@@ -1,14 +1,14 @@
 {
-  "2026-08-17T16-53-45-00-00_inspect-evals-simpleqa-verified_jEyBDs6DhBqUAJAe8nYrs8.eval": {
+  "2026-08-17T16-59-55-00-00_inspect-evals-simpleqa-verified_YbcrL2TYKhMBUkC5uS9CiY.eval": {
     "version": 2,
     "status": "success",
     "eval": {
-      "eval_set_id": "UnhxfErxZfq4hDia84M9Po",
-      "eval_id": "SUqEaRzdK4LCKUm3PcshxD",
-      "run_id": "k7F883yriaGYNz8qY3DmyB",
-      "created": "2026-08-17T16:53:45+00:00",
+      "eval_set_id": "ErFP4RMsSawqcPFE7H2JDV",
+      "eval_id": "NpZY5jRhaVWFJUKUHxjDRQ",
+      "run_id": "Gf6kr8saxC4dmtbz6LqWnz",
+      "created": "2026-08-17T16:59:55+00:00",
       "task": "audit/inspect_evals/simpleqa_verified",
-      "task_id": "jEyBDs6DhBqUAJAe8nYrs8",
+      "task_id": "YbcrL2TYKhMBUkC5uS9CiY",
       "task_version": 0,
       "task_display_name": "audit/inspect_evals/simpleqa_verified",
       "task_attribs": {},
@@ -45,7 +45,7 @@
       "revision": {
         "type": "git",
         "origin": "",
-        "commit": "23f0296",
+        "commit": "303056c",
         "dirty": true
       },
       "packages": {
@@ -83,16 +83,16 @@
       "scores": []
     },
     "stats": {
-      "started_at": "2026-08-17T16:53:45+00:00",
-      "completed_at": "2026-08-17T16:55:20+00:00",
+      "started_at": "2026-08-17T16:59:55+00:00",
+      "completed_at": "2026-08-17T17:02:59+00:00",
       "model_usage": {
         "openrouter/google/gemini-3.7-flash": {
-          "input_tokens": 303147,
-          "output_tokens": 7230,
-          "total_tokens": 787205,
-          "input_tokens_cache_read": 476828,
-          "reasoning_tokens": 267,
-          "total_cost": 0.14786138
+          "input_tokens": 258778,
+          "output_tokens": 8418,
+          "total_tokens": 827730,
+          "input_tokens_cache_read": 560534,
+          "reasoning_tokens": 433,
+          "total_cost": 0.13658283999999998
         }
       },
       "role_usage": {},
@@ -105,16 +105,16 @@
     },
     "reductions": []
   },
-  "2026-08-17T16-53-45-00-00_inspect-evals-simpleqa-verified_nPndUtTi7Wm5oZDycyCrgB.eval": {
+  "2026-08-17T16-59-55-00-00_inspect-evals-simpleqa-verified_e3zvkV9UKuDshDXSRYd83i.eval": {
     "version": 2,
     "status": "success",
     "eval": {
-      "eval_set_id": "UnhxfErxZfq4hDia84M9Po",
-      "eval_id": "WD2NzsXHG6BDuXkbEVJQKJ",
-      "run_id": "k7F883yriaGYNz8qY3DmyB",
-      "created": "2026-08-17T16:53:45+00:00",
+      "eval_set_id": "ErFP4RMsSawqcPFE7H2JDV",
+      "eval_id": "QfdEFTiswDs6asvGBXX3vD",
+      "run_id": "Gf6kr8saxC4dmtbz6LqWnz",
+      "created": "2026-08-17T16:59:55+00:00",
       "task": "audit/inspect_evals/simpleqa_verified",
-      "task_id": "nPndUtTi7Wm5oZDycyCrgB",
+      "task_id": "e3zvkV9UKuDshDXSRYd83i",
       "task_version": 0,
       "task_display_name": "audit/inspect_evals/simpleqa_verified",
       "task_attribs": {},
@@ -151,7 +151,7 @@
       "revision": {
         "type": "git",
         "origin": "",
-        "commit": "23f0296",
+        "commit": "303056c",
         "dirty": true
       },
       "packages": {
@@ -189,17 +189,17 @@
       "scores": []
     },
     "stats": {
-      "started_at": "2026-08-17T16:53:45+00:00",
-      "completed_at": "2026-08-17T16:54:56+00:00",
+      "started_at": "2026-08-17T16:59:55+00:00",
+      "completed_at": "2026-08-17T17:02:01+00:00",
       "model_usage": {
         "openrouter/openai/gpt-5.6-luna": {
-          "input_tokens": 2224,
-          "output_tokens": 7772,
-          "total_tokens": 334873,
-          "input_tokens_cache_write": 73851,
-          "input_tokens_cache_read": 251026,
-          "reasoning_tokens": 2726,
-          "total_cost": 0.06184574
+          "input_tokens": 12850,
+          "output_tokens": 8342,
+          "total_tokens": 618954,
+          "input_tokens_cache_write": 103986,
+          "input_tokens_cache_read": 493776,
+          "reasoning_tokens": 1403,
+          "total_cost": 0.09189964
         }
       },
       "role_usage": {},

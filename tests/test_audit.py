@@ -11,7 +11,7 @@ from inspect_ai import Task
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.scorer import match
 
-from inspect_audit import audit_task, resolve_task
+from inspect_audit import audit_sandbox, audit_task, resolve_task
 from inspect_audit._item import AUDIT_ROOT
 
 
@@ -78,7 +78,7 @@ def test_the_audited_tasks_own_sandbox_wins_over_ours() -> None:
     ours = audit_task(make_task(1)).dataset[0].sandbox
     assert ours is not None
     assert ours.type == "docker"
-    assert ours.config is not None and Path(str(ours.config)).name == "Dockerfile"
+    assert ours.config is not None
 
 
 def test_every_item_records_which_item_it_audits() -> None:
@@ -96,3 +96,19 @@ def test_the_generated_sandbox_pins_the_tasks_own_packages() -> None:
     # inspect-ai always, pinned to the resolving environment's version.
     assert any(r.startswith("inspect-ai==") for r in reqs)
     assert all("==" in r for r in reqs)
+
+
+def test_the_generated_sandbox_has_network_access() -> None:
+    """An auditor without egress cannot read a source, and will invent one instead.
+
+    Inspect's own generated compose for a Dockerfile sandbox sets
+    `network_mode: none`, which is why we write our own. Both observed failure modes
+    followed from that: one model reported it could not verify, another cited two URLs
+    it had never fetched.
+    """
+    sandbox = audit_sandbox(make_task(1))
+    assert isinstance(sandbox, tuple)
+    compose = Path(sandbox[1])
+    assert compose.name == "compose.yaml"
+    assert (compose.parent / "Dockerfile").is_file()
+    assert "network_mode" not in compose.read_text()

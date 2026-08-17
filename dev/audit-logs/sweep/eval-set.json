@@ -1,9 +1,9 @@
 {
-  "eval_set_id": "UnhxfErxZfq4hDia84M9Po",
+  "eval_set_id": "ErFP4RMsSawqcPFE7H2JDV",
   "tasks": [
     {
       "name": "audit/inspect_evals/simpleqa_verified",
-      "task_id": "nPndUtTi7Wm5oZDycyCrgB",
+      "task_id": "e3zvkV9UKuDshDXSRYd83i",
       "task_args": {},
       "model": "openrouter/openai/gpt-5.6-luna",
       "model_args": {},
@@ -11,7 +11,7 @@
     },
     {
       "name": "audit/inspect_evals/simpleqa_verified",
-      "task_id": "jEyBDs6DhBqUAJAe8nYrs8",
+      "task_id": "YbcrL2TYKhMBUkC5uS9CiY",
       "task_args": {},
       "model": "openrouter/google/gemini-3.7-flash",
       "model_args": {},

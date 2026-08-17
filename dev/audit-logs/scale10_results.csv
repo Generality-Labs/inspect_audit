@@ -1,0 +1,11 @@
+item,stratum,grade,cost,ktokens,n_sources,limit
+223,control,CORRECT,0.0468,285,2,
+239,control,CORRECT,0.0192,127,2,
+284,control,CORRECT,0.031,180,2,
+619,control,CORRECT,0.0409,240,3,
+757,control,CORRECT,0.0218,146,3,
+235,never_solved,CORRECT,0.0244,144,2,
+541,never_solved,CORRECT,0.0253,155,2,
+768,never_solved,CORRECT,0.0231,117,3,
+906,never_solved,CORRECT,0.0367,353,2,
+952,never_solved,CORRECT,0.0285,215,3,

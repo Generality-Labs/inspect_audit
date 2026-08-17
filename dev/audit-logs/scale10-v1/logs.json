@@ -1,0 +1,116 @@
+{
+  "2026-08-17T17-04-35-00-00_inspect-evals-simpleqa-verified_SYdCAKmMtSt7KKhDsLBqV4.eval": {
+    "version": 2,
+    "status": "success",
+    "eval": {
+      "eval_set_id": "PZMWUVeq5Ad3Eo9f5hyVFd",
+      "eval_id": "9Mc5LwRD9UYnCFimZbTogz",
+      "run_id": "PCefW7kBpfJyZHeciDBDTG",
+      "created": "2026-08-17T17:04:35+00:00",
+      "task": "audit/inspect_evals/simpleqa_verified",
+      "task_id": "SYdCAKmMtSt7KKhDsLBqV4",
+      "task_version": 0,
+      "task_display_name": "audit/inspect_evals/simpleqa_verified",
+      "task_attribs": {},
+      "task_args": {},
+      "task_args_passed": {},
+      "solver_args_passed": {},
+      "dataset": {
+        "samples": 10,
+        "sample_ids": [
+          "223",
+          "235",
+          "239",
+          "284",
+          "541",
+          "619",
+          "757",
+          "768",
+          "906",
+          "952"
+        ],
+        "shuffled": false
+      },
+      "model": "openrouter/openai/gpt-5.6-luna",
+      "model_generate_config": {},
+      "model_args": {},
+      "config": {
+        "epochs": 1,
+        "fail_on_error": true,
+        "continue_on_fail": false,
+        "score_on_error": false,
+        "token_limit": 400000,
+        "cost_limit": 0.25,
+        "max_samples": 5,
+        "max_tasks": 10,
+        "sandbox_cleanup": true,
+        "log_samples": true,
+        "log_realtime": true,
+        "log_images": true,
+        "score_display": true
+      },
+      "revision": {
+        "type": "git",
+        "origin": "",
+        "commit": "303056c",
+        "dirty": true
+      },
+      "packages": {
+        "inspect_ai": "0.3.259"
+      },
+      "metadata": {
+        "audited_task": "inspect_evals/simpleqa_verified"
+      },
+      "scorers": [
+        {
+          "name": "verdict",
+          "options": {},
+          "metrics": [],
+          "metadata": {}
+        }
+      ]
+    },
+    "plan": {
+      "name": "plan",
+      "steps": [
+        {
+          "solver": "inspect_audit/audit_agent",
+          "params": {
+            "items": null,
+            "model": null
+          },
+          "params_passed": {}
+        }
+      ],
+      "config": {}
+    },
+    "results": {
+      "total_samples": 10,
+      "completed_samples": 10,
+      "scores": []
+    },
+    "stats": {
+      "started_at": "2026-08-17T17:04:35+00:00",
+      "completed_at": "2026-08-17T17:08:45+00:00",
+      "model_usage": {
+        "openrouter/openai/gpt-5.6-luna": {
+          "input_tokens": 19659,
+          "output_tokens": 29495,
+          "total_tokens": 1966343,
+          "input_tokens_cache_write": 347493,
+          "input_tokens_cache_read": 1569696,
+          "reasoning_tokens": 5686,
+          "total_cost": 0.2974889400000001
+        }
+      },
+      "role_usage": {},
+      "connection_limit_history": []
+    },
+    "invalidated": false,
+    "tags": [],
+    "metadata": {
+      "audited_task": "inspect_evals/simpleqa_verified"
+    },
+    "reductions": []
+  }
+}

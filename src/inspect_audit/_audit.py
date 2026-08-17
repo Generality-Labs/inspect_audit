@@ -23,9 +23,9 @@ from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox.environment import SandboxEnvironmentType
 
-from ._candidates import LogSource, input_hash, sample_id_of
+from ._candidates import LogSource, sample_id_of
 from ._candidates import attempts as attempt_rows
-from ._case import AUDIT_ROOT, AttemptRef, CaseSpec, case_sample
+from ._item import AUDIT_ROOT, AttemptRef, AuditItem, item_sample
 from ._resolve import resolve_task
 from ._sandbox import audit_sandbox
 
@@ -115,7 +115,7 @@ def audit_task(
         limit: Audit at most this many samples.
         task_args: Task arguments used to resolve the audited task.
         sandbox: Override the sandbox (defaults to the audited task's own, else ours).
-        strict: Raise if logs cannot be verified against the task's dataset.
+        strict: Raise if a log shares no sample ids with the task's dataset.
 
     Returns:
         A task to run with `eval()` / `eval_set()`.
@@ -150,27 +150,25 @@ def audit_task(
                 )
             )
 
-    # One staging directory for the whole run, not one per case: a thousand cases
+    # One staging directory for the whole run, not one per item: a thousand items
     # would otherwise leave a thousand temporary directories behind.
     staging = Path(tempfile.mkdtemp(prefix="inspect_audit_"))
 
-    cases: list[Sample] = []
+    items: list[Sample] = []
     for sample_id, sample in zip(ids, dataset, strict=True):
         if sample_id not in in_scope:
             continue
-        refs = by_sample.get(str(sample_id), [])
-        case_spec = CaseSpec(
+        item = AuditItem(
             task=target.name,
             task_args=task_args or {},
             sample_id=sample_id,
-            input_hash=input_hash(sample.input),
-            attempts=refs,
+            attempts=by_sample.get(str(sample_id), []),
         )
-        cases.append(
-            case_sample(
+        items.append(
+            item_sample(
                 target,
                 sample,
-                case_spec,
+                item,
                 prompt=CASE_PROMPT,
                 stage=staging / str(sample_id),
                 sandbox=box,
@@ -179,7 +177,7 @@ def audit_task(
 
     return Task(
         name=f"audit/{target.name}",
-        dataset=MemoryDataset(cases),
+        dataset=MemoryDataset(items),
         solver=probe_sandbox(),
         metadata={"audited_task": target.name},
     )

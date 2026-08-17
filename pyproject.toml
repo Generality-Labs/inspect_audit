@@ -32,6 +32,15 @@ dev = ["ruff", "mypy", "pytest", "pytest-xdist", "pandas-stubs"]
 [tool.ruff]
 src = ["src"]
 
+# Matches the Inspect ecosystem's own configuration, so code written here reads the
+# way code in `inspect_ai` and its satellite packages reads.
+[tool.ruff.lint]
+select = ["E", "W", "F", "D", "I", "B", "SIM101", "PLE"]
+ignore = ["D10", "E501"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.mypy]
 strict = true
 mypy_path = "src"

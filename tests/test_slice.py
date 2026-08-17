@@ -14,7 +14,7 @@ from inspect_ai.log import (
 )
 from test_helpers.logs import run_fixture_eval
 
-from inspect_audit._case import AttemptRef
+from inspect_audit._item import AttemptRef
 from inspect_audit._slice import sample_logs
 
 

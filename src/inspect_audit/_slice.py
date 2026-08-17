@@ -11,8 +11,8 @@ attempts (`eval.scorers[].options`), how the model was elicited (`plan.steps`,
 private schema it has to trust; handing it the log lets it use `read_eval_log`,
 `samples_df`, and the viewer against the real thing, and check anything we claim.
 
-Whole logs are still not copied: a log is a container for a thousand samples and a
-case needs one of them. We take the slice and keep the container's header.
+Whole logs are still not copied: a log is a container for a thousand samples and an
+item needs one of them. We take the slice and keep the container's header.
 """
 
 import logging
@@ -26,7 +26,7 @@ from inspect_ai.log import (
     write_eval_log,
 )
 
-from ._case import AUDIT_ROOT, AttemptRef
+from ._item import AUDIT_ROOT, AttemptRef
 
 logger = logging.getLogger(__name__)
 

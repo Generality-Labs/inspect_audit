@@ -12,7 +12,7 @@ from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.scorer import match
 
 from inspect_audit import audit_task, resolve_task
-from inspect_audit._case import AUDIT_ROOT
+from inspect_audit._item import AUDIT_ROOT
 
 
 def make_task(n: int = 3, with_ids: bool = True) -> Task:
@@ -33,7 +33,7 @@ def test_resolve_task_names_the_spec_it_could_not_resolve() -> None:
         resolve_task("no_such_package/no_such_task")
 
 
-def test_audit_task_makes_one_case_per_sample() -> None:
+def test_audit_task_makes_one_item_per_sample() -> None:
     audit = audit_task(make_task(3))
 
     assert audit.name == "audit/fixture_task"
@@ -55,12 +55,12 @@ def test_samples_without_ids_are_addressed_by_position() -> None:
     assert [s.id for s in audit.dataset] == ["1", "2", "3"]
 
 
-def test_each_case_gets_a_sandbox_and_a_materialised_filesystem() -> None:
-    case = audit_task(make_task(1)).dataset[0]
+def test_each_item_gets_a_sandbox_and_a_filesystem() -> None:
+    item = audit_task(make_task(1)).dataset[0]
 
-    assert case.sandbox is not None
-    assert case.files is not None
-    assert f"{AUDIT_ROOT}/sample.json" in case.files
+    assert item.sandbox is not None
+    assert item.files is not None
+    assert f"{AUDIT_ROOT}/sample.json" in item.files
 
 
 def test_the_audited_tasks_own_sandbox_wins_over_ours() -> None:
@@ -79,12 +79,12 @@ def test_the_audited_tasks_own_sandbox_wins_over_ours() -> None:
     assert ours.config is not None and Path(str(ours.config)).name == "Dockerfile"
 
 
-def test_the_case_spec_records_provenance_for_every_case() -> None:
-    for case in audit_task(make_task(2)).dataset:
-        case_spec = (case.metadata or {})["case_spec"]
-        assert case_spec["task"] == "fixture_task"
-        assert case_spec["input_hash"]
-        assert case_spec["attempts"] == []  # attempts arrive with candidates()
+def test_every_item_records_which_item_it_audits() -> None:
+    for item in audit_task(make_task(2)).dataset:
+        audited = (item.metadata or {})["audit_item"]
+        assert audited["task"] == "fixture_task"
+        assert str(audited["sample_id"]) == str(item.id)
+        assert audited["attempts"] == []  # no logs were given
 
 
 def test_the_generated_sandbox_pins_the_tasks_own_packages() -> None:

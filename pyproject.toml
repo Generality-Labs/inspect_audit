@@ -27,6 +27,8 @@ dev = ["ruff", "mypy", "pytest", "pytest-xdist", "pandas-stubs"]
 
 [tool.ruff]
 src = ["src"]
+# Vendored third-party skills are copied verbatim; see src/inspect_audit/skills/VENDORED.md
+extend-exclude = ["src/inspect_audit/skills"]
 
 # Matches the Inspect ecosystem's own configuration, so code written here reads the
 # way code in `inspect_ai` and its satellite packages reads.
@@ -41,6 +43,7 @@ convention = "google"
 strict = true
 mypy_path = "src"
 files = ["src"]
+exclude = ["src/inspect_audit/skills/"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]

@@ -11,6 +11,7 @@ task resolves as `inspect_evals/simpleqa_verified`).
 """
 
 from collections.abc import Collection
+from typing import Any, cast
 
 import pandas as pd
 from inspect_ai.analysis import EvalModel, SampleSummary, samples_df
@@ -37,9 +38,9 @@ def is_pass(value: object) -> bool:
     Args:
         value: A score value, in whatever shape the scorer produced.
     """
-    if value is None or (not isinstance(value, (list, dict)) and pd.isna(value)):
+    if value is None or (not isinstance(value, (list, dict)) and pd.isna(cast(Any, value))):
         return False
-    return _to_float(value) >= 1.0  # type: ignore[arg-type]
+    return _to_float(cast(Any, value)) >= 1.0
 
 
 def sample_id_of(sample: Sample, index: int) -> str:
@@ -56,14 +57,16 @@ def attempts(
     logs: LogSource,
     *,
     sample_ids: Collection[str] | None = None,
-    parallel: bool | int = True,
+    parallel: bool | int = False,
 ) -> pd.DataFrame:
     """One row per recorded attempt, with a column per scorer.
 
     Args:
         logs: Log directory, log files, or already-read `EvalLog`s.
         sample_ids: Restrict to these sample ids.
-        parallel: Read logs in parallel.
+        parallel: Read logs in parallel. Defaults to Inspect's own default of `False`:
+            the process pool it uses breaks when a caller is already inside one, and
+            the reader is fast enough serially (50000 attempts in about six seconds).
 
     Returns:
         The `samples_df` frame for `logs`: `id`, `epoch`, `model`, `log`, `target`,

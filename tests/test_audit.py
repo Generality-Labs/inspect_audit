@@ -64,14 +64,16 @@ def test_each_item_gets_a_sandbox_and_a_filesystem() -> None:
 
 
 def test_the_audited_tasks_own_sandbox_wins_over_ours() -> None:
-    # Inspect normalises a sandbox to a SandboxEnvironmentSpec on assignment, so
-    # compare the resolved parts rather than the tuple that was passed in.
     task = make_task(1)
     task.sandbox = ("docker", "their-compose.yaml")  # type: ignore[assignment]
 
     theirs = audit_task(task).dataset[0].sandbox
     assert theirs is not None
-    assert (theirs.type, theirs.config) == ("docker", "their-compose.yaml")
+    assert theirs.type == "docker"
+    # Resolved against the task's own directory, the way Inspect resolves a task-level
+    # sandbox: a bare relative name would otherwise be read from the audit's cwd.
+    assert Path(str(theirs.config)).is_absolute()
+    assert Path(str(theirs.config)).name == "their-compose.yaml"
 
     ours = audit_task(make_task(1)).dataset[0].sandbox
     assert ours is not None

@@ -16,7 +16,7 @@ from inspect_ai import Task
 from inspect_ai._eval.loader import load_tasks
 from inspect_ai.log import EvalLog, read_eval_log
 
-__all__ = ["resolve_task", "resolve_task_from_log", "task_ref"]
+__all__ = ["resolve_task", "resolve_task_from_log"]
 
 
 def resolve_task(spec: str | Task, task_args: dict[str, Any] | None = None) -> Task:
@@ -87,8 +87,3 @@ def resolve_task_from_log(log: str | Path | EvalLog) -> Task:
         + "\n".join(errors)
         + "\nPass the task explicitly, or run from the directory the eval was run from."
     )
-
-
-def task_ref(task: Task) -> str:
-    """The string that addresses this task again later, for the audit's provenance."""
-    return task.name

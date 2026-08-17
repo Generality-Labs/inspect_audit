@@ -16,18 +16,17 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any
 
-import pandas as pd
 from inspect_ai import Task
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox.environment import SandboxEnvironmentType
 
-from ._candidates import LogSource, sample_id_of
+from ._candidates import LogSource, sample_id_of, score_columns
 from ._candidates import attempts as attempt_rows
 from ._item import AUDIT_ROOT, AttemptRef, AuditItem, item_sample
 from ._resolve import resolve_task
-from ._sandbox import audit_sandbox
+from ._sandbox import audit_sandbox, resolve_sandbox
 
 __all__ = ["audit_task"]
 
@@ -103,7 +102,6 @@ def audit_task(
     limit: int | None = None,
     task_args: dict[str, Any] | None = None,
     sandbox: SandboxEnvironmentType | None = None,
-    strict: bool = True,
 ) -> Task:
     """Build the audit as an Inspect `Task`.
 
@@ -115,13 +113,12 @@ def audit_task(
         limit: Audit at most this many samples.
         task_args: Task arguments used to resolve the audited task.
         sandbox: Override the sandbox (defaults to the audited task's own, else ours).
-        strict: Raise if a log shares no sample ids with the task's dataset.
 
     Returns:
         A task to run with `eval()` / `eval_set()`.
     """
     target = resolve_task(task, task_args)
-    box = sandbox or target.sandbox or audit_sandbox(target)
+    box = sandbox or resolve_sandbox(target) or audit_sandbox(target)
 
     # Decide what to audit before reading the attempts, so collection can be pushed
     # down to the selected samples. Auditing five samples of a ten-thousand sample
@@ -138,16 +135,23 @@ def audit_task(
 
     by_sample: dict[str, list[AttemptRef]] = {}
     if logs is not None:
-        rows = attempt_rows(target, logs, strict=strict, sample_ids=in_scope)
-        for row in rows.to_dict("records"):
-            by_sample.setdefault(str(row["sample_id"]), []).append(
+        frame = attempt_rows(logs, sample_ids=in_scope)
+        scores = score_columns(frame)
+        for row in frame.to_dict("records"):
+            sample_id = str(row["id"])
+            by_sample.setdefault(sample_id, []).append(
                 AttemptRef(
                     model=str(row["model"]),
                     epoch=int(row["epoch"]),
-                    score=_opt(row["score"]),
-                    log_file=str(row["log_file"]),
-                    sample_id=str(row["sample_id"]),
+                    scores={name.removeprefix("score_"): str(row[name]) for name in scores},
+                    log_file=str(row["log"]),
+                    sample_id=sample_id,
                 )
+            )
+        if not by_sample and in_scope:
+            raise ValueError(
+                f"no attempts at any selected sample of `{target.name}` were found in these "
+                "logs. Check the task and its arguments match the ones the logs were run with."
             )
 
     # One staging directory for the whole run, not one per item: a thousand items
@@ -181,12 +185,3 @@ def audit_task(
         solver=probe_sandbox(),
         metadata={"audited_task": target.name},
     )
-
-
-def _opt(value: Any) -> Any:
-    """Pandas turns missing values into NaN; models want None.
-
-    Reading a frame back row-wise reintroduces float NaN wherever a column held
-    nulls, which then fails validation against an optional string field.
-    """
-    return None if value is None or (isinstance(value, float) and pd.isna(value)) else value

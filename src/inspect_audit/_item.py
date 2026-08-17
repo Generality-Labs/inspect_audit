@@ -9,6 +9,7 @@ is read in place rather than copied:
 
     /audit/sample.json          the sample, in Inspect's own shape
     /audit/logs/<name>.eval     real logs, headers verbatim, sliced to this item
+    /audit/env/<Dockerfile>     the environment's own definition, as declared
     /audit/gold/grading.md      where grading lives, and how to read it
 
 Values in `Sample.files` are host paths, never file contents. Inspect resolves a
@@ -40,7 +41,13 @@ class AttemptRef(BaseModel):
 
     model: str
     epoch: int
-    score: str | float | bool | None = None
+    scores: dict[str, str] = Field(default_factory=dict)
+    """What each scorer gave this attempt, keyed by scorer name.
+
+    A dict rather than one value: a task can run several scorers, and which of them
+    decides "solved" is the auditor's question, not ours to collapse.
+    """
+
     log_file: str
     sample_id: str | int
 
@@ -54,7 +61,14 @@ class AuditItem(BaseModel):
     attempts: list[AttemptRef] = Field(default_factory=list)
 
 
-def item_files(task: Task, sample: Sample, attempts: list[AttemptRef], *, stage: Path) -> dict[str, str]:
+def item_files(
+    task: Task,
+    sample: Sample,
+    attempts: list[AttemptRef],
+    *,
+    stage: Path,
+    sandbox: SandboxEnvironmentType | None = None,
+) -> dict[str, str]:
     """Build the `Sample.files` mapping for one item, staging each file on the host.
 
     Args:
@@ -62,11 +76,14 @@ def item_files(task: Task, sample: Sample, attempts: list[AttemptRef], *, stage:
         sample: The sample being audited.
         attempts: The recorded attempts at this sample.
         stage: Directory to stage this item's files in.
+        sandbox: The sandbox the item will run in, whose definition is staged so the
+            auditor can read how its environment was built.
 
     Returns:
         Mapping of sandbox path to host path.
     """
     from ._gold import grading_doc
+    from ._sandbox import env_files
     from ._slice import sample_logs
 
     stage.mkdir(parents=True, exist_ok=True)
@@ -83,6 +100,7 @@ def item_files(task: Task, sample: Sample, attempts: list[AttemptRef], *, stage:
     staged("sample.json", json.dumps([_record(sample)], indent=2, default=str))
     staged("gold/grading.md", grading_doc(task, sample))
 
+    files.update(env_files(sandbox, stage=stage / "env"))
     files.update(sample_logs(attempts, stage=stage / "logs"))
     return files
 
@@ -108,5 +126,5 @@ def item_sample(
         target=sample.target,
         metadata={"audit_item": item.model_dump()},
         sandbox=sandbox,
-        files=item_files(task, sample, item.attempts, stage=stage),
+        files=item_files(task, sample, item.attempts, stage=stage, sandbox=sandbox),
     )

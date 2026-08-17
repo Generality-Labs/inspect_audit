@@ -17,10 +17,6 @@ dependencies = [
     "pandas>=2.0.0",
 ]
 
-[project.scripts]
-audit = "inspect_audit._cli.main:main"
-inspect-audit = "inspect_audit._cli.main:main"
-
 # Makes `inspect_audit/<name>` resolvable from the Inspect registry, so audit
 # items are addressable by name from the CLI, a job file, or plain Python.
 [project.entry-points.inspect_ai]

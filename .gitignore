@@ -1,0 +1,20 @@
+# data, never in git
+cells/
+out/
+reference/
+calibration/suite/
+*.eval
+
+# python
+__pycache__/
+*.egg-info/
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+dev/logs/
+
+# secrets
+.env
+.env.*

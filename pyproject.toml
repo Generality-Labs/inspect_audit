@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "inspect_audit"
+version = "0.0.1"
+description = "Benchmark validity auditing for Inspect AI evals"
+authors = [{ name = "Generality Labs" }]
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT License" }
+dependencies = [
+    # 0.3.247 is the first version we've validated `load_tasks` and the skills
+    # tools (`install_skills`, `skill`) against.
+    "inspect-ai>=0.3.247",
+    "pandas>=2.0.0",
+]
+
+[project.scripts]
+audit = "inspect_audit._cli.main:main"
+inspect-audit = "inspect_audit._cli.main:main"
+
+# Makes `inspect_audit/<name>` resolvable from the Inspect registry, so audit
+# items are addressable by name from the CLI, a job file, or plain Python.
+[project.entry-points.inspect_ai]
+inspect_audit = "inspect_audit._registry"
+
+[project.optional-dependencies]
+dev = ["ruff", "mypy", "pytest", "pytest-xdist", "pandas-stubs"]
+
+[tool.ruff]
+src = ["src"]
+
+[tool.mypy]
+strict = true
+mypy_path = "src"
+files = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = ["docker: needs a running Docker daemon"]

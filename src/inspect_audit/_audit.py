@@ -9,7 +9,10 @@ At v0 the solver only probes the sandbox, so the audit proves the filesystem was
 materialised correctly. The auditing agent replaces it unchanged.
 """
 
+import atexit
 import json
+import os
+import shutil
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -159,9 +162,7 @@ def audit_task(
                 "logs. Check the task and its arguments match the ones the logs were run with."
             )
 
-    # One staging directory for the whole run, not one per item: a thousand items
-    # would otherwise leave a thousand temporary directories behind.
-    staging = Path(tempfile.mkdtemp(prefix="inspect_audit_"))
+    staging = _staging()
 
     items: list[Sample] = []
     for sample_id, sample in zip(ids, dataset, strict=True):
@@ -191,3 +192,17 @@ def audit_task(
         scorer=verdict(),
         metadata={"audited_task": target.name},
     )
+
+
+def _staging() -> Path:
+    """A directory for one run's item files, removed when the process exits.
+
+    One directory per run rather than per item, and cleaned up on the way out: the
+    sliced logs are the bulk of an item's filesystem, so auditing a few hundred items
+    stages a couple of gigabytes. Set `INSPECT_AUDIT_KEEP_STAGING=1` to keep it, which
+    is how you inspect what an auditor was actually given.
+    """
+    staging = Path(tempfile.mkdtemp(prefix="inspect_audit_"))
+    if not os.environ.get("INSPECT_AUDIT_KEEP_STAGING"):
+        atexit.register(shutil.rmtree, staging, ignore_errors=True)
+    return staging

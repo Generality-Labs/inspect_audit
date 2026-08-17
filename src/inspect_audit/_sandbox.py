@@ -7,6 +7,9 @@ the sandbox instead *installs* the distributions that provide the task, pinned t
 versions in the environment the audit is resolved in.
 """
 
+import atexit
+import os
+import shutil
 import tempfile
 from importlib.metadata import PackageNotFoundError, packages_distributions, version
 from pathlib import Path
@@ -113,6 +116,8 @@ def audit_sandbox(task: Task) -> SandboxEnvironmentType:
         A `("docker", <compose path>)` sandbox spec.
     """
     out = Path(tempfile.mkdtemp(prefix="inspect_audit_sandbox_"))
+    if not os.environ.get("INSPECT_AUDIT_KEEP_STAGING"):
+        atexit.register(shutil.rmtree, out, ignore_errors=True)
     (out / "Dockerfile").write_text(
         DOCKERFILE.format(requirements=" ".join(task_requirements(task)))
     )

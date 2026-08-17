@@ -1,0 +1,11 @@
+item,false_gold,true_gold,agreeing,grade,caught,named_true,cost,limit
+223,1981,1976,1 attempt,INCORRECT,True,True,0.0211,
+235,11 July 2023,08 July 2023,1 attempt,INCORRECT,True,True,0.0272,
+239,114 (acceptable range: anything between 112 and 116),160 (158-162),1 attempt,INCORRECT,True,False,0.0275,
+284,Duarte,Curchod,1 attempt,INCORRECT,True,True,0.0493,
+541,Mark Shoulson,BenJamin P. Johnson,1 attempt,INCORRECT,True,True,0.0352,
+619,Venezuela,Cuba,1 attempt,INCORRECT,True,True,0.0251,
+757,1992,1991,1 attempt,INCORRECT,True,True,0.0324,
+768,Irises,Hyacinths,1 attempt,INCORRECT,True,True,0.026,
+906,Katerina Markelova,Ali Barbash,1 attempt,UNVERIFIABLE,False,False,0.0324,
+952,Forth's Corners,Stone's Corner,2 attempts,INCORRECT,True,True,0.0269,

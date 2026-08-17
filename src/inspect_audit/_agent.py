@@ -8,11 +8,19 @@ from inspect_ai.scorer import Score, Scorer, Target, scorer
 from inspect_ai.solver import TaskState
 from inspect_ai.tool import Tool, ToolError, bash, skill, tool
 from inspect_ai.util import StoreModel, store_as
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from ._prompt import audit_prompt
 
-__all__ = ["GRADES", "Verdict", "audit_agent", "audit_items", "audit_skills", "verdict"]
+__all__ = [
+    "GRADES",
+    "Evidence",
+    "Verdict",
+    "audit_agent",
+    "audit_items",
+    "audit_skills",
+    "verdict",
+]
 
 SKILLS = Path(__file__).parent / "skills"
 
@@ -37,6 +45,21 @@ def audit_skills() -> list[str]:
     return [str(path) for path in sorted(SKILLS.iterdir()) if path.is_dir()]
 
 
+class Evidence(BaseModel):
+    """One piece of evidence: what a source actually says, and which source said it.
+
+    A quote rather than a summary. An auditor that could not read a source cannot
+    write this field, which is the point: a conclusion asserted over an unread source
+    has nothing to paste here.
+    """
+
+    quote: str
+    """Verbatim text from the source, as it appears there."""
+
+    source: str
+    """Where the quote came from — a URL, or a path inside this container."""
+
+
 class Verdict(StoreModel):
     """What an auditor concluded, recorded where a scorer can read it.
 
@@ -46,8 +69,7 @@ class Verdict(StoreModel):
     """
 
     grade: str | None = Field(default=None)
-    evidence: str | None = Field(default=None)
-    sources: list[str] = Field(default_factory=list)
+    evidence: list[Evidence] = Field(default_factory=list)
     tried: str | None = Field(default=None)
     remarks: str | None = Field(default=None)
 
@@ -56,8 +78,7 @@ class Verdict(StoreModel):
 def submit_grade() -> Tool:
     async def execute(
         grade: str,
-        evidence: str,
-        sources: list[str],
+        evidence: list[Evidence],
         tried: str,
         remarks: str,
     ) -> str:
@@ -65,23 +86,31 @@ def submit_grade() -> Tool:
 
         Args:
             grade: One of CORRECT, INCORRECT, ALTERNATIVES, UNVERIFIABLE.
-            evidence: What the evidence is, and what it establishes.
-            sources: URLs or citations you actually read, one per defensible answer.
+            evidence: Verbatim quotes establishing the grade, each with its source.
+                Quote what the source says; do not summarise what you concluded.
             tried: What you did to try to break the item, including what failed.
             remarks: What you actually think, including anything you were not asked about.
         """
+        # ToolErrors are fed back to the model as recoverable errors, so a submission
+        # that does not meet the contract becomes a retry rather than a lost audit.
         if grade not in GRADES:
-            # A ToolError is fed back to the model as a recoverable error, so a
-            # malformed grade becomes a retry rather than a lost audit.
             raise ToolError(f"grade must be one of {', '.join(GRADES)}, got {grade!r}")
+
+        if grade != "UNVERIFIABLE" and not evidence:
+            raise ToolError(
+                f"a grade of {grade} needs at least one verbatim quote with its source. "
+                "If no source you read establishes the answer, the grade is UNVERIFIABLE."
+            )
+        for item in evidence:
+            if not item.quote.strip() or not item.source.strip():
+                raise ToolError("every piece of evidence needs both a quote and its source")
 
         submitted = store_as(Verdict)
         submitted.grade = grade
         submitted.evidence = evidence
-        submitted.sources = sources
         submitted.tried = tried
         submitted.remarks = remarks
-        return json.dumps({"grade": grade, "sources": sources})
+        return json.dumps({"grade": grade, "sources": [e.source for e in evidence]})
 
     return execute
 
@@ -115,9 +144,12 @@ def verdict() -> Scorer:
         return Score(
             value=submitted.grade or "NO_VERDICT",
             answer=submitted.grade,
-            explanation=submitted.evidence,
+            explanation="\n\n".join(
+                f"{e.quote}\n  -- {e.source}" for e in submitted.evidence
+            )
+            or None,
             metadata={
-                "sources": submitted.sources,
+                "evidence": [e.model_dump() for e in submitted.evidence],
                 "tried": submitted.tried,
                 "remarks": submitted.remarks,
             },

@@ -44,6 +44,10 @@ the item's own source is unverified.
 
 If you cannot settle it, grade `UNVERIFIABLE` rather than guessing.
 
-Report the grade, a source for each defensible answer, and — for **each** distinct
-wrong answer the field gave — what you found when you checked it. Then say what
+Report the grade, and for each defensible answer a **verbatim quote** from the
+source that establishes it, with that source. Quote what the source says; do not
+summarise what you concluded. If no source you read establishes the recorded
+answer, the grade is `UNVERIFIABLE` — however plausible the answer looks. Also
+report, for **each** distinct wrong answer the field gave, what you found when you
+checked it. Then say what
 you actually think, including anything you weren't asked about.

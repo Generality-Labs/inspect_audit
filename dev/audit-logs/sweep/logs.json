@@ -1,0 +1,215 @@
+{
+  "2026-08-17T16-53-45-00-00_inspect-evals-simpleqa-verified_jEyBDs6DhBqUAJAe8nYrs8.eval": {
+    "version": 2,
+    "status": "success",
+    "eval": {
+      "eval_set_id": "UnhxfErxZfq4hDia84M9Po",
+      "eval_id": "SUqEaRzdK4LCKUm3PcshxD",
+      "run_id": "k7F883yriaGYNz8qY3DmyB",
+      "created": "2026-08-17T16:53:45+00:00",
+      "task": "audit/inspect_evals/simpleqa_verified",
+      "task_id": "jEyBDs6DhBqUAJAe8nYrs8",
+      "task_version": 0,
+      "task_display_name": "audit/inspect_evals/simpleqa_verified",
+      "task_attribs": {},
+      "task_args": {},
+      "task_args_passed": {},
+      "solver_args_passed": {},
+      "dataset": {
+        "samples": 3,
+        "sample_ids": [
+          "16",
+          "152",
+          "210"
+        ],
+        "shuffled": false
+      },
+      "model": "openrouter/google/gemini-3.7-flash",
+      "model_generate_config": {},
+      "model_args": {},
+      "config": {
+        "epochs": 1,
+        "fail_on_error": true,
+        "continue_on_fail": false,
+        "score_on_error": false,
+        "token_limit": 400000,
+        "cost_limit": 0.5,
+        "max_samples": 3,
+        "max_tasks": 10,
+        "sandbox_cleanup": true,
+        "log_samples": true,
+        "log_realtime": true,
+        "log_images": true,
+        "score_display": true
+      },
+      "revision": {
+        "type": "git",
+        "origin": "",
+        "commit": "23f0296",
+        "dirty": true
+      },
+      "packages": {
+        "inspect_ai": "0.3.259"
+      },
+      "metadata": {
+        "audited_task": "inspect_evals/simpleqa_verified"
+      },
+      "scorers": [
+        {
+          "name": "verdict",
+          "options": {},
+          "metrics": [],
+          "metadata": {}
+        }
+      ]
+    },
+    "plan": {
+      "name": "plan",
+      "steps": [
+        {
+          "solver": "inspect_audit/audit_agent",
+          "params": {
+            "items": null,
+            "model": null
+          },
+          "params_passed": {}
+        }
+      ],
+      "config": {}
+    },
+    "results": {
+      "total_samples": 3,
+      "completed_samples": 3,
+      "scores": []
+    },
+    "stats": {
+      "started_at": "2026-08-17T16:53:45+00:00",
+      "completed_at": "2026-08-17T16:55:20+00:00",
+      "model_usage": {
+        "openrouter/google/gemini-3.7-flash": {
+          "input_tokens": 303147,
+          "output_tokens": 7230,
+          "total_tokens": 787205,
+          "input_tokens_cache_read": 476828,
+          "reasoning_tokens": 267,
+          "total_cost": 0.14786138
+        }
+      },
+      "role_usage": {},
+      "connection_limit_history": []
+    },
+    "invalidated": false,
+    "tags": [],
+    "metadata": {
+      "audited_task": "inspect_evals/simpleqa_verified"
+    },
+    "reductions": []
+  },
+  "2026-08-17T16-53-45-00-00_inspect-evals-simpleqa-verified_nPndUtTi7Wm5oZDycyCrgB.eval": {
+    "version": 2,
+    "status": "success",
+    "eval": {
+      "eval_set_id": "UnhxfErxZfq4hDia84M9Po",
+      "eval_id": "WD2NzsXHG6BDuXkbEVJQKJ",
+      "run_id": "k7F883yriaGYNz8qY3DmyB",
+      "created": "2026-08-17T16:53:45+00:00",
+      "task": "audit/inspect_evals/simpleqa_verified",
+      "task_id": "nPndUtTi7Wm5oZDycyCrgB",
+      "task_version": 0,
+      "task_display_name": "audit/inspect_evals/simpleqa_verified",
+      "task_attribs": {},
+      "task_args": {},
+      "task_args_passed": {},
+      "solver_args_passed": {},
+      "dataset": {
+        "samples": 3,
+        "sample_ids": [
+          "16",
+          "152",
+          "210"
+        ],
+        "shuffled": false
+      },
+      "model": "openrouter/openai/gpt-5.6-luna",
+      "model_generate_config": {},
+      "model_args": {},
+      "config": {
+        "epochs": 1,
+        "fail_on_error": true,
+        "continue_on_fail": false,
+        "score_on_error": false,
+        "token_limit": 400000,
+        "cost_limit": 0.5,
+        "max_samples": 3,
+        "max_tasks": 10,
+        "sandbox_cleanup": true,
+        "log_samples": true,
+        "log_realtime": true,
+        "log_images": true,
+        "score_display": true
+      },
+      "revision": {
+        "type": "git",
+        "origin": "",
+        "commit": "23f0296",
+        "dirty": true
+      },
+      "packages": {
+        "inspect_ai": "0.3.259"
+      },
+      "metadata": {
+        "audited_task": "inspect_evals/simpleqa_verified"
+      },
+      "scorers": [
+        {
+          "name": "verdict",
+          "options": {},
+          "metrics": [],
+          "metadata": {}
+        }
+      ]
+    },
+    "plan": {
+      "name": "plan",
+      "steps": [
+        {
+          "solver": "inspect_audit/audit_agent",
+          "params": {
+            "items": null,
+            "model": null
+          },
+          "params_passed": {}
+        }
+      ],
+      "config": {}
+    },
+    "results": {
+      "total_samples": 3,
+      "completed_samples": 3,
+      "scores": []
+    },
+    "stats": {
+      "started_at": "2026-08-17T16:53:45+00:00",
+      "completed_at": "2026-08-17T16:54:56+00:00",
+      "model_usage": {
+        "openrouter/openai/gpt-5.6-luna": {
+          "input_tokens": 2224,
+          "output_tokens": 7772,
+          "total_tokens": 334873,
+          "input_tokens_cache_write": 73851,
+          "input_tokens_cache_read": 251026,
+          "reasoning_tokens": 2726,
+          "total_cost": 0.06184574
+        }
+      },
+      "role_usage": {},
+      "connection_limit_history": []
+    },
+    "invalidated": false,
+    "tags": [],
+    "metadata": {
+      "audited_task": "inspect_evals/simpleqa_verified"
+    },
+    "reductions": []
+  }
+}

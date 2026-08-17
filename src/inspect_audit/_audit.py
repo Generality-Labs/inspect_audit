@@ -17,11 +17,13 @@ from textwrap import dedent
 from typing import Any
 
 from inspect_ai import Task
+from inspect_ai.agent import as_solver
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox.environment import SandboxEnvironmentType
 
+from ._agent import audit_agent, verdict
 from ._candidates import LogSource, sample_id_of, score_columns
 from ._candidates import attempts as attempt_rows
 from ._item import AUDIT_ROOT, AttemptRef, AuditItem, item_sample
@@ -102,6 +104,7 @@ def audit_task(
     limit: int | None = None,
     task_args: dict[str, Any] | None = None,
     sandbox: SandboxEnvironmentType | None = None,
+    solver: Solver | None = None,
 ) -> Task:
     """Build the audit as an Inspect `Task`.
 
@@ -113,6 +116,8 @@ def audit_task(
         limit: Audit at most this many samples.
         task_args: Task arguments used to resolve the audited task.
         sandbox: Override the sandbox (defaults to the audited task's own, else ours).
+        solver: Override the auditor (defaults to `audit_agent()`). Pass
+            `probe_sandbox()` to check the item filesystem without spending on a model.
 
     Returns:
         A task to run with `eval()` / `eval_set()`.
@@ -182,6 +187,7 @@ def audit_task(
     return Task(
         name=f"audit/{target.name}",
         dataset=MemoryDataset(items),
-        solver=probe_sandbox(),
+        solver=solver or as_solver(audit_agent()),
+        scorer=verdict(),
         metadata={"audited_task": target.name},
     )

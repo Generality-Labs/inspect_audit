@@ -2,7 +2,7 @@
 
 from ._item import AUDIT_ROOT
 
-__all__ = ["AUDIT_PROMPT"]
+__all__ = ["AUDIT_PROMPT", "audit_prompt"]
 
 AUDIT_PROMPT = f"""\
 You are auditing one item from an AI benchmark: one question, its recorded answer, and
@@ -14,12 +14,22 @@ every recorded attempt at it by many models.
   {AUDIT_ROOT}/gold/grading.md   where the grading code lives
   {AUDIT_ROOT}/env/              how this container was built
 
-The benchmark's own code is installed here, so read the real source in place. You have
-bash, curl, and web search. Use curl to read sources: never judge a source through a
-tool that summarises it, because a summary normalises the exact detail that is usually
-the finding. Search is for finding candidate sources, not for establishing what one
-says.
+The benchmark's own code is installed here, so read the real source in place. You have a
+shell in this container, with curl and the internet. Read sources verbatim with curl:
+never judge a source through anything that summarises it, because a summary normalises
+the exact detail that is usually the finding. A search engine is for finding candidate
+sources, never for establishing what one says.
 
-Invoke the skill for what you are investigating and follow it. Then submit a grade with
-the evidence that earned it, and say what you actually think.
+You are investigating: {{items}}. Invoke that skill first and follow it. Other skills are
+available for working with the logs. Then submit a grade with the evidence that earned
+it, and say what you actually think.
 """
+
+
+def audit_prompt(items: list[str]) -> str:
+    """The system message, naming the audit items in scope.
+
+    Args:
+        items: Names of the audit-item skills to investigate.
+    """
+    return AUDIT_PROMPT.format(items=", ".join(f"`{item}`" for item in items))

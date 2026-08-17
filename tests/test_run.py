@@ -15,12 +15,16 @@ from inspect_ai import eval
 from test_helpers.logs import fixture_task, run_fixture_eval
 
 from inspect_audit import audit_task
+from inspect_audit._audit import probe_sandbox
 
 pytestmark = pytest.mark.docker
 
 
 def test_a_container_is_spun_out_and_its_logs_open_inside_it(tmp_path: Path) -> None:
-    """The case's logs must be usable by the audited task's own `inspect_ai`.
+    """The item's logs must be usable by the audited task's own `inspect_ai`.
+
+    Uses `probe_sandbox` rather than the auditing agent: this test is about the
+    container, and `mockllm` cannot drive a react loop to a submission.
 
     Files arriving in the sandbox is not the claim: the claim is that they are real
     logs. So the solver opens each one inside the container with `read_eval_log` and
@@ -29,7 +33,7 @@ def test_a_container_is_spun_out_and_its_logs_open_inside_it(tmp_path: Path) -> 
     source = run_fixture_eval(str(tmp_path / "source"))
 
     log = eval(
-        audit_task(fixture_task(), source),
+        audit_task(fixture_task(), source, solver=probe_sandbox()),
         model="mockllm/model",
         log_dir=str(tmp_path / "audit"),
         display="none",

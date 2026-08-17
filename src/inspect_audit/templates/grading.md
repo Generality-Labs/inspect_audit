@@ -1,36 +1,57 @@
-# How this sample is graded
+# How this item is graded
 
-Scorer `{scorer}`, defined in `{module}`.
+Scorers on the live task:
 
-{judge_line}
+{scorers}
 
-**Verdict values.** This scorer can return: {values}. Counting as a pass: {passing}.
+Do not take this file's word for anything. The logs in `logs/` are real Inspect `.eval`
+files, headers untouched, sliced to this item only — every claim about how these
+attempts were graded is checkable there.
 
-**The criteria in full** are in `../elicitation.json` under `judge` — including the
-complete grading template the judge is given. Read it before deciding whether an
-answer was fairly marked: a template that pins an exact string, omits a valid
-alternative, or collapses "refused" into "incorrect" fails answers that were right.
+```python
+from inspect_ai.log import read_eval_log, read_eval_log_sample
 
-**The source** is installed in this sandbox rather than copied, so read the real thing:
+log = read_eval_log("logs/<name>.eval", header_only=True)
+log.eval.scorers        # what graded these attempts: grader model, grading template
+log.plan.steps          # how the model was elicited: the solver chain
+log.plan.config         # and with what config (reasoning effort, token budget)
+log.eval.packages       # what was installed when it ran
 
+s = read_eval_log_sample("logs/<name>.eval", id=..., epoch=1, resolve_attachments=True)
+s.messages, s.events    # the full trajectory, not just the answer
+s.scores                # the score, its answer, and the judge's explanation
 ```
-python -c "import importlib, inspect; print(inspect.getsourcefile(importlib.import_module('{module}')))"
+
+Across every attempt at once:
+
+```python
+from inspect_ai.analysis import samples_df
+samples_df("logs")
 ```
 
-{drift_line}
+Grading is recorded **per log**, so read it per log rather than assuming the field was
+graded uniformly: different runs of the same benchmark are routinely graded by
+different judge models or judge templates.
+
+The scorer's source is installed in this sandbox, so read the real code:
+
+```bash
+python -c "import importlib, inspect; print(inspect.getsourcefile(importlib.import_module('{modules}')))"
+```
+
+Read the grading template in full before deciding whether an answer was fairly marked.
+A template that pins an exact string, omits a valid alternative, or collapses "refused"
+into "incorrect" fails answers that were right.
 
 ## What the target is, and is not
 
-`target.txt` holds this sample's recorded `target` verbatim. It is not necessarily the
-whole gold: benchmarks keep reference material in whatever shape suits them — a patch,
-a test file, an acceptable numeric range, a list of accepted alternatives. Everything
-this sample carries is in `../sample.json`; its metadata keys are:
+`sample.json` is this item as the benchmark defines it, in Inspect's own shape — load it
+with `json_dataset()` to get a `Sample`. Its `target` is not necessarily the whole gold:
+benchmarks keep reference material in whatever shape suits them, such as a patch, a test
+file, an acceptable numeric range, or a list of accepted alternatives. This item's
+metadata keys are: {metadata_keys}. If one of those looks like reference material, treat
+it as part of the gold.
 
-{metadata_keys}
-
-If one of those looks like reference material, treat it as part of the gold.
-
-`sources.md`, when present, lists URLs found in this sample's metadata. Those are the
-benchmark's own citations, so they are the *weakest* confirmation available: the
-question was probably written from them, which makes agreement circular. An
-independent source is worth more.
+If the metadata cites URLs, those are the benchmark's own sources, so they are the
+*weakest* confirmation available: the question was probably written from them, which
+makes agreement circular. An independent source is worth more.

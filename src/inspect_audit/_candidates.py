@@ -13,7 +13,7 @@ dataset changed would otherwise pair the same id to a different question.
 """
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -26,10 +26,26 @@ from inspect_ai.log import (
     read_eval_log,
     read_eval_log_sample_summaries,
 )
+from inspect_ai.scorer import value_to_float
 
 __all__ = ["attempts", "candidates", "input_hash", "is_pass"]
 
+_to_float = value_to_float()
+
 LogSource = str | Path | Sequence[str | Path] | Sequence[EvalLog]
+
+_ATTEMPT_COLUMNS = [
+    "sample_id",
+    "epoch",
+    "model",
+    "log_file",
+    "score",
+    "answer",
+    "error",
+    "retries",
+    "message_count",
+    "verified",
+]
 
 
 def input_hash(value: Any) -> str:
@@ -57,7 +73,13 @@ def _log_files(logs: LogSource) -> list[str]:
     return files
 
 
-def attempts(task: Task, logs: LogSource, *, strict: bool = True) -> pd.DataFrame:
+def attempts(
+    task: Task,
+    logs: LogSource,
+    *,
+    strict: bool = True,
+    sample_ids: Collection[str] | None = None,
+) -> pd.DataFrame:
     """One row per recorded attempt at a sample of `task`.
 
     Args:
@@ -66,11 +88,15 @@ def attempts(task: Task, logs: LogSource, *, strict: bool = True) -> pd.DataFram
         strict: Raise if a log's samples cannot be verified against the task's
             dataset. With `strict=False` those rows are dropped and reported in
             the `verified` column instead.
+        sample_ids: Collect attempts for these samples only. Verification still
+            runs over the whole dataset, so restricting the selection cannot turn a
+            mispaired log into an accepted one.
 
     Returns:
         Columns: `sample_id`, `epoch`, `model`, `log_file`, `score`, `answer`,
         `error`, `retries`, `message_count`, `verified`.
     """
+    wanted = None if sample_ids is None else set(sample_ids)
     expected = {
         sample_id_of(sample, index): input_hash(sample.input)
         for index, sample in enumerate(task.dataset, start=1)
@@ -89,6 +115,8 @@ def attempts(task: Task, logs: LogSource, *, strict: bool = True) -> pd.DataFram
             want = expected.get(sample_id)
             verified = want is not None and want == input_hash(summary.input)
             matched += int(verified)
+            if wanted is not None and sample_id not in wanted:
+                continue
 
             score = next(iter((summary.scores or {}).values()), None)
             rows.append(
@@ -117,7 +145,10 @@ def attempts(task: Task, logs: LogSource, *, strict: bool = True) -> pd.DataFram
             "or pass strict=False to drop them."
         )
 
-    frame = pd.DataFrame(rows)
+    # Columns are named explicitly: a frame built from zero rows has no columns at
+    # all, so every downstream `frame["verified"]` becomes a KeyError instead of an
+    # empty result. Selecting nothing is a legitimate outcome.
+    frame = pd.DataFrame(rows, columns=_ATTEMPT_COLUMNS)
     return frame if strict is False else frame[frame["verified"]].reset_index(drop=True)
 
 
@@ -126,7 +157,6 @@ def candidates(
     logs: LogSource,
     *,
     strict: bool = True,
-    passing: set[str] | None = None,
 ) -> pd.DataFrame:
     """One row per sample of `task`, with the field's attempts summarised onto it.
 
@@ -140,7 +170,7 @@ def candidates(
     """
     frame = attempts(task, logs, strict=strict)
     correct = (
-        frame["score"].apply(lambda v: is_pass(v, passing))
+        frame["score"].apply(is_pass)
         if len(frame)
         else pd.Series(dtype=bool)
     )
@@ -176,29 +206,17 @@ def candidates(
     return merged
 
 
-# Fallback only. A scorer defines what its values mean, so `pass_values()` reads the
-# scorer's own score map where one is recoverable; this vocabulary is the guess used
-# when it is not, and it is the single place that guess lives.
-_ASSUMED_PASSING = frozenset({"C", "CORRECT", "TRUE", "PASS", "1"})
-
-
-def is_pass(value: Any, passing: set[str] | None = None) -> bool:
+def is_pass(value: Any) -> bool:
     """Whether a score value counts as a pass.
 
+    Uses Inspect's own `value_to_float`, which is the interpretation its metrics use:
+    `C`/`I`/`P`/`N`, common boolean spellings, and numeric strings all map the way the
+    rest of the ecosystem maps them.
+
     Args:
-        value: The score value, in whatever shape the scorer produces.
-        passing: Values the scorer itself declares as passing (from its score map).
-            When given, it is authoritative. When not, a documented guess is used.
+        value: The score value, in whatever shape the scorer produced.
     """
-    if passing is not None:
-        return str(value) in passing
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value >= 1
-    if isinstance(value, str):
-        return value.upper() in _ASSUMED_PASSING
-    return False
+    return _to_float(value) >= 1.0
 
 
 def log_headers(logs: LogSource) -> list[EvalLog]:

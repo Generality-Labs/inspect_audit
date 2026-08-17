@@ -38,6 +38,6 @@ mypy_path = "src"
 files = ["src"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 testpaths = ["tests"]
 markers = ["docker: needs a running Docker daemon"]

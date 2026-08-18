@@ -67,7 +67,7 @@ def item_files(
     attempts: list[AttemptRef],
     *,
     stage: Path,
-    sandbox: SandboxEnvironmentType | None = None,
+    original_env: SandboxEnvironmentType | None = None,
 ) -> dict[str, str]:
     """Build the `Sample.files` mapping for one item, staging each file on the host.
 
@@ -76,8 +76,9 @@ def item_files(
         sample: The sample being audited.
         attempts: The recorded attempts at this sample.
         stage: Directory to stage this item's files in.
-        sandbox: The sandbox the item will run in, whose definition is staged so the
-            auditor can read how its environment was built.
+        original_env: The audited task's own sandbox, staged verbatim so the auditor
+            reads the environment as the benchmark defined it rather than as we merged
+            it. Reading a merged file would show renamed services and stripped comments.
 
     Returns:
         Mapping of sandbox path to host path.
@@ -100,7 +101,7 @@ def item_files(
     staged("sample.json", json.dumps([_record(sample)], indent=2, default=str))
     staged("gold/grading.md", grading_doc(task, sample))
 
-    files.update(env_files(sandbox, stage=stage / "env"))
+    files.update(env_files(original_env, stage=stage / "env"))
     files.update(sample_logs(attempts, stage=stage / "logs"))
     return files
 
@@ -118,6 +119,7 @@ def item_sample(
     prompt: str,
     stage: Path,
     sandbox: SandboxEnvironmentType | None = None,
+    original_env: SandboxEnvironmentType | None = None,
 ) -> Sample:
     """One audited item, as an Inspect `Sample`."""
     return Sample(
@@ -126,5 +128,5 @@ def item_sample(
         target=sample.target,
         metadata={"audit_item": item.model_dump()},
         sandbox=sandbox,
-        files=item_files(task, sample, item.attempts, stage=stage, sandbox=sandbox),
+        files=item_files(task, sample, item.attempts, stage=stage, original_env=original_env),
     )

@@ -24,20 +24,31 @@ from typing import Any
 
 import yaml
 from inspect_ai import Task
-from inspect_ai.util import SandboxEnvironmentType
+from inspect_ai.util import SandboxEnvironmentSpec, SandboxEnvironmentType
 from inspect_ai.util._sandbox.compose import is_dockerfile
 
-from ._sandbox import DOCKERFILE, audit_sandbox, resolve_sandbox, task_requirements
+from ._sandbox import DOCKERFILE, audit_sandbox, task_requirements
 
 __all__ = ["BENCHMARK_SERVICE", "audit_compose"]
 
 BENCHMARK_SERVICE = "benchmark"
 """The name the audited task's `default` service is given, so it stays addressable."""
 
+AUDITOR_NETWORK = "inspect_audit"
+
 AUDITOR_SERVICE: dict[str, Any] = {
     "build": {"context": None, "dockerfile": "Dockerfile"},
     "command": "sleep infinity",
     "init": True,
+    # Explicit, and stripped from the benchmark's services below: an `x-default` on
+    # any service beats one merely *named* `default`, and a benchmark that declares
+    # its own would otherwise receive the audit's files -- including the sliced logs,
+    # which carry the answer whose reachability is the question.
+    "x-default": True,
+    # Our own network. Sharing the project default would put a live host running curl,
+    # git and a full Python next to the benchmark container, which was not there during
+    # the eval and which a reachability audit would find.
+    "networks": [AUDITOR_NETWORK],
     "stop_grace_period": "1s",
 }
 
@@ -70,16 +81,30 @@ def _anchor_service(service: dict[str, Any], base: Path) -> dict[str, Any]:
         elif isinstance(out.get(key), list):
             out[key] = [_anchor(v, base) for v in out[key]]
     if isinstance(out.get("volumes"), list):
-        out["volumes"] = [
-            f"{_anchor(v.split(':', 1)[0], base)}:{v.split(':', 1)[1]}"
-            if isinstance(v, str) and v.startswith(".")
-            else v
-            for v in out["volumes"]
-        ]
+        out["volumes"] = [_anchor_volume(v, base) for v in out["volumes"]]
     return out
 
 
-def audit_compose(task: Task, *, stage: Path) -> SandboxEnvironmentType:
+def _anchor_volume(volume: Any, base: Path) -> Any:
+    """Re-anchor a bind mount's host path, in either compose syntax.
+
+    Missing the long form is not a cosmetic bug: compose resolves the relative source
+    against the merged file's directory, docker then creates it empty, and the
+    benchmark container silently loses the data that was mounted there.
+    """
+    if isinstance(volume, str) and volume.startswith("."):
+        host, _, rest = volume.partition(":")
+        return f"{_anchor(host, base)}:{rest}"
+    if isinstance(volume, dict) and volume.get("type") == "bind":
+        bound = dict(volume)
+        bound["source"] = _anchor(bound.get("source"), base)
+        return bound
+    return volume
+
+
+def audit_compose(
+    task: Task, spec: SandboxEnvironmentSpec | None, *, stage: Path
+) -> SandboxEnvironmentType:
     """A sandbox holding the audited task's environment and the auditor's, side by side.
 
     Falls back to the auditor's environment alone when the task brings no compose file,
@@ -87,12 +112,12 @@ def audit_compose(task: Task, *, stage: Path) -> SandboxEnvironmentType:
 
     Args:
         task: The task being audited.
+        spec: The sandbox the audited sample runs in, or `None`.
         stage: Directory to write the merged compose and the auditor's Dockerfile into.
 
     Returns:
         A `("docker", <compose path>)` sandbox spec.
     """
-    spec = resolve_sandbox(task)
     config = spec.config if spec is not None else None
     # Inspect's rule: a config path is a Dockerfile if named like one, else a compose file.
     if not isinstance(config, str) or is_dockerfile(Path(config).name):
@@ -105,17 +130,21 @@ def audit_compose(task: Task, *, stage: Path) -> SandboxEnvironmentType:
     services: dict[str, Any] = merged.get("services") or {}
     base = source.parent
 
-    renamed = {
-        (BENCHMARK_SERVICE if name == "default" else name): _anchor_service(service, base)
-        for name, service in services.items()
-    }
+    benchmark_name = BENCHMARK_SERVICE
+    while benchmark_name in services and benchmark_name != "default":
+        benchmark_name += "_"
+    renamed = {}
+    for name, service in services.items():
+        anchored = _anchor_service(service, base)
+        anchored.pop("x-default", None)
+        renamed[benchmark_name if name == "default" else name] = anchored
     for service in renamed.values():
         depends = service.get("depends_on")
         if isinstance(depends, list):
-            service["depends_on"] = [BENCHMARK_SERVICE if d == "default" else d for d in depends]
+            service["depends_on"] = [benchmark_name if d == "default" else d for d in depends]
         elif isinstance(depends, dict):
             service["depends_on"] = {
-                (BENCHMARK_SERVICE if k == "default" else k): v for k, v in depends.items()
+                (benchmark_name if k == "default" else k): v for k, v in depends.items()
             }
 
     stage.mkdir(parents=True, exist_ok=True)
@@ -126,6 +155,9 @@ def audit_compose(task: Task, *, stage: Path) -> SandboxEnvironmentType:
     auditor["build"] = {"context": str(stage), "dockerfile": "Dockerfile"}
 
     merged["services"] = {"default": auditor, **renamed}
+    networks = dict(merged.get("networks") or {})
+    networks[AUDITOR_NETWORK] = None
+    merged["networks"] = networks
     out = stage / "compose.yaml"
     out.write_text(yaml.safe_dump(merged, sort_keys=False))
     return ("docker", str(out))

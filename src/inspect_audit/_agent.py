@@ -6,10 +6,11 @@ from pathlib import Path
 from inspect_ai.agent import Agent, AgentSubmit, agent, react
 from inspect_ai.scorer import Score, Scorer, Target, scorer
 from inspect_ai.solver import TaskState
-from inspect_ai.tool import Tool, ToolError, bash, skill, tool
+from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
 from inspect_ai.util import StoreModel, store_as
 from pydantic import BaseModel, Field
 
+from ._compose import BENCHMARK_SERVICE
 from ._prompt import audit_prompt
 
 __all__ = [
@@ -144,7 +145,19 @@ def audit_agent(items: list[str] | None = None, model: str | None = None) -> Age
         name="auditor",
         description="Audits one benchmark item and submits a grade.",
         prompt=audit_prompt(items or audit_items()),
-        tools=[bash(timeout=180), skill(audit_skills())],
+        tools=[
+            bash(timeout=180),
+            ToolDef(
+                bash(timeout=180, sandbox=BENCHMARK_SERVICE),
+                name="benchmark_bash",
+                description=(
+                    "Run a command inside the environment the benchmark itself ran in, "
+                    "exactly as the evaluated agent saw it. Anything you download, write "
+                    "or install here is evidence about you, not about the environment."
+                ),
+            ).as_tool(),
+            skill(audit_skills()),
+        ],
         model=model,
         submit=AgentSubmit(tool=submit_grade(), name="submit_grade", keep_in_messages=True),
     )

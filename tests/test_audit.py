@@ -64,7 +64,7 @@ def test_each_item_gets_a_sandbox_and_a_filesystem() -> None:
 
 
 def test_the_audited_tasks_environment_runs_alongside_the_auditors(tmp_path: Path) -> None:
-    """Their services are copied verbatim; ours is appended and marked x-default.
+    """Their services keep their definitions; ours is the default environment.
 
     An audit of what an environment affords is only valid against the environment as it
     was, so the merge never edits their service - not its name, not its network, not the

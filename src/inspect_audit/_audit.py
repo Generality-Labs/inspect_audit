@@ -32,6 +32,7 @@ from ._candidates import attempts as attempt_rows
 from ._compose import audit_compose
 from ._item import AUDIT_ROOT, AttemptRef, AuditItem, item_sample
 from ._resolve import resolve_task
+from ._sandbox import sample_sandbox
 
 __all__ = ["audit_task"]
 
@@ -127,8 +128,21 @@ def audit_task(
     """
     target = resolve_task(task, task_args)
     staging = _staging()
-    # The audited task's own environment plus the auditor's, side by side.
-    box = sandbox or audit_compose(target, stage=staging / "sandbox")
+
+    # One merged compose per distinct environment, not per item: the CTF-style
+    # benchmarks give every sample its own compose file, while most give them all one.
+    composed: dict[str, SandboxEnvironmentType] = {}
+
+    def environment(sample: Sample) -> SandboxEnvironmentType:
+        if sandbox is not None:
+            return sandbox
+        spec = sample_sandbox(target, sample)
+        key = str(spec.config) if spec is not None and isinstance(spec.config, str) else ""
+        if key not in composed:
+            composed[key] = audit_compose(
+                target, spec, stage=staging / "sandbox" / str(len(composed))
+            )
+        return composed[key]
 
     # Decide what to audit before reading the attempts, so collection can be pushed
     # down to the selected samples. Auditing five samples of a ten-thousand sample
@@ -181,7 +195,8 @@ def audit_task(
                 item,
                 prompt=CASE_PROMPT,
                 stage=staging / str(sample_id),
-                sandbox=box,
+                sandbox=environment(sample),
+                original_env=sample_sandbox(target, sample),
             )
         )
 

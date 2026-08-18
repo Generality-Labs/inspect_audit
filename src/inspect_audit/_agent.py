@@ -69,6 +69,14 @@ class Verdict(StoreModel):
     """
 
     grade: str | None = Field(default=None)
+    independent: bool | None = Field(default=None)
+    """Whether any source establishing the answer is independent of the item's citations.
+
+    A property of the evidence, not of the item. Kept separate from the grade because
+    an auditor that finds a verbatim confirmation in an authoritative source should not
+    be forced to call the item unverifiable merely because the benchmark cited it too.
+    """
+
     evidence: list[Evidence] = Field(default_factory=list)
     tried: str | None = Field(default=None)
     remarks: str | None = Field(default=None)
@@ -77,19 +85,25 @@ class Verdict(StoreModel):
 @tool
 def submit_grade() -> Tool:
     async def execute(
-        grade: str,
         evidence: list[Evidence],
+        independent: bool,
         tried: str,
         remarks: str,
+        grade: str,
     ) -> str:
         """Submit your audit of this item.
 
         Args:
-            grade: One of CORRECT, INCORRECT, ALTERNATIVES, UNVERIFIABLE.
             evidence: Verbatim quotes establishing the grade, each with its source.
                 Quote what the source says; do not summarise what you concluded.
+            independent: Whether at least one source you quote is independent of the
+                item's own cited URLs.
             tried: What you did to try to break the item, including what failed.
             remarks: What you actually think, including anything you were not asked about.
+            grade: One of CORRECT, INCORRECT, ALTERNATIVES, UNVERIFIABLE. Last, because
+                a categorical label emitted before its own justification is a label the
+                reasoning then has to live with: twice an auditor has argued its way to
+                one verdict having already written the other.
         """
         # ToolErrors are fed back to the model as recoverable errors, so a submission
         # that does not meet the contract becomes a retry rather than a lost audit.
@@ -107,6 +121,7 @@ def submit_grade() -> Tool:
 
         submitted = store_as(Verdict)
         submitted.grade = grade
+        submitted.independent = independent
         submitted.evidence = evidence
         submitted.tried = tried
         submitted.remarks = remarks
@@ -149,6 +164,7 @@ def verdict() -> Scorer:
             )
             or None,
             metadata={
+                "independent": submitted.independent,
                 "evidence": [e.model_dump() for e in submitted.evidence],
                 "tried": submitted.tried,
                 "remarks": submitted.remarks,

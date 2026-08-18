@@ -1,0 +1,146 @@
+{
+  "2026-08-17T22-21-56-00-00_inspect-evals-simpleqa-verified_MBgmvru4Dfcv43hqXMosA6.eval": {
+    "version": 2,
+    "status": "success",
+    "eval": {
+      "eval_set_id": "etAXSkZTi7UiDQQh4VSCxc",
+      "eval_id": "A8EC7ZZunVboozUpS2oSWs",
+      "run_id": "W6JxjpnTPyNDasCj9aq3wH",
+      "created": "2026-08-17T22:21:56+00:00",
+      "task": "audit/inspect_evals/simpleqa_verified",
+      "task_id": "MBgmvru4Dfcv43hqXMosA6",
+      "task_version": 0,
+      "task_display_name": "audit/inspect_evals/simpleqa_verified",
+      "task_attribs": {},
+      "task_args": {},
+      "task_args_passed": {},
+      "solver_args_passed": {},
+      "dataset": {
+        "samples": 38,
+        "sample_ids": [
+          "50",
+          "90",
+          "147",
+          "179",
+          "206",
+          "274",
+          "283",
+          "285",
+          "288",
+          "300",
+          "321",
+          "331",
+          "350",
+          "366",
+          "372",
+          "376",
+          "379",
+          "385",
+          "416",
+          "430",
+          "431",
+          "457",
+          "466",
+          "471",
+          "494",
+          "497",
+          "516",
+          "652",
+          "698",
+          "762",
+          "763",
+          "871",
+          "876",
+          "886",
+          "936",
+          "949",
+          "987",
+          "993"
+        ],
+        "shuffled": false
+      },
+      "model": "openrouter/openai/gpt-5.6-luna",
+      "model_generate_config": {},
+      "model_args": {},
+      "config": {
+        "epochs": 1,
+        "fail_on_error": false,
+        "continue_on_fail": false,
+        "retry_on_error": 2,
+        "score_on_error": false,
+        "token_limit": 1500000,
+        "cost_limit": 0.5,
+        "max_samples": 12,
+        "max_tasks": 10,
+        "max_subprocesses": 24,
+        "sandbox_cleanup": true,
+        "log_samples": true,
+        "log_realtime": true,
+        "log_images": true,
+        "score_display": true
+      },
+      "revision": {
+        "type": "git",
+        "origin": "",
+        "commit": "50ca7ba",
+        "dirty": true
+      },
+      "packages": {
+        "inspect_ai": "0.3.259"
+      },
+      "metadata": {
+        "audited_task": "inspect_evals/simpleqa_verified"
+      },
+      "scorers": [
+        {
+          "name": "verdict",
+          "options": {},
+          "metrics": [],
+          "metadata": {}
+        }
+      ]
+    },
+    "plan": {
+      "name": "plan",
+      "steps": [
+        {
+          "solver": "inspect_audit/audit_agent",
+          "params": {
+            "items": null,
+            "model": null
+          },
+          "params_passed": {}
+        }
+      ],
+      "config": {}
+    },
+    "results": {
+      "total_samples": 38,
+      "completed_samples": 38,
+      "scores": []
+    },
+    "stats": {
+      "started_at": "2026-08-17T22:21:56+00:00",
+      "completed_at": "2026-08-17T22:29:11+00:00",
+      "model_usage": {
+        "openrouter/openai/gpt-5.6-luna": {
+          "input_tokens": 91179,
+          "output_tokens": 144371,
+          "total_tokens": 11668415,
+          "input_tokens_cache_write": 1589703,
+          "input_tokens_cache_read": 9843162,
+          "reasoning_tokens": 29414,
+          "total_cost": 1.4849173799999995
+        }
+      },
+      "role_usage": {},
+      "connection_limit_history": []
+    },
+    "invalidated": false,
+    "tags": [],
+    "metadata": {
+      "audited_task": "inspect_evals/simpleqa_verified"
+    },
+    "reductions": []
+  }
+}

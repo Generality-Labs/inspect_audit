@@ -38,11 +38,17 @@ Grade one of:
 - `ALTERNATIVES` — several answers are independently defensible
 - `UNVERIFIABLE` — the evidence cannot settle it
 
-Whatever the item itself cites is the weakest evidence available: the question
-was probably written from it, so agreement is circular. A gold confirmed only by
-the item's own source is unverified.
+Weigh a source by what it is, not by who cited it. A **primary record for the
+fact** — an organisation's own account of itself, an official register, a
+contemporary document — is strong evidence even when the item cites it. A
+**derivative** source — an encyclopedia, an aggregator, a syndicated biography —
+is weaker, and weakest of all when the item cites it, because an error there
+propagates into the gold and then confirms itself.
 
-If you cannot settle it, grade `UNVERIFIABLE` rather than guessing.
+Grade `UNVERIFIABLE` only when you could not establish the answer at all. Good
+evidence that happens to be the source the item cites is still evidence; record
+how independent it was in the `independent` field instead of downgrading the
+grade.
 
 Report the grade, and for each defensible answer a **verbatim quote** from the
 source that establishes it, with that source. Quote what the source says; do not

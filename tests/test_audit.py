@@ -63,17 +63,39 @@ def test_each_item_gets_a_sandbox_and_a_filesystem() -> None:
     assert f"{AUDIT_ROOT}/sample.json" in item.files
 
 
-def test_the_audited_tasks_own_sandbox_wins_over_ours() -> None:
-    task = make_task(1)
-    task.sandbox = ("docker", "their-compose.yaml")  # type: ignore[assignment]
+def test_the_audited_tasks_environment_runs_alongside_the_auditors(tmp_path: Path) -> None:
+    """Their services are copied verbatim; ours is appended and marked x-default.
 
-    theirs = audit_task(task).dataset[0].sandbox
-    assert theirs is not None
-    assert theirs.type == "docker"
-    # Resolved against the task's own directory, the way Inspect resolves a task-level
-    # sandbox: a bare relative name would otherwise be read from the audit's cwd.
-    assert Path(str(theirs.config)).is_absolute()
-    assert Path(str(theirs.config)).name == "their-compose.yaml"
+    An audit of what an environment affords is only valid against the environment as it
+    was, so the merge never edits their service - not its name, not its network, not the
+    hosts it null-routes.
+    """
+    their_compose = tmp_path / "their-compose.yaml"
+    their_compose.write_text(
+        'services:\n'
+        '  default:\n'
+        '    build: .\n'
+        '    extra_hosts:\n'
+        '      - "codeocean.com:127.0.0.1"\n'
+    )
+    task = make_task(1)
+    task.sandbox = ("docker", str(their_compose))  # type: ignore[assignment]
+
+    sandbox = audit_task(task).dataset[0].sandbox
+    assert sandbox is not None and sandbox.type == "docker"
+    merged = Path(str(sandbox.config)).read_text()
+
+    import yaml
+
+    services = yaml.safe_load(merged)["services"]
+    # ours is `default`, because Inspect treats that name as an alias for the default
+    # environment rather than as a service lookup, so a benchmark service called
+    # `default` would be unaddressable.
+    assert set(services) == {"default", "benchmark"}
+    # theirs keeps its definition, including the hosts it deliberately null-routes
+    assert services["benchmark"]["extra_hosts"] == ["codeocean.com:127.0.0.1"]
+    # and its relative build context is re-anchored to its own directory
+    assert services["benchmark"]["build"] == str(tmp_path)
 
     ours = audit_task(make_task(1)).dataset[0].sandbox
     assert ours is not None

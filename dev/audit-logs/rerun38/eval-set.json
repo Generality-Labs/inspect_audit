@@ -1,0 +1,13 @@
+{
+  "eval_set_id": "etAXSkZTi7UiDQQh4VSCxc",
+  "tasks": [
+    {
+      "name": "audit/inspect_evals/simpleqa_verified",
+      "task_id": "MBgmvru4Dfcv43hqXMosA6",
+      "task_args": {},
+      "model": "openrouter/openai/gpt-5.6-luna",
+      "model_args": {},
+      "sequence": 0
+    }
+  ]
+}

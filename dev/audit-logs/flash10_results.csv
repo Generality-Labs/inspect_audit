@@ -1,0 +1,11 @@
+item,truth,grade,flagged,independent,n_quotes,cost,err
+223,clean,NO_VERDICT,False,,0,0.0421,
+239,clean,NO_VERDICT,False,,0,0.0427,
+284,clean,CORRECT,False,True,5,0.0296,
+619,clean,CORRECT,False,True,4,0.0262,
+757,clean,CORRECT,False,True,6,0.0315,
+104,defect,NO_VERDICT,False,,0,0.0545,
+16,defect,INCORRECT,True,True,5,0.0186,
+277,defect,ALTERNATIVES,True,True,7,0.0346,
+642,defect,INCORRECT,True,False,7,0.0344,
+833,defect,NO_VERDICT,False,,0,0.0383,

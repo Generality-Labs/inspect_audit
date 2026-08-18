@@ -29,9 +29,9 @@ from inspect_ai.util._sandbox.environment import SandboxEnvironmentType
 from ._agent import audit_agent, verdict
 from ._candidates import LogSource, sample_id_of, score_columns
 from ._candidates import attempts as attempt_rows
+from ._compose import audit_compose
 from ._item import AUDIT_ROOT, AttemptRef, AuditItem, item_sample
 from ._resolve import resolve_task
-from ._sandbox import audit_sandbox, resolve_sandbox
 
 __all__ = ["audit_task"]
 
@@ -126,7 +126,9 @@ def audit_task(
         A task to run with `eval()` / `eval_set()`.
     """
     target = resolve_task(task, task_args)
-    box = sandbox or resolve_sandbox(target) or audit_sandbox(target)
+    staging = _staging()
+    # The audited task's own environment plus the auditor's, side by side.
+    box = sandbox or audit_compose(target, stage=staging / "sandbox")
 
     # Decide what to audit before reading the attempts, so collection can be pushed
     # down to the selected samples. Auditing five samples of a ten-thousand sample
@@ -161,8 +163,6 @@ def audit_task(
                 f"no attempts at any selected sample of `{target.name}` were found in these "
                 "logs. Check the task and its arguments match the ones the logs were run with."
             )
-
-    staging = _staging()
 
     items: list[Sample] = []
     for sample_id, sample in zip(ids, dataset, strict=True):

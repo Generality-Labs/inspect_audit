@@ -23,7 +23,7 @@ dependencies = [
 inspect_audit = "inspect_audit._registry"
 
 [project.optional-dependencies]
-dev = ["ruff", "mypy", "pytest", "pytest-xdist", "pandas-stubs"]
+dev = ["ruff", "mypy", "pytest", "pytest-xdist", "pandas-stubs", "types-PyYAML"]
 
 [tool.ruff]
 src = ["src"]

@@ -261,6 +261,7 @@ def swebench_replay(
     dataset: str = "princeton-nlp/SWE-bench_Verified",
     split: str = "test",
     allow_internet: bool = False,
+    sandbox_type: str = "docker",
 ) -> Task:
     """Replay recorded exploits against the real SWE-bench task and grade them.
 
@@ -274,10 +275,16 @@ def swebench_replay(
         dataset: SWE-bench dataset to draw the samples from.
         split: Dataset split.
         allow_internet: Whether the benchmark boxes may reach the internet.
+        sandbox_type: Sandbox provider ("docker" locally, "k8s" on Hawk).
     """
     from inspect_evals.swe_bench import swe_bench
 
-    base = swe_bench(dataset=dataset, split=split, allow_internet=allow_internet)
+    base = swe_bench(
+        dataset=dataset,
+        split=split,
+        allow_internet=allow_internet,
+        sandbox_type=sandbox_type,
+    )
 
     # keep only the samples we hold an exploit for, in the benchmark's own shape
     wanted = set(exploits)

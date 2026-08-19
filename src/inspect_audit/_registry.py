@@ -5,12 +5,11 @@ from pathlib import Path
 from typing import Any
 
 from inspect_ai import Task, task
-from inspect_ai.agent import as_solver
 from inspect_ai.log import list_eval_logs
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox
 
-from ._agent import audit_agent, grade_benchmark, reset_benchmark
+from ._agent import grade_benchmark, reset_benchmark
 from ._audit import audit_task
 from ._resolve import resolve_task, resolve_task_from_log
 from ._sandbox import BENCHMARK_SERVICE
@@ -68,9 +67,8 @@ def audit(
         limit=limit,
         task_args=task_args,
         items=items,
-        solver=as_solver(audit_agent(items=items, model=model, reasoning_effort=reasoning_effort))
-        if model
-        else None,
+        model=model,
+        reasoning_effort=reasoning_effort,
         auditor_image=auditor_image,
         benchmark_image=benchmark_image,
     )

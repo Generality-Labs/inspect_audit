@@ -23,6 +23,7 @@ def test_every_skill_loads_and_names_are_unique() -> None:
         "environment-integrity",
         "gold-answer",
         "ground-truth-access",
+        "red-teaming",
         "reading-logs",
         "analyzing-logs",
         "map-inspect-packages",

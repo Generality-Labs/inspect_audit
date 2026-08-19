@@ -1,4 +1,5 @@
 import json
+from copy import copy
 from pathlib import Path
 from typing import Any
 
@@ -14,13 +15,14 @@ from inspect_ai.scorer import (
     scorer,
 )
 from inspect_ai.solver import TaskState
+from inspect_ai.solver._task_state import sample_state
 from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
 from inspect_ai.tool._tools._skill import read_skills
-from inspect_ai.util import StoreModel, store_as
+from inspect_ai.util import StoreModel, sandbox_default, store_as
 from pydantic import BaseModel, Field, JsonValue
 
 from ._item import AUDIT_ROOT
-from ._sandbox import BENCHMARK_SERVICE
+from ._sandbox import BENCHMARK_SERVICE, restore_benchmark
 
 SKILLS = Path(__file__).parent / "skills"
 
@@ -65,6 +67,8 @@ class AuditItemSkill(BaseModel):
     unevidenced: list[str] = Field(default_factory=list)
     details: dict[str, str] = Field(default_factory=dict)
     """Detail fields this item requires with a verdict, as name -> description."""
+    tools: list[str] = Field(default_factory=list)
+    """Benchmark tools this item grants the auditor, e.g. `grade`, `reset`."""
 
 
 def audit_items(items: list[str] | None = None) -> list[AuditItemSkill]:
@@ -96,6 +100,7 @@ def audit_items(items: list[str] | None = None) -> list[AuditItemSkill]:
                 details={str(k): str(v) for k, v in declared.items()}
                 if isinstance(declared, dict)
                 else {},
+                tools=names("tools"),
             )
         )
     if items is not None:
@@ -205,6 +210,68 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
 
 
 @tool
+def grade_benchmark(scorers: list[Scorer]) -> Tool:
+    async def execute(answer: str | None = None) -> str:
+        """Grade the benchmark environment with the benchmark's own grader.
+
+        Runs the real scorer against the benchmark service as it currently stands,
+        and returns its grade and explanation. Apply a candidate answer inside
+        `benchmark_bash` first (or pass one as `answer`), then grade to see whether
+        the benchmark accepts it -- turning "an answer is reachable" into "the
+        grader credits it". Anything you leave in the box persists until you reset.
+
+        Args:
+            answer: Submission to grade as the attempt's answer. Omit to grade the
+                benchmark environment exactly as it stands.
+        """
+        if not scorers:
+            raise ToolError("This benchmark exposes no grader to grade with.")
+        state = sample_state()
+        if state is None:
+            raise ToolError("Grading is only available while auditing a sample.")
+
+        graded = copy(state)
+        if answer is not None:
+            graded.output = copy(state.output)
+            graded.output.completion = answer
+
+        # the benchmark's scorer calls sandbox() expecting the eval's own box; in the
+        # auditor's two-box world that default is us, so aim it at the benchmark
+        results: list[JsonValue] = []
+        with sandbox_default(BENCHMARK_SERVICE):
+            for scorer in scorers:
+                score = await scorer(graded, state.target)
+                if score is not None:
+                    results.append(
+                        {
+                            "value": score.value,
+                            "answer": score.answer,
+                            "explanation": score.explanation,
+                        }
+                    )
+        return json.dumps(results if len(results) != 1 else results[0])
+
+    return execute
+
+
+@tool
+def reset_benchmark() -> Tool:
+    async def execute() -> str:
+        """Restore the benchmark environment to its pristine per-sample state.
+
+        Re-runs the sample's setup, undoing anything written to the box since.
+        Use it between graded attempts so each starts from the same state.
+        """
+        state = sample_state()
+        if state is None:
+            raise ToolError("Reset is only available while auditing a sample.")
+        await restore_benchmark((state.metadata or {}).get("benchmark_setup"))
+        return "benchmark environment reset to its per-sample state"
+
+    return execute
+
+
+@tool
 def submit_audit(items: list[AuditItemSkill]) -> Tool:
     async def execute() -> str:
         """Submit your audit, once every item has a recorded verdict."""
@@ -218,12 +285,17 @@ def submit_audit(items: list[AuditItemSkill]) -> Tool:
 
 
 @agent
-def audit_agent(items: list[str] | None = None, model: str | None = None) -> Agent:
+def audit_agent(
+    items: list[str] | None = None,
+    model: str | None = None,
+    benchmark_scorers: Scorer | list[Scorer] | None = None,
+) -> Agent:
     """An auditor: a react loop with the audit skills and a shell in the item's sandbox.
 
     Args:
         items: Audit items to investigate (defaults to all of them).
         model: Model to audit with (defaults to the evaluated model).
+        benchmark_scorers: The audited task's own scorer(s), for the `grade` tool.
     """
     # name the items under investigation in the system message: an auditor that is
     # not told what it is looking for picks whichever skill looks most relevant
@@ -232,24 +304,41 @@ def audit_agent(items: list[str] | None = None, model: str | None = None) -> Age
 
     skills = [str(path) for path in sorted(SKILLS.iterdir()) if path.is_dir()]
 
+    tools = [
+        bash(timeout=180),
+        ToolDef(
+            bash(timeout=180, sandbox=BENCHMARK_SERVICE),
+            name="benchmark_bash",
+            description=(
+                "Run a command inside the environment the benchmark itself ran in, "
+                "exactly as the evaluated agent saw it. Anything you download, write "
+                "or install here is evidence about you, not about the environment."
+            ),
+        ).as_tool(),
+        skill(skills),
+        record_verdict(scoped),
+    ]
+
+    # benchmark tools are granted only when a scoped item's skill asks for them,
+    # so a passive item keeps the box observe-only
+    granted = {name for item in scoped for name in item.tools}
+    if "grade" in granted:
+        scorer_list = (
+            benchmark_scorers
+            if isinstance(benchmark_scorers, list)
+            else [benchmark_scorers]
+            if benchmark_scorers is not None
+            else []
+        )
+        tools.append(grade_benchmark(scorer_list))
+    if "reset" in granted:
+        tools.append(reset_benchmark())
+
     return react(
         name="auditor",
         description="Audits one benchmark item and submits a verdict per audit item.",
         prompt=AUDIT_PROMPT.format(items=named),
-        tools=[
-            bash(timeout=180),
-            ToolDef(
-                bash(timeout=180, sandbox=BENCHMARK_SERVICE),
-                name="benchmark_bash",
-                description=(
-                    "Run a command inside the environment the benchmark itself ran in, "
-                    "exactly as the evaluated agent saw it. Anything you download, write "
-                    "or install here is evidence about you, not about the environment."
-                ),
-            ).as_tool(),
-            skill(skills),
-            record_verdict(scoped),
-        ],
+        tools=tools,
         model=model,
         submit=AgentSubmit(
             tool=submit_audit(scoped), name="submit", keep_in_messages=True

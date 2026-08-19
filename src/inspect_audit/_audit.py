@@ -13,17 +13,16 @@ from inspect_ai.analysis import EvalModel, SampleSummary, samples_df
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.log import EvalLog
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox.environment import SandboxEnvironmentType
 
 from ._agent import audit_agent, audit_items, item_scorer
 from ._item import AUDIT_ROOT, AttemptRef, AuditItem, item_sample
 from ._resolve import resolve_task
 from ._sandbox import (
-    BENCHMARK_SERVICE,
     audit_compose,
     audit_values,
     has_benchmark,
+    run_benchmark_setup,
     sample_sandbox,
 )
 
@@ -35,13 +34,7 @@ def benchmark_setup() -> Solver:
     """Run the audited sample's own setup script in the benchmark service."""
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        script = (state.metadata or {}).get("benchmark_setup")
-        if script:
-            result = await sandbox_env(BENCHMARK_SERVICE).exec(
-                ["bash", "-c", str(script)], timeout=300
-            )
-            if not result.success:
-                raise RuntimeError(f"Benchmark setup failed: {result.stderr[:500]}")
+        await run_benchmark_setup((state.metadata or {}).get("benchmark_setup"))
         return state
 
     return solve
@@ -184,7 +177,8 @@ def audit_task(
         name=f"audit/{target.name}",
         dataset=MemoryDataset(audit_samples),
         setup=benchmark_setup(),
-        solver=solver or as_solver(audit_agent(items=items)),
+        solver=solver
+        or as_solver(audit_agent(items=items, benchmark_scorers=target.scorer)),
         scorer=[item_scorer(item.name) for item in audit_items(items)],
         metadata={"audited_task": target.name},
     )

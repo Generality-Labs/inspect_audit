@@ -10,9 +10,9 @@ from inspect_ai.log import list_eval_logs
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox
 
-from ._agent import audit_agent
+from ._agent import audit_agent, grade_benchmark, reset_benchmark
 from ._audit import audit_task
-from ._resolve import resolve_task_from_log
+from ._resolve import resolve_task, resolve_task_from_log
 from ._sandbox import BENCHMARK_SERVICE
 
 
@@ -104,11 +104,53 @@ def audit_probe() -> Solver:
         await run("benchmark_egress", BENCHMARK_SERVICE,
                   "timeout 10 python -c \"import urllib.request; print(urllib.request.urlopen('https://example.com', timeout=8).status)\" 2>&1 | tail -1 || echo BLOCKED")
 
+        # grade/reset: grade the box pristine (expect fail), apply the sample's own
+        # gold patch and grade again (expect pass), then reset and grade once more
+        # (expect fail). proves the benchmark's grader runs against the box, that a
+        # real solution is credited, and that reset returns the box to pristine.
+        await _probe_grade(state, checks)
+
         state.store.set("probe", checks)
         state.output.completion = json.dumps(checks, indent=1)
         return state
 
     return solve
+
+
+async def _probe_grade(state: TaskState, checks: dict[str, str]) -> None:
+    async def grade_value(grade: Any) -> str:
+        result = json.loads(await grade())
+        one = result[0] if isinstance(result, list) else result
+        return str(one.get("value"))
+
+    try:
+        item = (state.metadata or {}).get("audit_item") or {}
+        resolved = resolve_task(item.get("task"), item.get("task_args") or {})
+        scorers = resolved.scorer if isinstance(resolved.scorer, list) else [resolved.scorer]
+        scorers = [s for s in scorers if s is not None]
+        if not scorers:
+            checks["grade"] = "SKIP no benchmark scorer"
+            return
+        grade = grade_benchmark(scorers)
+
+        checks["grade_pristine"] = await grade_value(grade)
+
+        # the sample's gold patch, from the item staged in the auditor box
+        record = json.loads((await sandbox().exec(["bash", "-c", "cat /audit/sample.json"])).stdout)[0]
+        patch = (record.get("metadata") or {}).get("patch")
+        if not patch:
+            checks["grade"] = "SKIP no gold patch in sample"
+            return
+        applied = await sandbox(BENCHMARK_SERVICE).exec(
+            ["bash", "-c", "cd /testbed && git apply -"], input=patch
+        )
+        checks["gold_applied"] = "ok" if applied.success else f"FAILED {applied.stderr[:120]}"
+        checks["grade_gold"] = await grade_value(grade)
+
+        await reset_benchmark()()
+        checks["grade_reset"] = await grade_value(grade)
+    except Exception as ex:
+        checks["grade"] = f"EXCEPTION {type(ex).__name__}: {ex}"[:200]
 
 
 def _hawk_fetch(eval_sets: str) -> str:

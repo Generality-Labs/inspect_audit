@@ -13,12 +13,50 @@ from inspect_ai import Task
 from inspect_ai._eval.task.util import task_run_dir
 from inspect_ai.dataset import Sample
 from inspect_ai.util import SandboxEnvironmentSpec, SandboxEnvironmentType
+from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox.compose import is_dockerfile
 from inspect_ai.util._sandbox.environment import resolve_sandbox_environment
 
 logger = getLogger(__name__)
 
 BENCHMARK_SERVICE = "benchmark"
+
+
+async def run_benchmark_setup(script: str | None) -> None:
+    """Run the audited sample's setup in the benchmark service.
+
+    The setup is what populates a benchmark's per-sample state; benchmarks whose
+    state is baked into a per-sample image (e.g. SWE-bench) carry no setup.
+    """
+    if not script:
+        return
+    result = await sandbox_env(BENCHMARK_SERVICE).exec(
+        ["bash", "-c", script], timeout=300
+    )
+    if not result.success:
+        raise RuntimeError(f"Benchmark setup failed: {result.stderr[:500]}")
+
+
+# undo tracked edits and drop untracked files (but keep ignored build artifacts)
+# in every git worktree in the box -- how an image-baked repo returns to pristine
+_GIT_RESTORE = (
+    'for g in $(find / -maxdepth 5 -type d -name .git 2>/dev/null); do '
+    'r=$(dirname "$g"); git -C "$r" checkout -- . 2>/dev/null; '
+    'git -C "$r" clean -fdq 2>/dev/null; done; true'
+)
+
+
+async def restore_benchmark(script: str | None) -> None:
+    """Restore the benchmark service to its pristine per-sample state.
+
+    Re-runs any setup, then reverts every git worktree in the box -- so a
+    benchmark whose state comes from setup and one whose state is a checked-out
+    repo both return to where the evaluated agent started.
+    """
+    await run_benchmark_setup(script)
+    await sandbox_env(BENCHMARK_SERVICE).exec(
+        ["bash", "-c", _GIT_RESTORE], timeout=300
+    )
 
 AUDITOR_NETWORK = "inspect_audit"
 

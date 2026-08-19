@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from inspect_ai.agent import Agent, AgentSubmit, agent, react
+from inspect_ai.model import GenerateConfig, Model, get_model
 from inspect_ai.scorer import (
     Metric,
     SampleScore,
@@ -296,6 +297,7 @@ def audit_agent(
     items: list[str] | None = None,
     model: str | None = None,
     benchmark_scorers: Scorer | list[Scorer] | None = None,
+    reasoning_effort: str | None = None,
 ) -> Agent:
     """An auditor: a react loop with the audit skills and a shell in the item's sandbox.
 
@@ -303,7 +305,13 @@ def audit_agent(
         items: Audit items to investigate (defaults to all of them).
         model: Model to audit with (defaults to the evaluated model).
         benchmark_scorers: The audited task's own scorer(s), for the `grade` tool.
+        reasoning_effort: Reasoning effort for the auditor model, when it takes one.
     """
+    # resolve the model object here so a generate config binds to it -- react
+    # re-resolves a bare string without one, so the config would be dropped
+    resolved: str | Model | None = model
+    if model is not None and reasoning_effort is not None:
+        resolved = get_model(model, config=GenerateConfig(reasoning_effort=reasoning_effort))
     # name the items under investigation in the system message: an auditor that is
     # not told what it is looking for picks whichever skill looks most relevant
     scoped = audit_items(items)
@@ -346,7 +354,7 @@ def audit_agent(
         description="Audits one benchmark item and submits a verdict per audit item.",
         prompt=AUDIT_PROMPT.format(items=named),
         tools=tools,
-        model=model,
+        model=resolved,
         submit=AgentSubmit(
             tool=submit_audit(scoped), name="submit", keep_in_messages=True
         ),

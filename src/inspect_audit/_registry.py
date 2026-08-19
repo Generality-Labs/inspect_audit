@@ -25,6 +25,7 @@ def audit(
     limit: int | None = None,
     items: list[str] | None = None,
     model: str | None = None,
+    reasoning_effort: str | None = None,
     auditor_image: str | None = None,
     benchmark_image: str | None = None,
 ) -> Task:
@@ -38,6 +39,7 @@ def audit(
         limit: Audit at most this many samples.
         items: Audit items to investigate (defaults to all of them).
         model: Model to audit with (defaults to the evaluated model).
+        reasoning_effort: Reasoning effort for the auditor model, when it takes one.
         auditor_image: Published auditor image; switches to Helm-values emission
             for k8s providers.
         benchmark_image: Published image for benchmark services that `build:`.
@@ -66,7 +68,9 @@ def audit(
         limit=limit,
         task_args=task_args,
         items=items,
-        solver=as_solver(audit_agent(items=items, model=model)) if model else None,
+        solver=as_solver(audit_agent(items=items, model=model, reasoning_effort=reasoning_effort))
+        if model
+        else None,
         auditor_image=auditor_image,
         benchmark_image=benchmark_image,
     )

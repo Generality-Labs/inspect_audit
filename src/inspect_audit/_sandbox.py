@@ -386,10 +386,16 @@ def _values_service(name: str, service: dict[str, Any], benchmark_image: str | N
         out["image"] = benchmark_image
     if build is not None:
         logger.warning(f"dropping 'build' from service '{name}': k8s images must be pullable")
+    # compose entrypoint maps to the chart's command (the container's argv[0]);
+    # compose command maps to its args -- unless there is no entrypoint, in which
+    # case compose command IS the process to run, so it must be the chart command
+    # or the image's own entrypoint runs instead and a `sleep infinity` never fires
     if "entrypoint" in src:
         out["command"] = _as_list(src.pop("entrypoint"))
-    if "command" in src:
-        out["args"] = _as_list(src.pop("command"))
+        if "command" in src:
+            out["args"] = _as_list(src.pop("command"))
+    elif "command" in src:
+        out["command"] = _as_list(src.pop("command"))
     if "working_dir" in src:
         out["workingDir"] = src.pop("working_dir")
     # A DNS record for every service, matching Docker Compose's name resolution.

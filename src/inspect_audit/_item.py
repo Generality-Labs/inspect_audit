@@ -23,6 +23,11 @@ logger = getLogger(__name__)
 
 AUDIT_ROOT = "/audit"
 
+# metadata fields that carry a benchmark's own answer -- redacted from the item the
+# auditor reads (SWE-bench stores the gold patch and hidden tests here). the grader
+# still sees them via `benchmark_metadata`; this only blinds the auditor.
+ANSWER_METADATA = ("patch", "test_patch", "FAIL_TO_PASS", "PASS_TO_PASS")
+
 GRADING_TEMPLATE = Path(__file__).parent / "templates" / "grading.md"
 
 
@@ -120,8 +125,14 @@ def item_files(
         host.write_text(content, encoding="utf-8")
         files[f"{AUDIT_ROOT}/{name}"] = str(host)
 
-    # the sample in inspect's own shape, one-record dataset
+    # the sample in inspect's own shape, one-record dataset -- with answer-bearing
+    # metadata redacted (SWE-bench keeps its gold patch and hidden tests here), so the
+    # auditor cannot read the benchmark's own solution and launder it as a finding.
+    # the grader still has the full answer (carried separately as `benchmark_metadata`).
     record = sample.model_dump(exclude_none=True, exclude={"files", "sandbox", "setup"})
+    if isinstance(record.get("metadata"), dict):
+        for key in ANSWER_METADATA:
+            record["metadata"].pop(key, None)
     staged("sample.json", json.dumps([record], indent=2, default=str))
 
     # where grading lives and how to read it

@@ -12,14 +12,23 @@ Two-stage design (James's):
   Self-protecting: only box-executable exploits replay (an /audit-leaning "exploit" won't).
 
 **Plan / progress:**
-- [ ] tighten red-teaming skill: record exact replayable exploit commands, not prose
-- [ ] build Stage-2 replay task (real swe_bench, solver runs recorded commands)
-- [ ] validate Stage 2 on 2 KNOWN exploits (django-13807, sympy-17630) -> expect 1.0/1.0
-- [ ] Stage-1 pilot: 5 random samples across repos -> exploits
-- [ ] Stage-2 those 5
+- [x] tighten red-teaming skill: exact replayable `commands`, not prose
+- [x] operator-notes insertion (general skill + per-run hint knob), threaded through
+- [x] build Stage-2 replay task `swebench_replay` (real swe_bench, sandbox_type=k8s)
+- [~] reviewer subagent checking implementation (a5fa629) -- awaiting (GATE 1)
+- [x] Stage-2 validation (stage2-validate-gdwn7z621donvpz2): django-13807=1.0,
+      sympy-17630=1.0 from the REAL benchmark scorer. GATE 2 GREEN. Replay pipeline
+      proven: a recorded exploit genuinely passes real SWE-bench, not just our grade().
+- [x] sample selection (seed 20260819): sample100.json (100 across 11 repos, django 45
+      sympy 17 sphinx 8 sklearn 7 astropy 6 matplotlib 6 xarray 5 ...), pilot8.json
+      (8 spanning top repos). scratchpad/.
+- [ ] Stage-1 pilot: 8 across repos -> exploits (red-teaming, notes=git steer) -- HELD
+      for reviewer
+- [ ] Stage-2 those
 - [ ] scale Stage-1 to 100, then Stage-2 the 100
-- config: Stage-1 red-teaming at effort=high (hinted exploit, saves time vs xhigh)
-- results -> JSONL incrementally
+- config: Stage-1 red-teaming at effort=high; notes hands the git-history route
+- GATE: do not scale to 100 until reviewer clean AND Stage-2 validation = 1.0/1.0
+- anti-spiral: if a stage fails twice, STOP and report, don't shotgun
 
 **Established earlier today:**
 - grade/reset proven live (probe 0.0->1.0->0.0). red-team babytest: 2/2 EXPLOITABLE,

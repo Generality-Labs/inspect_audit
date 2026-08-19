@@ -56,6 +56,16 @@ You are investigating:
 Invoke each skill and follow it. Other skills are available for working with the logs.
 Record a verdict for every item with the evidence that earned it, and say what you
 actually think. Then submit.
+{{notes}}"""
+
+# rendered into the prompt only when the operator sets `notes`: a free-form steer
+# ("what the operator has been thinking about"), kept separate from the skills so a
+# skill stays general and the steer stays a per-run knob
+NOTES_SECTION = """
+
+## Notes from the operator
+
+{notes}
 """
 
 
@@ -298,6 +308,7 @@ def audit_agent(
     model: str | None = None,
     benchmark_scorers: Scorer | list[Scorer] | None = None,
     reasoning_effort: str | None = None,
+    notes: str | None = None,
 ) -> Agent:
     """An auditor: a react loop with the audit skills and a shell in the item's sandbox.
 
@@ -306,6 +317,9 @@ def audit_agent(
         model: Model to audit with (defaults to the evaluated model).
         benchmark_scorers: The audited task's own scorer(s), for the `grade` tool.
         reasoning_effort: Reasoning effort for the auditor model, when it takes one.
+        notes: A free-form steer inserted into the system prompt -- what the operator
+            has been thinking about (a suspected route, a specific hint). Kept out of
+            the skills so a skill stays general and the steer stays a per-run knob.
     """
     # resolve the model object here so a generate config binds to it -- react
     # re-resolves a bare string without one, so the config would be dropped
@@ -352,7 +366,10 @@ def audit_agent(
     return react(
         name="auditor",
         description="Audits one benchmark item and submits a verdict per audit item.",
-        prompt=AUDIT_PROMPT.format(items=named),
+        prompt=AUDIT_PROMPT.format(
+            items=named,
+            notes=NOTES_SECTION.format(notes=notes) if notes else "",
+        ),
         tools=tools,
         model=resolved,
         submit=AgentSubmit(

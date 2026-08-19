@@ -70,6 +70,7 @@ def audit_task(
     solver: Solver | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
+    notes: str | None = None,
     auditor_image: str | None = None,
     benchmark_image: str | None = None,
 ) -> Task:
@@ -86,6 +87,7 @@ def audit_task(
         solver: Override the auditor (defaults to `audit_agent()`).
         model: Model to audit with (defaults to the evaluated model).
         reasoning_effort: Reasoning effort for the auditor model, when it takes one.
+        notes: A free-form operator steer inserted into the auditor's system prompt.
         auditor_image: Emit the sandbox as Helm values for k8s providers, with this
             published image as the auditor (see `audit_values`).
         benchmark_image: Published image standing in for benchmark services that
@@ -187,6 +189,7 @@ def audit_task(
                 items=items,
                 model=model,
                 reasoning_effort=reasoning_effort,
+                notes=notes,
                 benchmark_scorers=target.scorer,
             )
         ),

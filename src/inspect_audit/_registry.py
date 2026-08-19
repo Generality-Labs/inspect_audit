@@ -9,6 +9,8 @@ from inspect_ai.log import list_eval_logs
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox
 
+from inspect_ai.dataset import MemoryDataset
+
 from ._agent import grade_benchmark, reset_benchmark
 from ._audit import audit_task
 from ._resolve import resolve_task, resolve_task_from_log
@@ -25,6 +27,7 @@ def audit(
     items: list[str] | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
+    notes: str | None = None,
     auditor_image: str | None = None,
     benchmark_image: str | None = None,
 ) -> Task:
@@ -39,6 +42,7 @@ def audit(
         items: Audit items to investigate (defaults to all of them).
         model: Model to audit with (defaults to the evaluated model).
         reasoning_effort: Reasoning effort for the auditor model, when it takes one.
+        notes: A free-form operator steer inserted into the auditor's system prompt.
         auditor_image: Published auditor image; switches to Helm-values emission
             for k8s providers.
         benchmark_image: Published image for benchmark services that `build:`.
@@ -69,6 +73,7 @@ def audit(
         items=items,
         model=model,
         reasoning_effort=reasoning_effort,
+        notes=notes,
         auditor_image=auditor_image,
         benchmark_image=benchmark_image,
     )
@@ -230,3 +235,55 @@ def _hawk_token() -> str:
             "refresh environment."
         )
     return token
+
+
+@solver
+def replay_exploit(exploits: dict[str, str]) -> Solver:
+    """Run a recorded exploit's commands in the sample's box, as its whole solution.
+
+    The exploit is keyed by sample id. Whatever it leaves in the box is graded by
+    the task's own scorer exactly as a real submission would be -- so an exploit
+    that passes here passes the genuine benchmark, not our harness.
+    """
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        commands = exploits.get(str(state.sample_id))
+        if commands:
+            await sandbox().exec(["bash", "-c", commands], timeout=900)
+        return state
+
+    return solve
+
+
+@task
+def swebench_replay(
+    exploits: dict[str, str],
+    dataset: str = "princeton-nlp/SWE-bench_Verified",
+    split: str = "test",
+    allow_internet: bool = False,
+) -> Task:
+    """Replay recorded exploits against the real SWE-bench task and grade them.
+
+    Stage two of the exploit experiment: each sample runs its recorded exploit
+    (from a red-teaming audit) as its solution, and the benchmark's own scorer
+    grades the result. The pass rate is the real benchmark score of the exploits.
+
+    Args:
+        exploits: Map of sample id to the exact shell commands that carry out the
+            exploit in that sample's box.
+        dataset: SWE-bench dataset to draw the samples from.
+        split: Dataset split.
+        allow_internet: Whether the benchmark boxes may reach the internet.
+    """
+    from inspect_evals.swe_bench import swe_bench
+
+    base = swe_bench(dataset=dataset, split=split, allow_internet=allow_internet)
+
+    # keep only the samples we hold an exploit for, in the benchmark's own shape
+    wanted = set(exploits)
+    kept = [s for s in base.dataset if str(s.id) in wanted]
+    base.dataset = MemoryDataset(kept)
+
+    # the exploit is the whole solution; the benchmark's scorer stays untouched
+    base.solver = [replay_exploit(exploits)]
+    return base

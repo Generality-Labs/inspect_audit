@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 import tempfile
 
 from inspect_ai import Task, task
@@ -42,9 +43,13 @@ def audit(
     """
     # `hawk:<eval-set-id>[,<id>...]` fetches logs from the Hawk warehouse
     if logs and logs.startswith("hawk:"):
+        # the venv's own hawk, not whatever PATH finds: on Hawk runners the base
+        # image ships a hawk without the cli extras
+        hawk = Path(sys.executable).with_name("hawk")
+        cli = str(hawk) if hawk.exists() else "hawk"
         fetched = tempfile.mkdtemp(prefix="hawk_logs_")
         for eval_set in logs.removeprefix("hawk:").split(","):
-            subprocess.run(["hawk", "download", eval_set], cwd=fetched, check=True)
+            subprocess.run([cli, "download", eval_set], cwd=fetched, check=True)
         logs = fetched
     if task is None:
         if not logs:

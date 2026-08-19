@@ -37,11 +37,13 @@ async def run_benchmark_setup(script: str | None) -> None:
         raise RuntimeError(f"Benchmark setup failed: {result.stderr[:500]}")
 
 
-# undo tracked edits and drop untracked files (but keep ignored build artifacts)
-# in every git worktree in the box -- how an image-baked repo returns to pristine
+# return every git worktree in the box to HEAD and drop untracked files (but keep
+# ignored build artifacts) -- how an image-baked repo returns to pristine. reset
+# --hard, not checkout, because a prior grade stages its changes (git add -A) and
+# checkout would only revert the working tree back to that staged, patched state
 _GIT_RESTORE = (
     'for g in $(find / -maxdepth 5 -type d -name .git 2>/dev/null); do '
-    'r=$(dirname "$g"); git -C "$r" checkout -- . 2>/dev/null; '
+    'r=$(dirname "$g"); git -C "$r" reset --hard --quiet 2>/dev/null; '
     'git -C "$r" clean -fdq 2>/dev/null; done; true'
 )
 

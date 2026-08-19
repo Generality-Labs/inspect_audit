@@ -71,6 +71,9 @@ def item_sample(
             setup = _anchored(sample.setup, run_dir)
             path = Path(setup)
             metadata["benchmark_setup"] = path.read_text() if path.is_file() else setup
+        # the benchmark's own sample metadata, for its grader (base_commit etc.);
+        # carried on the audit sample, not shown to the auditor
+        metadata["benchmark_metadata"] = dict(sample.metadata or {})
 
     return Sample(
         id=str(item.sample_id),

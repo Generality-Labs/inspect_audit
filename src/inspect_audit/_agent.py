@@ -235,6 +235,13 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
             graded.output = copy(state.output)
             graded.output.completion = answer
 
+        # present the benchmark's own sample to its grader: its metadata (base_commit,
+        # target files, whatever the scorer reads) rather than the audit sample's
+        graded.metadata = {
+            **(state.metadata or {}),
+            **((state.metadata or {}).get("benchmark_metadata") or {}),
+        }
+
         # the benchmark's scorer calls sandbox() expecting the eval's own box; in the
         # auditor's two-box world that default is us, so aim it at the benchmark
         results: list[JsonValue] = []

@@ -135,11 +135,12 @@ async def _probe_grade(state: TaskState, checks: dict[str, str]) -> None:
 
         checks["grade_pristine"] = await grade_value(grade)
 
-        # the sample's gold patch, from the item staged in the auditor box
-        record = json.loads((await sandbox().exec(["bash", "-c", "cat /audit/sample.json"])).stdout)[0]
-        patch = (record.get("metadata") or {}).get("patch")
+        # inject the sample's gold solution and grade again -- git-patch benchmarks
+        # only; other shapes just exercise the pristine grade above
+        benchmark_md = (state.metadata or {}).get("benchmark_metadata") or {}
+        patch = benchmark_md.get("patch")
         if not patch:
-            checks["grade"] = "SKIP no gold patch in sample"
+            checks["grade"] = "SKIP gold injection is git-patch only"
             return
         applied = await sandbox(BENCHMARK_SERVICE).exec(
             ["bash", "-c", "cd /testbed && git apply -"], input=patch

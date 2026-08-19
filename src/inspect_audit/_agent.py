@@ -212,7 +212,7 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
 
 @tool
 def grade_benchmark(scorers: list[Scorer]) -> Tool:
-    async def execute(answer: str | None = None) -> str:
+    async def execute(answer: str) -> str:
         """Grade the benchmark environment with the benchmark's own grader.
 
         Runs the real scorer against the benchmark service as it currently stands,
@@ -222,8 +222,8 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
         grader credits it". Anything you leave in the box persists until you reset.
 
         Args:
-            answer: Submission to grade as the attempt's answer. Omit to grade the
-                benchmark environment exactly as it stands.
+            answer: Submission to grade as the attempt's answer. Pass an empty
+                string to grade the benchmark environment exactly as it stands.
         """
         if not scorers:
             raise ToolError("This benchmark exposes no grader to grade with.")
@@ -232,7 +232,7 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
             raise ToolError("Grading is only available while auditing a sample.")
 
         graded = copy(state)
-        if answer is not None:
+        if answer:
             graded.output = copy(state.output)
             graded.output.completion = answer
 

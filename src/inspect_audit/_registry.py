@@ -121,7 +121,7 @@ def audit_probe() -> Solver:
 
 async def _probe_grade(state: TaskState, checks: dict[str, str]) -> None:
     async def grade_value(grade: Any) -> str:
-        result = json.loads(await grade())
+        result = json.loads(await grade(answer=""))
         one = result[0] if isinstance(result, list) else result
         return str(one.get("value"))
 

@@ -2,6 +2,12 @@
 name: gold-answer
 description: Judge whether a benchmark item's recorded answer is the answer to
   the question it asks, and whether it is the only one.
+metadata:
+  grades: [CORRECT, INCORRECT, ALTERNATIVES, UNVERIFIABLE]
+  unevidenced: [UNVERIFIABLE]
+  details:
+    independent: whether any source you cite is independent of the item's own
+      cited sources (true/false)
 ---
 
 # Is the recorded answer the answer to this question?
@@ -21,6 +27,11 @@ sample id is in `sample.json`.
 from inspect_ai.analysis import samples_df
 df = samples_df("/audit/logs")     # one row per attempt: its answer and its score
 ```
+
+Read sources verbatim with curl: never judge a source through anything that
+summarises it, because a summary normalises the exact detail that is usually the
+finding. A search engine is for finding candidate sources, never for establishing
+what one says.
 
 Then go after the answers marked incorrect. Take each distinct wrong answer and
 try to establish it from a source, as though you were arguing for it. Many

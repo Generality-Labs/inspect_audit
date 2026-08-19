@@ -1,132 +1,218 @@
-"""The auditing agent, and the verdict it submits."""
-
 import json
 from pathlib import Path
+from typing import Any
 
 from inspect_ai.agent import Agent, AgentSubmit, agent, react
-from inspect_ai.scorer import Score, Scorer, Target, scorer
+from inspect_ai.scorer import (
+    Metric,
+    SampleScore,
+    Score,
+    Scorer,
+    Target,
+    Value,
+    metric,
+    scorer,
+)
 from inspect_ai.solver import TaskState
 from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
+from inspect_ai.tool._tools._skill import read_skills
 from inspect_ai.util import StoreModel, store_as
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue
 
-from ._compose import BENCHMARK_SERVICE
-from ._prompt import audit_prompt
-
-__all__ = [
-    "GRADES",
-    "Evidence",
-    "Verdict",
-    "audit_agent",
-    "audit_items",
-    "audit_skills",
-    "verdict",
-]
+from ._item import AUDIT_ROOT
+from ._sandbox import BENCHMARK_SERVICE
 
 SKILLS = Path(__file__).parent / "skills"
 
-# Skills that support the work rather than defining it, vendored from Meridian's
-# inspect-skills. An auditor is never asked to investigate one of these.
+# support skills help with the work rather than defining it; an auditor is never
+# asked to investigate one of these
 SUPPORT_SKILLS = ("reading-logs", "analyzing-logs", "map-inspect-packages")
 
-GRADES = ("CORRECT", "INCORRECT", "ALTERNATIVES", "UNVERIFIABLE")
+AUDIT_PROMPT = f"""\
+You are auditing one item from an AI benchmark: one question, its recorded answer, and
+every recorded attempt at it by many models.
+
+  {AUDIT_ROOT}/sample.json       the item as the benchmark defines it
+  {AUDIT_ROOT}/logs/*.eval       real Inspect logs: each attempt, its answer, its
+                           grade, the judge's explanation, the full transcript
+  {AUDIT_ROOT}/gold/grading.md   where the grading code lives
+  {AUDIT_ROOT}/env/              how this container was built
+
+The benchmark's own code is installed here, so read the real source in place. You have
+a shell in this container, with curl and the internet.
+
+Every benchmark question tests work: something the agent must do to earn the answer.
+Establish, for each question, what that work is. An answer that arrives without the
+tested work got around it somehow -- the items you are investigating are specific
+routes around the work. Attribute any unearned answer to its route, with evidence.
+
+You are investigating:
+
+{{items}}
+
+Invoke each skill and follow it. Other skills are available for working with the logs.
+Record a verdict for every item with the evidence that earned it, and say what you
+actually think. Then submit.
+"""
 
 
-def audit_items() -> list[str]:
-    """Audit items that can be investigated, one skill each."""
-    return [
-        path.name
+class AuditItemSkill(BaseModel):
+    """One audit item, read from its skill's frontmatter."""
+
+    name: str
+    description: str
+    grades: list[str]
+    unevidenced: list[str] = Field(default_factory=list)
+    details: dict[str, str] = Field(default_factory=dict)
+    """Detail fields this item requires with a verdict, as name -> description."""
+
+
+def audit_items(items: list[str] | None = None) -> list[AuditItemSkill]:
+    """The audit items an auditor can investigate, one skill each.
+
+    Args:
+        items: Restrict to these item names (defaults to all of them).
+    """
+    dirs = [
+        path
         for path in sorted(SKILLS.iterdir())
         if path.is_dir() and path.name not in SUPPORT_SKILLS
     ]
+    read = []
+    for s in read_skills([str(d) for d in dirs]):
+        metadata = s.metadata or {}
 
+        def names(key: str, metadata: dict[str, Any] = metadata) -> list[str]:
+            value = metadata.get(key, [])
+            return [str(g) for g in value] if isinstance(value, list) else []
 
-def audit_skills() -> list[str]:
-    """Skill directories available to an auditor."""
-    return [str(path) for path in sorted(SKILLS.iterdir()) if path.is_dir()]
+        declared = metadata.get("details", {})
+        read.append(
+            AuditItemSkill(
+                name=s.name,
+                description=s.description,
+                grades=names("grades"),
+                unevidenced=names("unevidenced"),
+                details={str(k): str(v) for k, v in declared.items()}
+                if isinstance(declared, dict)
+                else {},
+            )
+        )
+    if items is not None:
+        known = {s.name for s in read}
+        unknown = set(items) - known
+        if unknown:
+            raise ValueError(
+                f"Unknown audit item(s) {', '.join(sorted(unknown))}. "
+                f"Available: {', '.join(sorted(known))}."
+            )
+        read = [s for s in read if s.name in items]
+    return read
 
 
 class Evidence(BaseModel):
-    """One piece of evidence: what a source actually says, and which source said it.
+    """One observation and its provenance: a url, a log path, or a command run."""
 
-    A quote rather than a summary. An auditor that could not read a source cannot
-    write this field, which is the point: a conclusion asserted over an unread source
-    has nothing to paste here.
-    """
-
-    quote: str
-    """Verbatim text from the source, as it appears there."""
-
+    observed: str
     source: str
-    """Where the quote came from — a URL, or a path inside this container."""
 
 
-class Verdict(StoreModel):
-    """What an auditor concluded, recorded where a scorer can read it.
+class Verdict(BaseModel):
+    """An auditor's verdict on one audit item."""
 
-    The store rather than the completion: `react` strips the submit tool call from the
-    message history by default, and a run that hits a token or cost limit can end with
-    an empty completion — but the store survives both.
-    """
-
-    grade: str | None = Field(default=None)
-    independent: bool | None = Field(default=None)
-    """Whether any source establishing the answer is independent of the item's citations.
-
-    A property of the evidence, not of the item. Kept separate from the grade because
-    an auditor that finds a verbatim confirmation in an authoritative source should not
-    be forced to call the item unverifiable merely because the benchmark cited it too.
-    """
-
+    grade: str
+    approaches: str | None = None
     evidence: list[Evidence] = Field(default_factory=list)
-    tried: str | None = Field(default=None)
-    remarks: str | None = Field(default=None)
+    details: dict[str, JsonValue] = Field(default_factory=dict)
+    tried: str | None = None
+    remarks: str | None = None
+
+
+class Verdicts(StoreModel):
+    """Recorded verdicts, keyed by audit item name."""
+
+    verdicts: dict[str, Verdict] = Field(default_factory=dict)
 
 
 @tool
-def submit_grade() -> Tool:
+def record_verdict(items: list[AuditItemSkill]) -> Tool:
+    lookup = {item.name: item for item in items}
+
     async def execute(
+        item: str,
         evidence: list[Evidence],
-        independent: bool,
+        approaches: str,
         tried: str,
         remarks: str,
         grade: str,
+        details: str,
     ) -> str:
-        """Submit your audit of this item.
+        """Record your verdict on one audit item.
 
         Args:
-            evidence: Verbatim quotes establishing the grade, each with its source.
-                Quote what the source says; do not summarise what you concluded.
-            independent: Whether at least one source you quote is independent of the
-                item's own cited URLs.
+            item: The audit item this verdict is for.
+            evidence: Verbatim observations establishing the grade, each with its
+                source. Record what you observed; do not summarise what you concluded.
+            approaches: One sentence per attempt: how it approached the task, and
+                whether that path was the intended one.
             tried: What you did to try to break the item, including what failed.
             remarks: What you actually think, including anything you were not asked about.
-            grade: One of CORRECT, INCORRECT, ALTERNATIVES, UNVERIFIABLE. Last, because
-                a categorical label emitted before its own justification is a label the
-                reasoning then has to live with: twice an auditor has argued its way to
-                one verdict having already written the other.
+            grade: Your grade for this item.
+            details: JSON object holding any further fields this item's skill
+                asks you to record ("{}" when it asks for none).
         """
-        # ToolErrors are fed back to the model as recoverable errors, so a submission
-        # that does not meet the contract becomes a retry rather than a lost audit.
-        if grade not in GRADES:
-            raise ToolError(f"grade must be one of {', '.join(GRADES)}, got {grade!r}")
+        # a ToolError is fed back to the model as recoverable, so a submission that
+        # misses the contract becomes a retry rather than a lost verdict
+        skill = lookup.get(item)
+        if skill is None:
+            raise ToolError(f"Unknown item {item!r}. Expected one of {', '.join(lookup)}.")
+        try:
+            recorded_details: dict[str, JsonValue] = json.loads(details)
+            if not isinstance(recorded_details, dict):
+                raise ValueError
+        except ValueError:
+            raise ToolError("details must be a JSON object.") from None
+        if grade not in skill.grades:
+            raise ToolError(f"Grade for {item} must be one of {', '.join(skill.grades)}.")
+        if not evidence and grade not in skill.unevidenced:
+            raise ToolError(f"A grade of {grade} needs at least one observation with its source.")
+        for entry in evidence:
+            if not entry.observed.strip() or not entry.source.strip():
+                raise ToolError(
+                    "Every piece of evidence needs both an observation and its source."
+                )
+        missing = [key for key in skill.details if key not in recorded_details]
+        if missing:
+            asks = ", ".join(f"{key} ({skill.details[key]})" for key in missing)
+            raise ToolError(f"This item also requires details: {asks}.")
 
-        if grade != "UNVERIFIABLE" and not evidence:
-            raise ToolError(
-                f"a grade of {grade} needs at least one verbatim quote with its source. "
-                "If no source you read establishes the answer, the grade is UNVERIFIABLE."
-            )
-        for item in evidence:
-            if not item.quote.strip() or not item.source.strip():
-                raise ToolError("every piece of evidence needs both a quote and its source")
+        # replace rather than mutate so the store sees the change
+        recorded = store_as(Verdicts)
+        recorded.verdicts = {
+            **recorded.verdicts,
+            item: Verdict(
+                grade=grade,
+                approaches=approaches,
+                evidence=evidence,
+                details=recorded_details,
+                tried=tried,
+                remarks=remarks,
+            ),
+        }
+        return json.dumps({"item": item, "grade": grade})
 
-        submitted = store_as(Verdict)
-        submitted.grade = grade
-        submitted.independent = independent
-        submitted.evidence = evidence
-        submitted.tried = tried
-        submitted.remarks = remarks
-        return json.dumps({"grade": grade, "sources": [e.source for e in evidence]})
+    return execute
+
+
+@tool
+def submit_audit(items: list[AuditItemSkill]) -> Tool:
+    async def execute() -> str:
+        """Submit your audit, once every item has a recorded verdict."""
+        recorded = store_as(Verdicts).verdicts
+        missing = [item.name for item in items if item.name not in recorded]
+        if missing:
+            raise ToolError(f"No verdict recorded for: {', '.join(missing)}.")
+        return json.dumps({item: verdict.grade for item, verdict in recorded.items()})
 
     return execute
 
@@ -136,15 +222,20 @@ def audit_agent(items: list[str] | None = None, model: str | None = None) -> Age
     """An auditor: a react loop with the audit skills and a shell in the item's sandbox.
 
     Args:
-        items: Audit items to investigate (defaults to all of them). Named in the
-            system message, because an auditor that is not told what it is looking for
-            will pick whichever skill looks most relevant to the files in front of it.
+        items: Audit items to investigate (defaults to all of them).
         model: Model to audit with (defaults to the evaluated model).
     """
+    # name the items under investigation in the system message: an auditor that is
+    # not told what it is looking for picks whichever skill looks most relevant
+    scoped = audit_items(items)
+    named = "\n".join(f"- `{item.name}`: {item.description}" for item in scoped)
+
+    skills = [str(path) for path in sorted(SKILLS.iterdir()) if path.is_dir()]
+
     return react(
         name="auditor",
-        description="Audits one benchmark item and submits a grade.",
-        prompt=audit_prompt(items or audit_items()),
+        description="Audits one benchmark item and submits a verdict per audit item.",
+        prompt=AUDIT_PROMPT.format(items=named),
         tools=[
             bash(timeout=180),
             ToolDef(
@@ -156,32 +247,56 @@ def audit_agent(items: list[str] | None = None, model: str | None = None) -> Age
                     "or install here is evidence about you, not about the environment."
                 ),
             ).as_tool(),
-            skill(audit_skills()),
+            skill(skills),
+            record_verdict(scoped),
         ],
         model=model,
-        submit=AgentSubmit(tool=submit_grade(), name="submit_grade", keep_in_messages=True),
+        submit=AgentSubmit(
+            tool=submit_audit(scoped), name="submit", keep_in_messages=True
+        ),
     )
 
 
-@scorer(metrics=[])
-def verdict() -> Scorer:
-    """Surface the auditor's grade as the audit's score."""
+@metric
+def grades() -> Metric:
+    """Proportion of items in each grade."""
 
-    async def score(state: TaskState, target: Target) -> Score:
-        submitted = state.store_as(Verdict)
-        return Score(
-            value=submitted.grade or "NO_VERDICT",
-            answer=submitted.grade,
-            explanation="\n\n".join(
-                f"{e.quote}\n  -- {e.source}" for e in submitted.evidence
+    def compute(scores: list[SampleScore]) -> Value:
+        counts: dict[str, int] = {}
+        for score in scores:
+            counts[str(score.score.value)] = counts.get(str(score.score.value), 0) + 1
+        return {grade: count / len(scores) for grade, count in sorted(counts.items())}
+
+    return compute
+
+
+def item_scorer(item: str) -> Scorer:
+    """A scorer surfacing the auditor's verdict on one audit item."""
+
+    # a dynamic registry name so each item gets its own score column; the cost is
+    # that a cold `inspect score` cannot resolve these names to re-score a log
+    @scorer(metrics=[grades()], name=item)
+    def factory() -> Scorer:
+        async def score(state: TaskState, target: Target) -> Score:
+            verdict = state.store_as(Verdicts).verdicts.get(item)
+            if verdict is None:
+                return Score(value="NO_VERDICT")
+            return Score(
+                value=verdict.grade,
+                answer=verdict.grade,
+                explanation="\n\n".join(
+                    f"{e.observed}\n  -- {e.source}" for e in verdict.evidence
+                )
+                or None,
+                metadata={
+                    "evidence": [e.model_dump() for e in verdict.evidence],
+                    "approaches": verdict.approaches,
+                    **verdict.details,
+                    "tried": verdict.tried,
+                    "remarks": verdict.remarks,
+                },
             )
-            or None,
-            metadata={
-                "independent": submitted.independent,
-                "evidence": [e.model_dump() for e in submitted.evidence],
-                "tried": submitted.tried,
-                "remarks": submitted.remarks,
-            },
-        )
 
-    return score
+        return score
+
+    return factory()

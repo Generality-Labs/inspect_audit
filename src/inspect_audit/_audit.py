@@ -1,103 +1,68 @@
-"""Assembling the audit itself.
-
-An audit is an Inspect `Task`: its dataset is audit cases, its solver is an
-auditing agent, its scorer validates the verdict. Everything about running it —
-sandbox lifecycle, concurrency, retries, resume, logging, the viewer — is
-inherited rather than built.
-
-At v0 the solver only probes the sandbox, so the audit proves the filesystem was
-materialised correctly. The auditing agent replaces it unchanged.
-"""
-
 import atexit
-import json
 import os
 import shutil
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from pathlib import Path
-from textwrap import dedent
 from typing import Any
 
+import pandas as pd
 from inspect_ai import Task
 from inspect_ai.agent import as_solver
+from inspect_ai.analysis import EvalModel, SampleSummary, samples_df
 from inspect_ai.dataset import MemoryDataset, Sample
+from inspect_ai.log import EvalLog
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox.environment import SandboxEnvironmentType
 
-from ._agent import audit_agent, verdict
-from ._candidates import LogSource, sample_id_of, score_columns
-from ._candidates import attempts as attempt_rows
-from ._compose import audit_compose
+from ._agent import audit_agent, audit_items, item_scorer
 from ._item import AUDIT_ROOT, AttemptRef, AuditItem, item_sample
 from ._resolve import resolve_task
-from ._sandbox import sample_sandbox
-
-__all__ = ["audit_task"]
-
-CASE_PROMPT = (
-    f"You are auditing one benchmark sample. Its audit filesystem is at {AUDIT_ROOT}."
+from ._sandbox import (
+    BENCHMARK_SERVICE,
+    audit_compose,
+    audit_values,
+    has_benchmark,
+    sample_sandbox,
 )
 
-# A task that declares no sandbox of its own still gets one: every audit runs in a
-# sandbox, one code path for every benchmark. Ours is generated per task so the
-# task's own packages are installed and its grading code is readable in place.
-
-# Run inside the sandbox with the audited task's own `inspect_ai`, to prove the case
-# logs are genuine logs rather than files that merely arrived.
-_READ_LOGS = dedent(f"""
-    import glob, json
-    from inspect_ai.log import read_eval_log
-
-    out = []
-    for file in sorted(glob.glob("{AUDIT_ROOT}/logs/*.eval")):
-        log = read_eval_log(file)
-        out.append(
-            dict(
-                file=file,
-                task=log.eval.task,
-                model=log.eval.model,
-                samples=len(log.samples or []),
-                scorers=[s.name for s in (log.eval.scorers or [])],
-            )
-        )
-    print(json.dumps(out))
-""")
+LogSource = str | list[str] | EvalLog | list[EvalLog]
 
 
 @solver
-def probe_sandbox() -> Solver:
-    """v0 solver: read the case filesystem back out of the sandbox.
-
-    Exists so the audit is self-verifying — the log records what was actually
-    present in each container, rather than us inspecting it by hand. The auditing
-    agent replaces it.
-
-    Must be `@solver`-registered: Inspect writes the solver chain into the log's plan
-    and fails the run with "does not have registry info" for a bare callable. An
-    undecorated solver assembles fine and only breaks when an eval actually runs,
-    which is why `tests/test_run.py` runs one.
-    """
+def benchmark_setup() -> Solver:
+    """Run the audited sample's own setup script in the benchmark service."""
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        listing = await sandbox_env().exec(
-            ["find", AUDIT_ROOT, "-type", "f", "-print"], timeout=60
-        )
-        if not listing.success:
-            raise RuntimeError(f"could not list {AUDIT_ROOT}: {listing.stderr}")
-        state.store.set("audit_files", sorted(listing.stdout.splitlines()))
-
-        # The claim worth checking is not that files exist, but that they are the real
-        # artefacts: that the task's own installed `inspect_ai` opens the sliced logs.
-        # This is exactly what the auditing agent will do, so failing here fails early.
-        probe = await sandbox_env().exec(["python", "-c", _READ_LOGS], timeout=300)
-        if not probe.success:
-            raise RuntimeError(f"could not read the case logs in the sandbox: {probe.stderr}")
-        state.store.set("logs_readable", json.loads(probe.stdout))
+        script = (state.metadata or {}).get("benchmark_setup")
+        if script:
+            result = await sandbox_env(BENCHMARK_SERVICE).exec(
+                ["bash", "-c", str(script)], timeout=300
+            )
+            if not result.success:
+                raise RuntimeError(f"Benchmark setup failed: {result.stderr[:500]}")
         return state
 
     return solve
+
+ITEM_PROMPT = (
+    f"You are auditing one benchmark sample. Its audit filesystem is at {AUDIT_ROOT}."
+)
+
+
+def attempts(logs: LogSource, *, sample_ids: Collection[str] | None = None) -> pd.DataFrame:
+    """One row per recorded attempt, with a `score_*` column per scorer.
+
+    Args:
+        logs: Log directory, log files, or already-read `EvalLog`s.
+        sample_ids: Restrict to these sample ids.
+    """
+    frame = samples_df(logs, columns=SampleSummary + EvalModel)
+    if sample_ids is not None:
+        wanted = {str(sample) for sample in sample_ids}
+        frame = frame[frame["id"].astype(str).isin(wanted)]
+    return frame.reset_index(drop=True)
 
 
 def audit_task(
@@ -106,31 +71,34 @@ def audit_task(
     *,
     samples: Sequence[str | int] | None = None,
     limit: int | None = None,
+    items: list[str] | None = None,
     task_args: dict[str, Any] | None = None,
     sandbox: SandboxEnvironmentType | None = None,
     solver: Solver | None = None,
+    auditor_image: str | None = None,
+    benchmark_image: str | None = None,
 ) -> Task:
     """Build the audit as an Inspect `Task`.
 
     Args:
-        task: The task to audit — registry name, `file.py@name`, or a `Task`.
-        logs: Logs providing the recorded attempts at each sample. Without them an
-            auditor can only judge a sample in isolation.
+        task: The task to audit -- registry name, `file.py@name`, or a `Task`.
+        logs: Logs providing the recorded attempts at each sample.
         samples: Sample ids to audit (defaults to all, subject to `limit`).
         limit: Audit at most this many samples.
+        items: Audit items to investigate (defaults to all of them).
         task_args: Task arguments used to resolve the audited task.
         sandbox: Override the sandbox (defaults to the audited task's own, else ours).
-        solver: Override the auditor (defaults to `audit_agent()`). Pass
-            `probe_sandbox()` to check the item filesystem without spending on a model.
-
-    Returns:
-        A task to run with `eval()` / `eval_set()`.
+        solver: Override the auditor (defaults to `audit_agent()`).
+        auditor_image: Emit the sandbox as Helm values for k8s providers, with this
+            published image as the auditor (see `audit_values`).
+        benchmark_image: Published image standing in for benchmark services that
+            `build:` their own (k8s only).
     """
     target = resolve_task(task, task_args)
     staging = _staging()
 
-    # One merged compose per distinct environment, not per item: the CTF-style
-    # benchmarks give every sample its own compose file, while most give them all one.
+    # one merged compose per distinct environment: ctf-style benchmarks give every
+    # sample its own compose file, most give them all one
     composed: dict[str, SandboxEnvironmentType] = {}
 
     def environment(sample: Sample) -> SandboxEnvironmentType:
@@ -139,28 +107,37 @@ def audit_task(
         spec = sample_sandbox(target, sample)
         key = str(spec.config) if spec is not None and isinstance(spec.config, str) else ""
         if key not in composed:
-            composed[key] = audit_compose(
-                target, spec, stage=staging / "sandbox" / str(len(composed))
-            )
+            stage = staging / "sandbox" / str(len(composed))
+            if auditor_image is not None:
+                composed[key] = audit_values(
+                    target,
+                    spec,
+                    stage=stage,
+                    auditor_image=auditor_image,
+                    benchmark_image=benchmark_image,
+                )
+            else:
+                composed[key] = audit_compose(target, spec, stage=stage)
         return composed[key]
 
-    # Decide what to audit before reading the attempts, so collection can be pushed
-    # down to the selected samples. Auditing five samples of a ten-thousand sample
-    # benchmark otherwise materialises every attempt of every log, answers included.
+    # select samples before reading attempts, so collection pushes down and auditing
+    # five samples of a ten-thousand sample benchmark does not materialise every log
     dataset = list(target.dataset)
-    ids = [sample_id_of(sample, index) for index, sample in enumerate(dataset, start=1)]
-    # `samples is not None` rather than a truth test: an empty selection means audit
-    # nothing, which is what a filter that matched nothing should produce.
+    ids = [
+        str(sample.id) if sample.id is not None else str(index)
+        for index, sample in enumerate(dataset, start=1)
+    ]
     chosen = {str(s) for s in samples} if samples is not None else None
     selected = [sid for sid in ids if chosen is None or sid in chosen]
     if limit is not None:
         selected = selected[:limit]
     in_scope = set(selected)
 
+    # group the attempts by sample
     by_sample: dict[str, list[AttemptRef]] = {}
     if logs is not None:
-        frame = attempt_rows(logs, sample_ids=in_scope)
-        scores = score_columns(frame)
+        frame = attempts(logs, sample_ids=in_scope)
+        scores = [str(c) for c in frame.columns if str(c).startswith("score_")]
         for row in frame.to_dict("records"):
             sample_id = str(row["id"])
             by_sample.setdefault(sample_id, []).append(
@@ -174,11 +151,12 @@ def audit_task(
             )
         if not by_sample and in_scope:
             raise ValueError(
-                f"no attempts at any selected sample of `{target.name}` were found in these "
-                "logs. Check the task and its arguments match the ones the logs were run with."
+                f"No attempts at any selected sample of '{target.name}' were found in "
+                "these logs. Check the task and its arguments match the logs."
             )
 
-    items: list[Sample] = []
+    # stage one audit sample per item
+    audit_samples: list[Sample] = []
     for sample_id, sample in zip(ids, dataset, strict=True):
         if sample_id not in in_scope:
             continue
@@ -188,35 +166,32 @@ def audit_task(
             sample_id=sample_id,
             attempts=by_sample.get(str(sample_id), []),
         )
-        items.append(
+        original_env = sample_sandbox(target, sample)
+        audit_samples.append(
             item_sample(
                 target,
                 sample,
                 item,
-                prompt=CASE_PROMPT,
+                prompt=ITEM_PROMPT,
                 stage=staging / str(sample_id),
                 sandbox=environment(sample),
-                original_env=sample_sandbox(target, sample),
+                original_env=original_env,
+                benchmark=sandbox is None and has_benchmark(original_env),
             )
         )
 
     return Task(
         name=f"audit/{target.name}",
-        dataset=MemoryDataset(items),
-        solver=solver or as_solver(audit_agent()),
-        scorer=verdict(),
+        dataset=MemoryDataset(audit_samples),
+        setup=benchmark_setup(),
+        solver=solver or as_solver(audit_agent(items=items)),
+        scorer=[item_scorer(item.name) for item in audit_items(items)],
         metadata={"audited_task": target.name},
     )
 
 
 def _staging() -> Path:
-    """A directory for one run's item files, removed when the process exits.
-
-    One directory per run rather than per item, and cleaned up on the way out: the
-    sliced logs are the bulk of an item's filesystem, so auditing a few hundred items
-    stages a couple of gigabytes. Set `INSPECT_AUDIT_KEEP_STAGING=1` to keep it, which
-    is how you inspect what an auditor was actually given.
-    """
+    # one directory per run, removed at exit; INSPECT_AUDIT_KEEP_STAGING=1 keeps it
     staging = Path(tempfile.mkdtemp(prefix="inspect_audit_"))
     if not os.environ.get("INSPECT_AUDIT_KEEP_STAGING"):
         atexit.register(shutil.rmtree, staging, ignore_errors=True)

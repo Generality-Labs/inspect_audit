@@ -11,8 +11,9 @@ from inspect_ai import Task
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.scorer import match
 
-from inspect_audit import audit_sandbox, audit_task, resolve_task
+from inspect_audit import audit_task, resolve_task
 from inspect_audit._item import AUDIT_ROOT
+from inspect_audit._sandbox import audit_sandbox
 
 
 def make_task(n: int = 3, with_ids: bool = True) -> Task:

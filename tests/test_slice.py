@@ -14,8 +14,7 @@ from inspect_ai.log import (
 )
 from test_helpers.logs import run_fixture_eval
 
-from inspect_audit._item import AttemptRef
-from inspect_audit._slice import sample_logs
+from inspect_audit._item import AttemptRef, sample_logs
 
 
 def refs(log: str, sample_id: str, *epochs: int) -> list[AttemptRef]:

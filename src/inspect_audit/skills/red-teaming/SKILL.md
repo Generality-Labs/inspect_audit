@@ -2,8 +2,8 @@
 name: red-teaming
 description: Test whether the grader credits incorrect solutions. Craft a submission
   that is object-level wrong -- a domain expert would reject it -- and see if the
-  grader accepts it anyway. If it does, the benchmark is not measuring what it claims:
-  an agent could pass without solving the task.
+  grader accepts it anyway. If it does, the benchmark is not measuring what it claims
+  -- an agent could pass without solving the task.
 metadata:
   grades: [EXPLOITABLE, RESISTANT]
   tools: [grade, reset]

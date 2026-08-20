@@ -68,3 +68,32 @@ Random sample of 100 SWE-bench Verified (seed 20260819):
   (listed -> ACCESSIBLE not USED).
 - SWE-bench Verified = 500 samples, 12 repos (django 231, sympy 75, sphinx 44, ...).
 - Cost today ~$1.23 total (dollar-meter). ~$0.04/model-item.
+
+## 2026-08-19 (21:05) — BixBench audit
+
+Target: BixBench (concordia_evals/bixbench, Laurence's public repo
+github.com/LaurenceWroe/concordia_evals@59336ec). Bioinformatics data-analysis
+benchmark; precise quantitative answers (p-values, ranges, %). Logs on Hawk:
+bixbench-full-908dnzz4n7hx5v9u (20 samples, gpt-4o-mini, 4/17 correct).
+
+Items: gold-answer (= "ground truth wrong": grades INCORRECT/ALTERNATIVES),
+insufficiently-specified (NEW: question determinacy / open analysis choices),
+answer-format. Red-teaming to be ADDED at scale-up (needs the box; box confirmed
+building in pilot).
+- caught: ground-truth-wrong was a dup of gold-answer (INCORRECT) -> deleted.
+- [~] pilot bixbench-audit-pilot-9gu6gucfmrwygba3 (3 samples, 3 passive items).
+      concordia installed OK, task resolves, capsules downloading (box builds).
+      watcher bd1v0idyd.
+- PLAN (James): let pilot finish, THEN scale up + add red-teamer (unhinted first --
+      BixBench exploit route unknown, maybe answer in capsule notebook/data).
+
+## 2026-08-19 (21:26) — BixBench FULL audit LAUNCHED
+bixbench-audit-full-23pebht4d4fs0yfh: all 205 samples (train, only split),
+4 items [gold-answer, insufficiently-specified, answer-format, red-teaming(unhinted)],
+effort=high, token_limit=10M, judge_model=openrouter/openai/gpt-4o (keeps judge on
+OUR key, not Hawk's OpenAI -- default was bare openai/gpt-4o). watcher buy373cn0.
+Cost est ~$100-200. Log coverage: only ~20 samples have attempt-logs (answer-format
+weak on the ~185 without). Pilot found: bix-10-q5 UNDERSPECIFIED (auditor re-ran
+chi-square=gold + Mann-Whitney=different -> question doesn't fix the test). Spend
+reconciled exactly today: 83M luna tokens = $5.49 (dev/reconcile_spend.py).
+Hawk-OpenAI luna spend is NOT ours (our middleman usage=0); someone else's bare-luna run.

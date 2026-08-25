@@ -20,7 +20,9 @@ def test_every_skill_loads_and_names_are_unique() -> None:
     skills = load()
     assert {skill.name for skill in skills} == {
         "answer-format",
+        "approach-census",
         "environment-integrity",
+        "failure-attribution",
         "gold-answer",
         "ground-truth-access",
         "insufficiently-specified",

@@ -358,7 +358,13 @@ def reset_benchmark() -> Tool:
         if state is None:
             raise ToolError("Reset is only available while auditing a sample.")
         await restore_benchmark((state.metadata or {}).get("benchmark_setup"))
-        return "benchmark environment reset to its per-sample state"
+        # the bump is what lets a grade receipt say which box state it judged
+        session = store_as(BenchmarkState)
+        session.box_version = session.box_version + 1
+        return (
+            "benchmark environment reset to its per-sample state "
+            f"(box_version {session.box_version})"
+        )
 
     return execute
 

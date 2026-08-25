@@ -4,6 +4,7 @@ No cluster and no network: these check the emitted values file, and -- when a he
 binary and a chart checkout happen to be available -- that the chart renders it.
 """
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -19,11 +20,13 @@ from inspect_audit._sandbox import audit_values
 
 AUDITOR_IMAGE = "ghcr.io/example/inspect-audit-auditor:latest"
 
-# The inspect_k8s_sandbox checkout used to prove the egress design live on Hawk.
+# The agent-env chart vendored in reference/ (see its VENDORED.md); point
+# INSPECT_AUDIT_CHART at a checkout to render against a newer chart instead.
 CHART = Path(
-    "/private/tmp/claude-501/-Users-james-Documents-generality/"
-    "c69ecb81-dbb4-45a2-953b-ca49310e8af0/scratchpad/inspect_k8s_sandbox/"
-    "src/k8s_sandbox/resources/helm/agent-env"
+    os.environ.get(
+        "INSPECT_AUDIT_CHART",
+        Path(__file__).parent.parent / "reference" / "agent-env-chart",
+    )
 )
 
 

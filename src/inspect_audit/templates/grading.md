@@ -33,11 +33,20 @@ Grading is recorded **per log**, so read it per log rather than assuming the fie
 graded uniformly: different runs of the same benchmark are routinely graded by
 different judge models or judge templates.
 
-The scorer's source is installed in this sandbox, so read the real code:
+The benchmark's own code is staged in this sandbox, so read the real grader:
 
 ```bash
-python -c "import importlib, inspect; print(inspect.getsourcefile(importlib.import_module('{modules}')))"
+ls benchmark/          # the scorers' modules and the task's own directory
 ```
+
+Where the benchmark is an installed package, its modules resolve too:
+
+```bash
+python -c "import importlib, inspect; [print(inspect.getsourcefile(importlib.import_module(m))) for m in '{modules}'.split()]"
+```
+
+Prefer `benchmark/`: a benchmark that is a loose repository rather than a published
+package will not import here, and the staged copy is the same source either way.
 
 Read the grading template in full before deciding whether an answer was fairly marked.
 A template that pins an exact string, omits a valid alternative, or collapses "refused"

@@ -10,8 +10,10 @@ import pytest
 from inspect_ai import Task
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.scorer import match
+from test_helpers.logs import fixture_task, run_fixture_eval
 
 from inspect_audit import audit_task, resolve_task
+from inspect_audit._audit import attempts
 from inspect_audit._item import AUDIT_ROOT
 from inspect_audit._sandbox import audit_sandbox
 
@@ -121,6 +123,41 @@ def test_the_generated_sandbox_pins_the_tasks_own_packages() -> None:
     assert all("==" in r for r in reqs)
 
 
+def test_attempts_join_only_the_audited_tasks_logs(tmp_path: Path) -> None:
+    """Sample ids are unique only within a task, so the join must filter on task.
+
+    Two tasks in one logs directory both number their samples 1..N. Joining on id
+    alone would attach the other task's attempts to these items -- foreign
+    transcripts graded as if they were attempts at this question.
+    """
+    logs = str(tmp_path / "logs")
+    run_fixture_eval(logs, name="audited_task")
+    run_fixture_eval(logs, name="other_task")
+
+    mine = attempts(logs, task="audited_task")
+    assert set(mine["task_name"].astype(str).unique()) == {"audited_task"}
+    # both tasks have samples with id "1"; only the audited task's is joined
+    assert len(mine[mine["id"].astype(str) == "1"]) == 1
+
+    with pytest.raises(ValueError, match="record task 'absent_task'"):
+        attempts(logs, task="absent_task")
+
+
+def test_audit_task_does_not_attach_a_foreign_tasks_attempts(tmp_path: Path) -> None:
+    """End to end: audit one task from a dir that also holds another task's logs."""
+    logs = str(tmp_path / "logs")
+    run_fixture_eval(logs, name="fixture_task")
+    run_fixture_eval(logs, name="decoy_task")
+
+    audit = audit_task(fixture_task(), logs, samples=["1"])
+    item = audit.dataset[0].metadata["audit_item"]  # type: ignore[index]
+    assert item["attempts"], "the audited task's own attempt should be joined"
+    for attempt in item["attempts"]:
+        assert attempt["sample_id"] in ("1", 1)
+    # exactly the one fixture_task attempt at sample 1, not the decoy's too
+    assert len(item["attempts"]) == 1
+
+
 def test_the_generated_sandbox_has_network_access() -> None:
     """An auditor without egress cannot read a source, and will invent one instead.
 
@@ -135,3 +172,27 @@ def test_the_generated_sandbox_has_network_access() -> None:
     assert compose.name == "compose.yaml"
     assert (compose.parent / "Dockerfile").is_file()
     assert "network_mode" not in compose.read_text()
+
+
+def test_attempts_can_come_from_a_sibling_variant_of_the_audited_task(
+    fixture_log: str,
+) -> None:
+    """The same items often ship under several variants; the field's answers still count.
+
+    Integrity Bench runs the same 400 questions as `<domain>` and `<domain>_tools`
+    with identical sample ids. Auditing the tools task -- the only one with a real
+    environment -- while joining the no-tools attempts is the only way to get both a
+    benchmark box and an evidence base. Each sliced log keeps its own header, so the
+    auditor can see which variant produced each attempt.
+    """
+    from inspect_audit import attempts
+
+    recorded = attempts(fixture_log)
+    name = str(recorded["task_name"].iloc[0]).split("/")[-1]
+
+    # the guard still fires for a genuinely unrelated task
+    with pytest.raises(ValueError, match="None of these logs record task"):
+        attempts(fixture_log, task="some_other_benchmark")
+
+    # ...but an explicit sibling name is honoured
+    assert not attempts(fixture_log, task=name).empty

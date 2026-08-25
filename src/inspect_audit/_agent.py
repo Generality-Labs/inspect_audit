@@ -1,8 +1,13 @@
+import base64
 import json
+import mimetypes
 from copy import copy
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+# `as_data_uri` is inspect's own encoding for media content; `computer` builds its
+# screenshots the same way, so a tool result here looks like any other to a provider.
+from inspect_ai._util.images import as_data_uri
 from inspect_ai.agent import Agent, AgentSubmit, agent, react
 from inspect_ai.model import GenerateConfig, Model, get_model
 from inspect_ai.scorer import (
@@ -17,9 +22,19 @@ from inspect_ai.scorer import (
 )
 from inspect_ai.solver import TaskState
 from inspect_ai.solver._task_state import sample_state
-from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
+from inspect_ai.tool import (
+    ContentImage,
+    Tool,
+    ToolDef,
+    ToolError,
+    ToolResult,
+    bash,
+    python,
+    skill,
+    tool,
+)
 from inspect_ai.tool._tools._skill import read_skills
-from inspect_ai.util import StoreModel, sandbox_default, store_as
+from inspect_ai.util import StoreModel, sandbox, sandbox_default, store_as
 from pydantic import BaseModel, Field, JsonValue
 
 from ._item import AUDIT_ROOT
@@ -56,7 +71,32 @@ You are investigating:
 Invoke each skill and follow it. Other skills are available for working with the logs.
 Record a verdict for every item with the evidence that earned it, and say what you
 actually think. Then submit.
-{{notes}}"""
+{{confidential}}{{notes}}"""
+
+# rendered into the prompt only when the benchmark is unpublished. the auditor keeps
+# its shell and its internet -- an auditor that cannot check anything invents citations
+# (see the egress note in `_sandbox.py`) -- but it must not hand the item to a third
+# party to do the checking. the boundary is what leaves in a request, not whether the
+# network is reachable.
+CONFIDENTIAL_SECTION = """
+
+## This benchmark is unpublished
+
+Its questions, recorded answers and transcripts are confidential. Treat every file under
+{root} as material you may read but must not transmit.
+
+Do not put item content into anything that leaves this container: no question text,
+answer text, option list, transcript excerpt or distinctive phrasing from the item in a
+search query, a URL, a form, or a request body. Retrieving a public source is fine --
+sending it the item is not. Where you need a fact, describe what you need in your own
+words rather than quoting the item, and read the source directly.
+
+This constrains how you verify, not how hard. Exhaust the container first: the benchmark
+code, the grading code, the sliced logs, and what the field of attempts already tells
+you. If a question cannot be settled without disclosing the item, that is the answer --
+say so in `remarks` and grade on what you could establish. An unverified verdict is
+recoverable; a leaked item is not.
+"""
 
 # rendered into the prompt only when the operator sets `notes`: a free-form steer
 # ("what the operator has been thinking about"), kept separate from the skills so a
@@ -221,6 +261,33 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
 
 
 @tool
+def view_image() -> Tool:
+    async def execute(path: str) -> ToolResult:
+        """Look at one of this item's images, as the evaluated model saw it.
+
+        The item's media is staged under `/audit/media/` and `sample.json` points at
+        it. Reading those bytes with `bash` establishes nothing -- call this to see
+        the picture. Use `python` with pillow when you would rather measure it.
+
+        Args:
+            path: The image's path, exactly as `sample.json` gives it.
+        """
+        try:
+            data = await sandbox().read_file(path, text=False)
+        except Exception as ex:
+            raise ToolError(
+                f"Could not read {path!r}: {type(ex).__name__}: {ex}"
+            ) from None
+        if not isinstance(data, bytes):
+            raise ToolError(f"{path!r} did not read back as bytes.")
+        mime, _ = mimetypes.guess_type(path, strict=False)
+        encoded = base64.b64encode(data).decode()
+        return [ContentImage(image=as_data_uri(mime or "image/png", encoded))]
+
+    return execute
+
+
+@tool
 def grade_benchmark(scorers: list[Scorer]) -> Tool:
     async def execute(answer: str) -> str:
         """Grade the benchmark environment with the benchmark's own grader.
@@ -255,7 +322,7 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
 
         # the benchmark's scorer calls sandbox() expecting the eval's own box; in the
         # auditor's two-box world that default is us, so aim it at the benchmark
-        results: list[JsonValue] = []
+        results: list[dict[str, Any]] = []
         with sandbox_default(BENCHMARK_SERVICE):
             for scorer in scorers:
                 score = await scorer(graded, state.target)
@@ -307,8 +374,10 @@ def audit_agent(
     items: list[str] | None = None,
     model: str | None = None,
     benchmark_scorers: Scorer | list[Scorer] | None = None,
+    media: bool = False,
     reasoning_effort: str | None = None,
     notes: str | None = None,
+    confidential: bool = False,
 ) -> Agent:
     """An auditor: a react loop with the audit skills and a shell in the item's sandbox.
 
@@ -316,16 +385,26 @@ def audit_agent(
         items: Audit items to investigate (defaults to all of them).
         model: Model to audit with (defaults to the evaluated model).
         benchmark_scorers: The audited task's own scorer(s), for the `grade` tool.
+        media: Whether the audited items carry images. Grants `view_image` and
+            `python`, without which a vision benchmark is audited blind: its media
+            reaches the cell as a path, and a PNG read with `bash` establishes
+            nothing about what is in the picture.
         reasoning_effort: Reasoning effort for the auditor model, when it takes one.
         notes: A free-form steer inserted into the system prompt -- what the operator
             has been thinking about (a suspected route, a specific hint). Kept out of
             the skills so a skill stays general and the steer stays a per-run knob.
+        confidential: The benchmark is unpublished. Instructs the auditor not to
+            transmit item content off the box -- it keeps its shell and its internet,
+            but must not paste the item into a search query or any other request.
     """
     # resolve the model object here so a generate config binds to it -- react
     # re-resolves a bare string without one, so the config would be dropped
     resolved: str | Model | None = model
     if model is not None and reasoning_effort is not None:
-        resolved = get_model(model, config=GenerateConfig(reasoning_effort=reasoning_effort))
+        # a str arg so the CLI can pass it; GenerateConfig validates the value
+        resolved = get_model(
+            model, config=GenerateConfig(reasoning_effort=cast(Any, reasoning_effort))
+        )
     # name the items under investigation in the system message: an auditor that is
     # not told what it is looking for picks whichever skill looks most relevant
     scoped = audit_items(items)
@@ -350,6 +429,10 @@ def audit_agent(
 
     # benchmark tools are granted only when a scoped item's skill asks for them,
     # so a passive item keeps the box observe-only
+    # a vision item needs to be looked at, and measured; both are useless elsewhere
+    if media:
+        tools += [view_image(), python(timeout=180)]
+
     granted = {name for item in scoped for name in item.tools}
     if "grade" in granted:
         scorer_list = (
@@ -368,6 +451,9 @@ def audit_agent(
         description="Audits one benchmark item and submits a verdict per audit item.",
         prompt=AUDIT_PROMPT.format(
             items=named,
+            confidential=(
+                CONFIDENTIAL_SECTION.format(root=AUDIT_ROOT) if confidential else ""
+            ),
             notes=NOTES_SECTION.format(notes=notes) if notes else "",
         ),
         tools=tools,

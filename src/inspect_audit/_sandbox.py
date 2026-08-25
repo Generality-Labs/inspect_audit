@@ -1,4 +1,5 @@
 import atexit
+import math
 import os
 import re
 import shutil
@@ -14,7 +15,16 @@ from inspect_ai._eval.task.util import task_run_dir
 from inspect_ai.dataset import Sample
 from inspect_ai.util import SandboxEnvironmentSpec, SandboxEnvironmentType
 from inspect_ai.util import sandbox as sandbox_env
+from inspect_ai.util._sandbox.compose import DOCKERFILE as INSPECT_DOCKERFILE
 from inspect_ai.util._sandbox.compose import is_dockerfile
+
+# reuse Inspect's own auto-compose templates rather than re-deriving them, so a
+# synthesised benchmark box matches what `inspect eval` would have run -- the
+# same coupling to private core the task loader takes on (see `_resolve`)
+from inspect_ai.util._sandbox.docker.config import (
+    COMPOSE_DOCKERFILE_YAML,
+    COMPOSE_GENERIC_YAML,
+)
 from inspect_ai.util._sandbox.environment import resolve_sandbox_environment
 
 logger = getLogger(__name__)
@@ -51,14 +61,16 @@ _GIT_RESTORE = (
 async def restore_benchmark(script: str | None) -> None:
     """Restore the benchmark service to its pristine per-sample state.
 
-    Re-runs any setup, then reverts every git worktree in the box -- so a
+    Reverts every git worktree in the box first, then re-runs any setup -- in
+    that order, because setup routinely writes untracked files into a repo and
+    `git clean` after it would wipe the very state setup just recreated. A
     benchmark whose state comes from setup and one whose state is a checked-out
     repo both return to where the evaluated agent started.
     """
-    await run_benchmark_setup(script)
     await sandbox_env(BENCHMARK_SERVICE).exec(
         ["bash", "-c", _GIT_RESTORE], timeout=300
     )
+    await run_benchmark_setup(script)
 
 AUDITOR_NETWORK = "inspect_audit"
 
@@ -71,7 +83,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
         ca-certificates curl git jq ripgrep \\
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir {requirements}
+# pillow so an auditor can measure an image as well as look at one
+RUN pip install --no-cache-dir pillow {requirements}
 
 WORKDIR /audit
 CMD ["sleep", "infinity"]
@@ -154,19 +167,59 @@ def audit_sandbox(task: Task) -> SandboxEnvironmentType:
     return ("docker", str(compose))
 
 
+def benchmark_source(
+    spec: SandboxEnvironmentSpec | None,
+) -> tuple[dict[str, Any], Path | None] | None:
+    """The audited environment as a compose document, with its anchor directory.
+
+    A compose file is read as written. A Dockerfile config or a bare `docker`
+    provider carries no compose file, so it is synthesised from Inspect's own
+    auto-compose templates -- the same YAML `inspect eval` would have generated
+    for that sandbox, `network_mode: none` and all -- rather than reconstructed
+    here, so the benchmark box tracks whatever Inspect runs.
+
+    Args:
+        spec: The sandbox the audited sample runs in, or `None`.
+
+    Returns:
+        The compose document and the directory its relative paths resolve
+        against, or `None` when there is no environment to reproduce. The anchor
+        is `None` when the document holds no paths needing to be re-anchored.
+    """
+    if spec is None:
+        return None
+    config = spec.config
+    if isinstance(config, str):
+        source = Path(config)
+        if not source.is_file():
+            return None
+        if is_dockerfile(source.name):
+            # Inspect's Dockerfile template builds `./Dockerfile`; point it at the
+            # audited task's actual Dockerfile, absolute so no anchoring is needed
+            merged = yaml.safe_load(
+                COMPOSE_DOCKERFILE_YAML.format(dockerfile=INSPECT_DOCKERFILE)
+            )
+            merged["services"]["default"]["build"] = {
+                "context": str(source.parent),
+                "dockerfile": source.name,
+            }
+            return merged, None
+        return dict(yaml.safe_load(source.read_text()) or {}), source.parent
+    if config is None and spec.type == "docker":
+        # a bare `docker` sandbox runs Inspect's generic container
+        return yaml.safe_load(COMPOSE_GENERIC_YAML), None
+    return None
+
+
 def has_benchmark(spec: SandboxEnvironmentSpec | None) -> bool:
     """Whether the audited task's environment runs as a benchmark service."""
-    config = spec.config if spec is not None else None
-    return (
-        isinstance(config, str)
-        and not is_dockerfile(Path(config).name)
-        and Path(config).is_file()
-    )
+    return benchmark_source(spec) is not None
 
 
 def sample_sandbox(task: Task, sample: Sample) -> SandboxEnvironmentSpec | None:
     """The sandbox an audited sample actually runs in (its own, else its task's)."""
-    return resolve_sandbox(task, sample.sandbox) or resolve_sandbox(task)
+    # resolve_sandbox already falls back to the task's sandbox for a bare sample
+    return resolve_sandbox(task, sample.sandbox)
 
 
 def resolve_sandbox(
@@ -199,17 +252,19 @@ def audit_compose(
         spec: The sandbox the audited sample runs in, or `None`.
         stage: Directory to write the merged compose and the auditor's Dockerfile into.
     """
-    # no compose file to merge: the auditor's environment alone
-    config = spec.config if spec is not None else None
-    if not isinstance(config, str) or is_dockerfile(Path(config).name):
+    found = benchmark_source(spec)
+    if found is None:
+        # nothing to reproduce: the auditor's environment alone. loud when the
+        # audited task declared an environment we could not reproduce -- an audit
+        # of what an environment affords is not valid without the environment.
+        if spec is not None:
+            logger.warning(
+                f"cannot reproduce the audited sandbox ({spec.type!r}, config "
+                f"{spec.config!r}); the auditor runs without the benchmark environment"
+            )
         return audit_sandbox(task)
-    source = Path(config)
-    if not source.is_file():
-        return audit_sandbox(task)
-
-    merged: dict[str, Any] = yaml.safe_load(source.read_text()) or {}
+    merged, base = found
     services: dict[str, Any] = merged.get("services") or {}
-    base = source.parent
 
     # rename their `default`, avoiding collisions with their other services
     benchmark_name = BENCHMARK_SERVICE
@@ -219,7 +274,7 @@ def audit_compose(
     # re-anchor relative paths and strip any x-default claims
     renamed = {}
     for name, service in services.items():
-        anchored = _anchor_service(service, base)
+        anchored = _anchor_service(service, base) if base is not None else dict(service)
         anchored.pop("x-default", None)
         renamed[benchmark_name if name == "default" else name] = anchored
 
@@ -324,7 +379,10 @@ additionalResources:
             - world
 """
 
-_DURATION = re.compile(r"^((?P<h>\d+)h)?((?P<m>\d+)m)?((?P<s>\d+)s)?$")
+_DURATION = re.compile(
+    r"^((?P<h>\d+(?:\.\d+)?)h)?((?P<m>\d+(?:\.\d+)?)m)?"
+    r"((?P<s>\d+(?:\.\d+)?)s)?((?P<ms>\d+(?:\.\d+)?)ms)?$"
+)
 _MEMORY = re.compile(r"^(?P<value>\d+(?:\.\d+)?)(?P<unit>gb?|mb?|kb?|b)$", re.IGNORECASE)
 _MEMORY_UNITS = {"b": "", "k": "Ki", "m": "Mi", "g": "Gi"}
 
@@ -337,8 +395,10 @@ def _seconds(value: Any) -> int | None:
     match = _DURATION.match(str(value))
     if match is None or not any(match.groups()):
         return None
-    h, m, s = (int(match.group(g) or 0) for g in ("h", "m", "s"))
-    return h * 3600 + m * 60 + s
+    h, m, s, ms = (float(match.group(g) or 0) for g in ("h", "m", "s", "ms"))
+    total = h * 3600 + m * 60 + s + ms / 1000
+    # probe fields are whole seconds: round sub-second values up, never to zero
+    return math.ceil(total) if total else 0
 
 
 def _quantity(value: Any) -> Any:
@@ -491,10 +551,14 @@ def audit_values(
     values: dict[str, Any] = {}
     converted: dict[str, Any] = {}
 
-    config = spec.config if spec is not None else None
-    source = Path(config) if isinstance(config, str) else None
-    if source is not None and not is_dockerfile(source.name) and source.is_file():
-        compose: dict[str, Any] = yaml.safe_load(source.read_text()) or {}
+    found = benchmark_source(spec)
+    if found is None and spec is not None:
+        logger.warning(
+            f"cannot reproduce the audited sandbox ({spec.type!r}, config "
+            f"{spec.config!r}); the auditor runs without the benchmark environment"
+        )
+    if found is not None:
+        compose, _ = found
         theirs: dict[str, Any] = compose.get("services") or {}
         benchmark_name = BENCHMARK_SERVICE
         while benchmark_name in theirs and benchmark_name != "default":

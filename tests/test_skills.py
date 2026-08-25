@@ -24,6 +24,7 @@ def test_every_skill_loads_and_names_are_unique() -> None:
         "gold-answer",
         "ground-truth-access",
         "insufficiently-specified",
+        "other-findings",
         "red-teaming",
         "reading-logs",
         "analyzing-logs",
@@ -122,3 +123,41 @@ def test_verdicts_are_validated_and_scored_per_item(monkeypatch) -> None:
     from inspect_ai.util import store_as
 
     assert store_as(Verdicts).verdicts["gold-answer"].grade == "INCORRECT"
+
+
+def test_the_confidential_section_is_off_by_default_and_names_the_boundary() -> None:
+    """The toggle constrains what leaves, not whether the auditor may verify.
+
+    An auditor stripped of the ability to check anything invents citations (the
+    reason the audit sandbox grants egress at all), so the confidential prompt has
+    to draw the line at transmission and say what to do when that is not enough.
+    """
+    from inspect_audit._agent import AUDIT_PROMPT, CONFIDENTIAL_SECTION
+
+    default = AUDIT_PROMPT.format(items="- `x`: y", confidential="", notes="")
+    assert "unpublished" not in default
+
+    on = AUDIT_PROMPT.format(
+        items="- `x`: y",
+        confidential=CONFIDENTIAL_SECTION.format(root="/audit"),
+        notes="",
+    )
+    assert "must not transmit" in on
+    assert "/audit" in on
+    # it must not read as "stop verifying"
+    assert "grade on what you could establish" in on
+
+
+def test_other_findings_is_evidenced_but_lets_a_clean_item_say_nothing() -> None:
+    """The residue item must not become a place to file impressions.
+
+    FOUND needs a source like every other grade; NONE is the one verdict that does
+    not, because "I looked and there was nothing" cannot cite an observation.
+    """
+    skill = next(s for s in load() if s.name == "other-findings")
+    meta = skill.metadata or {}
+
+    assert meta["grades"] == ["FOUND", "NONE"]
+    assert meta["unevidenced"] == ["NONE"]
+    # scope separates a one-item quirk from a mechanism that recurs across the bank
+    assert "scope" in meta["details"]["findings"]

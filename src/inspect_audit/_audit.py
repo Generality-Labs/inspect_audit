@@ -9,14 +9,14 @@ from typing import Any
 import pandas as pd
 from inspect_ai import Task
 from inspect_ai.agent import as_solver
-from inspect_ai.analysis import EvalModel, SampleSummary, samples_df
+from inspect_ai.analysis import EvalModel, EvalTask, SampleSummary, samples_df
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.log import EvalLog
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util._sandbox.environment import SandboxEnvironmentType
 
 from ._agent import audit_agent, audit_items, item_scorer
-from ._item import AUDIT_ROOT, AttemptRef, AuditItem, item_sample
+from ._item import ANSWER_METADATA, AUDIT_ROOT, AttemptRef, AuditItem, item_sample
 from ._resolve import resolve_task
 from ._sandbox import (
     audit_compose,
@@ -44,14 +44,33 @@ ITEM_PROMPT = (
 )
 
 
-def attempts(logs: LogSource, *, sample_ids: Collection[str] | None = None) -> pd.DataFrame:
+def attempts(
+    logs: LogSource,
+    *,
+    sample_ids: Collection[str] | None = None,
+    task: str | None = None,
+) -> pd.DataFrame:
     """One row per recorded attempt, with a `score_*` column per scorer.
 
     Args:
         logs: Log directory, log files, or already-read `EvalLog`s.
         sample_ids: Restrict to these sample ids.
+        task: Restrict to logs recording this task. Sample ids are only unique
+            within a task, so a logs directory holding another task's logs would
+            otherwise silently attach that task's attempts to these items.
+            Matched on the unqualified name, so `pkg/name` in a log joins a task
+            resolved as `name` and vice versa.
     """
-    frame = samples_df(logs, columns=SampleSummary + EvalModel)
+    frame = samples_df(logs, columns=SampleSummary + EvalModel + EvalTask)
+    if task is not None and not frame.empty:
+        tails = frame["task_name"].astype(str).str.split("/").str[-1]
+        matched = frame[tails == task.split("/")[-1]]
+        if matched.empty:
+            found = ", ".join(sorted(frame["task_name"].astype(str).unique()))
+            raise ValueError(
+                f"None of these logs record task {task!r} (they record: {found})."
+            )
+        frame = matched
     if sample_ids is not None:
         wanted = {str(sample) for sample in sample_ids}
         frame = frame[frame["id"].astype(str).isin(wanted)]
@@ -71,6 +90,9 @@ def audit_task(
     model: str | None = None,
     reasoning_effort: str | None = None,
     notes: str | None = None,
+    confidential: bool = False,
+    redact: Sequence[str] | None = None,
+    attempts_task: str | None = None,
     auditor_image: str | None = None,
     benchmark_image: str | None = None,
 ) -> Task:
@@ -88,6 +110,19 @@ def audit_task(
         model: Model to audit with (defaults to the evaluated model).
         reasoning_effort: Reasoning effort for the auditor model, when it takes one.
         notes: A free-form operator steer inserted into the auditor's system prompt.
+        confidential: The benchmark is unpublished -- instruct the auditor not to
+            transmit item content off the box.
+        attempts_task: Name of the task whose attempts to join, when the logs record
+            a sibling variant of the audited task rather than the task itself. Many
+            benchmarks ship the same items under several variants (tools vs no-tools,
+            ablations); the field's answers to an item are evidence about that item
+            whichever variant produced them, and each sliced log keeps its own header
+            so the auditor can see which variant it is reading. Defaults to the
+            audited task's own name, which is the safe choice.
+        redact: Further metadata keys to strip from the item the auditor reads, on
+            top of the answer-bearing keys always stripped. Use it for a key that
+            would pre-empt the judgement under audit as well as for one that carries
+            the answer.
         auditor_image: Emit the sandbox as Helm values for k8s providers, with this
             published image as the auditor (see `audit_values`).
         benchmark_image: Published image standing in for benchmark services that
@@ -95,6 +130,7 @@ def audit_task(
     """
     target = resolve_task(task, task_args)
     staging = _staging()
+    redacted = (*ANSWER_METADATA, *(redact or ()))
 
     # one merged compose per distinct environment: ctf-style benchmarks give every
     # sample its own compose file, most give them all one
@@ -135,7 +171,7 @@ def audit_task(
     # group the attempts by sample
     by_sample: dict[str, list[AttemptRef]] = {}
     if logs is not None:
-        frame = attempts(logs, sample_ids=in_scope)
+        frame = attempts(logs, sample_ids=in_scope, task=attempts_task or target.name)
         scores = [str(c) for c in frame.columns if str(c).startswith("score_")]
         for row in frame.to_dict("records"):
             sample_id = str(row["id"])
@@ -156,6 +192,7 @@ def audit_task(
 
     # stage one audit sample per item
     audit_samples: list[Sample] = []
+    any_media = False
     for sample_id, sample in zip(ids, dataset, strict=True):
         if sample_id not in in_scope:
             continue
@@ -176,8 +213,14 @@ def audit_task(
                 sandbox=environment(sample),
                 original_env=original_env,
                 benchmark=sandbox is None and has_benchmark(original_env),
+                redact=redacted,
             )
         )
+
+    any_media = any(
+        any(f"{AUDIT_ROOT}/media/" in key for key in (s.files or {}))
+        for s in audit_samples
+    )
 
     return Task(
         name=f"audit/{target.name}",
@@ -190,6 +233,8 @@ def audit_task(
                 model=model,
                 reasoning_effort=reasoning_effort,
                 notes=notes,
+                confidential=confidential,
+                media=any_media,
                 benchmark_scorers=target.scorer,
             )
         ),

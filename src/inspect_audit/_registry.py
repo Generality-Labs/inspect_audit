@@ -4,12 +4,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from inspect_ai import Task, task
+from inspect_ai import Task, task, task_with
+from inspect_ai.dataset import MemoryDataset
 from inspect_ai.log import list_eval_logs
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox
-
-from inspect_ai.dataset import MemoryDataset
 
 from ._agent import grade_benchmark, reset_benchmark
 from ._audit import audit_task
@@ -28,6 +27,9 @@ def audit(
     model: str | None = None,
     reasoning_effort: str | None = None,
     notes: str | None = None,
+    confidential: bool = False,
+    redact: list[str] | None = None,
+    attempts_task: str | None = None,
     auditor_image: str | None = None,
     benchmark_image: str | None = None,
 ) -> Task:
@@ -43,6 +45,11 @@ def audit(
         model: Model to audit with (defaults to the evaluated model).
         reasoning_effort: Reasoning effort for the auditor model, when it takes one.
         notes: A free-form operator steer inserted into the auditor's system prompt.
+        confidential: The benchmark is unpublished -- instruct the auditor not to
+            transmit item content off the box.
+        redact: Further metadata keys to strip from the item the auditor reads.
+        attempts_task: Task whose attempts to join, when the logs record a sibling
+            variant of the audited task (e.g. no-tools attempts at a tools task).
         auditor_image: Published auditor image; switches to Helm-values emission
             for k8s providers.
         benchmark_image: Published image for benchmark services that `build:`.
@@ -74,6 +81,9 @@ def audit(
         model=model,
         reasoning_effort=reasoning_effort,
         notes=notes,
+        confidential=confidential,
+        redact=redact,
+        attempts_task=attempts_task,
         auditor_image=auditor_image,
         benchmark_image=benchmark_image,
     )
@@ -132,7 +142,11 @@ async def _probe_grade(state: TaskState, checks: dict[str, str]) -> None:
 
     try:
         item = (state.metadata or {}).get("audit_item") or {}
-        resolved = resolve_task(item.get("task"), item.get("task_args") or {})
+        audited = item.get("task")
+        if audited is None:
+            checks["grade"] = "SKIP no audited task recorded"
+            return
+        resolved = resolve_task(audited, item.get("task_args") or {})
         scorers = resolved.scorer if isinstance(resolved.scorer, list) else [resolved.scorer]
         scorers = [s for s in scorers if s is not None]
         if not scorers:
@@ -191,14 +205,18 @@ def _hawk_fetch(eval_sets: str) -> str:
             return dict(json.load(r))
 
     fetched = Path(tempfile.mkdtemp(prefix="hawk_logs_"))
-    for eval_set in eval_sets.split(","):
+    sets = eval_sets.split(",")
+    for eval_set in sets:
         files = get_json(f"/view/logs/logs?log_dir={urllib.parse.quote(eval_set)}")["files"]
         names = [f["name"] for f in files if str(f.get("name", "")).endswith(".eval")]
         if not names:
             raise ValueError(f"No .eval files found in Hawk eval set {eval_set!r}.")
+        # several sets share one flat directory: prefix so same-named files
+        # cannot silently overwrite each other
+        prefix = f"{eval_set}_" if len(sets) > 1 else ""
         urls = post_json("/view/logs/log-download-urls", {"logs": names})["urls"]
         for item in urls:
-            dest = fetched / Path(item["filename"]).name
+            dest = fetched / f"{prefix}{Path(item['filename']).name}"
             with urllib.request.urlopen(item["url"], timeout=600) as r, open(dest, "wb") as f:
                 while chunk := r.read(1 << 20):
                     f.write(chunk)
@@ -285,12 +303,18 @@ def swebench_replay(
         allow_internet=allow_internet,
         sandbox_type=sandbox_type,
     )
+    return replay_task(base, exploits)
 
-    # keep only the samples we hold an exploit for, in the benchmark's own shape
+
+def replay_task(base: Task, exploits: dict[str, str]) -> Task:
+    """`base`, narrowed to the samples we hold an exploit for, solved by replay.
+
+    Uses `task_with` rather than assigning attributes on the built task, which
+    would skip Task's own normalisation of the dataset and solver. `task_with`
+    edits `base` in place and returns it, so pass a task no other caller holds
+    (`swebench_replay` builds a fresh one). The benchmark's scorer is untouched:
+    it is the judge.
+    """
     wanted = set(exploits)
     kept = [s for s in base.dataset if str(s.id) in wanted]
-    base.dataset = MemoryDataset(kept)
-
-    # the exploit is the whole solution; the benchmark's scorer stays untouched
-    base.solver = [replay_exploit(exploits)]
-    return base
+    return task_with(base, dataset=MemoryDataset(kept), solver=[replay_exploit(exploits)])

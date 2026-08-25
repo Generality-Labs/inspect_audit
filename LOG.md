@@ -272,3 +272,24 @@ exists AND the contract has tools. 5 unit + 1 docker e2e (real box exec + record
 DEFERRED: per-sample auditor construction (single-construction + runtime guard
 instead); lazy tool rebuild (regret #2 unchanged -- eager build reused, not worsened).
 NEXT: change 5 (concordance gates), change 6 (skills prose).
+
+## 2026-08-25 (17:50) -- change 5: concordance gates (the "us bucket")
+_concordance.py: prove the grade channel before accusing the benchmark.
+- resolution_report: package + task_args drift (logged vs installed/resolved) -> caveat.
+- replay_regrade: rebuild each recorded attempt via our reconstruction, regrade with
+  the real scorer, require our value == recorded. Disagreement gets a SECOND regrade to
+  tell judge noise (flips -> noise floor, never blocks) from a stable reconstruction
+  fault. classify(): validated / blocked (stable deterministic disagreement, no box =
+  cluster-1 catch) / inconclusive (box end-state unreproducible from transcript).
+- probe_concordance wired into audit_probe solver; writes /audit/concordance.json
+  (orchestrator reads on resume). Zero model spend (judge scorers cost k<=15 grades).
+- regret #3 fixed: benchmark_task_state(model=) so a loaded attempt grades under the
+  evaluated model's identity, not the auditor's.
+- regret #1 guarded: complete-but-empty contract + logs show tools => walk_failed,
+  suppress "observed but not declared" accusations, treat logs as authority.
+9 concordance unit tests + 1 docker e2e (faithful channel -> validated, artifact written).
+102 tests green (98 nodocker + 4 docker), mypy strict clean.
+DEFERRED: logless scripted-mockllm round-trip (note); admissibility labeling (synthesis
+layer); scorers threaded to probe vs re-resolved (matches _probe_grade; real-usage OK).
+NEXT: change 6 (skills prose: attempt grants, provenance discipline, mechanism field,
+read discrepancies.md/concordance.json, record-as-you-go).

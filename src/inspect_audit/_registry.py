@@ -12,8 +12,10 @@ from inspect_ai.util import sandbox
 
 from ._agent import grade_benchmark, reset_benchmark
 from ._audit import audit_task
+from ._concordance import probe_concordance
+from ._item import AUDIT_ROOT
 from ._resolve import resolve_task, resolve_task_from_log
-from ._sandbox import BENCHMARK_SERVICE
+from ._sandbox import BENCHMARK_SERVICE, has_benchmark, sample_sandbox
 
 
 @task
@@ -127,11 +129,38 @@ def audit_probe() -> Solver:
         # real solution is credited, and that reset returns the box to pristine.
         await _probe_grade(state, checks)
 
+        # concordance: prove the resolution and the grade channel against the
+        # logs -- replay recorded attempts and require our regrade to reproduce
+        # their scores. writes a machine-readable artifact the orchestrator reads.
+        await _probe_concordance(state, checks)
+
         state.store.set("probe", checks)
         state.output.completion = json.dumps(checks, indent=1)
         return state
 
     return solve
+
+
+async def _probe_concordance(state: TaskState, checks: dict[str, str]) -> None:
+    try:
+        item = (state.metadata or {}).get("audit_item") or {}
+        audited = item.get("task")
+        if audited is None:
+            checks["concordance"] = "SKIP no audited task recorded"
+            return
+        resolved = resolve_task(audited, item.get("task_args") or {})
+        scorers = resolved.scorer if isinstance(resolved.scorer, list) else [resolved.scorer]
+        scorers = [s for s in scorers if s is not None]
+        if not scorers:
+            checks["concordance"] = "SKIP no benchmark scorer"
+            return
+        has_box = has_benchmark(sample_sandbox(resolved, resolved.dataset[0]))
+        report = await probe_concordance(state, scorers, has_box=has_box)
+        checks["concordance"] = report.verdict
+        checks["concordance_reasons"] = "; ".join(report.reasons)[:200]
+        await sandbox().write_file(f"{AUDIT_ROOT}/concordance.json", report.to_json())
+    except Exception as ex:
+        checks["concordance"] = f"EXCEPTION {type(ex).__name__}: {ex}"[:200]
 
 
 async def _probe_grade(state: TaskState, checks: dict[str, str]) -> None:

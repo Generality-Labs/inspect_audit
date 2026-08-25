@@ -35,6 +35,7 @@ from inspect_ai.model import (
     ChatMessageSystem,
     ChatMessageTool,
     ChatMessageUser,
+    ModelName,
     ModelOutput,
 )
 from inspect_ai.solver import TaskState
@@ -233,7 +234,11 @@ def receipt(state: BenchmarkState) -> str:
 
 
 def benchmark_task_state(
-    current: TaskState, session: BenchmarkState, answer: str
+    current: TaskState,
+    session: BenchmarkState,
+    answer: str,
+    *,
+    model: str | None = None,
 ) -> TaskState:
     """The benchmark's own `TaskState`, for its grader to judge.
 
@@ -249,6 +254,11 @@ def benchmark_task_state(
         session: The reconstructed benchmark session.
         answer: The submission under grade, as `output.completion`. Empty
             grades the benchmark environment exactly as it stands.
+        model: Model identity to stamp on the graded state. Defaults to the
+            auditor's. Set it to the evaluated model when regrading a recorded
+            attempt, so a scorer reading `state.model` (a judge naming the model
+            under test, a model-family gate) sees the model that produced the
+            attempt rather than the auditor.
     """
     metadata = current.metadata or {}
     raw_input = metadata.get("benchmark_input") or ""
@@ -262,7 +272,7 @@ def benchmark_task_state(
         input_messages = str(raw_input)
     item = metadata.get("audit_item") or {}
     return TaskState(
-        model=current.model,
+        model=ModelName(model) if model is not None else current.model,
         sample_id=item.get("sample_id", current.sample_id),
         epoch=current.epoch,
         input=input_messages,

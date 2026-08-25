@@ -196,6 +196,14 @@ def discrepancies_doc(
         return None
 
     declared = contract.tool_names()
+    any_logged = any(logged.values())
+
+    # a complete-looking contract that recovered NO tools while the logs show
+    # some is far likelier to be a failed walk (a registry-shape change we did
+    # not parse) than a benchmark that truly declares nothing. listing every
+    # observed tool as "undeclared" would be our bug filed as the benchmark's.
+    walk_failed = contract.complete and not declared and any_logged
+
     lines = [
         "# Declared vs recorded tools",
         "",
@@ -214,6 +222,12 @@ def discrepancies_doc(
             "NOTE: part of the solver is opaque to the registry, so the declared "
             "list may be incomplete. Treat the logs as the authority on tools."
         )
+    elif walk_failed:
+        lines.append(
+            "NOTE: the registry walk recovered no tools while the logs show some -- "
+            "the walk likely failed rather than the benchmark declaring none. "
+            "Treating the logs as the authority on tools."
+        )
 
     clean = True
     for log_name in sorted(logged):
@@ -221,10 +235,14 @@ def discrepancies_doc(
         lines += ["", f"## {log_name}", "", f"Observed: {_named(observed)}"]
         undeclared = observed - declared
         unobserved = declared - observed
-        if undeclared:
+        # observed-but-not-declared is informative even for a known-incomplete
+        # contract (dynamic tools), but a failed walk has nothing to declare
+        # against, so it would list every observed tool as undeclared -- suppress.
+        if undeclared and not walk_failed:
             clean = False
             lines.append(f"- observed but not declared: {_named(undeclared)}")
-        if unobserved and contract.complete:
+        # only a complete walk can honestly claim a declared tool never ran
+        if unobserved and contract.complete and not walk_failed:
             clean = False
             lines.append(f"- declared but never reached the model: {_named(unobserved)}")
     if clean:

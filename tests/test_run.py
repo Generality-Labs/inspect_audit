@@ -20,6 +20,7 @@ from test_helpers.logs import fixture_task, run_fixture_eval
 
 from inspect_audit import audit_task
 from inspect_audit._item import AUDIT_ROOT
+from inspect_audit._registry import audit_probe
 
 pytestmark = pytest.mark.docker
 
@@ -202,3 +203,46 @@ def test_a_mirrored_tool_enacts_in_the_box_and_records_the_call(tmp_path: Path) 
     # and it was recorded as an authored call with an enacted result
     assert store.get("recorded_call") == "bash"
     assert store.get("provenance") == {"authored": 1, "enacted": 1}
+
+
+CONCORDANCE_TASK = dedent('''
+    from inspect_ai import Task, task
+    from inspect_ai.dataset import MemoryDataset, Sample
+    from inspect_ai.scorer import match
+
+    @task
+    def graded():
+        return Task(
+            name="graded",
+            dataset=MemoryDataset([Sample(id=1, input="say ANSWER", target="ANSWER")]),
+            scorer=match(),
+        )
+''')
+
+
+def test_concordance_validates_a_faithful_channel(tmp_path: Path) -> None:
+    """Replay-regrade over real logs reproduces recorded grades -> validated.
+
+    Uses a file-addressable task, as a real audit does: the probe re-resolves
+    the audited task to recover its scorer.
+    """
+    task_file = tmp_path / "graded_task.py"
+    task_file.write_text(CONCORDANCE_TASK)
+    spec = f"{task_file}@graded"
+
+    source = eval(spec, model="mockllm/model", log_dir=str(tmp_path / "source"), display="none")[0].location
+
+    log = eval(
+        audit_task(spec, source, solver=audit_probe()),
+        model="mockllm/model",
+        log_dir=str(tmp_path / "audit"),
+        display="none",
+    )[0]
+
+    assert log.status == "success", log.error
+    assert log.samples is not None
+    for sample in log.samples:
+        checks = sample.store.get("probe")
+        # match is deterministic and box-free: our regrade must reproduce every
+        # recorded grade, or the channel is unfaithful
+        assert checks["concordance"] == "validated", checks.get("concordance_reasons")

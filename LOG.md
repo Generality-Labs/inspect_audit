@@ -225,3 +225,13 @@ INCORRECT-gold -> reclassify, don't double-count]. Real exploit story collapses 
 NEXT: stage-2 aggregator agent -- cluster findings by root mechanism (not grade label), promote
 systemic findings (injectable judge = 1 finding w/ N demos), dedup cross-item overlap, weight by
 confidence, lead report with the audit-grade x model-acc corroboration.
+
+## 2026-08-25 (15:20) -- contract recovery landed (_contract.py)
+Registry introspection replaces the planned mockllm dry-run as primary tool source:
+registry_params/registry_create recover declared tools (live, schema+impl) + prompt
+from any decorated solver, zero execution. James's insight -- I'd wrongly claimed no
+declarative source existed. Diff vs logs' ModelEvent.tools staged per-cell as
+/audit/discrepancies.md (clean diff still stages: absence is a checked claim).
+complete=False marks registry-opaque solvers; incomplete contracts may not accuse
+the logs. 12 tests incl. e2e cell staging. 68 green, mypy strict clean.
+NEXT: _state.py (benchmark TaskState puppet + attempt tool), then grade rewire.

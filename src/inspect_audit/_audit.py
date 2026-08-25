@@ -16,6 +16,7 @@ from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util._sandbox.environment import SandboxEnvironmentType
 
 from ._agent import audit_agent, audit_items, item_scorer
+from ._contract import task_contract
 from ._item import ANSWER_METADATA, AUDIT_ROOT, AttemptRef, AuditItem, item_sample
 from ._resolve import resolve_task
 from ._sandbox import (
@@ -131,6 +132,7 @@ def audit_task(
     target = resolve_task(task, task_args)
     staging = _staging()
     redacted = (*ANSWER_METADATA, *(redact or ()))
+    contract = task_contract(target)
 
     # one merged compose per distinct environment: ctf-style benchmarks give every
     # sample its own compose file, most give them all one
@@ -214,6 +216,7 @@ def audit_task(
                 original_env=original_env,
                 benchmark=sandbox is None and has_benchmark(original_env),
                 redact=redacted,
+                contract=contract,
             )
         )
 

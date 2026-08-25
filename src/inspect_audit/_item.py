@@ -20,6 +20,7 @@ from inspect_ai.util import SandboxEnvironmentType, resource
 from inspect_ai.util._sandbox.environment import resolve_sandbox_environment
 from pydantic import BaseModel, Field
 
+from ._contract import SolverContract, discrepancies_doc, logged_tool_names
 from ._sandbox import BENCHMARK_SERVICE
 
 logger = getLogger(__name__)
@@ -69,10 +70,17 @@ def item_sample(
     original_env: SandboxEnvironmentType | None = None,
     benchmark: bool = False,
     redact: Collection[str] = ANSWER_METADATA,
+    contract: SolverContract | None = None,
 ) -> Sample:
     """One audited item, as an Inspect `Sample`."""
     files = item_files(
-        task, sample, item.attempts, stage=stage, original_env=original_env, redact=redact
+        task,
+        sample,
+        item.attempts,
+        stage=stage,
+        original_env=original_env,
+        redact=redact,
+        contract=contract,
     )
     # the benchmark's own sample metadata, for its grader (base_commit, the recorded
     # answer, whatever the scorer reads). carried on every item, not just the ones with
@@ -120,6 +128,7 @@ def item_files(
     stage: Path,
     original_env: SandboxEnvironmentType | None = None,
     redact: Collection[str] = ANSWER_METADATA,
+    contract: SolverContract | None = None,
 ) -> dict[str, str]:
     """Stage one item's files on the host and return its `Sample.files` mapping.
 
@@ -130,6 +139,8 @@ def item_files(
         stage: Directory to stage this item's files in.
         original_env: The audited task's own sandbox definition, staged verbatim.
         redact: Metadata keys stripped from the staged `sample.json`.
+        contract: The audited task's declared tool surface, diffed against the
+            sliced logs into `discrepancies.md`.
     """
     stage.mkdir(parents=True, exist_ok=True)
     files: dict[str, str] = {}
@@ -169,7 +180,21 @@ def item_files(
 
     # the environment's own definition and the sliced logs
     files.update(env_files(original_env, stage=stage / "env"))
-    files.update(sample_logs(attempts, stage=stage / "logs"))
+    logs = sample_logs(attempts, stage=stage / "logs")
+    files.update(logs)
+
+    # declared vs recorded tools, diffed mechanically before any model reasons.
+    # a clean diff still stages: the absence of discrepancies is a checked claim.
+    if contract is not None and logs:
+        logged: dict[str, set[str]] = {}
+        for host in logs.values():
+            try:
+                logged[Path(host).name] = logged_tool_names(host)
+            except Exception as ex:  # a diff is evidence, never worth failing a cell
+                logger.warning("could not read tools from sliced log %s: %s", host, ex)
+        doc = discrepancies_doc(contract, logged)
+        if doc is not None:
+            staged("discrepancies.md", doc)
     return files
 
 

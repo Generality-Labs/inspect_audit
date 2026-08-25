@@ -1,7 +1,6 @@
 import base64
 import json
 import mimetypes
-from copy import copy
 from pathlib import Path
 from typing import Any, cast
 
@@ -39,7 +38,7 @@ from pydantic import BaseModel, Field, JsonValue
 
 from ._item import AUDIT_ROOT
 from ._sandbox import BENCHMARK_SERVICE, restore_benchmark
-from ._state import attempt
+from ._state import BenchmarkState, attempt, benchmark_task_state
 
 SKILLS = Path(__file__).parent / "skills"
 
@@ -120,7 +119,9 @@ class AuditItemSkill(BaseModel):
     details: dict[str, str] = Field(default_factory=dict)
     """Detail fields this item requires with a verdict, as name -> description."""
     tools: list[str] = Field(default_factory=list)
-    """Benchmark tools this item grants the auditor, e.g. `grade`, `reset`."""
+    """Mutating benchmark tools this item grants the auditor, e.g. `attempt`,
+    `reset`. `grade` needs no grant: it is granted whenever the benchmark has
+    a grader."""
 
 
 def audit_items(items: list[str] | None = None) -> list[AuditItemSkill]:
@@ -291,17 +292,20 @@ def view_image() -> Tool:
 @tool
 def grade_benchmark(scorers: list[Scorer]) -> Tool:
     async def execute(answer: str) -> str:
-        """Grade the benchmark environment with the benchmark's own grader.
+        """Grade a submission with the benchmark's own grader.
 
-        Runs the real scorer against the benchmark service as it currently stands,
-        and returns its grade and explanation. Apply a candidate answer inside
-        `benchmark_bash` first (or pass one as `answer`), then grade to see whether
-        the benchmark accepts it -- turning "an answer is reachable" into "the
-        grader credits it". Anything you leave in the box persists until you reset.
+        Runs the real scorer against the benchmark's own state of the world:
+        the item's question and choices, the session built with `attempt`
+        (empty if you built none), the benchmark box as it currently stands,
+        and `answer` as the submission. Returns each scorer's grade and
+        explanation, stamped with the session's provenance mix -- how
+        synthetic the graded evidence was is part of the result.
 
         Args:
-            answer: Submission to grade as the attempt's answer. Pass an empty
-                string to grade the benchmark environment exactly as it stands.
+            answer: Submission to grade as the attempt's completion. Pass an
+                empty string when the submission is the state of the box
+                (apply it with `benchmark_bash` first) rather than a text
+                answer.
         """
         if not scorers:
             raise ToolError("This benchmark exposes no grader to grade with.")
@@ -309,24 +313,17 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
         if state is None:
             raise ToolError("Grading is only available while auditing a sample.")
 
-        graded = copy(state)
-        if answer:
-            graded.output = copy(state.output)
-            graded.output.completion = answer
-
-        # present the benchmark's own sample to its grader: its metadata (base_commit,
-        # target files, whatever the scorer reads) rather than the audit sample's
-        graded.metadata = {
-            **(state.metadata or {}),
-            **((state.metadata or {}).get("benchmark_metadata") or {}),
-        }
+        # the grader judges the benchmark's own TaskState, never the audit's:
+        # its question, its choices, its metadata, the reconstructed session
+        session = store_as(BenchmarkState)
+        graded = benchmark_task_state(state, session, answer)
 
         # the benchmark's scorer calls sandbox() expecting the eval's own box; in the
         # auditor's two-box world that default is us, so aim it at the benchmark
         results: list[dict[str, Any]] = []
         with sandbox_default(BENCHMARK_SERVICE):
             for scorer in scorers:
-                score = await scorer(graded, state.target)
+                score = await scorer(graded, graded.target)
                 if score is not None:
                     results.append(
                         {
@@ -335,7 +332,16 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
                             "explanation": score.explanation,
                         }
                     )
-        return json.dumps(results if len(results) != 1 else results[0])
+        return json.dumps(
+            {
+                "scores": results if len(results) != 1 else results[0],
+                "graded": {
+                    "session": session.seeded,
+                    "provenance": session.provenance_mix(),
+                    "box_version": session.box_version,
+                },
+            }
+        )
 
     return execute
 
@@ -428,24 +434,27 @@ def audit_agent(
         record_verdict(scoped),
     ]
 
-    # benchmark tools are granted only when a scoped item's skill asks for them,
-    # so a passive item keeps the box observe-only
     # a vision item needs to be looked at, and measured; both are useless elsewhere
     if media:
         tools += [view_image(), python(timeout=180)]
 
+    # grading with the real scorer is a universal affordance, granted whenever
+    # the benchmark has one -- like inspect grants the evaluated agent its
+    # grading. the MUTATING tools stay gated on a scoped item's skill asking
+    # for them, so a passive item keeps the box and the session observe-only.
+    scorer_list = (
+        benchmark_scorers
+        if isinstance(benchmark_scorers, list)
+        else [benchmark_scorers]
+        if benchmark_scorers is not None
+        else []
+    )
+    if scorer_list:
+        tools.append(grade_benchmark(scorer_list))
+
     granted = {name for item in scoped for name in item.tools}
     if "attempt" in granted:
         tools.append(attempt(AUDIT_ROOT))
-    if "grade" in granted:
-        scorer_list = (
-            benchmark_scorers
-            if isinstance(benchmark_scorers, list)
-            else [benchmark_scorers]
-            if benchmark_scorers is not None
-            else []
-        )
-        tools.append(grade_benchmark(scorer_list))
     if "reset" in granted:
         tools.append(reset_benchmark())
 

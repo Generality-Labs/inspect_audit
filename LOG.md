@@ -245,3 +245,15 @@ logs out of the container (cell = source of truth). complete("") = box-graded
 attempt. _item.py now carries benchmark_input/benchmark_choices in metadata for
 grade's state rebuild (change 3). attempt gated on `tools: [attempt]`; prompt
 threading into the tool deferred to change 4. 77 green, mypy strict clean.
+
+## 2026-08-25 (16:10) -- grade rewire landed (cluster-1 fix)
+grade_benchmark no longer copies the auditor's TaskState: benchmark_task_state
+builds the graded state from the benchmark's side (question, choices, metadata,
+session messages, attempt store), mirroring inspect's own score_async rebuild.
+Fixes: judge templates got the audit prompt as the question; choice() got no
+choices; transcript/store scorers got the audit's. Bare grade() = empty
+completion (compat break, James's call). grade now default-granted whenever the
+benchmark has scorers (mutating tools stay frontmatter-gated). Result shape now
+{scores, graded:{session, provenance, box_version}} -- the receipt stamp.
+7 regression tests incl. a real-eval e2e (local sandbox, files stripped).
+84 green, mypy strict clean.

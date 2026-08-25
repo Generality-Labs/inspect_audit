@@ -37,6 +37,7 @@ from inspect_ai.model import (
     ChatMessageUser,
     ModelOutput,
 )
+from inspect_ai.solver import TaskState
 from inspect_ai.solver._task_state import sample_state
 from inspect_ai.tool import Tool, ToolCall, ToolError, tool
 from inspect_ai.util import StoreModel, sandbox, store_as
@@ -226,6 +227,50 @@ def receipt(state: BenchmarkState) -> str:
             "completed": state.completed,
             "box_version": state.box_version,
         }
+    )
+
+
+def benchmark_task_state(
+    current: TaskState, session: BenchmarkState, answer: str
+) -> TaskState:
+    """The benchmark's own `TaskState`, for its grader to judge.
+
+    Built from the benchmark's side of everything -- its input, choices and
+    metadata carried on the audit sample, and the reconstructed session --
+    the way `inspect score` rebuilds states from a log. The audit's own
+    state supplies nothing but the target and the model name: a grader
+    reading the question, the transcript or the store must see the
+    benchmark's, never the audit's.
+
+    Args:
+        current: The audit's `TaskState` (for target and ids).
+        session: The reconstructed benchmark session.
+        answer: The submission under grade, as `output.completion`. Empty
+            grades the benchmark environment exactly as it stands.
+    """
+    metadata = current.metadata or {}
+    raw_input = metadata.get("benchmark_input") or ""
+    input_messages: str | list[ChatMessage]
+    if isinstance(raw_input, list):
+        input_messages = [
+            AttemptMessage.model_validate({"provenance": "real", "message": m}).message
+            for m in raw_input
+        ]
+    else:
+        input_messages = str(raw_input)
+    item = metadata.get("audit_item") or {}
+    return TaskState(
+        model=current.model,
+        sample_id=item.get("sample_id", current.sample_id),
+        epoch=current.epoch,
+        input=input_messages,
+        target=current.target,
+        choices=metadata.get("benchmark_choices"),
+        messages=session.chat_messages(),
+        output=ModelOutput.from_content(model=AUTHORED_MODEL, content=answer),
+        completed=True,
+        metadata=dict(metadata.get("benchmark_metadata") or {}),
+        store=dict(session.attempt_store),
     )
 
 

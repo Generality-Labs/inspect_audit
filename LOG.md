@@ -235,3 +235,13 @@ declarative source existed. Diff vs logs' ModelEvent.tools staged per-cell as
 complete=False marks registry-opaque solvers; incomplete contracts may not accuse
 the logs. 12 tests incl. e2e cell staging. 68 green, mypy strict clean.
 NEXT: _state.py (benchmark TaskState puppet + attempt tool), then grade rewire.
+
+## 2026-08-25 (15:45) -- _state.py landed: the benchmark session puppet
+BenchmarkState (StoreModel): provenance-tagged messages (real/enacted/authored),
+output, attempt_store, box_version. Pure ops (seed_new/seed_from_sample/append/
+edit/truncate/complete) + `attempt` command-enum tool (new|load|append|edit|
+truncate|complete), mirrored to /audit/attempt/ per mutation. load reads sliced
+logs out of the container (cell = source of truth). complete("") = box-graded
+attempt. _item.py now carries benchmark_input/benchmark_choices in metadata for
+grade's state rebuild (change 3). attempt gated on `tools: [attempt]`; prompt
+threading into the tool deferred to change 4. 77 green, mypy strict clean.

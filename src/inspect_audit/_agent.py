@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field, JsonValue
 
 from ._item import AUDIT_ROOT
 from ._sandbox import BENCHMARK_SERVICE, restore_benchmark
+from ._state import attempt
 
 SKILLS = Path(__file__).parent / "skills"
 
@@ -434,6 +435,8 @@ def audit_agent(
         tools += [view_image(), python(timeout=180)]
 
     granted = {name for item in scoped for name in item.tools}
+    if "attempt" in granted:
+        tools.append(attempt(AUDIT_ROOT))
     if "grade" in granted:
         scorer_list = (
             benchmark_scorers

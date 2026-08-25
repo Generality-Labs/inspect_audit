@@ -89,6 +89,13 @@ def item_sample(
     metadata: dict[str, Any] = {
         "audit_item": item.model_dump(),
         "benchmark_metadata": dict(sample.metadata or {}),
+        # the original session's raw material, so the benchmark's own TaskState can
+        # be rebuilt at grading time: a grader must never see the audit's input,
+        # choices or messages in place of the benchmark's
+        "benchmark_input": sample.input
+        if isinstance(sample.input, str)
+        else [message.model_dump(exclude_none=True) for message in sample.input],
+        "benchmark_choices": list(sample.choices) if sample.choices else None,
     }
 
     # the benchmark's environment is image plus per-sample state: forward the

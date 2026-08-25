@@ -293,3 +293,20 @@ DEFERRED: logless scripted-mockllm round-trip (note); admissibility labeling (sy
 layer); scorers threaded to probe vs re-resolved (matches _probe_grade; real-usage OK).
 NEXT: change 6 (skills prose: attempt grants, provenance discipline, mechanism field,
 read discrepancies.md/concordance.json, record-as-you-go).
+
+## 2026-08-25 (16:25) -- two diagnostic skills + change-6 partial
+Added approach-census (route census: CONVERGENT/DIVERGENT/STALLED) and
+failure-attribution (CAPABILITY/ARTEFACT/MIXED/UNCLEAR -- the honest counterweight
+that can say "benchmark fine, models can't do it"). Reuses approach_census.py route
+vocab. Read Anthropic skill-authoring guide + skill-creator; kept collection house
+style (noun names, imperative desc) over gerund pref per consistency guidance.
+James lukewarm on them -> test empirically. change-6 PARTIAL: done ground-truth-access
+benchmark_bash->audit_probe rename fix (was a real bug from change 4), red-teaming
+body migrated to attempt+grade workflow w/ provenance + anti-laundering (from prior
+SWE-bench gold-leak false positive). STILL TODO change 6: AUDIT_PROMPT (workflow,
+provenance, record-as-you-go, discrepancies pointer), answer-format grant+line,
+other-findings discrepancies line.
+NOTE: a parallel session's _report.py/report_skills (layer-2 synthesizer) appeared
+then was reverted; tree clean without it.
+NEXT: finish change-6 prose; free real-benchmark audit_probe derisker; then paid
+audit of a subset of integrity bench (pablos).

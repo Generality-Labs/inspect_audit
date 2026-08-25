@@ -5,6 +5,7 @@ description: Establish whether the packaging of answers corrupted the measuremen
   to follow. Investigate the scorer's parsing before judging any attempt.
 metadata:
   grades: [PENALISED, AMBIGUOUS, SOUND]
+  tools: [attempt]
   details:
     instances: every formatting casualty, as {address, submitted, expected,
       content_right}
@@ -29,9 +30,10 @@ this defect lives.
 
 Examine the attempts graded incorrect. For each, separate the content from the
 packaging: would this answer's substance have scored correct if packaged as the
-scorer expects? Where you can, restate the same content in the accepted shape
-and say whether it passes. Record every casualty as an instance with the
-submitted text and the expected shape, verbatim.
+scorer expects? Do not leave that a guess where you can settle it: build an
+attempt with the same content in the accepted shape (`attempt`) and `grade` it,
+so "would have passed" becomes a demonstration. Record every casualty as an
+instance with the submitted text and the expected shape, verbatim.
 
 Address transcripts using the log's exact filename as it appears in
 `/audit/logs`. When in doubt, record the instance -- flagged instances get

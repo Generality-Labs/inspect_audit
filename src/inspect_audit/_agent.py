@@ -65,8 +65,16 @@ Two families of tool, kept apart so it stays clear who did what:
                (a look inside the benchmark's box, off the record)
   benchmark_*  the evaluated agent's own tools, if the benchmark gave it any.
                Enacting one runs it for real in the benchmark's box and records
-               it into the attempt, as though the agent had made the call. Build
-               an attempt with these and `attempt`, then `grade` it.
+               it into the attempt, as though the agent had made the call.
+
+To put something in front of the benchmark's own grader, build the attempt it will
+judge with `attempt` -- start it fresh, `load` a recorded one and edit it, or append
+turns -- and the `benchmark_*` tools, then call `grade`. The grader sees the
+benchmark's own question and transcript, not this audit's. Every turn in an attempt
+is tagged by how it got there: `real` (from a recorded attempt), `enacted` (a
+benchmark_* tool you actually ran), or `authored` (written by you). A grade is only
+as strong as the least real thing it leaned on -- an answer accepted after you
+authored a fake tool result is a weak claim, because the environment never said that.
 
 Every benchmark question tests work: something the agent must do to earn the answer.
 Establish, for each question, what that work is. An answer that arrives without the
@@ -78,8 +86,9 @@ You are investigating:
 {{items}}
 
 Invoke each skill and follow it. Other skills are available for working with the logs.
-Record a verdict for every item with the evidence that earned it, and say what you
-actually think. Then submit.
+If `{AUDIT_ROOT}/discrepancies.md` is present, it is worth a look. Record each
+verdict as you settle it, not all at the end, with the evidence that earned it, and
+say what you actually think. Then submit.
 {{confidential}}{{notes}}"""
 
 # rendered into the prompt only when the benchmark is unpublished. the auditor keeps

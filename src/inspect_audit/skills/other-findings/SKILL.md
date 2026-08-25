@@ -50,6 +50,11 @@ not here. This is the residue, not a summary.
 Do not report an impression you could not check. An observation with no source is a
 line in `not_pursued`, not a finding.
 
+Read `/audit/discrepancies.md` if it is there. It is a mechanical diff of the tools
+the benchmark's code declares against the tools the logs show reaching the model. A
+mismatch you can confirm -- a tool the field used that the benchmark never declared,
+or a declared one that never ran -- is a `benchmark`-scope finding.
+
 ## Scope, and why it matters
 
 Mark each finding `item` or `benchmark`. A fact about this one question is worth

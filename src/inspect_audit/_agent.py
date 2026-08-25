@@ -36,9 +36,10 @@ from inspect_ai.tool._tools._skill import read_skills
 from inspect_ai.util import StoreModel, sandbox, sandbox_default, store_as
 from pydantic import BaseModel, Field, JsonValue
 
+from ._contract import SolverContract
 from ._item import AUDIT_ROOT
 from ._sandbox import BENCHMARK_SERVICE, restore_benchmark
-from ._state import BenchmarkState, attempt, benchmark_task_state
+from ._state import BenchmarkState, attempt, benchmark_task_state, benchmark_tools
 
 SKILLS = Path(__file__).parent / "skills"
 
@@ -57,7 +58,15 @@ every recorded attempt at it by many models.
   {AUDIT_ROOT}/env/              how this container was built
 
 The benchmark's own code is installed here, so read the real source in place. You have
-a shell in this container, with curl and the internet.
+`audit_bash`, a shell in this container, with curl and the internet.
+
+Two families of tool, kept apart so it stays clear who did what:
+  audit_*      your own instruments -- `audit_bash` (this box) and `audit_probe`
+               (a look inside the benchmark's box, off the record)
+  benchmark_*  the evaluated agent's own tools, if the benchmark gave it any.
+               Enacting one runs it for real in the benchmark's box and records
+               it into the attempt, as though the agent had made the call. Build
+               an attempt with these and `attempt`, then `grade` it.
 
 Every benchmark question tests work: something the agent must do to earn the answer.
 Establish, for each question, what that work is. An answer that arrives without the
@@ -382,6 +391,81 @@ def submit_audit(items: list[AuditItemSkill]) -> Tool:
     return execute
 
 
+def auditor_tools(
+    scoped: list[AuditItemSkill],
+    *,
+    benchmark_scorers: Scorer | list[Scorer] | None = None,
+    media: bool = False,
+    contract: SolverContract | None = None,
+    benchmark: bool = False,
+) -> list[Tool]:
+    """The auditor's tools for one run, in two namespaces.
+
+    `audit_*` are the auditor's own instruments; `benchmark_*` mirror the
+    evaluated agent's tools. `grade` is granted whenever the benchmark has a
+    scorer; the mutating tools (`attempt`, `reset`) stay gated on a scoped
+    item's skill asking for them, so a passive item keeps the box and the
+    session observe-only.
+
+    Args:
+        scoped: The audit items in scope for this run.
+        benchmark_scorers: The audited task's scorer(s), for `grade`.
+        media: Whether to grant the image tools.
+        contract: The audited task's declared surface, for mirrored tools and
+            the reconstructed prompt.
+        benchmark: Whether a benchmark environment exists to mirror tools into.
+    """
+    skills = [str(path) for path in sorted(SKILLS.iterdir()) if path.is_dir()]
+
+    # two namespaces, kept distinct so provenance stays unambiguous:
+    #   audit_*     -- your own instruments (your box, an off-record probe of theirs)
+    #   benchmark_* -- the evaluated agent's own tools, mirrored, recorded when enacted
+    tools: list[Tool] = [
+        ToolDef(bash(timeout=180), name="audit_bash").as_tool(),
+        ToolDef(
+            bash(timeout=180, sandbox=BENCHMARK_SERVICE),
+            name="audit_probe",
+            description=(
+                "Look inside the environment the benchmark itself ran in, exactly as "
+                "the evaluated agent saw it, WITHOUT recording anything as the agent's "
+                "doing. Anything you download, write or install here is evidence about "
+                "you, not about the environment. To act AS the agent -- building the "
+                "attempt a grader will judge -- use the benchmark_* tools instead."
+            ),
+        ).as_tool(),
+        skill(skills),
+        record_verdict(scoped),
+    ]
+
+    # a vision item needs to be looked at, and measured; both are useless elsewhere
+    if media:
+        tools += [view_image(), python(timeout=180)]
+
+    # the evaluated agent's own tools, mirrored: enacting one runs it for real in
+    # the benchmark box and records the call into the attempt. only with a box to
+    # run them in -- and only the tools we could rebuild from the registry
+    if benchmark and contract is not None and contract.tools:
+        tools += benchmark_tools(contract.tools, AUDIT_ROOT)
+
+    scorer_list = (
+        benchmark_scorers
+        if isinstance(benchmark_scorers, list)
+        else [benchmark_scorers]
+        if benchmark_scorers is not None
+        else []
+    )
+    if scorer_list:
+        tools.append(grade_benchmark(scorer_list))
+
+    granted = {name for item in scoped for name in item.tools}
+    if "attempt" in granted:
+        tools.append(attempt(AUDIT_ROOT, prompt=contract.prompt if contract else None))
+    if "reset" in granted:
+        tools.append(reset_benchmark())
+
+    return tools
+
+
 @agent
 def audit_agent(
     items: list[str] | None = None,
@@ -391,6 +475,8 @@ def audit_agent(
     reasoning_effort: str | None = None,
     notes: str | None = None,
     confidential: bool = False,
+    contract: SolverContract | None = None,
+    benchmark: bool = False,
 ) -> Agent:
     """An auditor: a react loop with the audit skills and a shell in the item's sandbox.
 
@@ -409,6 +495,10 @@ def audit_agent(
         confidential: The benchmark is unpublished. Instructs the auditor not to
             transmit item content off the box -- it keeps its shell and its internet,
             but must not paste the item into a search query or any other request.
+        contract: The audited task's declared interaction surface. Its tools are
+            mirrored as `benchmark_*` for the auditor to enact against the box,
+            and its prompt seeds `attempt(new)`.
+        benchmark: Whether a benchmark environment exists to mirror tools into.
     """
     # resolve the model object here so a generate config binds to it -- react
     # re-resolves a bare string without one, so the config would be dropped
@@ -423,46 +513,13 @@ def audit_agent(
     scoped = audit_items(items)
     named = "\n".join(f"- `{item.name}`: {item.description}" for item in scoped)
 
-    skills = [str(path) for path in sorted(SKILLS.iterdir()) if path.is_dir()]
-
-    tools = [
-        bash(timeout=180),
-        ToolDef(
-            bash(timeout=180, sandbox=BENCHMARK_SERVICE),
-            name="benchmark_bash",
-            description=(
-                "Run a command inside the environment the benchmark itself ran in, "
-                "exactly as the evaluated agent saw it. Anything you download, write "
-                "or install here is evidence about you, not about the environment."
-            ),
-        ).as_tool(),
-        skill(skills),
-        record_verdict(scoped),
-    ]
-
-    # a vision item needs to be looked at, and measured; both are useless elsewhere
-    if media:
-        tools += [view_image(), python(timeout=180)]
-
-    # grading with the real scorer is a universal affordance, granted whenever
-    # the benchmark has one -- like inspect grants the evaluated agent its
-    # grading. the MUTATING tools stay gated on a scoped item's skill asking
-    # for them, so a passive item keeps the box and the session observe-only.
-    scorer_list = (
-        benchmark_scorers
-        if isinstance(benchmark_scorers, list)
-        else [benchmark_scorers]
-        if benchmark_scorers is not None
-        else []
+    tools = auditor_tools(
+        scoped,
+        benchmark_scorers=benchmark_scorers,
+        media=media,
+        contract=contract,
+        benchmark=benchmark,
     )
-    if scorer_list:
-        tools.append(grade_benchmark(scorer_list))
-
-    granted = {name for item in scoped for name in item.tools}
-    if "attempt" in granted:
-        tools.append(attempt(AUDIT_ROOT))
-    if "reset" in granted:
-        tools.append(reset_benchmark())
 
     return react(
         name="auditor",

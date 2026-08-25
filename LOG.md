@@ -257,3 +257,18 @@ benchmark has scorers (mutating tools stay frontmatter-gated). Result shape now
 {scores, graded:{session, provenance, box_version}} -- the receipt stamp.
 7 regression tests incl. a real-eval e2e (local sandbox, files stripped).
 84 green, mypy strict clean.
+
+## 2026-08-25 (17:05) -- change 4: mirrored tools + namespace split
+benchmark_tools() remounts the contract's rebuilt ToolDefs as benchmark_<name>,
+keeping the agent's schema; enacting one runs it under sandbox_default(benchmark)
+(the grade redirect) and records authored-call + enacted-result into the puppet,
+mirrored to /audit/attempt/. Submit-shaped tools (submit/finish/...) delegate to
+complete instead of executing. Namespaces: audit_bash (our box), audit_probe
+(off-record look into their box, was benchmark_bash) vs benchmark_* (mirrored,
+recording). Prompt from the contract threads into attempt(new). auditor_tools()
+extracted from audit_agent (testable, cleaner). Mounted only when a benchmark box
+exists AND the contract has tools. 5 unit + 1 docker e2e (real box exec + record).
+92 tests green (89 nodocker + 3 docker), mypy strict clean.
+DEFERRED: per-sample auditor construction (single-construction + runtime guard
+instead); lazy tool rebuild (regret #2 unchanged -- eager build reused, not worsened).
+NEXT: change 5 (concordance gates), change 6 (skills prose).

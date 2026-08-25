@@ -146,3 +146,59 @@ def test_the_benchmark_box_receives_the_samples_own_state(tmp_path: Path) -> Non
     assert log.samples is not None
     content = log.samples[0].store.get("content")
     assert content == "the sample's own state" * 2, content
+
+
+def test_a_mirrored_tool_enacts_in_the_box_and_records_the_call(tmp_path: Path) -> None:
+    """A benchmark_* tool runs for real in the benchmark box and lands in the attempt."""
+    from inspect_ai import Task
+    from inspect_ai.dataset import Sample
+    from inspect_ai.scorer import match
+    from inspect_ai.solver import generate
+    from inspect_ai.tool import ToolDef, bash
+
+    from inspect_audit._state import BenchmarkState, benchmark_tools
+
+    compose = tmp_path / "compose.yaml"
+    compose.write_text(
+        "services:\n  default:\n    image: python:3.12-slim\n"
+        "    command: 'sleep infinity'\n    working_dir: /work\n"
+    )
+    bench = Task(
+        name="probe/bench",
+        dataset=[Sample(input="q", target="a", id="one", sandbox=("docker", str(compose)))],
+        solver=generate(),
+        scorer=match(),
+    )
+
+    @solver
+    def enact_probe() -> Solver:
+        async def solve(state: TaskState, generate: Generate) -> TaskState:
+            # the mirrored bash tool, exactly as the auditor would hold it
+            (mirrored,) = benchmark_tools([ToolDef(bash())], AUDIT_ROOT)
+            await mirrored(command="echo enacted > /work/proof.txt")
+
+            proof = await sandbox("benchmark").exec(["cat", "/work/proof.txt"], timeout=60)
+            state.store.set("in_box", proof.stdout.strip() if proof.success else f"FAIL {proof.stderr}")
+
+            session = state.store_as(BenchmarkState)
+            state.store.set("provenance", session.provenance_mix())
+            state.store.set("recorded_call", session.messages[0].message.tool_calls[0].function)
+            return state
+
+        return solve
+
+    log = eval(
+        audit_task(bench, samples=["one"], solver=enact_probe()),
+        model="mockllm/model",
+        log_dir=str(tmp_path / "audit"),
+        display="none",
+    )[0]
+
+    assert log.status == "success", log.error
+    assert log.samples is not None
+    store = log.samples[0].store
+    # the tool really ran in the benchmark box
+    assert store.get("in_box") == "enacted"
+    # and it was recorded as an authored call with an enacted result
+    assert store.get("recorded_call") == "bash"
+    assert store.get("provenance") == {"authored": 1, "enacted": 1}

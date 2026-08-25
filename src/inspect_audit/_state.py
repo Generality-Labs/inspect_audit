@@ -26,7 +26,7 @@ is why grades stamp the full mix rather than a single flag.
 import json
 import tempfile
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from inspect_ai.log import EvalSample, read_eval_log_samples
 from inspect_ai.model import (
@@ -39,9 +39,11 @@ from inspect_ai.model import (
 )
 from inspect_ai.solver import TaskState
 from inspect_ai.solver._task_state import sample_state
-from inspect_ai.tool import Tool, ToolCall, ToolError, tool
-from inspect_ai.util import StoreModel, sandbox, store_as
+from inspect_ai.tool import Tool, ToolCall, ToolDef, ToolError, ToolResult, tool
+from inspect_ai.util import StoreModel, sandbox, sandbox_default, store_as
 from pydantic import BaseModel, Field, JsonValue
+
+from ._sandbox import BENCHMARK_SERVICE
 
 Provenance = Literal["real", "enacted", "authored"]
 
@@ -274,6 +276,36 @@ def benchmark_task_state(
     )
 
 
+def record_enacted(
+    state: BenchmarkState, name: str, arguments: dict[str, JsonValue], result: str
+) -> None:
+    """Record one executed benchmark tool call in the session.
+
+    The call is a turn the auditor chose to make -- `authored`, since an agent
+    could have made it -- and the result is what the box really returned, so it
+    is `enacted`. Splitting them keeps a forged call sequence honestly separable
+    from real environment output.
+
+    Args:
+        state: The session to append to.
+        name: The benchmark tool that was called.
+        arguments: The arguments it was called with.
+        result: The tool's result, as text.
+    """
+    call_id = f"enacted-{len(state.messages)}"
+    call = ChatMessageAssistant(
+        content="",
+        tool_calls=[ToolCall(id=call_id, function=name, arguments=dict(arguments))],
+        model=AUTHORED_MODEL,
+    )
+    output = ChatMessageTool(content=result, tool_call_id=call_id, function=name)
+    state.messages = [
+        *state.messages,
+        AttemptMessage(provenance="authored", message=call),
+        AttemptMessage(provenance="enacted", message=output),
+    ]
+
+
 ATTEMPT_DIR = "attempt"
 
 
@@ -387,6 +419,90 @@ def attempt(root: str, prompt: str | None = None) -> Tool:
         return receipt(state)
 
     return execute
+
+
+# names a recovered tool that ends the attempt rather than acting on the box:
+# in a react/basic_agent scaffold this is the submit tool, and enacting it means
+# fixing the completion, not running it
+_SUBMIT_NAMES = frozenset({"submit", "submit_answer", "complete", "finish"})
+
+
+def benchmark_tools(defs: list[ToolDef], root: str) -> list[Tool]:
+    """Mirror the evaluated agent's own tools for the auditor to enact.
+
+    Each declared tool is remounted as `benchmark_<name>`, keeping the original
+    schema, so the auditor holds exactly what the agent held. Calling one runs
+    the real implementation against the benchmark box (the `sandbox_default`
+    redirect that `grade` uses) and records the call and its result into the
+    session, so enacting a tool builds the same transcript a real rollout would.
+    A submit-shaped tool ends the attempt via `complete` instead of executing.
+
+    Args:
+        defs: The benchmark's declared tools, rebuilt from the registry.
+        root: The cell root (`/audit`).
+    """
+    return [
+        _submit_tool(d, root) if d.name in _SUBMIT_NAMES else _mirror_tool(d, root)
+        for d in defs
+    ]
+
+
+def _mirror_tool(d: ToolDef, root: str) -> Tool:
+    async def execute(**kwargs: JsonValue) -> ToolResult:
+        try:
+            sandbox(BENCHMARK_SERVICE)
+        except (ProcessLookupError, ValueError):
+            raise ToolError(
+                f"{d.name!r} runs in the benchmark environment, which this item "
+                "does not have."
+            ) from None
+        with sandbox_default(BENCHMARK_SERVICE):
+            result = cast(ToolResult, await d.tool(**kwargs))
+        session = store_as(BenchmarkState)
+        record_enacted(session, d.name, dict(kwargs), _as_text(result))
+        await mirror_state(session, root)
+        return result
+
+    return ToolDef(
+        execute,
+        name=f"benchmark_{d.name}",
+        description=(
+            f"The evaluated agent's `{d.name}` tool, run for real in the benchmark "
+            "environment and recorded into the attempt. " + (d.description or "")
+        ).strip(),
+        parameters=d.parameters,
+    ).as_tool()
+
+
+def _submit_tool(d: ToolDef, root: str) -> Tool:
+    # the agent's terminal action: enacting it fixes the answer and ends the
+    # attempt, the way `complete` does -- running it against the box would do
+    # nothing, since submit is scaffold loop control, not a real tool
+    async def execute(answer: str = "") -> str:
+        session = store_as(BenchmarkState)
+        complete_attempt(session, answer)
+        await mirror_state(session, root)
+        return receipt(session)
+
+    return ToolDef(
+        execute,
+        name=f"benchmark_{d.name}",
+        description=(
+            f"The evaluated agent's `{d.name}` tool: ends the attempt with the "
+            "given answer, exactly as submitting did for the agent."
+        ),
+        parameters={"answer": "The attempt's final answer."},
+    ).as_tool()
+
+
+def _as_text(result: ToolResult) -> str:
+    """A tool result as text, for the recorded tool message and the mirror."""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, list):
+        parts = [c.text for c in result if c.type == "text"]
+        return "\n".join(parts) if parts else json.dumps(result, default=str)
+    return str(result)
 
 
 async def _read_sliced(root: str, log: str, epoch: int) -> EvalSample:

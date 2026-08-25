@@ -194,7 +194,7 @@ def audit_task(
 
     # stage one audit sample per item
     audit_samples: list[Sample] = []
-    any_media = False
+    any_benchmark = False
     for sample_id, sample in zip(ids, dataset, strict=True):
         if sample_id not in in_scope:
             continue
@@ -205,6 +205,8 @@ def audit_task(
             attempts=by_sample.get(str(sample_id), []),
         )
         original_env = sample_sandbox(target, sample)
+        benchmark = sandbox is None and has_benchmark(original_env)
+        any_benchmark = any_benchmark or benchmark
         audit_samples.append(
             item_sample(
                 target,
@@ -214,7 +216,7 @@ def audit_task(
                 stage=staging / str(sample_id),
                 sandbox=environment(sample),
                 original_env=original_env,
-                benchmark=sandbox is None and has_benchmark(original_env),
+                benchmark=benchmark,
                 redact=redacted,
                 contract=contract,
             )
@@ -239,6 +241,8 @@ def audit_task(
                 confidential=confidential,
                 media=any_media,
                 benchmark_scorers=target.scorer,
+                contract=contract,
+                benchmark=any_benchmark,
             )
         ),
         scorer=[item_scorer(item.name) for item in audit_items(items)],

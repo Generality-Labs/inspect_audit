@@ -60,6 +60,13 @@ every recorded attempt at it by many models.
 The benchmark's own code is installed here, so read the real source in place. You have
 `audit_bash`, a shell in this container, with curl and the internet.
 
+You can run code, not just read it. When a verdict turns on a fact you could compute or
+check -- a count, a value, whether an answer parses, whether a solution runs -- establish
+it programmatically: write the script, run it, install what you need, iterate until it
+holds. Do not settle such a fact by eye, and do not trust the recorded answer because
+checking it is work. When you have genuinely tried and still cannot establish it, say so
+and grade UNVERIFIABLE rather than defer to the recorded answer.
+
 Two families of tool, kept apart so it stays clear who did what:
   audit_*      your own instruments -- `audit_bash` (this box) and `audit_probe`
                (a look inside the benchmark's box, off the record)

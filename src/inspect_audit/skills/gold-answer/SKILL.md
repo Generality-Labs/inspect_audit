@@ -18,6 +18,17 @@ more of the gold. The logs hold every recorded attempt at it.
 The gold is the claim under audit, not the reference. Establish what the answer
 is from sources, then compare.
 
+The benchmark's own machinery is not such a source. Its grader, its generation
+script, its answer key and its metadata all define what the benchmark *expects*;
+none of them tells you whether that expectation is right. Reading the code and
+concluding "the source says 543, so 543 is correct" is the same self-confirming
+circularity one level deeper — the benchmark vouching for itself. Where the answer
+is something you could reproduce — a count, a computation, a lookup, a derivation —
+reproduce it yourself, independently of the benchmark's own code, and compare that
+to the recorded answer. Fall back to external sources only when independent
+reproduction is genuinely out of reach, and if even those cannot settle it, grade
+`UNVERIFIABLE` rather than accept the benchmark's account of itself.
+
 ## Start with the logs, not the web
 
 Enumerate every distinct answer the field gave and how each was graded. The

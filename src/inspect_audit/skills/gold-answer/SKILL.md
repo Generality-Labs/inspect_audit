@@ -64,7 +64,10 @@ Grade one of:
 
 - `CORRECT` — it is the answer, and you tried to break it and failed
 - `INCORRECT` — the evidence contradicts it
-- `ALTERNATIVES` — several answers are independently defensible
+- `ALTERNATIVES` — several answers are independently defensible *and the grader
+  credits only one*, so a correct answer is marked wrong. Where the grader instead
+  credits every answer that meets its criterion (a functional grader that accepts
+  any valid solution), multiplicity is the design, not a fault — grade `CORRECT`.
 - `UNVERIFIABLE` — the evidence cannot settle it
 
 Weigh a source by what it is, not by who cited it. A **primary record for the

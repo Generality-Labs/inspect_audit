@@ -10,17 +10,17 @@ from typing import Any
 from inspect_ai import Task
 from inspect_ai._eval.task.util import task_run_dir
 from inspect_ai.dataset import Sample
+from inspect_ai.event import ModelEvent
 from inspect_ai.log import (
-    EvalSample,
     read_eval_log,
-    read_eval_log_sample,
+    read_eval_log_samples_by_id,
     write_eval_log,
 )
 from inspect_ai.util import SandboxEnvironmentType, resource
 from inspect_ai.util._sandbox.environment import resolve_sandbox_environment
 from pydantic import BaseModel, Field
 
-from ._contract import SolverContract, discrepancies_doc, logged_tool_names
+from ._contract import SolverContract, discrepancies_doc
 from ._sandbox import BENCHMARK_SERVICE
 
 logger = getLogger(__name__)
@@ -187,32 +187,35 @@ def item_files(
 
     # the environment's own definition and the sliced logs
     files.update(env_files(original_env, stage=stage / "env"))
-    logs = sample_logs(attempts, stage=stage / "logs")
+    logs, logged = sample_logs(attempts, stage=stage / "logs")
     files.update(logs)
 
     # declared vs recorded tools, diffed mechanically before any model reasons.
     # a clean diff still stages: the absence of discrepancies is a checked claim.
+    # `logged` is computed from the in-memory samples in sample_logs -- no re-read.
     if contract is not None and logs:
-        logged: dict[str, set[str]] = {}
-        for host in logs.values():
-            try:
-                logged[Path(host).name] = logged_tool_names(host)
-            except Exception as ex:  # a diff is evidence, never worth failing a cell
-                logger.warning("could not read tools from sliced log %s: %s", host, ex)
         doc = discrepancies_doc(contract, logged)
         if doc is not None:
             staged("discrepancies.md", doc)
     return files
 
 
-def sample_logs(attempts: list[AttemptRef], *, stage: Path) -> dict[str, str]:
+def sample_logs(
+    attempts: list[AttemptRef], *, stage: Path
+) -> tuple[dict[str, str], dict[str, set[str]]]:
     """Write one real `.eval` per source log, sliced to this item's attempts.
 
     Headers are kept verbatim so the auditor can check how attempts were graded and
     elicited against the log itself rather than a summary of ours.
+
+    Returns `(files, tools)`: the staged path map, and per sliced log the set of
+    tool names its attempts show reaching the model (union over `ModelEvent`s).
+    The tool names come from the samples already in memory here -- never re-read
+    the sliced log for them: its header still lists the whole original dataset, so
+    `read_eval_log_samples` would iterate every id (mostly IndexError-ing).
     """
     if not attempts:
-        return {}
+        return {}, {}
 
     by_log: dict[str, list[AttemptRef]] = defaultdict(list)
     for attempt in attempts:
@@ -220,14 +223,16 @@ def sample_logs(attempts: list[AttemptRef], *, stage: Path) -> dict[str, str]:
 
     stage.mkdir(parents=True, exist_ok=True)
     files: dict[str, str] = {}
+    tools: dict[str, set[str]] = {}
     for log_file, refs in sorted(by_log.items()):
-        # read the header and just this item's samples
+        # read the header and just this item's samples -- one shared reader for the
+        # subset, not a read_eval_log_sample call (and central-directory parse) each
         try:
             log = read_eval_log(log_file, header_only=True)
-            samples: list[EvalSample] = [
-                read_eval_log_sample(log_file, id=ref.sample_id, epoch=ref.epoch)
-                for ref in sorted(refs, key=lambda r: r.epoch)
-            ]
+            log.samples = read_eval_log_samples_by_id(
+                log_file,
+                [(ref.sample_id, ref.epoch) for ref in sorted(refs, key=lambda r: r.epoch)],
+            )
         except Exception as ex:
             # a missing log costs the auditor one log's attempts, not the whole item
             logger.warning(
@@ -236,13 +241,19 @@ def sample_logs(attempts: list[AttemptRef], *, stage: Path) -> dict[str, str]:
             )
             continue
 
-        # narrow the sample list, keep the source log's own filename
-        log.samples = samples
+        # keep the source log's own filename
         host = stage / Path(log_file.replace("file://", "")).name
         write_eval_log(log, str(host))
         files[f"{AUDIT_ROOT}/logs/{host.name}"] = str(host)
+        tools[host.name] = {
+            tool.name
+            for sample in log.samples
+            for event in sample.events
+            if isinstance(event, ModelEvent)
+            for tool in event.tools
+        }
 
-    return files
+    return files, tools
 
 
 def benchmark_source_files(task: Task) -> dict[str, Path]:

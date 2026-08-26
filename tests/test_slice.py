@@ -27,7 +27,7 @@ def refs(log: str, sample_id: str, *epochs: int) -> list[AttemptRef]:
 def test_slice_is_a_real_log_holding_only_the_audited_item(
     fixture_log: str, tmp_path: Path
 ) -> None:
-    files = sample_logs(refs(fixture_log, "2", 1), stage=tmp_path)
+    files, _ = sample_logs(refs(fixture_log, "2", 1), stage=tmp_path)
     sliced = next(iter(files.values()))
 
     log = read_eval_log(sliced)
@@ -44,7 +44,7 @@ def test_header_survives_verbatim(fixture_log: str, tmp_path: Path) -> None:
     Recovering those facts ourselves would hand the auditor a schema of ours to trust,
     so this is equality against the source header rather than a spot check.
     """
-    files = sample_logs(refs(fixture_log, "1", 1), stage=tmp_path)
+    files, _ = sample_logs(refs(fixture_log, "1", 1), stage=tmp_path)
     before = read_eval_log(fixture_log, header_only=True)
     after = read_eval_log(next(iter(files.values())), header_only=True)
 
@@ -55,7 +55,7 @@ def test_header_survives_verbatim(fixture_log: str, tmp_path: Path) -> None:
 def test_every_epoch_of_an_item_stays_together(
     fixture_log_epochs: str, tmp_path: Path
 ) -> None:
-    files = sample_logs(refs(fixture_log_epochs, "1", 1, 2, 3), stage=tmp_path)
+    files, _ = sample_logs(refs(fixture_log_epochs, "1", 1, 2, 3), stage=tmp_path)
     log = read_eval_log(next(iter(files.values())))
     assert sorted(s.epoch for s in (log.samples or [])) == [1, 2, 3]
 
@@ -63,7 +63,7 @@ def test_every_epoch_of_an_item_stays_together(
 def test_one_file_per_source_log_keeping_its_name(fixture_log: str, tmp_path: Path) -> None:
     """A case reads like the logs it came from, so names are not rewritten."""
     other = run_fixture_eval(str(tmp_path / "other"), name="other_task")
-    files = sample_logs(
+    files, _ = sample_logs(
         refs(fixture_log, "1", 1) + refs(other, "1", 1), stage=tmp_path / "case"
     )
 
@@ -75,7 +75,7 @@ def test_one_file_per_source_log_keeping_its_name(fixture_log: str, tmp_path: Pa
 def test_an_unreadable_log_costs_one_model_not_the_case(
     fixture_log: str, tmp_path: Path
 ) -> None:
-    files = sample_logs(
+    files, _ = sample_logs(
         refs(fixture_log, "1", 1) + refs(str(tmp_path / "missing.eval"), "1", 1),
         stage=tmp_path / "case",
     )

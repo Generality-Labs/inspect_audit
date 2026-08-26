@@ -330,7 +330,7 @@ def view_image() -> Tool:
     return execute
 
 
-@tool
+@tool(name="grade")
 def grade_benchmark(scorers: list[Scorer]) -> Tool:
     async def execute(answer: str) -> str:
         """Grade a submission with the benchmark's own grader.
@@ -387,7 +387,7 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
     return execute
 
 
-@tool
+@tool(name="reset")
 def reset_benchmark() -> Tool:
     async def execute() -> str:
         """Restore the benchmark environment to its pristine per-sample state.

@@ -21,8 +21,8 @@ from typing import Any, cast
 
 from inspect_ai import Task
 from inspect_ai._util.registry import (
+    create_registry_object,
     is_registry_object,
-    registry_create,
     registry_info,
     registry_params,
 )
@@ -126,7 +126,7 @@ def _walk_value(value: Any, contract: SolverContract, depth: int) -> None:
     kind, name, params = ref
     if kind == "tool":
         try:
-            contract.tools.append(ToolDef(registry_create("tool", name, **params)))
+            contract.tools.append(ToolDef(cast(Tool, create_registry_object("tool", name, params))))
         except Exception as ex:  # named but unbuildable: keep the name for the diff
             logger.warning(f"could not rebuild declared tool {name!r}: {ex}")
             contract.unrecovered.append(name)
@@ -171,7 +171,7 @@ def logged_tool_names(log_file: str) -> set[str]:
         log_file: Path to the log to read.
     """
     names: set[str] = set()
-    for sample in read_eval_log_samples(log_file, all_samples_required=False):
+    for sample in read_eval_log_samples(log_file, all_samples_required=False, resolve_attachments=True):
         for event in sample.events:
             if isinstance(event, ModelEvent):
                 names.update(tool.name for tool in event.tools)

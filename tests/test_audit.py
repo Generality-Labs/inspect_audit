@@ -162,16 +162,18 @@ def test_the_generated_sandbox_has_network_access() -> None:
     """An auditor without egress cannot read a source, and will invent one instead.
 
     Inspect's own generated compose for a Dockerfile sandbox sets
-    `network_mode: none`, which is why we write our own. Both observed failure modes
-    followed from that: one model reported it could not verify, another cited two URLs
-    it had never fetched.
+    `network_mode: none`, which is why we write our own. We give the auditor egress
+    via the shared `bridge` (not a named/project network), so it allocates no
+    per-sample network and can't exhaust Docker's address pool at concurrency.
     """
     sandbox = audit_sandbox(make_task(1))
     assert isinstance(sandbox, tuple)
     compose = Path(sandbox[1])
     assert compose.name == "compose.yaml"
     assert (compose.parent / "Dockerfile").is_file()
-    assert "network_mode" not in compose.read_text()
+    text = compose.read_text()
+    assert "network_mode: bridge" in text  # egress, zero per-sample networks
+    assert "network_mode: none" not in text
 
 
 def test_attempts_can_come_from_a_sibling_variant_of_the_audited_task(

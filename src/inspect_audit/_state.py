@@ -26,7 +26,7 @@ is why grades stamp the full mix rather than a single flag.
 import json
 import tempfile
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from inspect_ai.log import EvalSample, read_eval_log_samples
 from inspect_ai.model import (
@@ -112,6 +112,7 @@ def seed_new(state: BenchmarkState, input: JsonValue, prompt: str | None) -> Non
     state.seeded = "new"
     state.messages = messages
     state.output = None
+    state.attempt_store = {}
     state.completed = False
 
 
@@ -457,7 +458,7 @@ def benchmark_tools(defs: list[ToolDef], root: str) -> list[Tool]:
 
 
 def _mirror_tool(d: ToolDef, root: str) -> Tool:
-    async def execute(**kwargs: JsonValue) -> ToolResult:
+    async def execute(**kwargs: Any) -> ToolResult:
         try:
             sandbox(BENCHMARK_SERVICE)
         except (ProcessLookupError, ValueError):
@@ -487,7 +488,7 @@ def _submit_tool(d: ToolDef, root: str) -> Tool:
     # the agent's terminal action: enacting it fixes the answer and ends the
     # attempt, the way `complete` does -- running it against the box would do
     # nothing, since submit is scaffold loop control, not a real tool
-    async def execute(answer: str = "") -> str:
+    async def execute(answer: str) -> str:
         session = store_as(BenchmarkState)
         complete_attempt(session, answer)
         await mirror_state(session, root)
@@ -530,7 +531,7 @@ async def _read_sliced(root: str, log: str, epoch: int) -> EvalSample:
     with tempfile.TemporaryDirectory(prefix="inspect_audit_attempt_") as staging:
         host = Path(staging) / log
         host.write_bytes(data)
-        for sample in read_eval_log_samples(str(host), all_samples_required=False):
+        for sample in read_eval_log_samples(str(host), all_samples_required=False, resolve_attachments=True):
             if sample.epoch == epoch:
                 return sample
     raise ToolError(f"no attempt with epoch {epoch} in logs/{log}")

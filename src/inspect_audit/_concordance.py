@@ -14,9 +14,10 @@ benchmark's. Two zero-spend checks earn that trust per cell:
   match the score the log already recorded. A deterministic scorer that
   disagrees means our channel is broken -- this is exactly the check that
   catches a state-fidelity bug before it costs a model call. A disagreement is
-  regraded once more to tell a judge's own noise (the second regrade flips) from
-  a real reconstruction fault (it is stable): judge noise becomes a measured
-  floor any exploit must beat, a stable fault blocks grade-dependent verdicts.
+  resampled a few times to tell a scorer's own noise (the resamples vary) from a
+  real reconstruction fault (they are identical): noise becomes a measured floor,
+  a stable fault blocks grade-dependent verdicts, and it is tracked per attempt
+  so one flaky sample cannot exempt a whole scorer.
 
 Box-graded scorers are the honest exception: a recorded attempt's box end-state
 is not reproducible from its transcript, so replay-regrade cannot reproduce the
@@ -67,14 +68,20 @@ class ScorerConcordance:
     scorer: str
     checked: int = 0
     agreed: int = 0
-    disagreements: list[dict[str, str]] = field(default_factory=list)
-    nondeterministic: bool = False
-    """A disagreeing attempt regraded differently a second time: a judge's own
-    noise, not a reconstruction fault."""
+    # a disagreement whose resamples are identical is a real reconstruction fault;
+    # one whose resamples vary is the scorer's own (judge) noise. Tracked per
+    # attempt so a single flaky sample cannot exempt a whole scorer from blocking.
+    stable_disagreements: list[dict[str, str]] = field(default_factory=list)
+    noisy_disagreements: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def agreement(self) -> float:
         return self.agreed / self.checked if self.checked else 1.0
+
+    @property
+    def noise_rate(self) -> float:
+        d = len(self.stable_disagreements) + len(self.noisy_disagreements)
+        return len(self.noisy_disagreements) / d if d else 0.0
 
 
 @dataclass
@@ -106,8 +113,10 @@ def resolution_report(header: EvalSpec, task_args: dict[str, Any]) -> Resolution
         if installed != recorded:
             report.package_drift[package] = {"logged": recorded, "resolved": installed}
 
+    # only args the operator explicitly set can 'drift'; a log-resolved audit
+    # passes task_args={} and adopts the log's own args, so those are not drift
     recorded_args = header.task_args or {}
-    for key in set(recorded_args) | set(task_args):
+    for key in task_args:
         logged, resolved = recorded_args.get(key), task_args.get(key)
         if logged != resolved:
             report.arg_drift[key] = {"logged": logged, "resolved": resolved}
@@ -149,30 +158,32 @@ def classify(
     measured noise never blocks: it is a floor, reported not enforced.
     """
     reasons: list[str] = []
-    blocking = False
+    blocking = inconclusive = False
     for s in scorers:
-        if s.agreement >= 1.0 or s.nondeterministic:
-            if s.nondeterministic:
-                reasons.append(
-                    f"{s.scorer}: nondeterministic (judge), agreement "
-                    f"{s.agreement:.0%} is a noise floor, not a fault"
-                )
-            continue
-        if has_box:
+        if s.noisy_disagreements:
             reasons.append(
-                f"{s.scorer}: {s.agreement:.0%} agreement, but a benchmark box's "
-                "end-state is not reproducible from the transcript -- inconclusive"
+                f"{s.scorer}: {s.noise_rate:.0%} of disagreements are scorer noise "
+                f"(a measured floor over {s.checked} attempts), not a fault"
+            )
+        if not s.stable_disagreements:
+            continue  # only noise, or a clean replay -- nothing blocks
+        # stable disagreements are the reconstruction failing to reproduce a grade
+        if has_box:
+            inconclusive = True
+            reasons.append(
+                f"{s.scorer}: {len(s.stable_disagreements)} stable disagreement(s), but a "
+                "benchmark box's end-state is not reproducible from the transcript -- inconclusive"
             )
         else:
             blocking = True
             reasons.append(
-                f"{s.scorer}: {s.agreement:.0%} agreement on a deterministic, "
-                "box-free scorer -- the reconstruction does not reproduce recorded "
-                "grades, so grade-dependent verdicts are blocked"
+                f"{s.scorer}: {len(s.stable_disagreements)} stable disagreement(s) on a "
+                "deterministic, box-free scorer -- the reconstruction does not reproduce "
+                "recorded grades, so grade-dependent verdicts are blocked"
             )
     if blocking:
         return "blocked", reasons
-    if any(s.agreement < 1.0 and not s.nondeterministic for s in scorers):
+    if inconclusive:
         return "inconclusive", reasons
     return "validated", reasons or ["replay-regrade reproduced every recorded grade"]
 
@@ -212,19 +223,27 @@ async def replay_regrade(
             if normalize_value(ours.value) == normalize_value(recorded.value):
                 con.agreed += 1
                 continue
-            # a disagreement: regrade once more to tell judge noise from our fault
-            again = await _regrade(sample, scorer, audit_state, model=model, answer_from=recorded)
-            if again is not None and normalize_value(again.value) != normalize_value(ours.value):
-                con.nondeterministic = True
-            con.disagreements.append(
-                {
-                    "sample": str(sample.id),
-                    "epoch": str(sample.epoch),
-                    "recorded": normalize_value(recorded.value),
-                    "regraded": normalize_value(ours.value),
-                }
-            )
+            # a disagreement: resample a few times to tell a real reconstruction
+            # fault (resamples identical) from the scorer's own noise (they vary)
+            resamples = []
+            for _ in range(RESAMPLES):
+                again = await _regrade(sample, scorer, audit_state, model=model, answer_from=recorded)
+                if again is not None:
+                    resamples.append(normalize_value(again.value))
+            stable = bool(resamples) and all(v == normalize_value(ours.value) for v in resamples)
+            record = {
+                "sample": str(sample.id),
+                "epoch": str(sample.epoch),
+                "recorded": normalize_value(recorded.value),
+                "regraded": normalize_value(ours.value),
+            }
+            (con.stable_disagreements if stable else con.noisy_disagreements).append(record)
     return list(results.values())
+
+
+# resamples per disagreeing attempt, to separate a stable reconstruction fault
+# from scorer noise; a handful is enough to catch a flipping judge
+RESAMPLES = 3
 
 
 async def _regrade(
@@ -300,7 +319,8 @@ async def probe_concordance(
         try:
             samples.append(
                 read_eval_log_sample(
-                    ref["log_file"], id=ref["sample_id"], epoch=ref["epoch"]
+                    ref["log_file"], id=ref["sample_id"], epoch=ref["epoch"],
+                    resolve_attachments=True,
                 )
             )
         except Exception as ex:
@@ -317,9 +337,9 @@ async def probe_concordance(
 def _scorer_name(scorer: Scorer) -> str:
     # the name the log keys this scorer's score by: its registry name, with the
     # inspect_ai prefix stripped the way the recorder strips it
-    from inspect_ai._util.registry import is_registry_object, registry_log_name
+    from inspect_ai._util.registry import is_registry_object, registry_unqualified_name
 
     if is_registry_object(scorer):
-        return registry_log_name(scorer)
+        return registry_unqualified_name(scorer)
     fn = getattr(scorer, "__wrapped__", scorer)
     return str(getattr(fn, "__name__", "?"))

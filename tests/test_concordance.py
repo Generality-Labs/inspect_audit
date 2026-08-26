@@ -25,10 +25,12 @@ def test_normalize_collapses_equivalent_grade_shapes() -> None:
     assert normalize_value({"a": 1, "b": 2}) == normalize_value({"b": 2, "a": 1})
 
 
-def con(scorer: str, checked: int, agreed: int, nondeterministic: bool = False) -> ScorerConcordance:
-    c = ScorerConcordance(scorer=scorer, checked=checked, agreed=agreed)
-    c.nondeterministic = nondeterministic
-    return c
+def con(scorer: str, checked: int, agreed: int, *, stable: int = 0, noisy: int = 0) -> ScorerConcordance:
+    d = lambda n: [{"sample": str(i)} for i in range(n)]  # noqa: E731 - test brevity
+    return ScorerConcordance(
+        scorer=scorer, checked=checked, agreed=agreed,
+        stable_disagreements=d(stable), noisy_disagreements=d(noisy),
+    )
 
 
 def test_perfect_replay_validates() -> None:
@@ -37,32 +39,39 @@ def test_perfect_replay_validates() -> None:
 
 
 def test_stable_disagreement_without_a_box_blocks() -> None:
-    # a deterministic, box-free scorer that we cannot reproduce is OUR bug --
+    # a deterministic, box-free scorer we cannot reproduce is OUR bug --
     # this is the cluster-1 catch, and it must block grade-dependent verdicts
-    verdict, reasons = classify([con("match", 10, 4)], has_box=False)
+    verdict, reasons = classify([con("match", 10, 4, stable=6)], has_box=False)
     assert verdict == "blocked"
     assert "reconstruction does not reproduce" in " ".join(reasons)
 
 
 def test_disagreement_with_a_box_is_inconclusive_not_a_fault() -> None:
-    # a box's end-state is not reproducible from a transcript, so a low replay
-    # score there is expected, not a reconstruction failure
-    verdict, reasons = classify([con("test_pass", 10, 4)], has_box=True)
+    # a box's end-state is not reproducible from a transcript, so a stable
+    # disagreement there is inconclusive, not a reconstruction failure
+    verdict, reasons = classify([con("test_pass", 10, 4, stable=6)], has_box=True)
     assert verdict == "inconclusive"
     assert "not reproducible from the transcript" in " ".join(reasons)
 
 
 def test_judge_noise_never_blocks() -> None:
-    # a scorer whose disagreement flips on a second regrade is a judge; its
-    # agreement rate is a measured floor, reported not enforced
-    verdict, reasons = classify([con("model_graded", 10, 7, nondeterministic=True)], has_box=False)
+    # disagreements whose resamples flip are the scorer's own noise, reported as
+    # a measured floor, never blocking
+    verdict, reasons = classify([con("model_graded", 10, 7, noisy=3)], has_box=False)
     assert verdict == "validated"
-    assert "noise floor" in " ".join(reasons)
+    assert "scorer noise" in " ".join(reasons)
+
+
+def test_one_flaky_sample_does_not_exempt_a_scorer_with_stable_faults() -> None:
+    # the old bug: a single flipping sample marked the whole scorer nondeterministic
+    # and exempt. Now a scorer with BOTH noise and stable faults still blocks.
+    verdict, _ = classify([con("match", 10, 6, stable=3, noisy=1)], has_box=False)
+    assert verdict == "blocked"
 
 
 def test_mixed_scorers_block_on_the_deterministic_one() -> None:
     verdict, _ = classify(
-        [con("model_graded", 10, 7, nondeterministic=True), con("match", 10, 3)],
+        [con("model_graded", 10, 7, noisy=3), con("match", 10, 3, stable=7)],
         has_box=False,
     )
     assert verdict == "blocked"

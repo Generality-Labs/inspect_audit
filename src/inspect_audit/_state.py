@@ -342,17 +342,7 @@ def attempt(root: str, prompt: str | None = None) -> Tool:
         prompt: The benchmark's declared prompt template, for `new`.
     """
 
-    async def execute(
-        command: str,
-        log: str | None = None,
-        epoch: int | None = None,
-        role: str | None = None,
-        content: str | None = None,
-        tool_call_id: str | None = None,
-        tool_calls: str | None = None,
-        index: int | None = None,
-        answer: str | None = None,
-    ) -> str:
+    async def execute(command: str, args: str) -> str:
         """Build and edit the benchmark session that `grade` will judge.
 
         This is the evaluated agent's session as an object: seed it, write
@@ -363,32 +353,33 @@ def attempt(root: str, prompt: str | None = None) -> Tool:
         (written by you) -- and grades are stamped with the mix, so a
         verdict's strength is legible from how synthetic its evidence was.
 
-        Commands:
-          new       start the session at t=0: the item's own input, plus the
-                    benchmark's declared system prompt where one was recovered
-          load      seed from a recorded attempt: `log` (filename as it appears
-                    in logs/), and `epoch` when the log holds more than one
-          append    add a message: `role` and `content`, plus `tool_calls`
-                    (JSON list of {id, function, arguments}) on an assistant
-                    message or `tool_call_id` on a tool message
-          edit      replace the `content` of the message at `index`
-          truncate  drop the session from `index` on (counterfactuals: load a
-                    real attempt, truncate at the turn under test, rebuild)
-          complete  fix the final `answer` and end the attempt; pass an empty
-                    answer when the submission is the state of the box
+        `command` is one of `new`, `load`, `append`, `edit`, `truncate`,
+        `complete`. `args` is a JSON object with that command's fields (pass
+        `"{}"` for a command that needs none):
+
+          new       {} -- start the session at t=0: the item's own input, plus
+                    the benchmark's declared system prompt where recovered
+          load      {"log": <filename as in logs/>, "epoch": <n, default 1>}
+          append    {"role": "system|user|assistant|tool", "content": ...,
+                    plus "tool_calls": JSON list of {id, function, arguments}
+                    for an assistant message, or "tool_call_id" for a tool one}
+          edit      {"index": <0-based>, "content": <replacement>}
+          truncate  {"index": <cut from here>} -- counterfactuals: load a real
+                    attempt, truncate at the turn under test, rebuild
+          complete  {"answer": ...} -- fix the final answer and end the attempt;
+                    "" when the submission is the state of the box
 
         Args:
             command: One of `new`, `load`, `append`, `edit`, `truncate`, `complete`.
-            log: For `load`: the log's filename, exactly as it appears in `logs/`.
-            epoch: For `load`: the attempt's epoch (defaults to 1).
-            role: For `append`: `system`, `user`, `assistant`, or `tool`.
-            content: For `append` and `edit`: the message content.
-            tool_call_id: For `append` of a `tool` message: the call it answers.
-            tool_calls: For `append` of an `assistant` message: tool calls as a
-                JSON list of `{id, function, arguments}` objects.
-            index: For `edit` and `truncate`: the message position, 0-based.
-            answer: For `complete`: the attempt's final answer.
+            args: JSON object of the command's fields (`"{}"` when it needs none).
         """
+        try:
+            a = json.loads(args or "{}")
+            if not isinstance(a, dict):
+                raise ValueError("args must be a JSON object.")
+        except ValueError:
+            raise ToolError("args must be a JSON object.") from None
+
         state = store_as(BenchmarkState)
         try:
             if command == "new":
@@ -398,26 +389,34 @@ def attempt(root: str, prompt: str | None = None) -> Tool:
                     raise ValueError("this item carries no original input to seed from")
                 seed_new(state, metadata["benchmark_input"], prompt)
             elif command == "load":
+                log = a.get("log")
                 if not log:
-                    raise ValueError("load needs the log filename, as it appears in logs/")
-                sample = await _read_sliced(root, log, epoch or 1)
-                seed_from_sample(state, sample, source=f"{log}#epoch={epoch or 1}")
+                    raise ValueError("load needs 'log', the filename as it appears in logs/")
+                epoch = int(a.get("epoch") or 1)
+                sample = await _read_sliced(root, str(log), epoch)
+                seed_from_sample(state, sample, source=f"{log}#epoch={epoch}")
             elif command == "append":
-                if not role or content is None:
-                    raise ValueError("append needs a role and content")
+                if not a.get("role") or a.get("content") is None:
+                    raise ValueError("append needs 'role' and 'content'")
                 append_message(
-                    state, role, content, tool_call_id=tool_call_id, tool_calls=tool_calls
+                    state,
+                    str(a["role"]),
+                    str(a["content"]),
+                    tool_call_id=a.get("tool_call_id"),
+                    tool_calls=(
+                        json.dumps(a["tool_calls"]) if a.get("tool_calls") is not None else None
+                    ),
                 )
             elif command == "edit":
-                if index is None or content is None:
-                    raise ValueError("edit needs an index and the replacement content")
-                edit_message(state, index, content)
+                if a.get("index") is None or a.get("content") is None:
+                    raise ValueError("edit needs 'index' and 'content'")
+                edit_message(state, int(a["index"]), str(a["content"]))
             elif command == "truncate":
-                if index is None:
-                    raise ValueError("truncate needs the index to cut from")
-                truncate_messages(state, index)
+                if a.get("index") is None:
+                    raise ValueError("truncate needs 'index'")
+                truncate_messages(state, int(a["index"]))
             elif command == "complete":
-                complete_attempt(state, answer or "")
+                complete_attempt(state, str(a.get("answer") or ""))
             else:
                 raise ValueError(
                     f"unknown command {command!r}: expected new, load, append, "

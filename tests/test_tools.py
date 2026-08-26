@@ -93,3 +93,28 @@ def _auditor_tool_names(contract: SolverContract, *, benchmark: bool) -> set[str
         [item], contract=contract, benchmark=benchmark, benchmark_scorers=match()
     )
     return {d.name for d in anyio.run(tool_defs, tools)}
+
+
+def test_every_auditor_tool_is_strict_schema_valid() -> None:
+    """Every auditor tool's schema must be valid under strict function-calling.
+
+    OpenAI/Azure strict mode requires `required` to list EVERY property; a tool with
+    an optional parameter is rejected with a 400 before the model runs. mockllm never
+    validates this, so it must be asserted here. Guards the whole mounted set,
+    mirrored tools included.
+    """
+    from inspect_ai.scorer import match
+    from inspect_ai.tool import ToolDef, bash
+    from inspect_ai.tool._tool_def import tool_defs
+
+    from inspect_audit._agent import audit_items, auditor_tools
+    from inspect_audit._contract import SolverContract
+
+    contract = SolverContract(tools=[ToolDef(bash())])
+    tools = auditor_tools(
+        audit_items(), benchmark_scorers=match(), media=True, contract=contract, benchmark=True
+    )
+    for d in anyio.run(tool_defs, tools):
+        props = set(d.parameters.properties or {})
+        required = set(d.parameters.required or [])
+        assert props <= required, f"{d.name}: optional params break strict mode: {props - required}"

@@ -35,6 +35,14 @@ An answer the grader was built to accept -- within a documented tolerance, an ac
 alias, a normalization -- is it working as designed, not an exploit; if that leniency
 looks too lax, that goes to `other-findings`, not here.
 
+When the grader scores by running the submission -- it executes the program and checks it
+reproduces the examples, simulates the actions and checks the end state -- any submission
+that meets that criterion is correct by construction. A different program that reproduces
+every example is a valid solution, not an exploit, and how it behaves on inputs the grader
+never tests is out of scope. An exploit here is a submission the grader credits that does
+*not* meet the criterion -- e.g. the executor accepts a program that does not actually
+reproduce the examples.
+
 ## Be adversarial to the grader
 
 Attack the grader itself, not just the task -- read how it works (`gold/grading.md`).

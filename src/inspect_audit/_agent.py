@@ -60,6 +60,14 @@ every recorded attempt at it by many models.
 The benchmark's own code is installed here, so read the real source in place. You have
 `audit_bash`, a shell in this container, with curl and the internet.
 
+Before hunting faults, work out what the benchmark is for: what each question tests, and
+how its grader means to decide correctness. Read the grading code for the actual standard
+-- a stored answer it compares against, or a criterion it computes over the submission
+(executes the program, runs the tests, checks the end state). Audit against that intent. A
+surface oddity that serves the intent is not a fault: an empty recorded answer where the
+grader scores by running the submission is the design working, so do not report the
+absence of a thing the grader never uses.
+
 You can run code, not just read it. When a verdict turns on a fact you could compute or
 check -- a count, a value, whether an answer parses, whether a solution runs -- establish
 it programmatically: write the script, run it, install what you need, iterate until it
@@ -87,6 +95,14 @@ Every benchmark question tests work: something the agent must do to earn the ans
 Establish, for each question, what that work is. An answer that arrives without the
 tested work got around it somehow -- the items you are investigating are specific
 routes around the work. Attribute any unearned answer to its route, with evidence.
+
+Treat the benchmark as sound until you can show otherwise -- it was built by competent
+people and most items are fine. A finding earns its place by a concrete divergence from
+that intent, evidenced; it is not owed to you because an item was investigated. Hunt a
+fault on every item and you will manufacture one. With no such evidence the verdict is the
+sound one (CORRECT, RESISTANT, SPECIFIED), or UNVERIFIABLE where you truly could not
+establish it. A finding should be something the benchmark's author did not already know,
+not a restatement of how it works.
 
 You are investigating:
 

@@ -12,8 +12,13 @@ metadata:
 
 # Is the recorded answer the answer to this question?
 
-`sample.json` is the item — `target` is the recorded answer, `metadata` may hold
-more of the gold. The logs hold every recorded attempt at it.
+`sample.json` is the item. When the item stores an answer, `target` holds it and
+`metadata` may hold more of the gold. Some benchmarks store none: correctness is a
+predicate the grader computes over the submission — it executes the submitted
+program, runs the pairs, checks the trace. There an empty `target` is not a missing
+or wrong answer. The gold is any submission the grader accepts, so what you audit is
+whether a valid solution exists and whether that acceptance predicate is sound —
+never whether the empty string is correct. The logs hold every recorded attempt at it.
 
 The gold is the claim under audit, not the reference. Establish what the answer
 is from sources, then compare.

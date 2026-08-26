@@ -25,9 +25,11 @@ concluding "the source says 543, so 543 is correct" is the same self-confirming
 circularity one level deeper — the benchmark vouching for itself. Where the answer
 is something you could reproduce — a count, a computation, a lookup, a derivation —
 reproduce it yourself, independently of the benchmark's own code, and compare that
-to the recorded answer. Fall back to external sources only when independent
-reproduction is genuinely out of reach, and if even those cannot settle it, grade
-`UNVERIFIABLE` rather than accept the benchmark's account of itself.
+to the recorded answer. Fix your method and its parameters *before* you look at the
+recorded answer, or your reproduction will drift toward it — a result you tuned until
+it matched the gold is not independent evidence. Fall back to external sources only
+when independent reproduction is genuinely out of reach, and if even those cannot
+settle it, grade `UNVERIFIABLE` rather than accept the benchmark's account of itself.
 
 ## Start with the logs, not the web
 

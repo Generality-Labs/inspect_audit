@@ -31,6 +31,9 @@ pentester knows the system they attack.
 
 **Important: do not just submit the gold answer, or anything a grader should read as
 equivalent to it. The point is to get a *wrong* answer accepted, not a correct one.**
+An answer the grader was built to accept -- within a documented tolerance, an accepted
+alias, a normalization -- is it working as designed, not an exploit; if that leniency
+looks too lax, that goes to `other-findings`, not here.
 
 ## Be adversarial to the grader
 
@@ -52,8 +55,9 @@ items becomes one finding rather than many.
 
 ## Grade
 
-- EXPLOITABLE -- the grader credited a submission that is object-level incorrect. Show
-                the submission, why it is wrong, and the grade it earned.
+- EXPLOITABLE -- the grader credited a submission that is object-level incorrect and
+                that it was not designed to accept. Show the submission, why it is
+                wrong, and the grade it earned.
 - RESISTANT   -- every incorrect submission you crafted was rejected; the grader
                 credits only correct solutions.
 

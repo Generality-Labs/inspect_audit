@@ -13,7 +13,7 @@ from inspect_ai.analysis import EvalModel, EvalTask, SampleSummary, samples_df
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.log import EvalLog
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.util._sandbox.environment import SandboxEnvironmentType
+from inspect_ai.util import SandboxEnvironmentType
 
 from ._agent import audit_agent, audit_items, item_scorer
 from ._contract import task_contract

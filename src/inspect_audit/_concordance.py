@@ -33,11 +33,11 @@ from typing import Any
 
 from inspect_ai.log import EvalSpec
 from inspect_ai.scorer import Score, Scorer
+from inspect_ai.scorer._scorer import unique_scorer_name
 from inspect_ai.solver._task_state import TaskState
 from inspect_ai.util import sandbox_default
 
 from ._sandbox import BENCHMARK_SERVICE
-from ._state import BenchmarkState, benchmark_task_state, seed_from_sample
 
 logger = getLogger(__name__)
 
@@ -191,53 +191,72 @@ def classify(
 async def replay_regrade(
     samples: list[Any],
     scorers: list[Scorer],
-    audit_state: TaskState,
+    header_log: Any,
     *,
-    model: str | None,
     limit: int,
 ) -> list[ScorerConcordance]:
-    """Regrade recorded attempts through our channel and compare to the log.
+    """Regrade recorded attempts through inspect's own re-score path and compare.
+
+    Each recorded attempt is re-scored with `score_async` -- the same
+    `_run_score_task` path `inspect score` uses -- so the sample's own transcript,
+    store, input, target and output are restored, not a state we hand-build. The
+    regraded value must match the score the log already recorded.
 
     Args:
         samples: Recorded attempt samples (from the sliced logs), each carrying
             its own recorded `scores`.
         scorers: The benchmark's scorers, named as the log names them.
-        audit_state: The live audit `TaskState`, for the state rebuild.
-        model: The evaluated model, stamped on the regraded state so a scorer
-            reading `state.model` sees it rather than the auditor.
-        limit: Regrade at most this many attempts per scorer (judge cost bound).
+        header_log: A log header (`read_eval_log(..., header_only=True)`) whose
+            `eval`/`plan` give the model context `score_async` re-scores under.
+        limit: Regrade at most this many attempts (a judge-cost bound).
     """
+    batch = samples[:limit]
+    if not batch:
+        return []
+    names = _scorer_names(scorers)  # keyed the way the log keys scores
+    regraded = await _score_batch(batch, scorers, header_log)
+
     results: dict[str, ScorerConcordance] = {}
-    for sample in samples[:limit]:
+    disagreed: set[int] = set()
+    for i, sample in enumerate(batch):
         recorded_scores = sample.scores or {}
-        for scorer in scorers:
-            name = _scorer_name(scorer)
+        for name in names:
             recorded = recorded_scores.get(name)
-            if recorded is None:
+            ours = (regraded[i] or {}).get(name)
+            if recorded is None or ours is None:
                 continue
             con = results.setdefault(name, ScorerConcordance(scorer=name))
-            ours = await _regrade(sample, scorer, audit_state, model=model, answer_from=recorded)
-            if ours is None:
-                continue
             con.checked += 1
             if normalize_value(ours.value) == normalize_value(recorded.value):
                 con.agreed += 1
+            else:
+                disagreed.add(i)
+
+    # resample each disagreeing attempt to tell a real reconstruction fault
+    # (resamples identical to the first regrade) from the scorer's own noise
+    for i in sorted(disagreed):
+        sample = batch[i]
+        resample_runs = [await _score_batch([sample], scorers, header_log) for _ in range(RESAMPLES)]
+        for name in names:
+            recorded = (sample.scores or {}).get(name)
+            first = (regraded[i] or {}).get(name)
+            if recorded is None or first is None:
                 continue
-            # a disagreement: resample a few times to tell a real reconstruction
-            # fault (resamples identical) from the scorer's own noise (they vary)
-            resamples = []
-            for _ in range(RESAMPLES):
-                again = await _regrade(sample, scorer, audit_state, model=model, answer_from=recorded)
-                if again is not None:
-                    resamples.append(normalize_value(again.value))
-            stable = bool(resamples) and all(v == normalize_value(ours.value) for v in resamples)
+            if normalize_value(first.value) == normalize_value(recorded.value):
+                continue  # this scorer agreed on this sample
+            resamples = [
+                normalize_value(run[0][name].value)
+                for run in resample_runs
+                if run and run[0] is not None and name in run[0]
+            ]
+            stable = bool(resamples) and all(v == normalize_value(first.value) for v in resamples)
             record = {
                 "sample": str(sample.id),
                 "epoch": str(sample.epoch),
                 "recorded": normalize_value(recorded.value),
-                "regraded": normalize_value(ours.value),
+                "regraded": normalize_value(first.value),
             }
-            (con.stable_disagreements if stable else con.noisy_disagreements).append(record)
+            (results[name].stable_disagreements if stable else results[name].noisy_disagreements).append(record)
     return list(results.values())
 
 
@@ -246,26 +265,44 @@ async def replay_regrade(
 RESAMPLES = 3
 
 
-async def _regrade(
-    sample: Any,
-    scorer: Scorer,
-    audit_state: TaskState,
-    *,
-    model: str | None,
-    answer_from: Score,
-) -> Score | None:
-    # rebuild the attempt's benchmark state and run the one scorer against it,
-    # aiming any sandbox() calls at the benchmark service as grade() does
-    session = BenchmarkState(store=audit_state.store, instance="concordance")
-    seed_from_sample(session, sample, source="concordance")
-    answer = sample.output.completion if sample.output is not None else ""
-    graded = benchmark_task_state(audit_state, session, answer, model=model)
+async def _score_batch(
+    samples: list[Any], scorers: list[Scorer], header_log: Any
+) -> list[dict[str, Score] | None]:
+    """Re-score recorded samples through inspect's own `score_async`.
+
+    Returns each sample's fresh scores keyed as the log keys them, or `None` for a
+    sample the scorers could not be run against. Sandbox calls are aimed at the
+    benchmark box, so a box-graded scorer runs against the live environment the
+    way `grade` does. `score_async` restores each sample's transcript/store/state
+    from the recorded sample itself -- the reconstruction we are proving.
+    """
+    from copy import copy as shallow_copy
+
+    from inspect_ai._eval.score import score_async
+    from inspect_ai.model import get_model
+
+    log = shallow_copy(header_log)  # score_async deepcopies (copy=True); don't mutate the header
+    log.samples = list(samples)
+    # re-score under the audit's own (installed) model, not the log's recorded one:
+    # the recorded attempts span many providers whose packages this env need not
+    # have, and get_model would eagerly import them. A deterministic scorer ignores
+    # the model (the blocking case is exactly these); a model-graded scorer that
+    # binds its own grader still uses that, and if its provider is absent it errors
+    # here and the attempt is skipped -- never a false block.
     try:
         with sandbox_default(BENCHMARK_SERVICE):
-            return await scorer(graded, graded.target)
-    except Exception as ex:  # a scorer we cannot run is not a disagreement
-        logger.debug("could not regrade sample %s: %s", sample.id, ex)
-        return None
+            scored = await score_async(
+                log,
+                scorers,
+                action="overwrite",
+                model=get_model(),
+                copy=True,
+                display="plain",
+            )
+    except Exception as ex:  # a batch we cannot re-score is not a disagreement
+        logger.debug("could not re-score a concordance batch: %s", ex)
+        return [None] * len(samples)
+    return [(s.scores or None) for s in (scored.samples or [])]
 
 
 async def probe_concordance(
@@ -298,20 +335,25 @@ async def probe_concordance(
         concordance.reasons.append("no recorded attempts to replay")
         return concordance
 
-    # resolution identity, from the header of the first attempt's log
-    header = None
+    # resolution identity, from the header of the first attempt's log. the full
+    # header log (not just its spec) is also the model/plan context score_async
+    # re-scores under, so keep it.
+    header_log = None
     try:
-        header = read_eval_log(attempts[0]["log_file"], header_only=True).eval
+        header_log = read_eval_log(attempts[0]["log_file"], header_only=True)
     except Exception as ex:  # a missing header costs the resolution check, not the cell
         logger.warning("could not read a log header for the resolution check: %s", ex)
-    if header is not None:
-        report = resolution_report(header, item.get("task_args") or {})
+    if header_log is not None:
+        report = resolution_report(header_log.eval, item.get("task_args") or {})
         concordance.resolution = asdict(report)
         if report.drifted:
             concordance.reasons.append(
                 "the resolved task drifted from the logs (see resolution); verdicts "
                 "may be auditing a different version than the field ran"
             )
+    else:
+        concordance.reasons.append("could not read a log header to re-score against")
+        return concordance
 
     # replay-regrade over the recorded attempt samples
     samples = []
@@ -325,8 +367,7 @@ async def probe_concordance(
             )
         except Exception as ex:
             logger.warning("could not read a recorded attempt for replay: %s", ex)
-    model = header.model if header is not None else None
-    scored = await replay_regrade(samples, scorers, audit_state, model=model, limit=limit)
+    scored = await replay_regrade(samples, scorers, header_log, limit=limit)
     concordance.scorers = [asdict(s) for s in scored]
 
     concordance.verdict, reasons = classify(scored, has_box=has_box)
@@ -343,3 +384,14 @@ def _scorer_name(scorer: Scorer) -> str:
         return registry_unqualified_name(scorer)
     fn = getattr(scorer, "__wrapped__", scorer)
     return str(getattr(fn, "__name__", "?"))
+
+
+def _scorer_names(scorers: list[Scorer]) -> list[str]:
+    # the keys the log stores scores under, in order: the unqualified registry
+    # name with inspect's own duplicate-name suffixing (name, name1, ...), so two
+    # scorers sharing a name resolve to the distinct keys the recorder wrote --
+    # otherwise the second collides on the first's key and goes silently unchecked
+    used: list[str] = []
+    for scorer in scorers:
+        used.append(unique_scorer_name(scorer, used))
+    return used

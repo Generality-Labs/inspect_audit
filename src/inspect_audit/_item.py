@@ -103,8 +103,17 @@ def item_sample(
     # script for `benchmark_setup` to run there
     if benchmark:
         run_dir = Path(task_run_dir(task))
+        # carry the file spec too, not just stage it: a hard reset rebuilds the box
+        # from its image (empty), so `phoenix_benchmark` must re-lay these files the
+        # way sample-init first did -- restoring only setup would drop file-delivered
+        # state the evaluated agent started with
+        benchmark_files: dict[str, str] = {}
         for name, value in (sample.files or {}).items():
-            files[f"{BENCHMARK_SERVICE}:{name}"] = _anchored(value, run_dir)
+            anchored = _anchored(value, run_dir)
+            files[f"{BENCHMARK_SERVICE}:{name}"] = anchored
+            benchmark_files[f"{BENCHMARK_SERVICE}:{name}"] = anchored
+        if benchmark_files:
+            metadata["benchmark_files"] = benchmark_files
         if sample.setup is not None:
             setup = _anchored(sample.setup, run_dir)
             path = Path(setup)

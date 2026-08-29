@@ -70,6 +70,10 @@ class BenchmarkState(StoreModel):
     completed: bool = False
     box_version: int = 0
     """Bumped by `reset`: which state of the benchmark box grades ran against."""
+    box_method: str = "initial"
+    """How the box reached its current state: `initial`, `soft` (reverted in place),
+    or `phoenix` (rebuilt from image). Stamped on grades so a receipt says whether
+    the judged box was git-restored or genuinely rebuilt."""
 
     def chat_messages(self) -> list[ChatMessage]:
         """The session as plain messages, for a grader or a `TaskState`."""
@@ -230,6 +234,7 @@ def receipt(state: BenchmarkState) -> str:
             "provenance": state.provenance_mix(),
             "completed": state.completed,
             "box_version": state.box_version,
+            "box_method": state.box_method,
         }
     )
 

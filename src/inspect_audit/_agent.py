@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field, JsonValue
 
 from ._contract import SolverContract
 from ._item import AUDIT_ROOT
-from ._sandbox import BENCHMARK_SERVICE, restore_benchmark
+from ._sandbox import BENCHMARK_SERVICE, phoenix_benchmark, restore_benchmark
 from ._state import BenchmarkState, attempt, benchmark_task_state, benchmark_tools
 
 SKILLS = Path(__file__).parent / "skills"
@@ -380,6 +380,7 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
                     "session": session.seeded,
                     "provenance": session.provenance_mix(),
                     "box_version": session.box_version,
+                    "box_method": session.box_method,
                 },
             }
         )
@@ -389,25 +390,63 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
 
 @tool(name="reset")
 def reset_benchmark() -> Tool:
-    async def execute() -> str:
+    async def execute(hard: bool) -> str:
         """Restore the benchmark environment to its pristine per-sample state.
 
-        Re-runs the sample's setup, undoing anything written to the box since.
-        Use it between graded attempts so each starts from the same state.
+        Pass `hard=false` for the cheap path between graded attempts: revert the
+        box in place -- return every repo to HEAD and re-run the sample's setup.
+        Pass `hard=true` to instead rebuild the container from its image: the
+        only reset that recovers a *bricked* box (a killed process, a corrupted
+        or filled filesystem, a hang). You do not have to guess right -- a soft
+        reset that fails on a damaged box rebuilds on its own -- so reach for
+        `hard=true` when you have deliberately broken the box and know it needs one.
+
+        Args:
+            hard: Rebuild the container from its image (true) rather than
+                reverting it in place (false).
         """
         state = sample_state()
         if state is None:
             raise ToolError("Reset is only available while auditing a sample.")
-        await restore_benchmark((state.metadata or {}).get("benchmark_setup"))
-        # the bump is what lets a grade receipt say which box state it judged
+        metadata = state.metadata or {}
+        script = metadata.get("benchmark_setup")
+        files = metadata.get("benchmark_files")
         session = store_as(BenchmarkState)
+
+        if hard:
+            summary = await _phoenix(script, files)
+            method = "phoenix"
+        else:
+            try:
+                await restore_benchmark(script)
+                summary = "benchmark environment reset to its per-sample state"
+                method = "soft"
+            except Exception as ex:
+                # the soft revert runs commands *inside* the box; if it failed the
+                # box may be bricked, so rebuild rather than leave the auditor stuck
+                summary = (
+                    f"{await _phoenix(script, files)} (soft reset failed first: "
+                    f"{type(ex).__name__})"
+                )
+                method = "phoenix"
+
+        # the bump is what lets a grade receipt say which box state it judged
         session.box_version = session.box_version + 1
-        return (
-            "benchmark environment reset to its per-sample state "
-            f"(box_version {session.box_version})"
-        )
+        session.box_method = method
+        return f"{summary} (box_version {session.box_version})"
 
     return execute
+
+
+async def _phoenix(script: str | None, files: dict[str, str] | None) -> str:
+    # a phoenix that cannot revive the box is not a tool crash but a finding the
+    # auditor should see and record, so surface it as a ToolError not a raw raise.
+    # TimeoutError as well as RuntimeError: a degraded-daemon brick that hangs the
+    # rebuild is exactly such a finding, not an uncaught crash.
+    try:
+        return await phoenix_benchmark(script, files)
+    except (RuntimeError, TimeoutError) as ex:
+        raise ToolError(str(ex)) from None
 
 
 @tool

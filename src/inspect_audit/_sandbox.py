@@ -11,12 +11,20 @@ from typing import Any
 
 import yaml
 from inspect_ai import Task
+from inspect_ai._eval.task.sandbox import read_sandboxenv_file, resolve_sample_files
 from inspect_ai._eval.task.util import task_run_dir
 from inspect_ai.dataset import Sample
 from inspect_ai.util import SandboxEnvironmentSpec, SandboxEnvironmentType
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox.compose import DOCKERFILE as INSPECT_DOCKERFILE
 from inspect_ai.util._sandbox.compose import is_dockerfile
+from inspect_ai.util._sandbox.context import copy_sandbox_environment_files
+from inspect_ai.util._sandbox.docker.compose import (
+    COMPOSE_WAIT,
+    compose_command,
+    compose_ps,
+    compose_services,
+)
 
 # reuse Inspect's own auto-compose templates rather than re-deriving them, so a
 # synthesised benchmark box matches what `inspect eval` would have run -- the
@@ -25,7 +33,10 @@ from inspect_ai.util._sandbox.docker.config import (
     COMPOSE_DOCKERFILE_YAML,
     COMPOSE_GENERIC_YAML,
 )
+from inspect_ai.util._sandbox.docker.docker import DockerSandboxEnvironment
+from inspect_ai.util._sandbox.docker.service import services_healthcheck_time
 from inspect_ai.util._sandbox.environment import resolve_sandbox_environment
+from inspect_ai.util._subprocess import subprocess
 
 logger = getLogger(__name__)
 
@@ -66,11 +77,189 @@ async def restore_benchmark(script: str | None) -> None:
     `git clean` after it would wipe the very state setup just recreated. A
     benchmark whose state comes from setup and one whose state is a checked-out
     repo both return to where the evaluated agent started.
+
+    Probes the box first and raises if it is unreachable: this is the *soft*
+    path, executing inside the live container, so a bricked box cannot be
+    restored here (its own git/setup execs would run in a corpse). Raising lets
+    the caller fall back to a rebuild -- important for image-baked benchmarks
+    with no setup script, where the git/setup steps would otherwise no-op and
+    falsely report success on a dead box.
     """
-    await sandbox_env(BENCHMARK_SERVICE).exec(
-        ["bash", "-c", _GIT_RESTORE], timeout=300
-    )
+    box = sandbox_env(BENCHMARK_SERVICE)
+    alive = await box.exec(["true"], timeout=30)
+    if not alive.success:
+        raise RuntimeError("benchmark box is unreachable; a rebuild is needed")
+    await box.exec(["bash", "-c", _GIT_RESTORE], timeout=300)
     await run_benchmark_setup(script)
+
+
+# the auditor rides here; every other service is the benchmark's and gets rebuilt
+AUDITOR_SERVICE_NAME = "default"
+
+
+async def phoenix_benchmark(
+    script: str | None, files: dict[str, str] | None = None
+) -> str:
+    """Rebuild the benchmark box from its image, then repopulate per-sample state.
+
+    Where `restore_benchmark` reverts filesystem state *inside a live box*, this
+    brings a box back from the dead -- a killed PID 1, a corrupted or filled root,
+    a hang -- by force-recreating its container(s) from the image. Every service
+    but the auditor `default` is recreated: CTF-style benchmarks carry siblings
+    (`victim`, `writer`) a brick can take with it, and the auditor is no benchmark
+    service's dependency, so naming the benchmark set never restarts it. Docker
+    only -- the recreate is the docker provider's; the k8s path is its own.
+
+    A rebuilt container is empty, so both channels the harness used to seed the
+    box are replayed, in the order sample-init used: the sample's `files` are
+    copied back in (via Inspect's own resolve/read/copy routines, honouring the
+    `service:path` prefix), then any setup script runs. Restoring only setup
+    would silently drop file-delivered state -- a fixture, a data file -- that
+    the evaluated agent started with.
+
+    Args:
+        script: The sample's setup script, re-run in the fresh box.
+        files: The sample's `Sample.files`, keyed as `service:path` (the audit
+            carries these on `benchmark_files`); re-copied into the fresh box.
+
+    Raises:
+        RuntimeError: the provider is not docker, the item has no benchmark box, or
+            the box did not come back (the brick reached past the container -- the
+            daemon, the host disk, or a shared resource -- which is itself a finding).
+    """
+    # the default service is the auditor; it holds the project shared by every box.
+    # `sandbox()` hands back a proxy, so unwrap to the concrete docker env with
+    # as_type (which also type-checks) rather than isinstance against the proxy
+    env = sandbox_env()
+    try:
+        docker = env.as_type(DockerSandboxEnvironment)
+    except TypeError:
+        raise RuntimeError(
+            "phoenix reset needs the docker sandbox; this run's provider is not "
+            "docker, where rebuilding a bricked box from its image is unsupported."
+        ) from None
+    project = docker._project
+
+    services = await compose_services(project)
+    targets = [name for name in services if name != AUDITOR_SERVICE_NAME]
+    if not targets:
+        raise RuntimeError("this item has no benchmark box to rebuild.")
+
+    # size the wait to the services' healthchecks exactly as inspect's own
+    # compose_up does, so a box with a long healthcheck is not killed prematurely
+    wait = services_healthcheck_time({t: services[t] for t in targets}) or COMPOSE_WAIT
+
+    # force-recreate the benchmark service(s) from image -- a fresh container fs is
+    # the only way back from a brick. name them explicitly and never `compose down`,
+    # which is project-wide and would take the auditor and its volumes with it.
+    # timeout_retry=False: a genuine daemon hang should fail fast as a finding, not
+    # retry for ~11 minutes holding a docker-cli slot.
+    try:
+        result = await compose_command(
+            [
+                "up",
+                "--detach",
+                "--wait",
+                "--wait-timeout",
+                str(wait + 1),
+                "--force-recreate",
+                *targets,
+            ],
+            project=project,
+            timeout=wait,
+            timeout_retry=False,
+        )
+        # `--wait` returns non-zero for services that exit even successfully, so
+        # verify by state, not exit code. check the targets directly rather than
+        # reusing compose_check_running: it counts against the whole project (the
+        # auditor keeps running), so a subset always trips its count guard. a
+        # target that legitimately exits 0 (a one-shot writer/init) is up too --
+        # match inspect's own success notion or a CTF sibling false-alarms.
+        running = {s["Service"] for s in await compose_ps(project=project, status="running")}
+        exited_ok = {
+            s["Service"]
+            for s in await compose_ps(project=project, status="exited")
+            if s.get("ExitCode") == 0
+        }
+    except TimeoutError as ex:
+        raise RuntimeError(
+            "the benchmark box did not come back after a rebuild -- the rebuild "
+            "itself timed out, so the brick reached past the container (the daemon "
+            "or host is degraded)."
+        ) from ex
+    down = [t for t in targets if t not in running | exited_ok]
+    if down:
+        raise RuntimeError(
+            f"the benchmark box did not come back after a rebuild ({', '.join(down)}) "
+            "-- the brick reached past the container (the daemon, the host disk, or a "
+            f"shared resource): {(result.stderr or '')[:500]}"
+        )
+
+    # replay both seeding channels into the empty box, files then setup (as
+    # sample-init does). files are prefixed `service:path`; hand the copy both envs
+    # by name so the prefix routes to the benchmark and the copy can still resolve
+    # its ambient default (the auditor) the way inspect's own init does.
+    if files:
+        resolved = resolve_sample_files(files)
+        contents = {path: await read_sandboxenv_file(src) for path, src in resolved.items()}
+        environments = {
+            AUDITOR_SERVICE_NAME: sandbox_env(),
+            BENCHMARK_SERVICE: sandbox_env(BENCHMARK_SERVICE),
+        }
+        await copy_sandbox_environment_files(contents, environments)
+    await run_benchmark_setup(script)
+
+    caveat = await _unreset_mounts(services, targets)
+    rebuilt = f"benchmark box rebuilt from image ({', '.join(targets)})"
+    return f"{rebuilt}; {caveat}" if caveat else rebuilt
+
+
+async def _unreset_mounts(services: dict[str, Any], targets: list[str]) -> str | None:
+    """Name any target whose state survives a rebuild, so nobody reads it as clean.
+
+    Three persistence vectors outlive `--force-recreate`, because it rebuilds the
+    container from the image but not the storage under it: compose-declared named
+    volumes and host bind-mounts (the `volumes:` key), and volumes the *image*
+    declares (`VOLUME /data` in the Dockerfile -- common in db images), whose anon
+    volume compose migrates onto the new container. State written to any of them is
+    not reset, so "rebuilt from image" would otherwise overclaim.
+    """
+    mounted = {t for t in targets if services.get(t, {}).get("volumes")}
+    imaged = set()
+    for t in targets:
+        if await _image_declares_volumes(services.get(t, {})):
+            imaged.add(t)
+    flagged = sorted(mounted | imaged)
+    if not flagged:
+        return None
+    return (
+        f"volumes/bind-mounts on {', '.join(flagged)} are not reset by a rebuild "
+        "(they live outside the container), so state written there persists"
+    )
+
+
+async def _image_declares_volumes(service: dict[str, Any]) -> bool:
+    """Whether a service's image declares its own VOLUMEs (best-effort).
+
+    Only a named image can be inspected cheaply; a build-only service has no image
+    to query pre-build, so it is treated as declaring none (any VOLUME in its
+    Dockerfile is a gap this does not close). Any docker error is swallowed -- the
+    caveat is advisory, never a reason to fail a rebuild.
+    """
+    image = service.get("image")
+    if not isinstance(image, str) or not image:
+        return False
+    try:
+        result = await subprocess(
+            ["docker", "image", "inspect", image, "--format", "{{json .Config.Volumes}}"],
+        )
+    except Exception:
+        return False
+    if not result.success:
+        return False
+    declared = result.stdout.strip()
+    return bool(declared) and declared not in ("null", "{}")
+
 
 AUDITOR_NETWORK = "inspect_audit"
 

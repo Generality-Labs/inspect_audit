@@ -244,6 +244,14 @@ def sample_logs(
     for attempt in attempts:
         by_log[attempt.log_file].append(attempt)
 
+    # Reserve original names before allocating suffixes, including names from
+    # sources visited later. An eval_id identifies an evaluation, not a file:
+    # copies and rescored versions can share it and must not overwrite each other.
+    source_names = {
+        source: Path(source.replace("file://", "")).name for source in by_log
+    }
+    reserved_names = set(source_names.values())
+
     stage.mkdir(parents=True, exist_ok=True)
     files: dict[str, str] = {}
     tools: dict[str, set[str]] = {}
@@ -273,8 +281,17 @@ def sample_logs(
         log.eval.dataset.sample_ids = sliced_ids
         log.eval.dataset.samples = len(sliced_ids)
 
-        # keep the source log's own filename
-        host = stage / Path(log_file.replace("file://", "")).name
+        # Keep the source filename where possible; disambiguate colliding files
+        # without changing their Inspect headers or losing a recorded attempt.
+        name = source_names[log_file]
+        host = stage / name
+        if name in tools:
+            suffix = 2
+            while True:
+                host = stage / f"{Path(name).stem}-{suffix}{Path(name).suffix}"
+                if host.name not in reserved_names and host.name not in tools:
+                    break
+                suffix += 1
         write_eval_log(log, str(host))
         files[f"{AUDIT_ROOT}/logs/{host.name}"] = str(host)
         tools[host.name] = {

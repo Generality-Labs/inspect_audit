@@ -161,3 +161,47 @@ def test_grade_tool_end_to_end_hands_the_scorer_the_benchmark_world() -> None:
     graded = seen["graded"]
     assert isinstance(graded, dict)
     assert graded["provenance"] == {"real": 1, "authored": 1}
+
+
+
+def test_a_grader_that_cannot_run_is_a_tool_error_not_a_sample_error() -> None:
+    """The judge model being gone reaches the auditor as a tool error; the sample survives."""
+    from inspect_ai.scorer import accuracy
+    from inspect_ai.tool import ToolError
+
+    @scorer(metrics=[accuracy()])
+    def exploding() -> Scorer:
+        async def score(state: TaskState, target: Target) -> Score:
+            raise RuntimeError("No endpoints found for google/gemini-2.0-flash-001")
+
+        return score
+
+    seen: dict[str, object] = {}
+
+    @solver
+    def probing_auditor() -> Solver:
+        async def solve(state: TaskState, generate: Generate) -> TaskState:
+            session = store_as(BenchmarkState)
+            seed_new(session, QUESTION, prompt=None)
+            complete_attempt(session, "MOVE: a1a2")
+            grade = grade_benchmark([exploding()])
+            try:
+                await grade(answer="MOVE: a1a2")
+            except ToolError as ex:
+                seen["error"] = ex.message
+            return state
+
+        return solve
+
+    target = Task(
+        name="fixture_task",
+        dataset=MemoryDataset([Sample(id=42, input=QUESTION, target="1066")]),
+        scorer=match(),
+    )
+    audit = audit_task(target, sandbox="local", solver=probing_auditor())
+    for audit_sample in audit.dataset:
+        audit_sample.files = None
+    logs = eval(audit, model="mockllm/model", display="none")
+    assert logs[0].status == "success"
+    assert "grader failed to run" in str(seen["error"])
+    assert "No endpoints found" in str(seen["error"])

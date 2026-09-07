@@ -461,7 +461,16 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
         results: list[dict[str, Any]] = []
         with redirect:
             for scorer in scorers:
-                score = await scorer(graded, graded.target)
+                try:
+                    score = await scorer(graded, graded.target)
+                except Exception as ex:
+                    # a grader that cannot run (its judge model is gone, its
+                    # sandbox call failed) is a fact for the auditor to record,
+                    # not a reason to error the sample and cancel the run
+                    raise ToolError(
+                        f"the benchmark's grader failed to run: {type(ex).__name__}: "
+                        f"{str(ex)[:500]}"
+                    ) from ex
                 if score is not None:
                     results.append(
                         {

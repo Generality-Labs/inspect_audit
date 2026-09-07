@@ -391,8 +391,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
         ca-certificates curl git jq ripgrep \\
     && rm -rf /var/lib/apt/lists/*
 
-# pillow so an auditor can measure an image as well as look at one
-RUN pip install --no-cache-dir pillow {requirements}
+# pandas + pyarrow so `samples_df` works over the sliced logs (the log-reading
+# skills teach it); pillow so an auditor can measure an image as well as look at one
+RUN pip install --no-cache-dir pandas pyarrow pillow {requirements}
 
 WORKDIR /audit
 CMD ["sleep", "infinity"]

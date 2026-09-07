@@ -19,13 +19,39 @@ def resolve_task(spec: str | Task, task_args: dict[str, Any] | None = None) -> T
     if isinstance(spec, Task):
         return spec
 
-    tasks = load_tasks([spec], task_args or {})
-    if len(tasks) != 1:
-        raise ValueError(
-            f"Task spec {spec!r} resolved to {len(tasks)} tasks; an audit needs "
-            "exactly one. Address a single task, e.g. 'file.py@task_name'."
-        )
-    return tasks[0]
+    # a registry name resolves with or without its package prefix depending on
+    # how the package was installed: a wheel/git install registers `pkg/name`,
+    # an editable install (not recognised as a package by inspect) registers the
+    # bare `name`. try what was given, then the other form, so a user need not
+    # know which install they have.
+    candidates = [spec]
+    if "/" in spec and "@" not in spec and not spec.endswith(".py"):
+        candidates.append(spec.split("/", 1)[1])
+    elif "/" not in spec and "@" not in spec and not spec.endswith(".py"):
+        candidates.extend(f"{pkg}/{spec}" for pkg in _registry_packages())
+
+    tried: list[str] = []
+    for candidate in candidates:
+        try:
+            tasks = load_tasks([candidate], task_args or {})
+        except Exception as ex:
+            tried.append(f"  {candidate!r}: {type(ex).__name__}: {ex}")
+            continue
+        if len(tasks) == 1:
+            return tasks[0]
+        tried.append(f"  {candidate!r}: resolved to {len(tasks)} tasks")
+    raise ValueError(
+        f"Task spec {spec!r} did not resolve to exactly one task. Tried:\n"
+        + "\n".join(tried)
+        + "\nAddress a single task, e.g. 'pkg/task_name' or 'file.py@task_name'."
+    )
+
+
+def _registry_packages() -> list[str]:
+    """Packages that register inspect tasks via the `inspect_ai` entry point."""
+    from importlib.metadata import entry_points
+
+    return sorted({ep.name for ep in entry_points(group="inspect_ai")})
 
 
 def resolve_task_from_log(log: str | Path | EvalLog) -> Task:

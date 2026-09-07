@@ -16,7 +16,12 @@ from ._concordance import probe_concordance
 from ._item import AUDIT_ROOT
 from ._report import report_task
 from ._resolve import resolve_task, resolve_task_from_log
-from ._sandbox import BENCHMARK_SERVICE, has_benchmark, sample_sandbox
+from ._sandbox import (
+    BENCHMARK_SERVICE,
+    has_benchmark,
+    has_benchmark_box,
+    sample_sandbox,
+)
 
 
 @task
@@ -35,7 +40,6 @@ def audit(
     attempts_task: str | None = None,
     auditor_image: str | None = None,
     benchmark_image: str | None = None,
-    setup: str | None = None,
 ) -> Task:
     """Audit a benchmark task from its logs.
 
@@ -57,8 +61,6 @@ def audit(
         auditor_image: Published auditor image; switches to Helm-values emission
             for k8s providers.
         benchmark_image: Published image for benchmark services that `build:`.
-        setup: Shell script run in the auditor's box at sample start, installing
-            tooling this audit needs beyond the general image.
     """
     if logs:
         logs = fetch_logs(logs)
@@ -91,7 +93,6 @@ def audit(
         attempts_task=attempts_task,
         auditor_image=auditor_image,
         benchmark_image=benchmark_image,
-        setup=setup,
     )
 
 
@@ -121,6 +122,12 @@ def audit_probe() -> Solver:
         checks: dict[str, str] = {}
 
         async def run(name: str, target: str | None, cmd: str) -> None:
+            # `sandbox(name)` falls back to the default box when the sample has
+            # only one, so a benchmark check on a box-less item would report the
+            # auditor's own filesystem as the benchmark's
+            if target is not None and not has_benchmark_box():
+                checks[name] = "SKIP no benchmark box"
+                return
             box = sandbox() if target is None else sandbox(target)
             try:
                 r = await box.exec(["bash", "-c", cmd], timeout=120)

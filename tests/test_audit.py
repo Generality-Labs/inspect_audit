@@ -200,36 +200,22 @@ def test_attempts_can_come_from_a_sibling_variant_of_the_audited_task(
     assert not attempts(fixture_log, task=name).empty
 
 
-def test_setup_runs_in_the_auditors_box_and_fails_loudly() -> None:
-    """The `setup` script installs bespoke tooling at sample start; a failure is a sample error."""
-    import asyncio
 
-    from inspect_ai.util import ExecResult
+def test_resolve_task_accepts_either_registry_name_form(monkeypatch) -> None:  # noqa: ANN001
+    """`pkg/name` and bare `name` both resolve, whichever way the package was installed."""
+    from inspect_audit import _resolve
 
-    from inspect_audit import _audit
+    registered = {"pkg/thing": object()}
 
-    calls: list[list[str]] = []
+    def load_tasks(specs, args):  # noqa: ANN001, ANN202
+        return [registered[specs[0]]] if specs[0] in registered else []
 
-    class Box:
-        def __init__(self, ok: bool) -> None:
-            self.ok = ok
-
-        async def exec(self, cmd, timeout=None):  # noqa: ANN001, ANN202
-            calls.append(cmd)
-            return ExecResult(self.ok, 0 if self.ok else 1, "", "apt: no such package")
-
-    async def run(ok: bool) -> None:
-        state = type("S", (), {"metadata": {}})()
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(_audit, "sandbox", lambda *a, **k: Box(ok))
-
-            async def no_benchmark(script):  # noqa: ANN001, ANN202
-                return None
-
-            mp.setattr(_audit, "run_benchmark_setup", no_benchmark)
-            await _audit.benchmark_setup("apt-get install -y stockfish")(state, None)
-
-    asyncio.run(run(True))
-    assert calls == [["bash", "--login", "-c", "apt-get install -y stockfish"]]
-    with pytest.raises(RuntimeError, match="auditor setup failed"):
-        asyncio.run(run(False))
+    monkeypatch.setattr(_resolve, "load_tasks", load_tasks)
+    monkeypatch.setattr(_resolve, "_registry_packages", lambda: ["pkg"])
+    assert _resolve.resolve_task("pkg/thing") is registered["pkg/thing"]
+    assert _resolve.resolve_task("thing") is registered["pkg/thing"]
+    registered.clear()
+    registered["thing"] = object()
+    assert _resolve.resolve_task("pkg/thing") is registered["thing"]
+    with pytest.raises(ValueError, match="Tried"):
+        _resolve.resolve_task("pkg/missing")

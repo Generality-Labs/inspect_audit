@@ -15,6 +15,13 @@ dependencies = [
     # tools (`install_skills`, `skill`) against.
     "inspect-ai>=0.3.247",
     "pandas>=2.0.0",
+    # inspect_ai.analysis (samples_df, used to read attempts) imports pyarrow but
+    # inspect-ai only lists it under its own dev extra
+    "pyarrow>=10.0.1",
+    # the auditor always needs a model provider; openai's SDK serves OpenAI,
+    # OpenRouter and every OpenAI-compatible endpoint. others (anthropic,
+    # google-genai) are the user's to install and inspect names them on error.
+    "openai>=1.0",
 ]
 
 # Makes `inspect_audit/<name>` resolvable from the Inspect registry, so audit

@@ -7,10 +7,12 @@ Inspect's own API — if it were subtly not a log, `read_eval_log` is what would
 
 from pathlib import Path
 
+import pytest
 from inspect_ai.log import (
     read_eval_log,
     read_eval_log_sample,
     read_eval_log_sample_summaries,
+    write_eval_log,
 )
 from test_helpers.logs import run_fixture_eval
 
@@ -96,6 +98,57 @@ def test_an_unreadable_log_costs_one_model_not_the_case(
         stage=tmp_path / "case",
     )
     assert len(files) == 1
+
+
+@pytest.mark.parametrize("shared_eval_id", [True, False])
+def test_colliding_names_preserve_every_source_and_its_attempt(
+    fixture_log: str, tmp_path: Path, shared_eval_id: bool
+) -> None:
+    """Different evaluations and copies/rescores sharing an ID must survive.
+
+    Also reserve a real suffixed filename so collision handling cannot overwrite
+    a third source. Read every slice through Inspect to verify its identity and
+    content, not just the number of filenames returned.
+    """
+    sources = []
+    for directory, name in (("a", "same.eval"), ("b", "same.eval"), ("c", "same-2.eval")):
+        source = tmp_path / directory / name
+        source.parent.mkdir()
+        log = read_eval_log(fixture_log)
+        log.eval.eval_id = "shared-evaluation" if shared_eval_id else f"evaluation-{directory}"
+        log.eval.model = f"mockllm/{directory}"
+        assert log.samples
+        log.samples[0].input = f"question from {directory}"
+        write_eval_log(log, str(source))
+        sources.extend(refs(str(source), "1", 1))
+
+    files, tools = sample_logs(sources, stage=tmp_path / "case")
+
+    assert len(files) == 3
+    assert set(tools) == {Path(path).name for path in files}
+    observed = {}
+    for path in files.values():
+        log = read_eval_log(path)
+        directory = log.eval.model.rsplit("/", 1)[-1]
+        assert log.eval.eval_id == (
+            "shared-evaluation" if shared_eval_id else f"evaluation-{directory}"
+        )
+        assert log.samples and len(log.samples) == 1
+        observed[log.eval.model] = log.samples[0].input
+    assert observed == {
+        f"mockllm/{directory}": f"question from {directory}"
+        for directory in ("a", "b", "c")
+    }
+
+    # Assignment depends on source identity, not the incoming attempt order.
+    reordered, _ = sample_logs(list(reversed(sources)), stage=tmp_path / "reordered")
+    assert {
+        Path(path).name: read_eval_log(path, header_only=True).eval.model
+        for path in reordered.values()
+    } == {
+        Path(path).name: read_eval_log(path, header_only=True).eval.model
+        for path in files.values()
+    }
 
 
 def test_the_graders_own_model_calls_are_not_the_agents_tools() -> None:

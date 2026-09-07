@@ -13,7 +13,7 @@ from inspect_ai.analysis import EvalModel, EvalTask, SampleSummary, samples_df
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.log import EvalLog
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.util import SandboxEnvironmentType, sandbox
+from inspect_ai.util import SandboxEnvironmentType
 
 from ._agent import audit_agent, audit_items, item_scorer
 from ._contract import task_contract
@@ -31,26 +31,10 @@ LogSource = str | list[str] | EvalLog | list[EvalLog]
 
 
 @solver
-def benchmark_setup(auditor_setup: str | None = None) -> Solver:
-    """Run the audited sample's own setup script in the benchmark service.
-
-    Args:
-        auditor_setup: A shell script to run in the auditor's own box first --
-            the bespoke tooling one audit needs (a chess engine, a proof
-            assistant) installed at sample start, so the auditor image stays
-            general and published once. Fails the sample loudly if it fails.
-    """
+def benchmark_setup() -> Solver:
+    """Run the audited sample's own setup script in the benchmark service."""
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        if auditor_setup:
-            result = await sandbox().exec(
-                ["bash", "--login", "-c", auditor_setup], timeout=900
-            )
-            if not result.success:
-                raise RuntimeError(
-                    f"auditor setup failed (exit {result.returncode}): "
-                    f"{(result.stderr or result.stdout)[-1500:]}"
-                )
         await run_benchmark_setup((state.metadata or {}).get("benchmark_setup"))
         return state
 
@@ -157,7 +141,6 @@ def audit_task(
     attempts_task: str | None = None,
     auditor_image: str | None = None,
     benchmark_image: str | None = None,
-    setup: str | None = None,
 ) -> Task:
     """Build the audit as an Inspect `Task`.
 
@@ -190,8 +173,6 @@ def audit_task(
             published image as the auditor (see `audit_values`).
         benchmark_image: Published image standing in for benchmark services that
             `build:` their own (k8s only).
-        setup: Shell script run in the auditor's box at sample start, for tooling
-            this audit needs beyond the general image (needs egress from the box).
     """
     target = resolve_task(task, task_args)
     staging = _staging()
@@ -295,7 +276,7 @@ def audit_task(
     return Task(
         name=f"audit/{target.name}",
         dataset=MemoryDataset(audit_samples),
-        setup=benchmark_setup(setup),
+        setup=benchmark_setup(),
         solver=solver
         or as_solver(
             audit_agent(

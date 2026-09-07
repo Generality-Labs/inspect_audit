@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git jq ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir inspect-ai pandas
+RUN pip install --no-cache-dir inspect-ai pandas pyarrow pillow
 
 WORKDIR /audit
 CMD ["sleep", "infinity"]

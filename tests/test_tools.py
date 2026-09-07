@@ -84,9 +84,12 @@ def test_auditor_mounts_the_family_only_with_a_box() -> None:
 
     assert "benchmark_bash" in mounted_with
     assert "benchmark_bash" not in mounted_without
-    # our own instruments are present either way, under the audit_* namespace
+    # our own shell is always present; the probe only where a benchmark box is,
+    # or a box-less sample's "probe into the benchmark" would resolve to the
+    # auditor's own container
     assert {"audit_bash", "audit_probe"} <= mounted_with
-    assert {"audit_bash", "audit_probe"} <= mounted_without
+    assert "audit_bash" in mounted_without
+    assert "audit_probe" not in mounted_without
     # the old namespace is gone: benchmark_bash now means the mirrored tool only
     assert "bash" not in mounted_with
 
@@ -113,12 +116,15 @@ def _patch_reset(monkeypatch, *, soft_raises: bool = False, phoenix_raises: bool
         ),
     )
     monkeypatch.setattr(agent_module, "store_as", lambda _cls: session)
+    # the guard needs a benchmark box to exist, or the tool (rightly) refuses
+    monkeypatch.setattr(agent_module, "has_benchmark_box", lambda: True)
     seen: dict = {}
 
     async def fake_restore(script):
         seen["restore"] = script
         if soft_raises:
             raise RuntimeError("box is dead")
+        return ["benchmark:/repo"]
 
     async def fake_phoenix(script, files=None):
         seen["phoenix"] = script
@@ -141,7 +147,7 @@ def test_reset_soft_by_default_reverts_in_place(monkeypatch) -> None:
     assert "restore" in seen and "phoenix" not in seen
     assert session.box_method == "soft"
     assert session.box_version == 1
-    assert "reset to its per-sample state" in out
+    assert "reset in place" in out
 
 
 def test_reset_hard_rebuilds_without_trying_soft(monkeypatch) -> None:
@@ -202,3 +208,53 @@ def test_every_auditor_tool_is_strict_schema_valid() -> None:
         props = set(d.parameters.properties or {})
         required = set(d.parameters.required or [])
         assert props <= required, f"{d.name}: optional params break strict mode: {props - required}"
+
+
+def test_audit_probe_reaches_any_named_box_and_refuses_unknown_ones(monkeypatch) -> None:
+    """Every benchmark box is addressable by name.
+
+    A typo'd name is an error naming the valid set, never a silent fallback to
+    some other container.
+    """
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit._agent import audit_probe
+
+    ran: list[tuple[str, str]] = []
+
+    class Box:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def exec(self, cmd, timeout=None):  # noqa: D102
+            ran.append((self.name, cmd[-1]))
+            return SimpleNamespace(success=True, stdout=f"out:{self.name}", stderr="")
+
+    monkeypatch.setattr(
+        agent_module, "benchmark_boxes", lambda: ["benchmark", "victim"]
+    )
+    monkeypatch.setattr(agent_module, "sandbox", lambda name=None: Box(name))
+
+    probe = audit_probe()
+    assert anyio.run(lambda: probe(cmd="ls /", service="victim")) == "out:victim"
+    assert ran == [("victim", "ls /")]
+
+    with pytest.raises(ToolError, match="benchmark, victim"):
+        anyio.run(lambda: probe(cmd="ls /", service="victmi"))
+
+    monkeypatch.setattr(agent_module, "benchmark_boxes", lambda: [])
+    with pytest.raises(ToolError, match="no benchmark environment"):
+        anyio.run(lambda: probe(cmd="ls /", service="benchmark"))
+
+
+def test_audit_probe_renders_as_bash_and_runs_in_parallel() -> None:
+    """The probe kept the bash tool's viewer and parallel=True it replaced.
+
+    Without them, concurrent probes serialize and the viewer shows raw JSON
+    args instead of a bash code block.
+    """
+    from inspect_audit._agent import audit_probe
+
+    d = ToolDef(audit_probe())
+    assert d.parallel is True
+    assert d.viewer is not None

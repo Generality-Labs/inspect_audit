@@ -14,6 +14,7 @@ from ._agent import grade_benchmark, reset_benchmark
 from ._audit import audit_task
 from ._concordance import probe_concordance
 from ._item import AUDIT_ROOT
+from ._report import report_task
 from ._resolve import resolve_task, resolve_task_from_log
 from ._sandbox import BENCHMARK_SERVICE, has_benchmark, sample_sandbox
 
@@ -34,6 +35,7 @@ def audit(
     attempts_task: str | None = None,
     auditor_image: str | None = None,
     benchmark_image: str | None = None,
+    setup: str | None = None,
 ) -> Task:
     """Audit a benchmark task from its logs.
 
@@ -55,10 +57,11 @@ def audit(
         auditor_image: Published auditor image; switches to Helm-values emission
             for k8s providers.
         benchmark_image: Published image for benchmark services that `build:`.
+        setup: Shell script run in the auditor's box at sample start, installing
+            tooling this audit needs beyond the general image.
     """
-    # `hawk:<eval-set-id>[,<id>...]` fetches logs from the Hawk warehouse
-    if logs and logs.startswith("hawk:"):
-        logs = _hawk_fetch(logs.removeprefix("hawk:"))
+    if logs:
+        logs = fetch_logs(logs)
     if task is None:
         if not logs:
             raise ValueError("Provide a task to audit, or logs recording one.")
@@ -88,7 +91,22 @@ def audit(
         attempts_task=attempts_task,
         auditor_image=auditor_image,
         benchmark_image=benchmark_image,
+        setup=setup,
     )
+
+
+@task
+def report(logs: str | None = None) -> Task:
+    """Synthesis session over a directory of completed audit logs.
+
+    v0 is the conversational skeleton: launch with `--acp-server` and attach
+    via `inspect acp` (or the web chat in frontend/) to work with it. See
+    `_report.py` for the roadmap.
+
+    Args:
+        logs: Log file or directory of audit logs to synthesize over.
+    """
+    return report_task(logs)
 
 
 @solver
@@ -202,6 +220,58 @@ async def _probe_grade(state: TaskState, checks: dict[str, str]) -> None:
         checks["grade_reset"] = await grade_value(grade)
     except Exception as ex:
         checks["grade"] = f"EXCEPTION {type(ex).__name__}: {ex}"[:200]
+
+
+def fetch_logs(logs: str) -> str:
+    """Resolve a `logs` argument to something inspect can read locally.
+
+    - `hawk:<eval-set-id>[,<id>...]` downloads an eval set from the Hawk warehouse.
+    - `http(s)://...eval` downloads one log; `http(s)://...` anything else is read
+      as a manifest of log URLs (one per line, or a CSV with a `logs`/`url`
+      column), e.g. the public S3 listing a benchmark publisher hands out.
+    - anything else (a path, an `s3://` dir inspect reads natively) passes through.
+
+    Downloads happen in the process running the eval -- on Hawk that is the
+    trusted runner, which has egress; the auditor's sandbox need not.
+    """
+    if logs.startswith("hawk:"):
+        return _hawk_fetch(logs.removeprefix("hawk:"))
+    if logs.startswith(("http://", "https://")):
+        return _url_fetch(logs)
+    return logs
+
+
+def _url_fetch(url: str) -> str:
+    import csv
+    import io
+    import urllib.request
+
+    def read(u: str) -> bytes:
+        with urllib.request.urlopen(u, timeout=600) as r:
+            return bytes(r.read())
+
+    if url.endswith((".eval", ".json")):
+        urls = [url]
+    else:
+        text = read(url).decode("utf-8")
+        if "," in text.splitlines()[0]:
+            rows = list(csv.DictReader(io.StringIO(text)))
+            column = next((c for c in ("logs", "log", "url") if rows and c in rows[0]), None)
+            if column is None:
+                raise ValueError(f"Log manifest {url!r} needs a `logs`/`log`/`url` column.")
+            urls = [str(row[column]).strip() for row in rows if row.get(column)]
+        else:
+            urls = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")]
+    if not urls:
+        raise ValueError(f"No log URLs found in manifest {url!r}.")
+
+    fetched = Path(tempfile.mkdtemp(prefix="url_logs_"))
+    for u in urls:
+        name = Path(u.split("?", 1)[0]).name
+        if not name.endswith((".eval", ".json")):
+            raise ValueError(f"Manifest entry {u!r} does not name an .eval/.json log.")
+        (fetched / name).write_bytes(read(u))
+    return str(fetched)
 
 
 def _hawk_fetch(eval_sets: str) -> str:

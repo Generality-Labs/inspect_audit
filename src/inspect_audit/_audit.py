@@ -13,7 +13,7 @@ from inspect_ai.analysis import EvalModel, EvalTask, SampleSummary, samples_df
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.log import EvalLog
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.util import SandboxEnvironmentType
+from inspect_ai.util import SandboxEnvironmentType, sandbox
 
 from ._agent import audit_agent, audit_items, item_scorer
 from ._contract import task_contract
@@ -31,10 +31,26 @@ LogSource = str | list[str] | EvalLog | list[EvalLog]
 
 
 @solver
-def benchmark_setup() -> Solver:
-    """Run the audited sample's own setup script in the benchmark service."""
+def benchmark_setup(auditor_setup: str | None = None) -> Solver:
+    """Run the audited sample's own setup script in the benchmark service.
+
+    Args:
+        auditor_setup: A shell script to run in the auditor's own box first --
+            the bespoke tooling one audit needs (a chess engine, a proof
+            assistant) installed at sample start, so the auditor image stays
+            general and published once. Fails the sample loudly if it fails.
+    """
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
+        if auditor_setup:
+            result = await sandbox().exec(
+                ["bash", "--login", "-c", auditor_setup], timeout=900
+            )
+            if not result.success:
+                raise RuntimeError(
+                    f"auditor setup failed (exit {result.returncode}): "
+                    f"{(result.stderr or result.stdout)[-1500:]}"
+                )
         await run_benchmark_setup((state.metadata or {}).get("benchmark_setup"))
         return state
 
@@ -43,6 +59,43 @@ def benchmark_setup() -> Solver:
 ITEM_PROMPT = (
     f"You are auditing one benchmark sample. Its audit filesystem is at {AUDIT_ROOT}."
 )
+
+
+# logs read per samples_df call: the read fans out one open file descriptor per
+# log with no cap, so an unchunked directory of N logs needs N+7 fds -- at ~1200
+# logs that exhausts the default limit and killed a box with `Errno 24`. Derived
+# from the process's own soft fd limit (leaving headroom for pandas/pyarrow and
+# the eval's own writers), overridable for a tight or generous environment.
+_FD_RESERVE = 64
+
+
+def _log_chunk_size() -> int:
+    override = os.environ.get("INSPECT_AUDIT_LOG_CHUNK")
+    if override and override.isdigit() and int(override) > 0:
+        return int(override)
+    import resource
+
+    soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+    return max(32, soft - _FD_RESERVE)
+
+
+def _log_files(logs: LogSource) -> list[Any] | None:
+    """Resolve a directory or file-list to concrete log files, else `None`.
+
+    `None` means "hand it to samples_df whole" -- an already-read `EvalLog`, or
+    a resolution that failed (never swallow the failure into a single chunk that
+    re-arms the fd exhaustion this exists to prevent).
+    """
+    from inspect_ai.analysis._dataframe.util import resolve_logs
+    from inspect_ai.log import EvalLog
+
+    if isinstance(logs, EvalLog) or (
+        isinstance(logs, list) and any(isinstance(x, EvalLog) for x in logs)
+    ):
+        return None
+    # resolve_logs expands a directory and normalises order the way samples_df
+    # does, so chunking cannot reorder attempts relative to an unchunked read
+    return list(resolve_logs(logs))
 
 
 def attempts(
@@ -62,7 +115,15 @@ def attempts(
             Matched on the unqualified name, so `pkg/name` in a log joins a task
             resolved as `name` and vice versa.
     """
-    frame = samples_df(logs, columns=SampleSummary + EvalModel + EvalTask)
+    columns = SampleSummary + EvalModel + EvalTask
+    files = _log_files(logs)
+    if files is None:
+        frame = samples_df(logs, columns=columns)
+    else:
+        size = _log_chunk_size()
+        chunks = [files[i : i + size] for i in range(0, len(files), size)] or [[]]
+        frames = [samples_df(chunk, columns=columns) for chunk in chunks]
+        frame = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
     if task is not None and not frame.empty:
         tails = frame["task_name"].astype(str).str.split("/").str[-1]
         matched = frame[tails == task.split("/")[-1]]
@@ -72,7 +133,7 @@ def attempts(
                 f"None of these logs record task {task!r} (they record: {found})."
             )
         frame = matched
-    if sample_ids is not None:
+    if sample_ids is not None and not frame.empty:
         wanted = {str(sample) for sample in sample_ids}
         frame = frame[frame["id"].astype(str).isin(wanted)]
     return frame.reset_index(drop=True)
@@ -96,6 +157,7 @@ def audit_task(
     attempts_task: str | None = None,
     auditor_image: str | None = None,
     benchmark_image: str | None = None,
+    setup: str | None = None,
 ) -> Task:
     """Build the audit as an Inspect `Task`.
 
@@ -128,6 +190,8 @@ def audit_task(
             published image as the auditor (see `audit_values`).
         benchmark_image: Published image standing in for benchmark services that
             `build:` their own (k8s only).
+        setup: Shell script run in the auditor's box at sample start, for tooling
+            this audit needs beyond the general image (needs egress from the box).
     """
     target = resolve_task(task, task_args)
     staging = _staging()
@@ -157,8 +221,9 @@ def audit_task(
                 composed[key] = audit_compose(target, spec, stage=stage)
         return composed[key]
 
-    # select samples before reading attempts, so collection pushes down and auditing
-    # five samples of a ten-thousand sample benchmark does not materialise every log
+    # select samples before reading attempts: staging is pushed down to the
+    # selection (the summary read over the logs is not -- every log's summaries
+    # are still read once, chunked so file handles stay bounded)
     dataset = list(target.dataset)
     ids = [
         str(sample.id) if sample.id is not None else str(index)
@@ -230,7 +295,7 @@ def audit_task(
     return Task(
         name=f"audit/{target.name}",
         dataset=MemoryDataset(audit_samples),
-        setup=benchmark_setup(),
+        setup=benchmark_setup(setup),
         solver=solver
         or as_solver(
             audit_agent(
@@ -245,7 +310,7 @@ def audit_task(
                 benchmark=any_benchmark,
             )
         ),
-        scorer=[item_scorer(item.name) for item in audit_items(items)],
+        scorer=[item_scorer(item) for item in audit_items(items)],
         metadata={"audited_task": target.name},
     )
 

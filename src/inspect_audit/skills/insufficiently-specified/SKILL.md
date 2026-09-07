@@ -32,7 +32,7 @@ bites hardest.
 
 Establish the work the question requires, then find every decision left to the worker
 that changes the result: the method or tool, a parameter or threshold, which data or
-background set, a tie-break or rounding convention, an ambiguous referent. For each,
+reference set, a tie-break or rounding convention, an ambiguous referent. For each,
 ask what a defensible analyst could choose and what answer that choice yields. A
 choice that does not move the answer does not count -- only degrees of freedom that
 reach a different value.

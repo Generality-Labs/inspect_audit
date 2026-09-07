@@ -10,7 +10,7 @@ from typing import Any
 from inspect_ai import Task
 from inspect_ai._eval.task.util import task_run_dir
 from inspect_ai.dataset import Sample
-from inspect_ai.event import ModelEvent
+from inspect_ai.event import Event, ModelEvent, SpanBeginEvent
 from inspect_ai.log import (
     read_eval_log,
     read_eval_log_samples_by_id,
@@ -21,7 +21,7 @@ from inspect_ai.util._sandbox.environment import resolve_sandbox_environment
 from pydantic import BaseModel, Field
 
 from ._contract import SolverContract, discrepancies_doc
-from ._sandbox import BENCHMARK_SERVICE
+from ._sandbox import BENCHMARK_SERVICE, compose_renames
 
 logger = getLogger(__name__)
 
@@ -99,25 +99,38 @@ def item_sample(
     }
 
     # the benchmark's environment is image plus per-sample state: forward the
-    # original sample's files into the benchmark service, and carry its setup
-    # script for `benchmark_setup` to run there
+    # original sample's files into the benchmark's service(s), and carry its
+    # setup script for `benchmark_setup` to run there
     if benchmark:
         run_dir = Path(task_run_dir(task))
+        renames = compose_renames(original_env)
         # carry the file spec too, not just stage it: a hard reset rebuilds the box
         # from its image (empty), so `phoenix_benchmark` must re-lay these files the
         # way sample-init first did -- restoring only setup would drop file-delivered
         # state the evaluated agent started with
         benchmark_files: dict[str, str] = {}
         for name, value in (sample.files or {}).items():
+            # a `service:` prefix names one of THEIR services: route it through
+            # the same rename the compose merge applied (their default became
+            # `benchmark`; a sibling keeps its name). blanket-prefixing here
+            # once produced `benchmark:victim:/flag` -- a file literally named
+            # `victim:/flag` written into the wrong box.
+            service, sep, box_path = name.partition(":")
+            if sep:
+                key = f"{renames.get(service, service)}:{box_path}"
+            else:
+                key = f"{BENCHMARK_SERVICE}:{name}"
             anchored = _anchored(value, run_dir)
-            files[f"{BENCHMARK_SERVICE}:{name}"] = anchored
-            benchmark_files[f"{BENCHMARK_SERVICE}:{name}"] = anchored
+            files[key] = anchored
+            benchmark_files[key] = anchored
         if benchmark_files:
             metadata["benchmark_files"] = benchmark_files
         if sample.setup is not None:
-            setup = _anchored(sample.setup, run_dir)
-            path = Path(setup)
-            metadata["benchmark_setup"] = path.read_text() if path.is_file() else setup
+            # carry the source as-is (a host path anchored for relative values,
+            # else literal text or a data URI); run_benchmark_setup resolves it
+            # through inspect's own read_sandboxenv_file, which handles file /
+            # data-uri / http -- pre-reading the text here dropped the latter two
+            metadata["benchmark_setup"] = _anchored(sample.setup, run_dir)
 
     return Sample(
         id=str(item.sample_id),
@@ -180,7 +193,7 @@ def item_files(
 
     # an item's media is referenced from its content by HOST path, which means nothing
     # inside the container. copy each file in and rewrite the reference, so an image
-    # item is auditable at all -- otherwise the auditor is asked to check a chair count
+    # item is auditable at all -- otherwise the auditor is asked to judge an image
     # against a path that does not resolve.
     files.update(media_files(record, stage=stage / "media"))
     staged("sample.json", json.dumps([record], indent=2, default=str))
@@ -214,14 +227,15 @@ def sample_logs(
 ) -> tuple[dict[str, str], dict[str, set[str]]]:
     """Write one real `.eval` per source log, sliced to this item's attempts.
 
-    Headers are kept verbatim so the auditor can check how attempts were graded and
-    elicited against the log itself rather than a summary of ours.
+    The header is kept as the source wrote it (task, model, scorers, config,
+    packages, plan) so the auditor checks how attempts were graded and elicited
+    against the log itself rather than a summary of ours -- with one field
+    narrowed: `eval.dataset.sample_ids`/`samples` are cut to the slice, or
+    inspect's streaming reader would walk the whole original id list and raise.
 
     Returns `(files, tools)`: the staged path map, and per sliced log the set of
     tool names its attempts show reaching the model (union over `ModelEvent`s).
-    The tool names come from the samples already in memory here -- never re-read
-    the sliced log for them: its header still lists the whole original dataset, so
-    `read_eval_log_samples` would iterate every id (mostly IndexError-ing).
+    The tool names come from the samples already in memory here -- no re-read.
     """
     if not attempts:
         return {}, {}
@@ -250,6 +264,15 @@ def sample_logs(
             )
             continue
 
+        # narrow the header's dataset ids to what the slice actually holds:
+        # inspect's streaming reader iterates header ids x epochs, so a
+        # verbatim id list makes `read_eval_log_samples` (the call our own
+        # reading-logs skill teaches) raise IndexError on every absent sample.
+        # everything else in the header stays verbatim.
+        sliced_ids = list(dict.fromkeys(s.id for s in log.samples))
+        log.eval.dataset.sample_ids = sliced_ids
+        log.eval.dataset.samples = len(sliced_ids)
+
         # keep the source log's own filename
         host = stage / Path(log_file.replace("file://", "")).name
         write_eval_log(log, str(host))
@@ -257,12 +280,36 @@ def sample_logs(
         tools[host.name] = {
             tool.name
             for sample in log.samples
-            for event in sample.events
+            for event in _solver_events(sample.events)
             if isinstance(event, ModelEvent)
             for tool in event.tools
         }
 
     return files, tools
+
+
+def _solver_events(events: list[Event]) -> list[Event]:
+    """The sample's events minus everything that happened under scoring.
+
+    A model-graded scorer makes its own model calls (an extractor with a `submit`
+    tool, a judge with a rubric), and those land in the sample's events like any
+    other -- so read naively they show tools "reaching the model" that the
+    evaluated model never had. Everything under a `scorers`-type span is the
+    grader's, not the agent's.
+    """
+    scoring: set[str] = set()
+    kept: list[Event] = []
+    for event in events:
+        if isinstance(event, SpanBeginEvent) and (
+            event.type in ("scorers", "scorer") or event.parent_id in scoring
+        ):
+            scoring.add(event.id)
+            continue
+        span = getattr(event, "span_id", None)
+        if span in scoring:
+            continue
+        kept.append(event)
+    return kept
 
 
 def benchmark_source_files(task: Task) -> dict[str, Path]:
@@ -340,6 +387,7 @@ def media_files(record: dict[str, Any], *, stage: Path) -> dict[str, str]:
     """
     files: dict[str, str] = {}
     seen: dict[str, str] = {}
+    used: set[str] = set()
 
     def rewrite(node: Any) -> None:
         if isinstance(node, list):
@@ -358,8 +406,16 @@ def media_files(record: dict[str, Any], *, stage: Path) -> dict[str, str]:
                 continue
             if value not in seen:
                 stage.mkdir(parents=True, exist_ok=True)
-                # keep the parent directory in the name: view_0.png repeats across items
+                # keep the parent directory in the name: basenames repeat across
+                # items -- and uniquify beyond that, or two distinct files
+                # sharing parent+basename collapse into one and the auditor is
+                # shown the wrong picture with no error anywhere
                 name = f"{source.parent.name}_{source.name}" if source.parent.name else source.name
+                n = 1
+                while name in used:
+                    name = f"{n}_{source.parent.name}_{source.name}"
+                    n += 1
+                used.add(name)
                 host = stage / name
                 host.write_bytes(source.read_bytes())
                 seen[value] = f"{AUDIT_ROOT}/{MEDIA_ROOT}/{name}"

@@ -15,7 +15,7 @@ metadata:
 `sample.json` is the item. When the item stores an answer, `target` holds it and
 `metadata` may hold more of the gold. Some benchmarks store none: correctness is a
 predicate the grader computes over the submission — it executes the submitted
-program, runs the pairs, checks the trace. There an empty `target` is not a missing
+program, runs the tests, checks the end state. There an empty `target` is not a missing
 or wrong answer. The gold is any submission the grader accepts, so what you audit is
 whether a valid solution exists and whether that acceptance predicate is sound —
 never whether the empty string is correct. The logs hold every recorded attempt at it.
@@ -26,7 +26,7 @@ is from sources, then compare.
 The benchmark's own machinery is not such a source. Its grader, its generation
 script, its answer key and its metadata all define what the benchmark *expects*;
 none of them tells you whether that expectation is right. Reading the code and
-concluding "the source says 543, so 543 is correct" is the same self-confirming
+concluding "the source says X, so X is correct" is the same self-confirming
 circularity one level deeper — the benchmark vouching for itself. Where the answer
 is something you could reproduce — a count, a computation, a lookup, a derivation —
 reproduce it yourself, independently of the benchmark's own code, and compare that

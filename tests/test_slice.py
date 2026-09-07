@@ -38,18 +38,34 @@ def test_slice_is_a_real_log_holding_only_the_audited_item(
     assert read_eval_log_sample(sliced, id=2, epoch=1).input == "q2"
 
 
-def test_header_survives_verbatim(fixture_log: str, tmp_path: Path) -> None:
-    """The header is the point: it records how the attempt was elicited and graded.
+def test_header_survives_except_the_dataset_ids_which_narrow(
+    fixture_log: str, tmp_path: Path
+) -> None:
+    """The header records how the attempt was elicited and graded -- keep it.
 
-    Recovering those facts ourselves would hand the auditor a schema of ours to trust,
-    so this is equality against the source header rather than a spot check.
+    Recovering those facts ourselves would hand the auditor a schema of ours to
+    trust, so everything is equality against the source header. The one
+    deliberate exception is the dataset id list: inspect's streaming reader
+    walks it, so a verbatim list of the WHOLE original dataset makes
+    `read_eval_log_samples` raise on every log the audit stages.
     """
     files, _ = sample_logs(refs(fixture_log, "1", 1), stage=tmp_path)
+    sliced_file = next(iter(files.values()))
     before = read_eval_log(fixture_log, header_only=True)
-    after = read_eval_log(next(iter(files.values())), header_only=True)
+    after = read_eval_log(sliced_file, header_only=True)
 
-    assert after.eval == before.eval  # task, model, scorers, config, packages, args
+    assert after.eval.dataset.sample_ids == [1]
+    assert after.eval.dataset.samples == 1
+    without_dataset = {"dataset": None}
+    assert after.eval.model_copy(update=without_dataset) == before.eval.model_copy(
+        update=without_dataset
+    )  # task, model, scorers, config, packages, args
     assert after.plan == before.plan  # solver chain and generate config
+
+    # and the point of the narrowing: inspect's own default reader works
+    from inspect_ai.log import read_eval_log_samples
+
+    assert [(s.id, s.epoch) for s in read_eval_log_samples(sliced_file)] == [(1, 1)]
 
 
 def test_every_epoch_of_an_item_stays_together(
@@ -80,3 +96,38 @@ def test_an_unreadable_log_costs_one_model_not_the_case(
         stage=tmp_path / "case",
     )
     assert len(files) == 1
+
+
+def test_the_graders_own_model_calls_are_not_the_agents_tools() -> None:
+    """A model-graded scorer's extractor/judge calls sit under the scorers span."""
+    from inspect_ai.event import ModelEvent, SpanBeginEvent, SpanEndEvent
+    from inspect_ai.model import ChatMessageUser, ModelOutput
+    from inspect_ai.tool import ToolInfo, ToolParams
+
+    from inspect_audit._item import _solver_events
+
+    def model_event(span: str, tools: list[str]) -> ModelEvent:
+        return ModelEvent(
+            model="m",
+            input=[ChatMessageUser(content="x")],
+            tools=[ToolInfo(name=t, description="", parameters=ToolParams()) for t in tools],
+            tool_choice="auto",
+            config={},
+            output=ModelOutput.from_content("m", "y"),
+            span_id=span,
+        )
+
+    events = [
+        SpanBeginEvent(id="solvers", name="solvers", type="solvers"),
+        SpanBeginEvent(id="gen", parent_id="solvers", name="generate", type="solver"),
+        model_event("gen", ["bash"]),
+        SpanEndEvent(id="gen"),
+        SpanEndEvent(id="solvers"),
+        SpanBeginEvent(id="scorers", name="scorers", type="scorers"),
+        SpanBeginEvent(id="judge", parent_id="scorers", name="judge", type="scorer"),
+        model_event("judge", ["submit"]),
+        SpanEndEvent(id="judge"),
+        SpanEndEvent(id="scorers"),
+    ]
+    seen = {t.name for e in _solver_events(events) if isinstance(e, ModelEvent) for t in e.tools}
+    assert seen == {"bash"}

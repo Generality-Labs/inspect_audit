@@ -27,20 +27,20 @@ from inspect_audit._state import (
     seed_new,
 )
 
-QUESTION = "In what year did Aleksandrov prove his first important result?"
+QUESTION = "In what year did the Battle of Hastings take place?"
 
 
 def audit_state(metadata: dict[str, object]) -> TaskState:
     """A TaskState shaped like the auditor's own, mid-audit."""
     return TaskState(
         model=ModelName("mockllm/model"),
-        sample_id="863",
+        sample_id="42",
         epoch=1,
         input=ITEM_PROMPT,
         messages=[],
-        target=Target("1915"),
+        target=Target("1066"),
         metadata={
-            "audit_item": {"task": "fixture_task", "sample_id": "863"},
+            "audit_item": {"task": "fixture_task", "sample_id": "42"},
             "benchmark_metadata": {"category": "maths"},
             "benchmark_input": QUESTION,
             "benchmark_choices": None,
@@ -54,27 +54,27 @@ def make_session() -> BenchmarkState:
 
 
 def test_the_grader_sees_the_benchmark_question_not_the_audit_prompt() -> None:
-    graded = benchmark_task_state(audit_state({}), make_session(), "1915")
+    graded = benchmark_task_state(audit_state({}), make_session(), "1066")
 
     assert graded.input_text == QUESTION
     assert ITEM_PROMPT not in graded.input_text
 
 
 def test_the_grader_sees_the_benchmark_choices() -> None:
-    current = audit_state({"benchmark_choices": ["1905", "1915", "1925"]})
-    graded = benchmark_task_state(current, make_session(), "1915")
+    current = audit_state({"benchmark_choices": ["1056", "1066", "1076"]})
+    graded = benchmark_task_state(current, make_session(), "1066")
 
-    assert [choice.value for choice in graded.choices] == ["1905", "1915", "1925"]
+    assert [choice.value for choice in graded.choices] == ["1056", "1066", "1076"]
 
 
 def test_the_grader_sees_the_session_not_the_audit_transcript() -> None:
     session = make_session()
     seed_new(session, QUESTION, prompt=None)
-    append_message(session, "assistant", "It was 1915.")
+    append_message(session, "assistant", "It was 1066.")
 
-    graded = benchmark_task_state(audit_state({}), session, "1915")
+    graded = benchmark_task_state(audit_state({}), session, "1066")
 
-    assert [m.text for m in graded.messages] == [QUESTION, "It was 1915."]
+    assert [m.text for m in graded.messages] == [QUESTION, "It was 1066."]
 
 
 def test_the_grader_sees_benchmark_metadata_only() -> None:
@@ -86,16 +86,16 @@ def test_the_grader_sees_benchmark_metadata_only() -> None:
 
 def test_the_answer_is_the_completion_and_bare_grade_is_empty() -> None:
     current = audit_state({})
-    assert benchmark_task_state(current, make_session(), "1915").output.completion == "1915"
+    assert benchmark_task_state(current, make_session(), "1066").output.completion == "1066"
     assert benchmark_task_state(current, make_session(), "").output.completion == ""
 
 
 def test_the_grader_sees_the_attempt_store() -> None:
     session = make_session()
-    session.attempt_store = {"scaffold_answer": "1915"}
+    session.attempt_store = {"scaffold_answer": "1066"}
     graded = benchmark_task_state(audit_state({}), session, "")
 
-    assert graded.store.get("scaffold_answer") == "1915"
+    assert graded.store.get("scaffold_answer") == "1066"
 
 
 @scorer(metrics=[])
@@ -127,16 +127,16 @@ def test_grade_tool_end_to_end_hands_the_scorer_the_benchmark_world() -> None:
         async def solve(state: TaskState, generate: Generate) -> TaskState:
             session = store_as(BenchmarkState)
             seed_new(session, QUESTION, prompt=None)
-            complete_attempt(session, "It was 1915.")
+            complete_attempt(session, "It was 1066.")
             grade = grade_benchmark([world_probe()])
-            seen.update(json.loads(await grade(answer="1915")))
+            seen.update(json.loads(await grade(answer="1066")))
             return state
 
         return solve
 
     target = Task(
         name="fixture_task",
-        dataset=MemoryDataset([Sample(id=863, input=QUESTION, target="1915")]),
+        dataset=MemoryDataset([Sample(id=42, input=QUESTION, target="1066")]),
         scorer=match(),
     )
     audit = audit_task(target, sandbox="local", solver=probing_auditor())
@@ -153,10 +153,10 @@ def test_grade_tool_end_to_end_hands_the_scorer_the_benchmark_world() -> None:
     assert scores["answer"] == QUESTION
     world = json.loads(str(scores["explanation"]))
     # the reconstructed session, not the auditor's transcript
-    assert world["messages"] == [QUESTION, "It was 1915."]
+    assert world["messages"] == [QUESTION, "It was 1066."]
     # the benchmark's metadata, not the audit's bookkeeping
     assert "audit_item" not in world["metadata_keys"]
-    assert world["completion"] == "1915"
+    assert world["completion"] == "1066"
     # and the receipt says how synthetic the graded session was
     graded = seen["graded"]
     assert isinstance(graded, dict)

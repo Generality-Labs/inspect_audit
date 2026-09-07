@@ -58,7 +58,7 @@ raw text — not the summariser). Every binary answers observed / latent / absen
 unclear. The example is the calibration case: "this is what a real one looks like."
 
 **[T.7] Wrong gold** — find a sample whose recorded answer is not correct.
-- Counts: our own — code_trace regenerated items, the spatial l03/l07 candidates.
+- Counts: a recorded gold contradicted by an independent reproduction or a primary source.
 - Not: an answer you merely dislike; you must establish the truth independently.
 
 **[T.5] Ground truth not isolated** — find a way to reach the answer from the environment.
@@ -129,7 +129,7 @@ they make the X concrete.
 
 | # | Question (find a case where…) | ABC | Notes |
 |---|---|---|---|
-| ★ OV1 | the recorded gold answer is wrong | T.7 | code_trace, spatial |
+| ★ OV1 | the recorded gold answer is wrong | T.7 | mislabelled golds, stale answers |
 | ★ OV2 | a correct submission is rejected (grader too narrow) | O.a.1, O.a.2, O.b.1, O.h.1 | semantic equivalents, redundant words, negation, format assumptions |
 | ★ OV3 | a wrong submission is credited (grader too broad) | O.d.1, O.b.2, O.g.1, O.g.2 | SWE-bench weak tests, "list all answers", full-DB-dump, state under-check |
 | OV4 | the tests are too weak to catch a plausible wrong solution (adequacy) | O.d.2, O.e.1, O.e.2, O.e.3, O.f.1, O.g.3 | coverage/complexity; fuzz input coverage; branch coverage; state complexity |

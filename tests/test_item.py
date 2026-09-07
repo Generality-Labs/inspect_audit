@@ -14,13 +14,13 @@ from inspect_ai.scorer import match
 from inspect_audit import AuditItem
 from inspect_audit._item import AUDIT_ROOT, item_files, item_sample
 
-QUESTION = "In what year did Aleksandrov prove his first important result?"
+QUESTION = "In what year did the Battle of Hastings take place?"
 
 
 def make_task(metadata: dict[str, object] | None = None) -> Task:
     return Task(
         name="fixture_task",
-        dataset=MemoryDataset([Sample(id=863, input=QUESTION, target="1915", metadata=metadata)]),
+        dataset=MemoryDataset([Sample(id=42, input=QUESTION, target="1066", metadata=metadata)]),
         scorer=match(),
     )
 
@@ -48,16 +48,16 @@ def test_sample_is_written_in_inspects_own_shape(tmp_path: Path) -> None:
 
     assert json.loads(Path(path).read_text()) == [
         {
-            "id": 863,
+            "id": 42,
             "input": QUESTION,
-            "target": "1915",
+            "target": "1066",
             "metadata": {"references": ["https://example.org/a"]},
         }
     ]
 
     loaded = json_dataset(path)
     assert loaded[0].input == QUESTION
-    assert loaded[0].target == "1915"
+    assert loaded[0].target == "1066"
     assert (loaded[0].metadata or {})["references"] == ["https://example.org/a"]
 
 
@@ -101,7 +101,7 @@ def test_grading_doc_import_line_handles_multiple_scorer_modules(tmp_path: Path)
 
     task = Task(
         name="two_scorer_task",
-        dataset=MemoryDataset([Sample(id=1, input=QUESTION, target="1915")]),
+        dataset=MemoryDataset([Sample(id=1, input=QUESTION, target="1066")]),
         scorer=[match(), local_scorer()],
     )
     files = item_files(task, task.dataset[0], [], stage=tmp_path)
@@ -124,38 +124,38 @@ def test_item_sample_records_which_item_it_audits(tmp_path: Path) -> None:
     audited = item_sample(
         task,
         task.dataset[0],
-        AuditItem(task="fixture_task", sample_id=863),
+        AuditItem(task="fixture_task", sample_id=42),
         prompt="audit it",
         stage=tmp_path,
         sandbox="docker",
     )
 
-    assert audited.id == "863"
+    assert audited.id == "42"
     assert audited.input == "audit it"
-    assert audited.target == "1915"
-    assert (audited.metadata or {})["audit_item"]["sample_id"] == 863
+    assert audited.target == "1066"
+    assert (audited.metadata or {})["audit_item"]["sample_id"] == 42
     assert audited.files is not None and f"{AUDIT_ROOT}/sample.json" in audited.files
 
 
 def test_redact_strips_extra_metadata_keys_and_their_names(tmp_path: Path) -> None:
     """A key that pre-empts the finding under audit is withheld, name included.
 
-    Integrity Bench records the construction-validator vote pattern that *is* the
-    difficulty label under audit; an auditor that reads it is no longer an
-    independent witness. Naming the key alone leaks the finding, so `grading.md`
-    must not list it either.
+    Some benchmarks record the construction-time validator votes that *are* the
+    label under audit; an auditor that reads them is no longer an independent
+    witness. Naming the key alone leaks the finding, so `grading.md` must not
+    list it either.
     """
-    task = make_task({"answer": "1915", "gemini_vote_pattern": "1/3", "kind": "spatial"})
+    task = make_task({"answer": "42", "validator_votes": "1/3", "kind": "geometry"})
     files = item_files(
-        task, task.dataset[0], [], stage=tmp_path, redact=("gemini_vote_pattern",)
+        task, task.dataset[0], [], stage=tmp_path, redact=("validator_votes",)
     )
 
     staged = json.loads(Path(files[f"{AUDIT_ROOT}/sample.json"]).read_text())[0]
-    assert "gemini_vote_pattern" not in staged["metadata"]
-    assert staged["metadata"]["kind"] == "spatial"
+    assert "validator_votes" not in staged["metadata"]
+    assert staged["metadata"]["kind"] == "geometry"
 
     grading = Path(files[f"{AUDIT_ROOT}/gold/grading.md"]).read_text()
-    assert "gemini_vote_pattern" not in grading
+    assert "validator_votes" not in grading
     assert "`kind`" in grading
 
 
@@ -166,31 +166,31 @@ def test_benchmark_metadata_is_carried_without_a_benchmark_container(tmp_path: P
     reads `metadata` for the recorded answer. Withholding it there left `grade` -- and
     so the whole red-teaming item -- broken on every task without a container.
     """
-    task = make_task({"answer": "1915"})
-    item = AuditItem(task=task.name, sample_id=863)
+    task = make_task({"answer": "42"})
+    item = AuditItem(task=task.name, sample_id=42)
     sample = item_sample(
         task, task.dataset[0], item, prompt="p", stage=tmp_path, benchmark=False
     )
 
-    assert (sample.metadata or {})["benchmark_metadata"] == {"answer": "1915"}
+    assert (sample.metadata or {})["benchmark_metadata"] == {"answer": "42"}
 
 
 def test_redaction_does_not_reach_the_grader(tmp_path: Path) -> None:
     """Redaction blinds the auditor, never the scorer that has to grade against it."""
-    task = make_task({"answer": "1915", "gemini_vote_pattern": "1/3"})
-    item = AuditItem(task=task.name, sample_id=863)
+    task = make_task({"answer": "1066", "validator_votes": "1/3"})
+    item = AuditItem(task=task.name, sample_id=42)
     sample = item_sample(
         task,
         task.dataset[0],
         item,
         prompt="p",
         stage=tmp_path,
-        redact=("gemini_vote_pattern", "answer"),
+        redact=("validator_votes", "answer"),
     )
 
     assert (sample.metadata or {})["benchmark_metadata"] == {
-        "answer": "1915",
-        "gemini_vote_pattern": "1/3",
+        "answer": "1066",
+        "validator_votes": "1/3",
     }
 
 
@@ -281,3 +281,97 @@ def test_media_staging_leaves_uris_alone(tmp_path: Path) -> None:
     assert media_files(record, stage=tmp_path) == {}
     assert record["input"][0]["content"][0]["image"].startswith("data:")
     assert record["input"][1]["content"][0]["image"].startswith("https://")
+
+
+def test_sample_files_route_through_the_service_renames(tmp_path: Path) -> None:
+    """Prefixed files follow the same renames the compose merge applies.
+
+    Blanket-prefixing once produced `benchmark:victim:/flag` -- a file
+    literally named `victim:/flag` written into the wrong box. Their default
+    (here `web`) becomes `benchmark`; a sibling keeps its name; an unprefixed
+    file targets their default.
+    """
+    import yaml
+    from inspect_ai.util import SandboxEnvironmentSpec
+
+    compose = tmp_path / "compose.yaml"
+    compose.write_text(
+        yaml.safe_dump(
+            {
+                "services": {
+                    "web": {"image": "i", "x-default": True},
+                    "victim": {"image": "v"},
+                }
+            }
+        )
+    )
+    task = Task(
+        name="fixture_task",
+        dataset=MemoryDataset(
+            [
+                Sample(
+                    id=1,
+                    input="q",
+                    target="a",
+                    files={
+                        "victim:/flag.txt": "sibling state",
+                        "/work/x.txt": "default-box state",
+                        "web:/srv/app.py": "their-default state",
+                    },
+                )
+            ]
+        ),
+        scorer=match(),
+    )
+    spec = SandboxEnvironmentSpec("docker", str(compose))
+    sample = item_sample(
+        task,
+        task.dataset[0],
+        AuditItem(task="fixture_task", sample_id=1),
+        prompt="p",
+        stage=tmp_path / "stage",
+        sandbox=("docker", str(compose)),
+        original_env=spec,
+        benchmark=True,
+    )
+
+    carried = (sample.metadata or {})["benchmark_files"]
+    assert set(carried) == {
+        "victim:/flag.txt",  # sibling keeps its name
+        "benchmark:/work/x.txt",  # unprefixed -> their default's new name
+        "benchmark:/srv/app.py",  # their default's own name follows the rename
+    }
+
+
+def test_two_media_files_with_the_same_name_do_not_collide(tmp_path: Path) -> None:
+    """Distinct images sharing parent dir + basename must stage separately.
+
+    Collapsed, both references point at whichever staged last, and the auditor
+    grades a vision item against the wrong picture with no error anywhere.
+    """
+    from inspect_audit._item import media_files
+
+    first = tmp_path / "x" / "views"
+    second = tmp_path / "y" / "views"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    (first / "0.png").write_bytes(b"picture-A")
+    (second / "0.png").write_bytes(b"picture-B")
+
+    record = {
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": str(first / "0.png")},
+                    {"type": "image", "image": str(second / "0.png")},
+                ],
+            }
+        ]
+    }
+    files = media_files(record, stage=tmp_path / "stage")
+
+    refs = [c["image"] for c in record["input"][0]["content"]]
+    assert refs[0] != refs[1]
+    assert Path(files[refs[0]]).read_bytes() == b"picture-A"
+    assert Path(files[refs[1]]).read_bytes() == b"picture-B"

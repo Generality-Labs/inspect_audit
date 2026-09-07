@@ -24,6 +24,9 @@ inspect_audit = "inspect_audit._registry"
 
 [project.optional-dependencies]
 dev = ["ruff", "mypy", "pytest", "pytest-xdist", "pandas-stubs", "types-PyYAML"]
+# frontend/server.py: fastapi + uvicorn arrive via inspect-ai; uvicorn needs a
+# websocket protocol library that plain (non-[standard]) uvicorn doesn't ship
+frontend = ["websockets"]
 
 [tool.ruff]
 src = ["src"]

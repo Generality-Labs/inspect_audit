@@ -28,7 +28,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from inspect_ai.log import EvalSample, read_eval_log_samples
+from inspect_ai.log import EvalSample, read_eval_log
 from inspect_ai.model import (
     ChatMessage,
     ChatMessageAssistant,
@@ -44,7 +44,7 @@ from inspect_ai.tool import Tool, ToolCall, ToolDef, ToolError, ToolResult, tool
 from inspect_ai.util import StoreModel, sandbox, sandbox_default, store_as
 from pydantic import BaseModel, Field, JsonValue
 
-from ._sandbox import BENCHMARK_SERVICE
+from ._sandbox import BENCHMARK_SERVICE, has_benchmark_box
 
 Provenance = Literal["real", "enacted", "authored"]
 
@@ -464,13 +464,14 @@ def benchmark_tools(defs: list[ToolDef], root: str) -> list[Tool]:
 
 def _mirror_tool(d: ToolDef, root: str) -> Tool:
     async def execute(**kwargs: Any) -> ToolResult:
-        try:
-            sandbox(BENCHMARK_SERVICE)
-        except (ProcessLookupError, ValueError):
+        # an explicit membership check: `sandbox(name)` resolves to the DEFAULT
+        # environment on a one-environment sample, so the try/except this
+        # replaced was dead code and the tool would have run in the auditor
+        if not has_benchmark_box():
             raise ToolError(
                 f"{d.name!r} runs in the benchmark environment, which this item "
                 "does not have."
-            ) from None
+            )
         with sandbox_default(BENCHMARK_SERVICE):
             result = cast(ToolResult, await d.tool(**kwargs))
         session = store_as(BenchmarkState)
@@ -536,7 +537,12 @@ async def _read_sliced(root: str, log: str, epoch: int) -> EvalSample:
     with tempfile.TemporaryDirectory(prefix="inspect_audit_attempt_") as staging:
         host = Path(staging) / log
         host.write_bytes(data)
-        for sample in read_eval_log_samples(str(host), all_samples_required=False, resolve_attachments=True):
+        # read the slice whole: it holds only this item's attempts, so this is
+        # one central-directory parse. the streaming reader would instead walk
+        # the header's id list -- O(original dataset x epochs) doomed lookups
+        # per load, ~24s measured on a 10k-sample four-epoch benchmark.
+        sliced = read_eval_log(str(host), resolve_attachments=True)
+        for sample in sliced.samples or []:
             if sample.epoch == epoch:
                 return sample
     raise ToolError(f"no attempt with epoch {epoch} in logs/{log}")

@@ -80,6 +80,44 @@ def test_a_skill_directory_is_the_whole_contract(tmp_path: Path, monkeypatch) ->
         audit_items(["nope"])
 
 
+def test_malformed_frontmatter_fails_at_load(tmp_path: Path, monkeypatch) -> None:
+    """A broken skill contract must fail at load, not at verdict time.
+
+    Silently coerced to an empty contract, a typo'd frontmatter surfaces as
+    `record_verdict` rejecting every grade forever -- a paid run burned against
+    its limits with no verdict. Loading is where the author is watching.
+    """
+    import shutil
+
+    import pytest
+
+    import inspect_audit._agent as agent_module
+    from inspect_audit._agent import audit_items
+
+    monkeypatch.setattr(agent_module, "SKILLS", tmp_path)
+
+    cases = {
+        "no-metadata": "",
+        "scalar-grades": "metadata:\n  grades: SOUND\n",
+        "int-grades": "metadata:\n  grades: [1, 2]\n",
+        "typo-key": "metadata:\n  grade: [A, B]\n",
+        "rogue-unevidenced": "metadata:\n  grades: [A]\n  unevidenced: [B]\n",
+        "scalar-unevidenced": "metadata:\n  grades: [A]\n  unevidenced: B\n",
+        "unknown-tool": "metadata:\n  grades: [A]\n  tools: [attempts]\n",
+        "scalar-tools": "metadata:\n  grades: [A]\n  tools: reset\n",
+        "list-details": "metadata:\n  grades: [A]\n  details: [x, y]\n",
+    }
+    for name, frontmatter in cases.items():
+        d = tmp_path / name
+        d.mkdir()
+        (d / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: test item\n{frontmatter}---\n\nbody\n"
+        )
+        with pytest.raises(ValueError, match=name):
+            audit_items()
+        shutil.rmtree(d)
+
+
 def test_verdicts_are_validated_and_scored_per_item(monkeypatch) -> None:
     """record_verdict enforces the item's grades; each item scores independently."""
     import asyncio

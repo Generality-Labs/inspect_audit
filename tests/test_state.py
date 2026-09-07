@@ -97,7 +97,7 @@ def test_edit_marks_the_message_authored() -> None:
 def test_truncate_reopens_the_attempt() -> None:
     state = make_state()
     seed_new(state, "What year?", prompt=None)
-    complete_attempt(state, "1915")
+    complete_attempt(state, "1066")
     assert state.completed
 
     truncate_messages(state, 1)
@@ -109,10 +109,10 @@ def test_truncate_reopens_the_attempt() -> None:
 def test_complete_sets_output_and_transcript() -> None:
     state = make_state()
     seed_new(state, "What year?", prompt=None)
-    complete_attempt(state, "1915")
+    complete_attempt(state, "1066")
 
     assert state.completed
-    assert state.output is not None and state.output.completion == "1915"
+    assert state.output is not None and state.output.completion == "1066"
     # the answer also lands as an assistant turn, so transcript-readers see
     # what a submitting agent's transcript shows
     assert state.messages[-1].message.role == "assistant"

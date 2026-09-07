@@ -1,6 +1,7 @@
 import base64
 import json
 import mimetypes
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, cast
 
@@ -10,13 +11,10 @@ from inspect_ai._util.images import as_data_uri
 from inspect_ai.agent import Agent, AgentSubmit, agent, react
 from inspect_ai.model import GenerateConfig, Model, get_model
 from inspect_ai.scorer import (
-    Metric,
-    SampleScore,
     Score,
     Scorer,
     Target,
-    Value,
-    metric,
+    frequency,
     scorer,
 )
 from inspect_ai.solver import TaskState
@@ -29,16 +27,23 @@ from inspect_ai.tool import (
     ToolResult,
     bash,
     python,
+    read_skills,
     skill,
     tool,
 )
-from inspect_ai.tool._tools._skill import read_skills
+from inspect_ai.tool._tools._execute import code_viewer
 from inspect_ai.util import StoreModel, sandbox, sandbox_default, store_as
 from pydantic import BaseModel, Field, JsonValue
 
 from ._contract import SolverContract
 from ._item import AUDIT_ROOT
-from ._sandbox import BENCHMARK_SERVICE, phoenix_benchmark, restore_benchmark
+from ._sandbox import (
+    BENCHMARK_SERVICE,
+    benchmark_boxes,
+    has_benchmark_box,
+    phoenix_benchmark,
+    restore_benchmark,
+)
 from ._state import BenchmarkState, attempt, benchmark_task_state, benchmark_tools
 
 SKILLS = Path(__file__).parent / "skills"
@@ -77,7 +82,8 @@ and grade UNVERIFIABLE rather than defer to the recorded answer.
 
 Two families of tool, kept apart so it stays clear who did what:
   audit_*      your own instruments -- `audit_bash` (this box) and `audit_probe`
-               (a look inside the benchmark's box, off the record)
+               (a look inside any of the benchmark's own boxes, by service
+               name, off the record)
   benchmark_*  the evaluated agent's own tools, if the benchmark gave it any.
                Enacting one runs it for real in the benchmark's box and records
                it into the attempt, as though the agent had made the call.
@@ -165,38 +171,83 @@ class AuditItemSkill(BaseModel):
     a grader."""
 
 
+# tools an item's frontmatter may grant. `grade` is listed for legibility only:
+# it is granted whenever the benchmark has a grader (see `auditor_tools`).
+_GRANTABLE_TOOLS = frozenset({"attempt", "grade", "reset"})
+
+
+def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> AuditItemSkill:
+    """Read one item skill's frontmatter contract, loudly.
+
+    The frontmatter drives grade validation, evidence rules and tool grants, so
+    a malformed block must fail here at load. Coerced to an empty contract it
+    would instead surface at verdict time, as `record_verdict` rejecting every
+    grade forever -- a paid run burned against its limits with no verdict.
+    """
+
+    def str_list(key: str) -> list[str]:
+        value = metadata.get(key, [])
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise ValueError(
+                f"audit skill {name!r}: frontmatter `{key}` must be a list of "
+                f"strings, got {value!r}"
+            )
+        return value
+
+    grades = str_list("grades")
+    if not grades:
+        raise ValueError(
+            f"audit skill {name!r} declares no grades: its frontmatter needs "
+            "`metadata.grades`, the exhaustive list of verdicts it can produce"
+        )
+    unevidenced = str_list("unevidenced")
+    if rogue := set(unevidenced) - set(grades):
+        raise ValueError(
+            f"audit skill {name!r}: `unevidenced` names grades it does not "
+            f"declare: {', '.join(sorted(rogue))}"
+        )
+    tools = str_list("tools")
+    if unknown := set(tools) - _GRANTABLE_TOOLS:
+        raise ValueError(
+            f"audit skill {name!r}: `tools` grants unknown tools "
+            f"{', '.join(sorted(unknown))} "
+            f"(grantable: {', '.join(sorted(_GRANTABLE_TOOLS))})"
+        )
+    declared = metadata.get("details", {})
+    if not isinstance(declared, dict):
+        raise ValueError(
+            f"audit skill {name!r}: frontmatter `details` must be a mapping of "
+            f"field name to description, got {declared!r}"
+        )
+    return AuditItemSkill(
+        name=name,
+        description=description,
+        grades=grades,
+        unevidenced=unevidenced,
+        details={str(k): str(v) for k, v in declared.items()},
+        tools=tools,
+    )
+
+
 def audit_items(items: list[str] | None = None) -> list[AuditItemSkill]:
     """The audit items an auditor can investigate, one skill each.
 
     Args:
         items: Restrict to these item names (defaults to all of them).
+
+    Raises:
+        ValueError: A skill's frontmatter contract is malformed, or `items`
+            names an unknown item.
     """
     dirs = [
         path
         for path in sorted(SKILLS.iterdir())
         if path.is_dir() and path.name not in SUPPORT_SKILLS
     ]
-    read = []
-    for s in read_skills([str(d) for d in dirs]):
-        metadata = s.metadata or {}
-
-        def names(key: str, metadata: dict[str, Any] = metadata) -> list[str]:
-            value = metadata.get(key, [])
-            return [str(g) for g in value] if isinstance(value, list) else []
-
-        declared = metadata.get("details", {})
-        read.append(
-            AuditItemSkill(
-                name=s.name,
-                description=s.description,
-                grades=names("grades"),
-                unevidenced=names("unevidenced"),
-                details={str(k): str(v) for k, v in declared.items()}
-                if isinstance(declared, dict)
-                else {},
-                tools=names("tools"),
-            )
-        )
+    read = [
+        _item_skill(s.name, s.description, s.metadata or {})
+        for s in read_skills([str(d) for d in dirs])
+    ]
     if items is not None:
         known = {s.name for s in read}
         unknown = set(items) - known
@@ -303,6 +354,47 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
     return execute
 
 
+# render probe calls as a bash code block and let independent probes run
+# concurrently, matching the bash tool this replaced (a `service` arg is the
+# only reason it isn't just `ToolDef(bash(...))`)
+@tool(viewer=code_viewer("bash", "cmd"), parallel=True)
+def audit_probe() -> Tool:
+    async def execute(cmd: str, service: str) -> str:
+        """Look inside one of the benchmark's own containers, off the record.
+
+        Runs a bash command in the named benchmark box, exactly as the
+        evaluated agent's environment stands, WITHOUT recording anything as
+        the agent's doing. Anything you download, write or install there is
+        evidence about you, not about the environment. To act AS the agent --
+        building the attempt a grader will judge -- use the benchmark_* tools.
+
+        Args:
+            cmd: The bash command line to run.
+            service: Which box to probe. Usually `benchmark` (the one the
+                evaluated agent held); a multi-service benchmark also has its
+                sibling services, addressable by name. An unknown name is
+                rejected with the list of this item's boxes.
+        """
+        boxes = benchmark_boxes()
+        if not boxes:
+            raise ToolError("This item has no benchmark environment to probe.")
+        if service not in boxes:
+            raise ToolError(
+                f"Unknown service {service!r}. This item's benchmark boxes: "
+                f"{', '.join(sorted(boxes))}."
+            )
+        # `bash --login`, matching inspect's own bash tool: a benchmark image
+        # whose environment lives in /etc/profile.d (conda, rustup, nvm) must
+        # give the probe the same PATH the evaluated agent had, or the auditor
+        # concludes a present tool is missing
+        result = await sandbox(service).exec(["bash", "--login", "-c", cmd], timeout=180)
+        # inspect's own bash-tool convention: stderr first, then stdout
+        output = f"{result.stderr}\n" if result.stderr else ""
+        return f"{output}{result.stdout}"
+
+    return execute
+
+
 @tool
 def view_image() -> Tool:
     async def execute(path: str) -> ToolResult:
@@ -360,9 +452,14 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
         graded = benchmark_task_state(state, session, answer)
 
         # the benchmark's scorer calls sandbox() expecting the eval's own box; in the
-        # auditor's two-box world that default is us, so aim it at the benchmark
+        # auditor's two-box world that default is us, so aim it at the benchmark.
+        # only when a benchmark box exists: redirecting to an absent name would
+        # resolve BACK to the auditor on a one-environment sample.
+        redirect = (
+            sandbox_default(BENCHMARK_SERVICE) if has_benchmark_box() else nullcontext()
+        )
         results: list[dict[str, Any]] = []
-        with sandbox_default(BENCHMARK_SERVICE):
+        with redirect:
             for scorer in scorers:
                 score = await scorer(graded, graded.target)
                 if score is not None:
@@ -408,6 +505,11 @@ def reset_benchmark() -> Tool:
         state = sample_state()
         if state is None:
             raise ToolError("Reset is only available while auditing a sample.")
+        if not has_benchmark_box():
+            # without this check, `sandbox("benchmark")` on a one-environment
+            # sample resolves to the AUDITOR's box, and the reset would git-wipe
+            # the audit cell itself while reporting success
+            raise ToolError("This item has no benchmark environment to reset.")
         metadata = state.metadata or {}
         script = metadata.get("benchmark_setup")
         files = metadata.get("benchmark_files")
@@ -418,8 +520,17 @@ def reset_benchmark() -> Tool:
             method = "phoenix"
         else:
             try:
-                await restore_benchmark(script)
-                summary = "benchmark environment reset to its per-sample state"
+                reset_repos = await restore_benchmark(script)
+                # name what was actually reset, so a repo-backed benchmark whose
+                # worktree was never found reads as "reset nothing" rather than a
+                # silent success -- the auditor can see it and reach for hard
+                if reset_repos:
+                    summary = f"benchmark reset in place (repos: {', '.join(reset_repos)})"
+                else:
+                    summary = (
+                        "benchmark reset in place; no git worktree was reset "
+                        "(setup-only state, or none found)"
+                    )
                 method = "soft"
             except Exception as ex:
                 # the soft revert runs commands *inside* the box; if it failed the
@@ -486,27 +597,30 @@ def auditor_tools(
             the reconstructed prompt.
         benchmark: Whether a benchmark environment exists to mirror tools into.
     """
-    skills = [str(path) for path in sorted(SKILLS.iterdir()) if path.is_dir()]
+    # only the skills in scope (plus the support skills), or a two-item audit
+    # still pays for all thirteen descriptions every turn and can invoke bodies
+    # it may never record a verdict for
+    granted_skills = {item.name for item in scoped} | set(SUPPORT_SKILLS)
+    skills = [
+        str(path)
+        for path in sorted(SKILLS.iterdir())
+        if path.is_dir() and path.name in granted_skills
+    ]
 
     # two namespaces, kept distinct so provenance stays unambiguous:
     #   audit_*     -- your own instruments (your box, an off-record probe of theirs)
     #   benchmark_* -- the evaluated agent's own tools, mirrored, recorded when enacted
     tools: list[Tool] = [
         ToolDef(bash(timeout=180), name="audit_bash").as_tool(),
-        ToolDef(
-            bash(timeout=180, sandbox=BENCHMARK_SERVICE),
-            name="audit_probe",
-            description=(
-                "Look inside the environment the benchmark itself ran in, exactly as "
-                "the evaluated agent saw it, WITHOUT recording anything as the agent's "
-                "doing. Anything you download, write or install here is evidence about "
-                "you, not about the environment. To act AS the agent -- building the "
-                "attempt a grader will judge -- use the benchmark_* tools instead."
-            ),
-        ).as_tool(),
         skill(skills),
         record_verdict(scoped),
     ]
+
+    # the probe only exists where a benchmark box does: on a box-less sample,
+    # inspect resolves a named lookup to the DEFAULT environment, so a probe
+    # "into the benchmark" would silently hand back the auditor's own box
+    if benchmark:
+        tools.append(audit_probe())
 
     # a vision item needs to be looked at, and measured; both are useless elsewhere
     if media:
@@ -574,7 +688,15 @@ def audit_agent(
     # resolve the model object here so a generate config binds to it -- react
     # re-resolves a bare string without one, so the config would be dropped
     resolved: str | Model | None = model
-    if model is not None and reasoning_effort is not None:
+    if reasoning_effort is not None:
+        if model is None:
+            # there is nothing to bind the config to yet (the eval's model is
+            # not resolved at task-construction time), and dropping the knob
+            # silently corrupts effort comparisons
+            raise ValueError(
+                "reasoning_effort needs an explicit model to bind to: pass "
+                "model= alongside it (the eval-level --model cannot carry it)"
+            )
         # a str arg so the CLI can pass it; GenerateConfig validates the value
         resolved = get_model(
             model, config=GenerateConfig(reasoning_effort=cast(Any, reasoning_effort))
@@ -610,28 +732,19 @@ def audit_agent(
     )
 
 
-@metric
-def grades() -> Metric:
-    """Proportion of items in each grade."""
-
-    def compute(scores: list[SampleScore]) -> Value:
-        counts: dict[str, int] = {}
-        for score in scores:
-            counts[str(score.score.value)] = counts.get(str(score.score.value), 0) + 1
-        return {grade: count / len(scores) for grade, count in sorted(counts.items())}
-
-    return compute
-
-
-def item_scorer(item: str) -> Scorer:
+def item_scorer(item: AuditItemSkill) -> Scorer:
     """A scorer surfacing the auditor's verdict on one audit item."""
+    # inspect's own categorical metric, with the skill's grades declared so a
+    # grade nobody earned still reports as 0.0 and the metric round-trips
+    # through recompute_metrics(). a dynamic registry name gives each item its
+    # own score column; the cost is that a cold `inspect score` cannot resolve
+    # these names to re-score a log
+    distribution = frequency(categories=[*item.grades, "NO_VERDICT"])
 
-    # a dynamic registry name so each item gets its own score column; the cost is
-    # that a cold `inspect score` cannot resolve these names to re-score a log
-    @scorer(metrics=[grades()], name=item)
+    @scorer(metrics=[distribution], name=item.name)
     def factory() -> Scorer:
         async def score(state: TaskState, target: Target) -> Score:
-            verdict = state.store_as(Verdicts).verdicts.get(item)
+            verdict = state.store_as(Verdicts).verdicts.get(item.name)
             if verdict is None:
                 return Score(value="NO_VERDICT")
             return Score(

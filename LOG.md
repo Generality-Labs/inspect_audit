@@ -310,3 +310,25 @@ NOTE: a parallel session's _report.py/report_skills (layer-2 synthesizer) appear
 then was reverted; tree clean without it.
 NEXT: finish change-6 prose; free real-benchmark audit_probe derisker; then paid
 audit of a subset of integrity bench (pablos).
+
+2026-08-26: NEW layer-2 skeleton + web chat (James-approved design, this time on request).
+_report.py: report(logs=) task -- react agent, chat-first turn-taking via request_input()
+in on_continue (default self-nudge chatters under ACP); list_logs tool only; registered
+in _registry. frontend/: loopback FastAPI relay (browser speaks raw ACP JSON-RPC over WS
+-> NDJSON to the eval socket, discovery via inspect_ai.agent._acp.discovery) + minimal
+chat page. Verified: task constructs, page JS compiles; live mockllm e2e NOT yet run
+(permission layer). Run: inspect eval inspect_audit/report -T logs=<dir> --acp-server
+--display none, then python frontend/server.py -> 127.0.0.1:7676.
+2026-08-26 15:20: e2e VERIFIED (mockllm, free): browser-equivalent client through the live
+relay -- init, auto-bind, chunk stream, elicitation turn-taking both ways, session_ended,
+operator msg in the .eval transcript. One fix: TargetAddress.describe() not .address().
+frontend server up on 127.0.0.1:7676 (nohup, scratchpad/frontend.log).
+
+## 2026-09-07 (Sun) -- Epoch Chess Puzzles as the first external target; Hawk readiness
+- 12:00 Read every local inspect doc (75 files) + this package end to end. Working tree was ~1850 lines ahead of HEAD with no LOG entries since 08-26 (that work: benchmark_boxes() membership, setup replay via inspect's own runner, service renames everywhere, phoenix timeout-as-state-check, per-log replay regrade, `unvalidated` default). This entry is the catch-up.
+- 13:30 Target chosen: Epoch AI's Chess Puzzles (38 public logs, 4000 attempts, 100 items, no sandbox). Task source is public (gist fc1c6f9e…); missing only `bench.model.default_grader_model` and `puzzles.csv`. Rebuilt both in ../epoch_bench (bespoke package, separate from this general one): CSV from the logs (identical across all 38), grader bound via the `grader` model role. SciCode/HAL dropped (non-Inspect traces, someone else's).
+- 13:40 Finding in the logs: the extractor model drifted across the leaderboard -- gemini-2.0-flash-001 in 25 logs, gpt-5-mini-2025-08-07 in 12. Not in any header (model_roles unset), only in ModelEvents under the scorer span. Concordance replays against one grader, so expect stable disagreements on the gpt-5-mini logs.
+- 13:50 audit_probe on 1 chess item in Docker: passes in 18s (40 attempts, 38 sliced logs, 42 files). Two package bugs it exposed, fixed: (1) discrepancies.md reported `submit` as an agent tool -- it is the scorer's extractor call; `_solver_events` now drops everything under a scorers-type span. (2) `_score_batch` did not pass the audit's model roles to score_async, so a role-bound grader fell to its hard-coded default; now passes `model_roles()`.
+- 14:00 Hawk readiness fixes: `task_requirements` pins a git-installed task package by commit via PEP 610 direct_url.json (was `name==version`, which sends pip to PyPI for a package that is not there); editable/local installs are skipped with a warning. `logs` accepts an http(s) URL manifest (Epoch's public S3 list) fetched in the runner. Drafted epoch_bench/audit/hawk-chess.eval-set.yaml + a bespoke auditor Dockerfile (stockfish + python-chess on the general image).
+- Uncertain: registry name. Editable install registers the task as bare `Chess Puzzles` (matches Epoch's own log), a wheel/git install as `bench/Chess Puzzles`; attempts join on the tail so both work, but the Hawk YAML must use the prefixed form.
+- Still needed before a Hawk run (each needs James's yes): push epoch_bench + inspect_audit to a git host Hawk can pull; build+push the auditor image to a registry; choose the auditor model through middleman (or an openrouter key as a secret); pilot limit 10.

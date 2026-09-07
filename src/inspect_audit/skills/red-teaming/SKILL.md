@@ -51,20 +51,19 @@ you can reach is what the hole is worth:
   - **MAJOR_EXPLOIT** -- a non-solution passes, or the hole is realised in the recorded
     attempts, or it would move the benchmark's reported numbers; the grader is failing to
     measure the capability.
-  - **MINOR_EXPLOIT** -- a genuinely wrong answer slips through only narrowly (a modest
-    over-tolerance), unrealised and changing no score.
+  - **MINOR_EXPLOIT** -- a genuinely wrong answer slips through only narrowly, unrealised
+    and changing no score.
 
 Grade by how wrong the admitted answer is and how far it reaches, never by how squarely it
 violates a stated rule. If you cannot construct a genuinely wrong answer the grader
 accepts, there is no exploit -- say what you tried.
 
-When the grader scores by running the submission -- it executes the program and checks it
-reproduces the examples, simulates the actions and checks the end state -- any submission
-that meets that criterion is correct by construction. A different program that reproduces
-every example is a valid solution, not an exploit, and how it behaves on inputs the grader
+When the grader scores by running the submission -- it executes the program and checks
+its output, simulates the actions and checks the end state -- any submission that meets
+that criterion is correct by construction. A different solution that meets the criterion
+in full is a valid solution, not an exploit, and how it behaves on inputs the grader
 never tests is out of scope. An exploit here is a submission the grader credits that does
-*not* meet the criterion -- e.g. the executor accepts a program that does not actually
-reproduce the examples.
+*not* meet the criterion -- e.g. the executor credits a program whose output is wrong.
 
 ## Be adversarial to the grader
 

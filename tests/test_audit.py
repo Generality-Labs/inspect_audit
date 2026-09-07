@@ -181,10 +181,10 @@ def test_attempts_can_come_from_a_sibling_variant_of_the_audited_task(
 ) -> None:
     """The same items often ship under several variants; the field's answers still count.
 
-    Integrity Bench runs the same 400 questions as `<domain>` and `<domain>_tools`
-    with identical sample ids. Auditing the tools task -- the only one with a real
-    environment -- while joining the no-tools attempts is the only way to get both a
-    benchmark box and an evidence base. Each sliced log keeps its own header, so the
+    Benchmarks routinely run the same questions as `<name>` and `<name>_tools`
+    variants with identical sample ids. Auditing the tools task -- the one with a
+    real environment -- while joining the no-tools attempts is the only way to get
+    both a benchmark box and an evidence base. Each sliced log keeps its own header, so the
     auditor can see which variant produced each attempt.
     """
     from inspect_audit import attempts
@@ -198,3 +198,38 @@ def test_attempts_can_come_from_a_sibling_variant_of_the_audited_task(
 
     # ...but an explicit sibling name is honoured
     assert not attempts(fixture_log, task=name).empty
+
+
+def test_setup_runs_in_the_auditors_box_and_fails_loudly() -> None:
+    """The `setup` script installs bespoke tooling at sample start; a failure is a sample error."""
+    import asyncio
+
+    from inspect_ai.util import ExecResult
+
+    from inspect_audit import _audit
+
+    calls: list[list[str]] = []
+
+    class Box:
+        def __init__(self, ok: bool) -> None:
+            self.ok = ok
+
+        async def exec(self, cmd, timeout=None):  # noqa: ANN001, ANN202
+            calls.append(cmd)
+            return ExecResult(self.ok, 0 if self.ok else 1, "", "apt: no such package")
+
+    async def run(ok: bool) -> None:
+        state = type("S", (), {"metadata": {}})()
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(_audit, "sandbox", lambda *a, **k: Box(ok))
+
+            async def no_benchmark(script):  # noqa: ANN001, ANN202
+                return None
+
+            mp.setattr(_audit, "run_benchmark_setup", no_benchmark)
+            await _audit.benchmark_setup("apt-get install -y stockfish")(state, None)
+
+    asyncio.run(run(True))
+    assert calls == [["bash", "--login", "-c", "apt-get install -y stockfish"]]
+    with pytest.raises(RuntimeError, match="auditor setup failed"):
+        asyncio.run(run(False))

@@ -1,4 +1,5 @@
 import atexit
+import json
 import math
 import os
 import re
@@ -14,11 +15,18 @@ from inspect_ai import Task
 from inspect_ai._eval.task.sandbox import read_sandboxenv_file, resolve_sample_files
 from inspect_ai._eval.task.util import task_run_dir
 from inspect_ai.dataset import Sample
-from inspect_ai.util import SandboxEnvironmentSpec, SandboxEnvironmentType
+from inspect_ai.util import (
+    SandboxEnvironmentSpec,
+    SandboxEnvironmentType,
+    is_dockerfile,
+    subprocess,
+)
 from inspect_ai.util import sandbox as sandbox_env
 from inspect_ai.util._sandbox.compose import DOCKERFILE as INSPECT_DOCKERFILE
-from inspect_ai.util._sandbox.compose import is_dockerfile
-from inspect_ai.util._sandbox.context import copy_sandbox_environment_files
+from inspect_ai.util._sandbox.context import (
+    copy_sandbox_environment_files,
+    setup_sandbox_environment,
+)
 from inspect_ai.util._sandbox.docker.compose import (
     COMPOSE_WAIT,
     compose_command,
@@ -34,13 +42,41 @@ from inspect_ai.util._sandbox.docker.config import (
     COMPOSE_GENERIC_YAML,
 )
 from inspect_ai.util._sandbox.docker.docker import DockerSandboxEnvironment
-from inspect_ai.util._sandbox.docker.service import services_healthcheck_time
+from inspect_ai.util._sandbox.docker.service import (
+    parse_duration,
+    services_healthcheck_time,
+)
 from inspect_ai.util._sandbox.environment import resolve_sandbox_environment
-from inspect_ai.util._subprocess import subprocess
 
 logger = getLogger(__name__)
 
 BENCHMARK_SERVICE = "benchmark"
+
+# a healthcheck time is a schedule, not a recreate budget: stop + remove + create
+# + start take real time on top of the health-wait. this is the slack the host
+# timeout adds over compose's own --wait-timeout before it may call a rebuild dead.
+_RECREATE_OVERHEAD = 60
+
+
+def benchmark_boxes() -> list[str]:
+    """Every benchmark container live in this sample, by service name.
+
+    The benchmark's default runs as `benchmark`; its siblings keep their own
+    names. Whatever topology the audited compose declared, this is the set of
+    boxes an auditor may reach. Read from the live environment dict --
+    `sandbox(name)` cannot answer membership, because inspect resolves a
+    *named* lookup to the default environment whenever the sample has exactly
+    one, so on a box-less item it silently hands back the auditor's own box.
+    """
+    from inspect_ai.util._sandbox.context import sandbox_environments_context_var
+
+    environments = sandbox_environments_context_var.get(None) or {}
+    return [name for name in environments if name != AUDITOR_SERVICE_NAME]
+
+
+def has_benchmark_box() -> bool:
+    """Whether this sample's project actually includes a benchmark service."""
+    return BENCHMARK_SERVICE in benchmark_boxes()
 
 
 async def run_benchmark_setup(script: str | None) -> None:
@@ -48,28 +84,58 @@ async def run_benchmark_setup(script: str | None) -> None:
 
     The setup is what populates a benchmark's per-sample state; benchmarks whose
     state is baked into a per-sample image (e.g. SWE-bench) carry no setup.
+    Replayed exactly as inspect's own sample-init does (sandbox.py:136-143 +
+    context.py): resolve the source (file path, data URI, http, or literal
+    text), inject a `#!/usr/bin/env bash` shebang when the script has none, then
+    run it through the setup runner (write to a file, `chmod +x`, exec via
+    `env`) so `INSPECT_SANDBOX_SETUP_TIMEOUT` applies. The runner execs the file
+    directly, not through a shell, so a shebang-less script would otherwise run
+    under `sh` (bashisms fail) or not at all -- `bash -c` here diverged from
+    what the audited eval ran, and dropping the shebang injection diverged again.
     """
     if not script:
         return
-    result = await sandbox_env(BENCHMARK_SERVICE).exec(
-        ["bash", "-c", script], timeout=300
+    if not has_benchmark_box():
+        # distinguish "no box configured" from "the box didn't come up": the
+        # audit builder already decided this item HAS a benchmark, so an absent
+        # live box here means the container failed to start, not a box-less item
+        raise RuntimeError(
+            "the benchmark box is not running -- it failed to start or exited, "
+            "so its per-sample setup cannot be run"
+        )
+    setup_bytes = await read_sandboxenv_file(script)
+    setup_str = setup_bytes.decode("utf-8")
+    if not setup_str.strip().startswith("#!"):
+        setup_str = f"#!/usr/bin/env bash\n\n{setup_str}"
+    # the runner executes in the dict's default environment; hand it the
+    # benchmark box under that name
+    await setup_sandbox_environment(
+        setup_str.encode("utf-8"), {AUDITOR_SERVICE_NAME: sandbox_env(BENCHMARK_SERVICE)}
     )
-    if not result.success:
-        raise RuntimeError(f"Benchmark setup failed: {result.stderr[:500]}")
 
 
 # return every git worktree in the box to HEAD and drop untracked files (but keep
 # ignored build artifacts) -- how an image-baked repo returns to pristine. reset
 # --hard, not checkout, because a prior grade stages its changes (git add -A) and
 # checkout would only revert the working tree back to that staged, patched state
+# echo each repo it actually reset, so a no-op is visible in the receipt rather
+# than inferred: `; true` at the end keeps the exec success (a repo with nothing
+# to reset is not a failure), but a repo that was never found -- deeper than the
+# search depth, on a different filesystem -- simply prints nothing and the caller
+# can see it did nothing. `-c safe.directory=*` defeats git's dubious-ownership
+# refusal when the checkout is owned by a different uid than the exec user, which
+# would otherwise no-op silently under the `2>/dev/null`.
+_GIT_RESTORE_DEPTH = 6
 _GIT_RESTORE = (
-    'for g in $(find / -maxdepth 5 -type d -name .git 2>/dev/null); do '
-    'r=$(dirname "$g"); git -C "$r" reset --hard --quiet 2>/dev/null; '
-    'git -C "$r" clean -fdq 2>/dev/null; done; true'
+    f"for g in $(find / -maxdepth {_GIT_RESTORE_DEPTH} -type d -name .git 2>/dev/null); do "
+    'r=$(dirname "$g"); '
+    'git -c safe.directory="*" -C "$r" reset --hard --quiet 2>/dev/null && '
+    'git -c safe.directory="*" -C "$r" clean -fdq 2>/dev/null && '
+    'echo "reset $r"; done; true'
 )
 
 
-async def restore_benchmark(script: str | None) -> None:
+async def restore_benchmark(script: str | None) -> list[str]:
     """Restore the benchmark service to its pristine per-sample state.
 
     Reverts every git worktree in the box first, then re-runs any setup -- in
@@ -84,13 +150,39 @@ async def restore_benchmark(script: str | None) -> None:
     the caller fall back to a rebuild -- important for image-baked benchmarks
     with no setup script, where the git/setup steps would otherwise no-op and
     falsely report success on a dead box.
+
+    Returns the worktrees it actually reset, per box (`<box>:<path>`), so a
+    reset that found no repos -- a checkout deeper than the search, an ownership
+    refusal -- is visible in the receipt rather than a silent no-op reported as
+    success. An empty list on a repo-backed benchmark is the signal to look.
     """
-    box = sandbox_env(BENCHMARK_SERVICE)
-    alive = await box.exec(["true"], timeout=30)
-    if not alive.success:
-        raise RuntimeError("benchmark box is unreachable; a rebuild is needed")
-    await box.exec(["bash", "-c", _GIT_RESTORE], timeout=300)
+    boxes = benchmark_boxes()
+    if not boxes:
+        raise RuntimeError("this item has no benchmark box to restore")
+    reset_repos: list[str] = []
+    # every box, not just the primary: a CTF sibling holds per-sample state too
+    for name in boxes:
+        box = sandbox_env(name)
+        alive = await box.exec(["true"], timeout=30)
+        if not alive.success:
+            raise RuntimeError(f"benchmark box {name!r} is unreachable; a rebuild is needed")
+        restored = await box.exec(["bash", "-c", _GIT_RESTORE], timeout=300)
+        if not restored.success:
+            # the script itself ends `; true`, so a failure here means the box
+            # could not even run it (no bash, a corrupted root) -- claiming
+            # "restored" would be false success on exactly the image-baked case
+            # this exists for
+            raise RuntimeError(
+                f"the in-place restore could not run in benchmark box {name!r}: "
+                f"{restored.stderr[:500]}"
+            )
+        reset_repos += [
+            f"{name}:{line.removeprefix('reset ').strip()}"
+            for line in restored.stdout.splitlines()
+            if line.startswith("reset ")
+        ]
     await run_benchmark_setup(script)
+    return reset_repos
 
 
 # the auditor rides here; every other service is the benchmark's and gets rebuilt
@@ -146,7 +238,10 @@ async def phoenix_benchmark(
         raise RuntimeError("this item has no benchmark box to rebuild.")
 
     # size the wait to the services' healthchecks exactly as inspect's own
-    # compose_up does, so a box with a long healthcheck is not killed prematurely
+    # compose_up does, so a box with a long healthcheck is not killed prematurely.
+    # but a healthcheck time is a *schedule*, not a recreate budget -- stop,
+    # remove, create and start take real time on top of it -- so add a recreate
+    # overhead the host timeout must clear before it can call a slow rebuild a brick
     wait = services_healthcheck_time({t: services[t] for t in targets}) or COMPOSE_WAIT
 
     # force-recreate the benchmark service(s) from image -- a fresh container fs is
@@ -154,7 +249,13 @@ async def phoenix_benchmark(
     # which is project-wide and would take the auditor and its volumes with it.
     # timeout_retry=False: a genuine daemon hang should fail fast as a finding, not
     # retry for ~11 minutes holding a docker-cli slot.
+    timed_out = False
+    result = None
     try:
+        # host timeout sits ABOVE compose's own --wait-timeout: with retries off
+        # (unlike inspect's compose_up, which tolerates the race by retrying), a
+        # host timeout that fired first would misreport a slow-but-healthy
+        # rebuild as a brick that reached past the container
         result = await compose_command(
             [
                 "up",
@@ -166,46 +267,63 @@ async def phoenix_benchmark(
                 *targets,
             ],
             project=project,
-            timeout=wait,
+            timeout=wait + _RECREATE_OVERHEAD,
             timeout_retry=False,
         )
-        # `--wait` returns non-zero for services that exit even successfully, so
-        # verify by state, not exit code. check the targets directly rather than
-        # reusing compose_check_running: it counts against the whole project (the
-        # auditor keeps running), so a subset always trips its count guard. a
-        # target that legitimately exits 0 (a one-shot writer/init) is up too --
-        # match inspect's own success notion or a CTF sibling false-alarms.
-        running = {s["Service"] for s in await compose_ps(project=project, status="running")}
-        exited_ok = {
-            s["Service"]
-            for s in await compose_ps(project=project, status="exited")
-            if s.get("ExitCode") == 0
-        }
-    except TimeoutError as ex:
-        raise RuntimeError(
-            "the benchmark box did not come back after a rebuild -- the rebuild "
-            "itself timed out, so the brick reached past the container (the daemon "
-            "or host is degraded)."
-        ) from ex
+    except TimeoutError:
+        # a timeout is not itself a verdict -- the recreate may have finished and
+        # only the health-wait lagged. fall through and let the state check below
+        # decide, exactly as inspect's own compose_up defers to compose_ps.
+        timed_out = True
+    # `--wait` returns non-zero for services that exit even successfully, so
+    # verify by state, not exit code. check the targets directly rather than
+    # reusing compose_check_running: it counts against the whole project (the
+    # auditor keeps running), so a subset always trips its count guard. a
+    # target that legitimately exits 0 (a one-shot writer/init) is up too --
+    # match inspect's own success notion or a CTF sibling false-alarms.
+    running = {s["Service"] for s in await compose_ps(project=project, status="running")}
+    exited_ok = {
+        s["Service"]
+        for s in await compose_ps(project=project, status="exited")
+        if s.get("ExitCode") == 0
+    }
     down = [t for t in targets if t not in running | exited_ok]
     if down:
+        detail = (
+            "the rebuild timed out and the box is still not up"
+            if timed_out
+            else (result.stderr or "")[:500] if result is not None else ""
+        )
         raise RuntimeError(
             f"the benchmark box did not come back after a rebuild ({', '.join(down)}) "
             "-- the brick reached past the container (the daemon, the host disk, or a "
-            f"shared resource): {(result.stderr or '')[:500]}"
+            f"shared resource): {detail}"
         )
 
-    # replay both seeding channels into the empty box, files then setup (as
-    # sample-init does). files are prefixed `service:path`; hand the copy both envs
-    # by name so the prefix routes to the benchmark and the copy can still resolve
-    # its ambient default (the auditor) the way inspect's own init does.
+    # replay both seeding channels into the empty box(es), files then setup (as
+    # sample-init does). files are prefixed `service:path`; hand the copy each
+    # LIVE box by name -- a sibling-targeted fixture must land back on the
+    # sibling -- plus the ambient default (the auditor) the way inspect's own
+    # init resolves it. only live boxes: a one-shot service that exited (a
+    # writer that plants state and stops) is not in the environments dict, so
+    # `sandbox_env(name)` for it would raise or mis-resolve to the auditor.
     if files:
+        live = set(benchmark_boxes())
+        wanted = {
+            file.split(":", 1)[0] for file in files if ":" in file
+        }
+        unreachable = wanted - live - {AUDITOR_SERVICE_NAME}
+        if unreachable:
+            raise RuntimeError(
+                f"cannot re-lay files for {', '.join(sorted(unreachable))}: no live "
+                "box by that name after the rebuild (a one-shot service that exited "
+                "cannot be re-seeded from here)"
+            )
         resolved = resolve_sample_files(files)
         contents = {path: await read_sandboxenv_file(src) for path, src in resolved.items()}
-        environments = {
-            AUDITOR_SERVICE_NAME: sandbox_env(),
-            BENCHMARK_SERVICE: sandbox_env(BENCHMARK_SERVICE),
-        }
+        environments = {AUDITOR_SERVICE_NAME: sandbox_env()}
+        for name in live:
+            environments[name] = sandbox_env(name)
         await copy_sandbox_environment_files(contents, environments)
     await run_benchmark_setup(script)
 
@@ -250,8 +368,11 @@ async def _image_declares_volumes(service: dict[str, Any]) -> bool:
     if not isinstance(image, str) or not image:
         return False
     try:
+        # bounded: this runs right after a rebuild, possibly against the very
+        # degraded daemon phoenix exists to survive
         result = await subprocess(
             ["docker", "image", "inspect", image, "--format", "{{json .Config.Volumes}}"],
+            timeout=60,
         )
     except Exception:
         return False
@@ -260,8 +381,6 @@ async def _image_declares_volumes(service: dict[str, Any]) -> bool:
     declared = result.stdout.strip()
     return bool(declared) and declared not in ("null", "{}")
 
-
-AUDITOR_NETWORK = "inspect_audit"
 
 DOCKERFILE = """\
 # Generated by inspect_audit. The audited task's packages are installed so the
@@ -316,6 +435,54 @@ AUDITOR_SERVICE: dict[str, Any] = {
 }
 
 
+def compose_renames(spec: SandboxEnvironmentType | None) -> dict[str, str]:
+    """How the audited environment's service names map into the merged project.
+
+    Sample `files` and setup carry these names as prefixes, so anything staging
+    them must rewrite through the same mapping the compose merge applies.
+    """
+    found = benchmark_source(resolve_sandbox_environment(spec))
+    if found is None:
+        return {}
+    return _service_renames(found[0].get("services") or {})
+
+
+def _service_renames(services: dict[str, Any]) -> dict[str, str]:
+    """How the audited compose's service names map into the merged project.
+
+    Three reserved-name rules keep the two-box world addressable, whatever the
+    audited compose declares:
+
+    - the benchmark's own default service becomes `benchmark`, so setup, grade,
+      reset and the mirrored tools have a stable address for it;
+    - any *other* service squatting on `benchmark` moves aside first, or every
+      one of those addresses would silently hit the interloper;
+    - any service named `default` that is not the benchmark's default moves
+      aside too: `default` is the auditor's slot, and left in place it would
+      replace the auditor in the merge -- no audit cell at all, and inspect
+      would stage the audit's own files (sliced logs, answers) into the
+      benchmark's container.
+    """
+    default_service = _default_service(services)
+    if default_service is None:
+        return {}
+    renames: dict[str, str] = {}
+    taken = set(services) | {BENCHMARK_SERVICE, AUDITOR_SERVICE_NAME}
+
+    def uniquify(name: str) -> str:
+        while name in taken:
+            name += "_"
+        taken.add(name)
+        return name
+
+    if BENCHMARK_SERVICE in services and BENCHMARK_SERVICE != default_service:
+        renames[BENCHMARK_SERVICE] = uniquify(BENCHMARK_SERVICE)
+    renames[default_service] = BENCHMARK_SERVICE
+    if AUDITOR_SERVICE_NAME in services and AUDITOR_SERVICE_NAME != default_service:
+        renames[AUDITOR_SERVICE_NAME] = uniquify(AUDITOR_SERVICE_NAME)
+    return renames
+
+
 def _default_service(services: dict[str, Any]) -> str | None:
     """The benchmark's default service, by inspect's own precedence.
 
@@ -349,14 +516,29 @@ def task_requirements(task: Task) -> list[str]:
             modules.add(module.split(".")[0])
     modules = {m for m in modules if m and m.isidentifier()}
 
-    # pin to the versions in the environment the audit resolved the task in
+    # pin to the versions in the environment the audit resolved the task in.
+    # a task package that is not on PyPI (installed from git, as Hawk installs
+    # `packages:`) is pinned to the exact commit it came from via its PEP 610
+    # direct_url.json -- `name==version` would send pip to PyPI for a package
+    # that is not there and fail the image build. an editable or local-path
+    # install cannot be reproduced inside the image at all: skip it, loudly.
     pins: dict[str, str] = {}
 
     def pin(dist: str) -> None:
         try:
-            pins[dist] = version(dist)
+            dist_version = version(dist)
         except PackageNotFoundError:
-            pass
+            return
+        requirement = _direct_url_requirement(dist)
+        if requirement is None:
+            pins[dist] = f"{dist}=={dist_version}"
+        elif requirement:
+            pins[dist] = requirement
+        else:
+            logger.warning(
+                f"{dist} is installed from a local path, which the auditor image "
+                "cannot reproduce; the auditor runs without the task's package"
+            )
 
     pin("inspect-ai")
     distributions = packages_distributions()
@@ -364,7 +546,33 @@ def task_requirements(task: Task) -> list[str]:
         for dist in distributions.get(module, []):
             pin(dist)
 
-    return [f"{dist}=={ver}" for dist, ver in sorted(pins.items())]
+    return [pins[dist] for dist in sorted(pins)]
+
+
+def _direct_url_requirement(dist: str) -> str | None:
+    """A PEP 508 requirement for a non-PyPI install, per PEP 610.
+
+    `None` for a normal index install (pin by version), the empty string for an
+    editable or local-directory install (unreproducible), else `name @ vcs+url@commit`.
+    """
+    from importlib.metadata import distribution
+
+    text = distribution(dist).read_text("direct_url.json")
+    if not text:
+        return None
+    direct = json.loads(text)
+    url = str(direct.get("url", ""))
+    if "vcs_info" in direct:
+        vcs = direct["vcs_info"]
+        ref = vcs.get("commit_id") or vcs.get("requested_revision")
+        pinned = f"{vcs['vcs']}+{url}" + (f"@{ref}" if ref else "")
+        subdirectory = direct.get("subdirectory")
+        if subdirectory:
+            pinned += f"#subdirectory={subdirectory}"
+        return f"{dist} @ {pinned}"
+    if "archive_info" in direct and not url.startswith("file:"):
+        return f"{dist} @ {url}"
+    return ""
 
 
 def audit_sandbox(task: Task) -> SandboxEnvironmentType:
@@ -478,31 +686,22 @@ def audit_compose(
         return audit_sandbox(task)
     merged, base = found
     services: dict[str, Any] = merged.get("services") or {}
-
-    # which service is the benchmark's default: x-default wins over the literal
-    # name `default`, matching inspect's own selection, else a lone service. That
-    # is the one we rename to `benchmark` so setup/grade can address it.
-    default_service = _default_service(services)
-    benchmark_name = BENCHMARK_SERVICE
-    while benchmark_name in services and benchmark_name != default_service:
-        benchmark_name += "_"
+    renames = _service_renames(services)
 
     # re-anchor relative paths and strip any x-default claims
     renamed = {}
     for name, service in services.items():
         anchored = _anchor_service(service, base) if base is not None else dict(service)
         anchored.pop("x-default", None)
-        renamed[benchmark_name if name == default_service else name] = anchored
+        renamed[renames.get(name, name)] = anchored
 
-    # rewrite depends_on references to the renamed service
+    # rewrite depends_on references to renamed services
     for service in renamed.values():
         depends = service.get("depends_on")
         if isinstance(depends, list):
-            service["depends_on"] = [benchmark_name if d == default_service else d for d in depends]
+            service["depends_on"] = [renames.get(d, d) for d in depends]
         elif isinstance(depends, dict):
-            service["depends_on"] = {
-                (benchmark_name if k == default_service else k): v for k, v in depends.items()
-            }
+            service["depends_on"] = {renames.get(k, k): v for k, v in depends.items()}
 
     # add the auditor service; it rides the shared bridge, so no per-sample
     # network is allocated. the benchmark's own networks (if any) are preserved.
@@ -593,10 +792,6 @@ additionalResources:
             - world
 """
 
-_DURATION = re.compile(
-    r"^((?P<h>\d+(?:\.\d+)?)h)?((?P<m>\d+(?:\.\d+)?)m)?"
-    r"((?P<s>\d+(?:\.\d+)?)s)?((?P<ms>\d+(?:\.\d+)?)ms)?$"
-)
 _MEMORY = re.compile(r"^(?P<value>\d+(?:\.\d+)?)(?P<unit>gb?|mb?|kb?|b)$", re.IGNORECASE)
 _MEMORY_UNITS = {"b": "", "k": "Ki", "m": "Mi", "g": "Gi"}
 
@@ -606,13 +801,16 @@ def _as_list(value: str | list[str]) -> list[str]:
 
 
 def _seconds(value: Any) -> int | None:
-    match = _DURATION.match(str(value))
-    if match is None or not any(match.groups()):
+    # inspect's own compose-duration parser (it knows ns/us/µs and embedded
+    # whitespace, and errors on garbage a regex would silently skip over).
+    # probe fields are whole seconds >= 1: a zero or empty duration returns
+    # None so the field is dropped rather than emitting periodSeconds: 0, which
+    # k8s rejects; a positive sub-second value rounds up.
+    try:
+        total = parse_duration(str(value)).seconds
+    except ValueError:
         return None
-    h, m, s, ms = (float(match.group(g) or 0) for g in ("h", "m", "s", "ms"))
-    total = h * 3600 + m * 60 + s + ms / 1000
-    # probe fields are whole seconds: round sub-second values up, never to zero
-    return math.ceil(total) if total else 0
+    return math.ceil(total) if total > 0 else None
 
 
 def _quantity(value: Any) -> Any:
@@ -774,12 +972,9 @@ def audit_values(
     if found is not None:
         compose, _ = found
         theirs: dict[str, Any] = compose.get("services") or {}
-        default_service = _default_service(theirs)
-        benchmark_name = BENCHMARK_SERVICE
-        while benchmark_name in theirs and benchmark_name != default_service:
-            benchmark_name += "_"
+        renames = _service_renames(theirs)
         for name, service in theirs.items():
-            converted[benchmark_name if name == default_service else name] = _values_service(
+            converted[renames.get(name, name)] = _values_service(
                 name, service, benchmark_image
             )
         if volumes := compose.get("volumes"):

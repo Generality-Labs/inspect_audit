@@ -71,14 +71,19 @@ def _log_files(logs: LogSource) -> list[Any] | None:
     re-arms the fd exhaustion this exists to prevent).
     """
     from inspect_ai.analysis._dataframe.util import resolve_logs
-    from inspect_ai.log import EvalLog
+    from inspect_ai.log import EvalLog, list_eval_logs
 
     if isinstance(logs, EvalLog) or (
         isinstance(logs, list) and any(isinstance(x, EvalLog) for x in logs)
     ):
         return None
-    # resolve_logs expands a directory and normalises order the way samples_df
-    # does, so chunking cannot reorder attempts relative to an unchunked read
+    # a directory is listed with list_eval_logs: inspect's own resolve_logs
+    # stat()s the path first, and an S3 prefix has no object to stat (HeadObject
+    # 404), so a log directory in a bucket fails there while listing it works.
+    # explicit files still go through resolve_logs, which normalises their order
+    # the way samples_df does, so chunking cannot reorder attempts.
+    if isinstance(logs, str) and not logs.endswith((".eval", ".json")):
+        return sorted(info.name for info in list_eval_logs(logs, recursive=True))
     return list(resolve_logs(logs))
 
 

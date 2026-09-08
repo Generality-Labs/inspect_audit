@@ -20,7 +20,8 @@ The other items each name a defect someone already knew to look for. A benchmark
 worst problems are usually not on that list -- they are the thing that looked odd for
 ten seconds while you were doing something else. This item is where that goes.
 
-You have already read the item, the grading code, and every recorded attempt at it.
+Review what you actually inspected: the item, grading code, and recorded attempts.
+Do not assume another check established exhaustive coverage.
 Report what struck you that the other items had no slot for.
 
 ## What counts
@@ -70,3 +71,9 @@ to see elsewhere if you are right.
 - NONE  -- you looked and there is nothing the other items did not already cover
 
 There is no grade for "probably fine". NONE is a claim that you looked.
+
+Keep audit-environment failures in the submission debrief. A missing analysis
+package, unavailable judge, or misconfigured API route is not by itself a defect
+of the benchmark. Historical judge differences are a lead: establish their effect
+before asserting measurement corruption. Keep incomplete investigations in
+`not_pursued`, with the next check that would resolve them.

@@ -43,8 +43,14 @@ sample id is in `sample.json`.
 
 ```python
 from inspect_ai.analysis import samples_df
-df = samples_df("/audit/logs")     # one row per attempt: its answer and its score
+df = samples_df("/audit/logs")     # summary rows; inspect available columns
 ```
+
+Enumerate all epochs and read the actual submissions, not just the scorer's
+extracted answers. Reuse the saved attempt review table across skills. Account
+for unscored and unresolved cases; compute counts in code. `samples_df` defaults
+do not include full completions: inspect its columns and use Inspect's sample
+reading API for the submitted content.
 
 Read sources verbatim with curl: never judge a source through anything that
 summarises it, because a summary normalises the exact detail that is usually the

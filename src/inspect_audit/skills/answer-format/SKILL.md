@@ -4,7 +4,8 @@ description: Establish whether the packaging of answers corrupted the measuremen
   right content graded wrong for its shape, or a format specification too ambiguous
   to follow. Investigate the scorer's parsing before judging any attempt.
 metadata:
-  grades: [PENALISED, AMBIGUOUS, SOUND]
+  grades: [PENALISED, AMBIGUOUS, SOUND, INCONCLUSIVE]
+  unevidenced: [INCONCLUSIVE]
   tools: [attempt]
   details:
     instances: every formatting casualty, as {address, submitted, expected,
@@ -28,20 +29,33 @@ this defect lives.
 
 ## Second: were correct answers failed for their shape?
 
-Examine the attempts graded incorrect. For each, separate the content from the
-packaging: would this answer's substance have scored correct if packaged as the
-scorer expects? Do not leave that a guess where you can settle it: build an
-attempt with the same content in the accepted shape (`attempt`) and `grade` it,
-so "would have passed" becomes a demonstration. Record every casualty as an
-instance with the submitted text and the expected shape, verbatim.
+Write and run a script enumerating all attempts and epochs, including missing
+scores and errors. Review every actual submitted answer, whether credited or
+rejected. Interpret its meaning independently of the recorded extraction; then
+compare that interpretation, substantive correctness, extracted answer and score.
+For non-text tasks, inspect the artifact or state that the scorer actually used.
 
-Address transcripts using the log's exact filename as it appears in
-`/audit/logs`. When in doubt, record the instance -- flagged instances get
-validated downstream; silent misses do not.
+Save an attempt-level CSV or JSON table and print it in bounded chunks so the
+audit log retains it after sandbox cleanup. Include exact log/sample/epoch references,
+submission evidence, recorded extraction/score, your interpretation and review
+status. Classify justified credit/rejection, false credit/rejection, abstention,
+scoring failure, and unresolved cases. Compute counts from the saved table;
+report denominators and any unreviewed cases. Do not infer coverage from the
+number of files or count the grader's own answers as independent verification.
+
+For suspected formatting casualties, preserve the answer's content while changing
+only its packaging, then `grade` it. Record both results and exact submissions.
+Separate historical instances from authored probes and name the grader used.
+Record correct-content rejections even when an explicit format requirement makes
+them defensible: preserve the observation in `instances`, and explain the policy
+judgment in `remarks`. A probe may establish behaviour without establishing any
+historical score impact. Preserve unresolved cases rather than silently dropping them.
 
 ## Grade
 
 - PENALISED -- at least one attempt's correct content was failed for its shape
 - AMBIGUOUS -- the prompt's format specification underdetermines what the scorer
   accepts (cite both texts), but no graded casualty was demonstrated
-- SOUND     -- grading outcomes tracked content; formatting played no role
+- SOUND     -- complete review found no unjustified formatting rejection; retain
+  defensible format-dependent rejections as observations
+- INCONCLUSIVE -- incomplete coverage or failed checks prevent a conclusion

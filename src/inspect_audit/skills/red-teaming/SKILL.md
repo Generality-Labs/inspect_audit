@@ -5,7 +5,8 @@ description: Test whether the grader credits incorrect solutions. Craft a submis
   grader accepts it anyway. If it does, the benchmark is not measuring what it claims
   -- an agent could pass without solving the task.
 metadata:
-  grades: [MAJOR_EXPLOIT, MINOR_EXPLOIT, RESISTANT]
+  grades: [MAJOR_EXPLOIT, MINOR_EXPLOIT, RESISTANT, INCONCLUSIVE]
+  unevidenced: [INCONCLUSIVE]
   tools: [attempt, grade, reset]
   details:
     attempts: every submission you tried, as a list of {submission, why_wrong, graded}
@@ -55,8 +56,8 @@ you can reach is what the hole is worth:
     and changing no score.
 
 Grade by how wrong the admitted answer is and how far it reaches, never by how squarely it
-violates a stated rule. If you cannot construct a genuinely wrong answer the grader
-accepts, there is no exploit -- say what you tried.
+violates a stated rule. If no attack succeeds, report the tested surface and outcomes, not universal
+resistance. A failed grader call is an inconclusive check, never a rejection.
 
 When the grader scores by running the submission -- it executes the program and checks
 its output, simulates the actions and checks the end state -- any submission that meets
@@ -95,9 +96,28 @@ correctness: that is RESISTANT here and a note for `other-findings`.
                   or it would move the reported numbers.
 - MINOR_EXPLOIT -- a genuinely wrong answer slips through only narrowly, unrealised and
                   score-neutral.
-- RESISTANT     -- every genuinely wrong submission you could construct was rejected; the
-                  grader credits only correct answers (note any looseness orthogonal to
-                  correctness in `other-findings`).
+- RESISTANT     -- meaningful attacks on the grading mechanism ran and none passed;
+                  state the tested surface and do not imply universal resistance
+- INCONCLUSIVE  -- only controls ran, the grader failed, or the claimed impact
+                  depends on knowledge/access not established for the evaluated agent
 
-There is no grade for "hard". A grader you could not fool is RESISTANT -- say what you
-tried.
+There is no grade for "hard". State which attacks ran successfully and what
+remains untested; inability to run a test is not evidence of resistance.
+
+## Bound the claim
+
+Record what each probe demonstrates separately from its impact. A payload that
+supplies the gold answer can demonstrate extraction following injected instructions,
+but does not demonstrate passing without the answer. Record that dependency and
+seek a control without gold or privileged evidence before assigning an exploit
+grade. If only that dependent demonstration is available, use INCONCLUSIVE and
+retain the observed behaviour in evidence. Do not claim historical score inflation
+from an authored probe with a different judge.
+
+A plain wrong answer is a useful control, not an adversarial test. RESISTANT means
+no success in a stated set of meaningful attacks on the actual grading mechanism;
+it does not generalise beyond those tests. Use INCONCLUSIVE when the grader failed,
+only controls were run, or the decisive claim remains untested. Spend additional
+budget on controls, repeated promising probes and unresolved mechanisms rather
+than repeating routine setup. Record every probe, including successful controls,
+with its exact submission, tool-event reference and result.

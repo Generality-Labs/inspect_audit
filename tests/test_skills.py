@@ -61,7 +61,10 @@ def test_a_skill_directory_is_the_whole_contract(tmp_path: Path, monkeypatch) ->
     from inspect_audit._agent import audit_items
 
     # a new item, added as a directory and nothing else
-    for name, grades in (("gold-answer", "[CORRECT, INCORRECT]"), ("env-broken", "[SOUND, BROKEN]")):
+    for name, grades in (
+        ("gold-answer", "[CORRECT, INCORRECT]"),
+        ("env-broken", "[SOUND, BROKEN]"),
+    ):
         d = tmp_path / name
         d.mkdir()
         (d / "SKILL.md").write_text(
@@ -149,14 +152,38 @@ def test_verdicts_are_validated_and_scored_per_item(monkeypatch) -> None:
         import pytest
 
         with pytest.raises(ToolError, match="must be one of"):
-            await record(item="gold-answer", evidence=quote, approaches="", tried="", remarks="", grade="MAYBE", details="{}")
+            await record(
+                item="gold-answer",
+                evidence=quote,
+                approaches="",
+                tried="",
+                remarks="",
+                grade="MAYBE",
+                details={},
+            )
         with pytest.raises(ToolError, match="at least one"):
-            await record(item="gold-answer", evidence=[], approaches="", tried="", remarks="", grade="CORRECT", details="{}")
+            await record(
+                item="gold-answer",
+                evidence=[],
+                approaches="",
+                tried="",
+                remarks="",
+                grade="CORRECT",
+                details={},
+            )
         with pytest.raises(ToolError, match="No verdict recorded"):
             await submit()
 
         # an unevidenced grade may go without evidence; submit then passes
-        await record(item="gold-answer", evidence=[], approaches="", tried="looked", remarks="", grade="INCORRECT", details="{}")
+        await record(
+            item="gold-answer",
+            evidence=[],
+            approaches="",
+            tried="looked",
+            remarks="",
+            grade="INCORRECT",
+            details={},
+        )
         await submit()
 
     asyncio.run(run())
@@ -202,3 +229,69 @@ def test_other_findings_is_evidenced_but_lets_a_clean_item_say_nothing() -> None
     assert meta["unevidenced"] == ["NONE"]
     # scope separates a one-item quirk from a mechanism that recurs across the bank
     assert "scope" in meta["details"]["findings"]
+
+
+def test_verdict_object_contract_and_submission_debrief() -> None:
+    """Expose skill fields before the first call and retain structured results."""
+    import asyncio
+
+    import pytest
+    from inspect_ai.tool import ToolDef, ToolError
+    from inspect_ai.util import store_as
+    from inspect_ai.util._store import Store, init_subtask_store
+
+    from inspect_audit._agent import (
+        AuditItemSkill,
+        Evidence,
+        Verdicts,
+        record_verdict,
+        submit_audit,
+    )
+
+    item = AuditItemSkill(
+        name="answer-format",
+        description="Review answers",
+        grades=["SOUND"],
+        details={"examined": "Exact log, sample, epoch references"},
+    )
+    init_subtask_store(Store())
+    record = record_verdict([item])
+    schema = ToolDef(record).parameters.properties["details"]
+    assert schema.type == "object"
+    assert "examined" in schema.properties
+    assert "answer-format: examined" in schema.description
+    quote = Evidence(
+        observed="MOVE: a1a2", source="run.eval#sample=1,epoch=2,message=4"
+    )
+
+    async def run() -> None:
+        args = dict(
+            item=item.name,
+            evidence=[quote],
+            approaches="reviewed",
+            tried="read",
+            remarks="",
+            grade="SOUND",
+        )
+        with pytest.raises(ToolError, match="examined"):
+            await record(**args, details={})
+        with pytest.raises(ToolError, match="not a JSON string"):
+            await record(**args, details='{"examined": []}')
+        await record(**args, details={"examined": [quote.source]})
+        await submit_audit([item])(
+            environment_issues=[
+                Evidence(
+                    observed="Analysis dependency was missing", source="tool-event-1"
+                )
+            ],
+            unresolved=[
+                Evidence(observed="Alternative judge not tested", source="tool-event-2")
+            ],
+        )
+
+    asyncio.run(run())
+    saved = store_as(Verdicts)
+    assert saved.verdicts[item.name].details["examined"] == [quote.source]
+    assert saved.debrief["environment_issues"][0].source == "tool-event-1"
+    assert saved.debrief["unresolved"][0].observed == "Alternative judge not tested"
+    assert saved.debrief["improvements"] == []

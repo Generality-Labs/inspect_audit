@@ -24,6 +24,7 @@ from inspect_ai.tool import (
     Tool,
     ToolDef,
     ToolError,
+    ToolParam,
     ToolResult,
     bash,
     python,
@@ -62,7 +63,8 @@ every recorded attempt at it by many models.
   {AUDIT_ROOT}/gold/grading.md   where the grading code lives
   {AUDIT_ROOT}/env/              how this container was built
 
-The benchmark's own code is installed here, so read the real source in place. You have
+The benchmark's source is staged under /audit/benchmark; read it there.
+It may not be importable in this analysis container. You have
 `audit_bash`, a shell in this container, with curl and the internet.
 
 Before hunting faults, work out what the benchmark is for: what each question tests, and
@@ -79,6 +81,21 @@ it programmatically: write the script, run it, install what you need, iterate un
 holds. Do not settle such a fact by eye, and do not trust the recorded answer because
 checking it is work. When you have genuinely tried and still cannot establish it, say so
 and grade UNVERIFIABLE rather than defer to the recorded answer.
+
+For log-based checks, write and run a script enumerating every attempt and epoch,
+including unscored and errored attempts. Review the actual submission the scorer
+received, not only its extracted answer. Save a CSV or JSON review table under
+/audit with one row per attempt: exact log/id/epoch, submission or transcript
+reference, extracted answer, recorded score, independent interpretation, review
+status and evidence. Choose columns suited to the task; no inventory service is
+provided. Reuse this table across skills. Compute counts and percentages from it,
+with explicit denominators and unresolved/unreviewed counts. Reconcile later
+observations with earlier conclusions before submitting. Read long transcripts
+in bounded sections; truncated output does not establish complete coverage.
+
+Evidence must be locatable: log filename + sample id + epoch + message/event or
+quoted segment; code path + symbol/lines; or the command and saved output. Keep
+historical outcomes separate from new probes using the current grader.
 
 Two families of tool, kept apart so it stays clear who did what:
   audit_*      your own instruments -- `audit_bash` (this box) and `audit_probe`
@@ -106,8 +123,8 @@ Treat the benchmark as sound until you can show otherwise -- it was built by com
 people and most items are fine. A finding earns its place by a concrete divergence from
 that intent, evidenced; it is not owed to you because an item was investigated. Hunt a
 fault on every item and you will manufacture one. With no such evidence the verdict is the
-sound one (CORRECT, RESISTANT, SPECIFIED), or UNVERIFIABLE where you truly could not
-establish it. A finding should be something the benchmark's author did not already know,
+sound one only when its required checks succeeded. Use INCONCLUSIVE for incomplete
+format or adversarial checks, and UNVERIFIABLE for unresolved gold answers. A finding should be something the benchmark's author did not already know,
 not a restatement of how it works.
 
 You are investigating:
@@ -117,7 +134,10 @@ You are investigating:
 Invoke each skill and follow it. Other skills are available for working with the logs.
 If `{AUDIT_ROOT}/discrepancies.md` is present, it is worth a look. Record each
 verdict as you settle it, not all at the end, with the evidence that earned it, and
-say what you actually think. Then submit.
+say what you actually think. Then submit with a brief investigation debrief: environment issues, blocked or
+unreviewed work, and possible improvements. Separate repairs to the audit setup
+from changes to the evaluated agent's environment; for the latter say whether the
+change preserves the capability being measured.
 {{confidential}}{{notes}}"""
 
 # rendered into the prompt only when the benchmark is unpublished. the auditor keeps
@@ -176,7 +196,9 @@ class AuditItemSkill(BaseModel):
 _GRANTABLE_TOOLS = frozenset({"attempt", "grade", "reset"})
 
 
-def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> AuditItemSkill:
+def _item_skill(
+    name: str, description: str, metadata: dict[str, Any]
+) -> AuditItemSkill:
     """Read one item skill's frontmatter contract, loudly.
 
     The frontmatter drives grade validation, evidence rules and tool grants, so
@@ -282,6 +304,7 @@ class Verdicts(StoreModel):
     """Recorded verdicts, keyed by audit item name."""
 
     verdicts: dict[str, Verdict] = Field(default_factory=dict)
+    debrief: dict[str, list[Evidence]] = Field(default_factory=dict)
 
 
 @tool
@@ -295,7 +318,7 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
         tried: str,
         remarks: str,
         grade: str,
-        details: str,
+        details: dict[str, Any],
     ) -> str:
         """Record your verdict on one audit item.
 
@@ -308,24 +331,27 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
             tried: What you did to try to break the item, including what failed.
             remarks: What you actually think, including anything you were not asked about.
             grade: Your grade for this item.
-            details: JSON object holding any further fields this item's skill
-                asks you to record ("{}" when it asks for none).
+            details: Object containing the required fields listed for this item.
+                Pass an object, not an encoded JSON string.
         """
         # a ToolError is fed back to the model as recoverable, so a submission that
         # misses the contract becomes a retry rather than a lost verdict
         skill = lookup.get(item)
         if skill is None:
-            raise ToolError(f"Unknown item {item!r}. Expected one of {', '.join(lookup)}.")
-        try:
-            recorded_details: dict[str, JsonValue] = json.loads(details)
-            if not isinstance(recorded_details, dict):
-                raise ValueError
-        except ValueError:
-            raise ToolError("details must be a JSON object.") from None
+            raise ToolError(
+                f"Unknown item {item!r}. Expected one of {', '.join(lookup)}."
+            )
+        if not isinstance(details, dict):
+            raise ToolError("details must be an object, not a JSON string.")
+        recorded_details = details
         if grade not in skill.grades:
-            raise ToolError(f"Grade for {item} must be one of {', '.join(skill.grades)}.")
+            raise ToolError(
+                f"Grade for {item} must be one of {', '.join(skill.grades)}."
+            )
         if not evidence and grade not in skill.unevidenced:
-            raise ToolError(f"A grade of {grade} needs at least one observation with its source.")
+            raise ToolError(
+                f"A grade of {grade} needs at least one observation with its source."
+            )
         for entry in evidence:
             if not entry.observed.strip() or not entry.source.strip():
                 raise ToolError(
@@ -351,7 +377,24 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
         }
         return json.dumps({"item": item, "grade": grade})
 
-    return execute
+    definition = ToolDef(execute, name="record_verdict")
+    fields: dict[str, list[str]] = {}
+    for item in items:
+        for key, description in item.details.items():
+            fields.setdefault(key, []).append(f"{item.name}: {description}")
+    definition.parameters.properties["details"] = ToolParam(
+        type="object",
+        description="Required fields by item:\n"
+        + "\n".join(
+            f"{item.name}: {', '.join(item.details) or '(none)'}" for item in items
+        ),
+        properties={
+            key: ToolParam(description="; ".join(descriptions))
+            for key, descriptions in fields.items()
+        },
+        additionalProperties=True,
+    )
+    return definition.as_tool()
 
 
 # render probe calls as a bash code block and let independent probes run
@@ -387,7 +430,9 @@ def audit_probe() -> Tool:
         # whose environment lives in /etc/profile.d (conda, rustup, nvm) must
         # give the probe the same PATH the evaluated agent had, or the auditor
         # concludes a present tool is missing
-        result = await sandbox(service).exec(["bash", "--login", "-c", cmd], timeout=180)
+        result = await sandbox(service).exec(
+            ["bash", "--login", "-c", cmd], timeout=180
+        )
         # inspect's own bash-tool convention: stderr first, then stdout
         output = f"{result.stderr}\n" if result.stderr else ""
         return f"{output}{result.stdout}"
@@ -534,7 +579,9 @@ def reset_benchmark() -> Tool:
                 # worktree was never found reads as "reset nothing" rather than a
                 # silent success -- the auditor can see it and reach for hard
                 if reset_repos:
-                    summary = f"benchmark reset in place (repos: {', '.join(reset_repos)})"
+                    summary = (
+                        f"benchmark reset in place (repos: {', '.join(reset_repos)})"
+                    )
                 else:
                     summary = (
                         "benchmark reset in place; no git worktree was reset "
@@ -571,12 +618,29 @@ async def _phoenix(script: str | None, files: dict[str, str] | None) -> str:
 
 @tool
 def submit_audit(items: list[AuditItemSkill]) -> Tool:
-    async def execute() -> str:
-        """Submit your audit, once every item has a recorded verdict."""
+    async def execute(
+        environment_issues: list[Evidence] | None = None,
+        unresolved: list[Evidence] | None = None,
+        improvements: list[Evidence] | None = None,
+    ) -> str:
+        """Submit your audit, once every item has a recorded verdict.
+
+        Args:
+            environment_issues: Audit setup or tool failures, with tool-event sources.
+            unresolved: Blocked or unreviewed checks and their evidence references.
+            improvements: Suggested changes with supporting observations; distinguish
+                audit repairs from benchmark changes and state whether the intended
+                task is preserved. These are proposals, not benchmark findings.
+        """
         recorded = store_as(Verdicts).verdicts
         missing = [item.name for item in items if item.name not in recorded]
         if missing:
             raise ToolError(f"No verdict recorded for: {', '.join(missing)}.")
+        store_as(Verdicts).debrief = {
+            "environment_issues": environment_issues or [],
+            "unresolved": unresolved or [],
+            "improvements": improvements or [],
+        }
         return json.dumps({item: verdict.grade for item, verdict in recorded.items()})
 
     return execute
@@ -769,6 +833,10 @@ def item_scorer(item: AuditItemSkill) -> Scorer:
                     **verdict.details,
                     "tried": verdict.tried,
                     "remarks": verdict.remarks,
+                    "debrief": {
+                        key: [e.model_dump() for e in entries]
+                        for key, entries in state.store_as(Verdicts).debrief.items()
+                    },
                 },
             )
 

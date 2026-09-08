@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir inspect-ai pandas pyarrow pillow
+# Fail the image build if the standard log-analysis stack is incomplete.
+RUN python -c "import pandas, pyarrow, PIL; from inspect_ai.analysis import samples_df"
 
 WORKDIR /audit
 CMD ["sleep", "infinity"]

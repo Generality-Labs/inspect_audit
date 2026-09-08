@@ -258,7 +258,7 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
     record = record_verdict([item])
     schema = ToolDef(record).parameters.properties["details"]
     assert schema.type == "object"
-    assert "examined" in schema.properties
+    assert "Exact log, sample, epoch references" in schema.description
     assert "answer-format: examined" in schema.description
     quote = Evidence(
         observed="MOVE: a1a2", source="run.eval#sample=1,epoch=2,message=4"

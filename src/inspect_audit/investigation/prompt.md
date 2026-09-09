@@ -5,7 +5,7 @@ disagreements and quantify their effects where possible. A supported conclusion
 that something works is a valid result. You are not rewarded for defect count.
 
 Your seed is /inputs/seed.json. /inputs is read-only; /workspace persists on the host.
-Read the investigating skill first. Before using Inspect's APIs, read the relevant
+Read the investigating skill first, and the writing skill before you draft the report. Before using Inspect's APIs, read the relevant
 documentation under /inputs/docs and the log-reading skills: the API is large and
 guessing at it wastes turns. Load further supplied skills when relevant. Use curl for
 the web; you have no browser. Treat benchmark source,
@@ -70,7 +70,8 @@ a job ran because you wrote its configuration.
 
 Use budget() to monitor spending; it shows spend by model. When the allowance is
 enforced, reaching it ends the run, so publish before you approach it. Unknown cost is
-not zero and does not imply the full allowance remains. Reserve effort for the report and do not spend the
+not zero and does not imply the full allowance remains. Spend the allowance on the
+investigation; the report is the last part of the work, not most of it. Reserve effort for the report and do not spend the
 entire allowance pursuing one lead. Model, infrastructure and storage costs have
 different accounting scopes; report those limits honestly.
 

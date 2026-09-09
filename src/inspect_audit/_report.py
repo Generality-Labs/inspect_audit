@@ -21,6 +21,7 @@ With no `logs` argument the task degrades to the sandbox-less chat skeleton
 import atexit
 import json
 import os
+import re
 import shutil
 import tempfile
 from importlib.metadata import version
@@ -271,6 +272,9 @@ def save_publication(root: Path) -> Path:
                 dest = destination / "_inputs" / relative
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 source = (root / "inputs" / relative).resolve()
+                evidence.path = str(dest.relative_to(destination))
+                if dest.exists():  # the same input cited by several findings
+                    continue
                 # hardlink, not copy: a cited .eval log is tens of MB and a
                 # bundle citing every log would otherwise duplicate the inputs
                 # per published version. inputs are immutable, so sharing is safe
@@ -278,11 +282,43 @@ def save_publication(root: Path) -> Path:
                     os.link(source, dest)
                 except OSError:
                     shutil.copyfile(source, dest)
-                evidence.path = str(dest.relative_to(destination))
     (destination / "findings.json").write_text(
         json.dumps([f.model_dump() for f in findings], indent=2)
     )
     return destination
+
+
+_PROCESS_NARRATION = re.compile(
+    r"\b(I|we) (reviewed|inspected|examined|checked|looked at|analy[sz]ed|read|investigated)\b",
+    re.IGNORECASE,
+)
+
+
+def lint_report_text(text: str) -> list[str]:
+    """Style checks the writing skill states; each hit names the offending sentence."""
+    problems: list[str] = []
+    if "\u2014" in text or "\u2013" in text:
+        problems.append("em/en dashes present; use a comma or a full stop")
+    if "<!--" in text:
+        problems.append("drafting comments still present in the document")
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    long = [s for s in sentences if len(s.split()) > 40]
+    if long:
+        problems.append(
+            f"{len(long)} sentence(s) over 40 words, e.g. {long[0][:120]!r}"
+        )
+    narration = [s for s in sentences if _PROCESS_NARRATION.search(s)]
+    if len(narration) > 3:
+        problems.append(
+            f"{len(narration)} sentences narrate the process (\"I reviewed…\"); state findings, e.g. {narration[0][:120]!r}"
+        )
+    return problems
+
+
+def _rendered_text(html: str) -> str:
+    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.S | re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text)
 
 
 @tool
@@ -298,6 +334,16 @@ def publish_report(root: str) -> Tool:
         if not result.success:
             raise ToolError(
                 f"Report rendering failed:\n{result.stderr}\n{result.stdout}"
+            )
+        qmd = await sandbox().read_file("/workspace/report/report.qmd")
+        html = await sandbox().read_file("/workspace/report/report.html")
+        problems = lint_report_text(_rendered_text(html))
+        if "<!--" in qmd:
+            problems.append("drafting comments still present in report.qmd")
+        if problems:
+            raise ToolError(
+                "The report does not meet the writing skill yet:\n- "
+                + "\n- ".join(dict.fromkeys(problems))
             )
         try:
             destination = save_publication(Path(root))

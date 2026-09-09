@@ -19,7 +19,13 @@ from inspect_ai import Task, task
 from inspect_ai.agent import AgentState, react
 from inspect_ai.dataset import Sample
 from inspect_ai.log import list_eval_logs
-from inspect_ai.model import CompactionSummary, ModelCost, ModelInfo, set_model_info
+from inspect_ai.model import (
+    CompactionSummary,
+    GenerateConfig,
+    ModelCost,
+    ModelInfo,
+    set_model_info,
+)
 from inspect_ai.model._model import sample_model_usage
 from inspect_ai.tool import Tool, ToolError, bash, skill, tool
 from inspect_ai.util import sandbox, store_as
@@ -431,9 +437,10 @@ def investigate(
     """
     if not math.isfinite(budget_usd) or budget_usd <= 0:
         raise ValueError("budget_usd must be finite and positive")
-    skill_paths = [str(ASSETS / "skills" / "investigating")] + [
-        str(SKILLS / name) for name in SUPPORT_SKILLS
-    ]
+    skill_paths = [
+        str(ASSETS / "skills" / "investigating"),
+        str(ASSETS / "skills" / "writing"),
+    ] + [str(SKILLS / name) for name in SUPPORT_SKILLS]
     for path in extra_skills or []:
         resolved = Path(path).expanduser().resolve()
         if not (resolved / "SKILL.md").is_file():
@@ -480,6 +487,10 @@ def investigate(
             on_continue=on_continue,
         ),
         sandbox=("docker", str(root / "compose.yaml")),
+        # tool results are truncated at 16KB by default; an inventory of fifty
+        # logs or a transcript dump is routinely larger, and a truncated view
+        # is what the agent then reasons from
+        config=GenerateConfig(max_tool_output=200 * 1024),
         cost_limit=budget_usd if enforce_cost_limit else None,
         token_limit=token_limit,
         metadata={

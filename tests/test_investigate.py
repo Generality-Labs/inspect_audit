@@ -406,3 +406,38 @@ PY"""
         for m in log.samples[0].messages
         if isinstance(m, ChatMessageTool) and m.error
     ]
+
+
+def test_publish_lint_catches_dashes_comments_and_process_narration() -> None:
+    from inspect_audit._report import lint_report_text
+
+    bad = (
+        "I reviewed the logs. I inspected the grader. I examined the paper. I checked the "
+        "config \u2014 carefully. " + " ".join(["word"] * 45) + ". <!-- draft -->"
+    )
+    problems = lint_report_text(bad)
+    assert any("dash" in p for p in problems)
+    assert any("drafting comments" in p for p in problems)
+    assert any("over 40 words" in p for p in problems)
+    assert any("narrate" in p for p in problems)
+    assert lint_report_text("Claude Haiku 4.5 abstained on 812 of 1,000 attempts.") == []
+
+
+def test_the_same_input_cited_twice_publishes_once(tmp_path: Path) -> None:
+    report = tmp_path / "work/report"
+    inputs = tmp_path / "inputs"
+    report.mkdir(parents=True)
+    inputs.mkdir()
+    (inputs / "paper.pdf").write_bytes(b"%PDF")
+    (report / "report.qmd").write_text("Report")
+    (report / "report.html").write_text("<p>Report</p>")
+    finding = dict(
+        id="F1", section="task", claim="A", status="supported", origin="source",
+        evidence=[dict(path="/inputs/paper.pdf", location="p. 1"), dict(path="/inputs/paper.pdf", location="p. 2")],
+        reproduce="read", limitations="",
+    )
+    (report / "findings.json").write_text(json.dumps([finding, {**finding, "id": "F2"}]))
+    destination = save_publication(tmp_path)
+    saved = json.loads((destination / "findings.json").read_text())
+    assert {e["path"] for f in saved for e in f["evidence"]} == {"_inputs/paper.pdf"}
+    assert (destination / "_inputs/paper.pdf").read_bytes() == b"%PDF"

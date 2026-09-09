@@ -118,8 +118,9 @@ are already staged for Hawk: the seed's `remote.supplied_logs` is the `logs` val
 use. To audit attempts from a job you ran, use hawk:<that job's eval set id>. Either way
 the runner fetches them through the Hawk API, so they are readable from any job.
 
-Procedure: one or two samples first, wait, collect, read the result as you would any
-log and check the job saw what you meant; then expand. jobs(action="wait") blocks
+Procedure: one or two samples first, with retries off, so a configuration that cannot
+work fails once instead of eleven times; wait, collect, read the result as you would any
+log and check the job saw what you meant; then expand and let retries back on. jobs(action="wait") blocks
 without spending tokens; do other work while jobs run.
 
 Watch what you launched. jobs(action="watch") is a live snapshot of every sample's
@@ -129,6 +130,11 @@ jobs(action="stacktrace") show what a running job is blocked on. Afterwards,
 jobs(action="samples") lists the samples with their scores and
 jobs(action="transcripts") writes them to /inputs/jobs/<label>/transcripts/ for you to
 read. The debug-stuck-eval and babysit-eval skills explain what those are showing you.
+When a job of yours fails for a reason that belongs to this audit rather than to the
+benchmark, a missing credential, an image that will not build, a config you got wrong,
+that is an audit limitation and not a finding: record it with origin audit_limitation,
+say what it stopped you checking, and do not file it under the benchmark's harness.
+
 A job that hangs, retries or hits limits is evidence about your run first. Check your
 own configuration, image and limits before you attribute it to the benchmark; if it
 survives that check, it is a fact about running this benchmark and belongs in the

@@ -48,5 +48,5 @@ token_limit: 4000000
 time_limit: 7200
 max_connections: 5
 max_retries: 10
-retry_attempts: 0
+retry_attempts: 0        # a first job fails once; raise it only once the config works
 timeout: 600

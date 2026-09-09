@@ -33,6 +33,6 @@ token_limit: 2000000
 time_limit: 3600
 max_connections: 10
 max_retries: 10
-retry_attempts: 0
+retry_attempts: 0        # a first job fails once; raise it only once the config works
 metadata:
   purpose: one line on why this job exists

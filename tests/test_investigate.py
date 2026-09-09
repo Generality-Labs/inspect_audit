@@ -705,3 +705,30 @@ def test_remote_work_refuses_to_guess_a_package_it_cannot_derive(
             output_dir=str(tmp_path / "runs"),
             hawk_api_url="https://hawk.example",
         )
+
+
+def test_the_task_directory_is_found_without_inspect_evals_conventions(tmp_path: Path) -> None:
+    """Not every benchmark ships an eval.yaml; most just declare a task in a file."""
+    from inspect_audit._investigate import paths_from_metadata
+
+    repo = tmp_path / "bench"
+    (repo / "bench/task/chess").mkdir(parents=True)
+    (repo / "bench/task/__init__.py").write_text("")
+    (repo / "bench/task/chess/__init__.py").write_text(
+        '@task(name="Chess Puzzles")\ndef chess_puzzles(epochs: int = 1) -> Task:\n    ...\n'
+    )
+    (repo / "bench/task/other").mkdir()
+    (repo / "bench/task/other/__init__.py").write_text('@task\ndef something_else() -> Task:\n    ...\n')
+    (repo / "tests").mkdir()
+    (repo / "tests/test_chess.py").write_text('@task(name="Chess Puzzles")\ndef chess_puzzles():\n    ...\n')
+
+    # the registry name, which is not the function name and carries a space
+    chosen = paths_from_metadata(repo, "bench/Chess Puzzles")
+    assert chosen is not None and "bench/task/chess" in chosen
+    assert not any("other" in c for c in chosen)
+    assert not any("tests" in c for c in chosen), "a test that declares the task is not the task"
+
+    # the function name, for a task that does not name itself
+    assert "bench/task/other" in (paths_from_metadata(repo, "bench/something_else") or [])
+    # and nothing invented when the task cannot be found
+    assert paths_from_metadata(repo, "bench/not_here") is None

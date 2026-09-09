@@ -328,7 +328,15 @@ def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | No
 
 
 def _task_directory(source: Path, target_task: str | None) -> Path | None:
-    """Where an eval's own code lives, from the metadata it publishes about itself."""
+    """Where an eval's own code lives.
+
+    Two ways, because benchmarks are not all shaped like `inspect_evals`. Its evals
+    publish an `eval.yaml` naming their tasks, and that is the most reliable answer
+    where it exists. Everything else is found the way a person would: the file that
+    declares the task with `@task`. A benchmark that hides its task behind a factory
+    defeats both, and then the whole repository is snapshotted, which is the old
+    behaviour rather than a wrong answer.
+    """
     if not target_task:
         return None
     name = target_task.split("/")[-1]
@@ -341,7 +349,29 @@ def _task_directory(source: Path, target_task: str | None) -> Path | None:
         }
         if name in names or path.parent.name == name:
             return path.parent
-    return None
+    return _declaring_file(source, name)
+
+
+# `@task` may name the task itself, or take the function's name. Both spellings, and
+# the registry name may carry spaces where the function has underscores.
+def _declaring_file(source: Path, name: str) -> Path | None:
+    function = re.compile(rf"^\s*def {re.escape(name.replace(' ', '_').lower())}\s*\(", re.M)
+    declared = re.compile(rf"@task\([^)]*name\s*=\s*[\"']{re.escape(name)}[\"']", re.S)
+    fallback: Path | None = None
+    for path in sorted(source.rglob("*.py")):
+        if any(part in {".git", "tests", "test", "build", ".venv"} for part in path.parts):
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        if "@task" not in text:
+            continue
+        if declared.search(text):
+            return path.parent
+        if function.search(text) and fallback is None:
+            fallback = path.parent
+    return fallback
 
 
 def _safe_yaml(path: Path) -> dict[str, object]:

@@ -10,7 +10,13 @@ from typing import Any
 from inspect_ai import Task
 from inspect_ai._eval.task.util import task_run_dir
 from inspect_ai.dataset import Sample
-from inspect_ai.event import Event, ModelEvent, SpanBeginEvent
+from inspect_ai.event import (
+    Event,
+    EventTreeNode,
+    EventTreeSpan,
+    ModelEvent,
+    event_tree,
+)
 from inspect_ai.log import (
     read_eval_log,
     read_eval_log_samples_by_id,
@@ -313,20 +319,24 @@ def _solver_events(events: list[Event]) -> list[Event]:
     other -- so read naively they show tools "reaching the model" that the
     evaluated model never had. Everything under a `scorers`-type span is the
     grader's, not the agent's.
+
+    `event_tree` does the parent linkage: an earlier version tracked span ids and
+    parents by hand and broke the first time inspect nested them differently.
     """
-    scoring: set[str] = set()
-    kept: list[Event] = []
-    for event in events:
-        if isinstance(event, SpanBeginEvent) and (
-            event.type in ("scorers", "scorer") or event.parent_id in scoring
-        ):
-            scoring.add(event.id)
-            continue
-        span = getattr(event, "span_id", None)
-        if span in scoring:
-            continue
-        kept.append(event)
-    return kept
+    def outside_scoring(node: EventTreeNode) -> list[Event]:
+        if isinstance(node, EventTreeSpan):
+            if node.type in ("scorers", "scorer"):
+                return []
+            return [
+                node.begin,
+                *[e for child in node.children for e in outside_scoring(child)],
+                *([node.end] if node.end else []),
+            ]
+        return [node]
+
+    return [
+        event for node in event_tree(events) for event in outside_scoring(node)
+    ]
 
 
 def benchmark_source_files(task: Task) -> dict[str, Path]:

@@ -5,6 +5,7 @@ import importlib.util
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from inspect_ai import eval, task_with
@@ -114,6 +115,11 @@ def test_snapshot_paths_paper_download_and_docs_mount(
 def test_budget_does_not_turn_missing_prices_into_zero(
     monkeypatch: pytest.MonkeyPatch, missing: bool
 ) -> None:
+    """The total comes from Inspect's own cost tree; an unpriced model makes it unknown.
+
+    The tool reads `sample_limits().cost`, which only exists inside a running sample,
+    so the limit tree is set up here the way a sample would.
+    """
     from inspect_ai.model import ModelUsage
 
     from inspect_audit import _investigate
@@ -132,6 +138,15 @@ def test_budget_does_not_turn_missing_prices_into_zero(
                 total_cost=None if missing else 1,
             ),
         },
+    )
+
+    class _Cost:
+        limit = 10.0
+        usage = 2.0 if missing else 3.0
+        remaining = 8.0 if missing else 7.0
+
+    monkeypatch.setattr(
+        _investigate, "sample_limits", lambda: SimpleNamespace(cost=_Cost())
     )
     text = asyncio.run(_investigate.investigation_budget(10, True)())
     assert "Allowance: $10.00 (enforced)" in text
@@ -508,12 +523,20 @@ def test_resume_reuses_the_directory_ledger_and_staged_logs(
     from inspect_audit import _investigate
 
     staged: list[str] = []
-    monkeypatch.setattr(
-        _investigate,
-        "stage_logs_to_s3",
-        lambda local_dir, bucket, eval_set_id, profile: staged.append(eval_set_id)
-        or f"hawk:{eval_set_id}/inputs/logs",
-    )
+
+    async def fake_stage(local_dir, bucket, eval_set_id, profile):  # noqa: ANN001, ANN202
+        staged.append(eval_set_id)
+        return f"hawk:{eval_set_id}/inputs/logs"
+
+    monkeypatch.setattr(_investigate, "stage_logs_to_s3", fake_stage)
+
+    async def noop_generate(state, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        return state
+
+    def run_setup(target) -> None:  # noqa: ANN001
+        setup = target.setup
+        for step in setup if isinstance(setup, list) else [setup]:
+            asyncio.run(step(None, noop_generate))
     repo = str(git_repo(tmp_path / "repo"))
     log = run_fixture_eval(str(tmp_path / "logs"))
     common = dict(
@@ -524,6 +547,7 @@ def test_resume_reuses_the_directory_ledger_and_staged_logs(
     )
     first = investigate(repo, **common)  # type: ignore[arg-type]
     root = Path(first.metadata["investigation_dir"])
+    run_setup(first)
     (root / "jobs.json").write_text(
         json.dumps(
             [
@@ -553,12 +577,13 @@ def test_resume_reuses_the_directory_ledger_and_staged_logs(
         def __init__(self, *args: object, **kwargs: object) -> None:
             pass
 
-        def eval_set_exists(self, eval_set_id: str) -> bool:
+        async def eval_set_exists(self, eval_set_id: str) -> bool:
             asked.append(eval_set_id)
             return True
 
     monkeypatch.setattr(_investigate, "Hawk", RecordingHawk)
     second = investigate(repo, resume=str(root), **common)  # type: ignore[arg-type]
+    run_setup(second)
     assert asked == ["inv-smoke-1234abcd"], "resume did not ask Hawk about the pending job"
     assert JobLedger(root).get("smoke").status == "submitted"  # type: ignore[union-attr]
     assert Path(second.metadata["investigation_dir"]) == root

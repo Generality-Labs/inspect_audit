@@ -11,7 +11,6 @@ import fcntl
 import json
 import re
 import shutil
-import subprocess
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -21,7 +20,9 @@ from logging import getLogger
 from pathlib import Path
 from typing import Any
 
+import anyio
 import yaml
+from inspect_ai.util import display_counter, subprocess
 
 logger = getLogger(__name__)
 
@@ -119,40 +120,41 @@ class Hawk:
         self.secrets_file = secrets_file
         self.binary = binary
 
-    def _run(self, *args: str, timeout: int = 600) -> str:
-        import os
+    async def _run(self, *args: str, timeout: int = 600) -> str:
+        """One `hawk` invocation, through Inspect's subprocess rather than blocking.
 
-        result = subprocess.run(
-            [self.binary, *args],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env={**os.environ, **self.env},
+        `inspect_ai.util.subprocess` keeps the event loop free, counts against the
+        eval's `max_subprocesses` limit, and terminates a hung child properly. A
+        blocking `subprocess.run` here would stall every other sample in the eval for
+        as long as Hawk takes to answer.
+        """
+        result = await subprocess(
+            [self.binary, *args], text=True, env=self.env, timeout=timeout
         )
-        if result.returncode != 0:
+        if not result.success:
             raise RuntimeError(
                 f"hawk {' '.join(args[:2])} failed: {(result.stderr or result.stdout)[-1500:]}"
             )
-        return result.stdout
+        return str(result.stdout)
 
-    def submit(self, config_path: Path) -> str:
+    async def submit(self, config_path: Path) -> str:
         args = ["eval-set", "run", str(config_path), "--skip-confirm", "--log-dir-allow-dirty"]
         if self.secrets_file:
             args += ["--secrets-file", self.secrets_file]
-        out = self._run(*args)
+        out = await self._run(*args)
         match = re.search(r"Eval set ID:\s*(\S+)", out)
         if not match:
             raise RuntimeError(f"could not find the eval set id in hawk's output:\n{out[-800:]}")
         return match.group(1)
 
-    def eval_set_exists(self, eval_set_id: str) -> bool:
+    async def eval_set_exists(self, eval_set_id: str) -> bool:
         """Whether Hawk has this eval set, used to resolve a submission with no answer."""
-        out = self._run("list", "eval-sets", "--search", eval_set_id, "--limit", "50", timeout=120)
+        out = await self._run("list", "eval-sets", "--search", eval_set_id, "--limit", "50", timeout=120)
         return eval_set_id in out
 
-    def evals(self, eval_set_id: str) -> list[dict[str, str]]:
+    async def evals(self, eval_set_id: str) -> list[dict[str, str]]:
         """Task, model, status and sample counts per eval, parsed from the CLI table."""
-        out = self._run("list", "evals", eval_set_id, timeout=120)
+        out = await self._run("list", "evals", eval_set_id, timeout=120)
         rows: list[dict[str, str]] = []
         for line in out.splitlines():
             parts = [p for p in re.split(r"\s{2,}", line.strip()) if p]
@@ -162,63 +164,63 @@ class Hawk:
                 )
         return rows
 
-    def samples(self, eval_set_id: str, limit: int = 500) -> list[dict[str, Any]]:
-        out = self._run("list", "samples", eval_set_id, "--json", "--limit", str(limit), timeout=180)
+    async def samples(self, eval_set_id: str, limit: int = 500) -> list[dict[str, Any]]:
+        out = await self._run("list", "samples", eval_set_id, "--json", "--limit", str(limit), timeout=180)
         start = out.find("[")
         return list(json.loads(out[start:])) if start >= 0 else []
 
-    def download(self, eval_set_id: str, out_dir: Path) -> list[Path]:
+    async def download(self, eval_set_id: str, out_dir: Path) -> list[Path]:
         out_dir.mkdir(parents=True, exist_ok=True)
-        self._run("download", eval_set_id, "--output-dir", str(out_dir), timeout=1800)
+        await self._run("download", eval_set_id, "--output-dir", str(out_dir), timeout=1800)
         return sorted(out_dir.rglob("*.eval"))
 
-    def stop(self, eval_set_id: str) -> None:
-        self._run("stop", eval_set_id, timeout=300)
+    async def stop(self, eval_set_id: str) -> None:
+        await self._run("stop", eval_set_id, timeout=300)
 
-    def logs(self, eval_set_id: str, lines: int = 120) -> str:
+    async def logs(self, eval_set_id: str, lines: int = 120) -> str:
         """Tail of the runner's own log, the place install failures and crashes show up."""
-        out = self._run("logs", eval_set_id, "-n", str(lines), timeout=120)
+        out = await self._run("logs", eval_set_id, "-n", str(lines), timeout=120)
         return out[-6000:]
 
-    def watch(self, eval_set_id: str) -> str:
+    async def watch(self, eval_set_id: str) -> str:
         """One-shot live status: per-task and per-sample phase, retries, limits, trouble."""
-        out = self._run("watch", eval_set_id, "--no-follow", timeout=180)
+        out = await self._run("watch", eval_set_id, "--no-follow", timeout=180)
         return out[-8000:]
 
-    def status(self, eval_set_id: str) -> str:
+    async def status(self, eval_set_id: str) -> str:
         """The raw monitoring report: pod status, metrics, recent logs, as JSON."""
-        out = self._run("status", eval_set_id, timeout=300)
+        out = await self._run("status", eval_set_id, timeout=300)
         return out[-8000:]
 
-    def trace(self, eval_set_id: str, lines: int = 100) -> str:
+    async def trace(self, eval_set_id: str, lines: int = 100) -> str:
         """Runner's in-flight actions. An `enter` with no `exit` is what is hanging now."""
-        out = self._run("trace", eval_set_id, "-n", str(lines), timeout=180)
+        out = await self._run("trace", eval_set_id, "-n", str(lines), timeout=180)
         return out[-8000:]
 
-    def stacktrace(self, eval_set_id: str) -> str:
+    async def stacktrace(self, eval_set_id: str) -> str:
         """py-spy dump of the live runner's thread stacks; running pod only."""
-        out = self._run("stacktrace", eval_set_id, timeout=300)
+        out = await self._run("stacktrace", eval_set_id, timeout=300)
         return out[-8000:]
 
-    def transcript(self, sample_uuid: str, out_dir: Path) -> Path:
+    async def transcript(self, sample_uuid: str, out_dir: Path) -> Path:
         """One sample's transcript as markdown, written to a file rather than returned."""
         out_dir.mkdir(parents=True, exist_ok=True)
-        text = self._run("transcript", sample_uuid, timeout=600)
+        text = await self._run("transcript", sample_uuid, timeout=600)
         path = out_dir / f"{sample_uuid}.md"
         path.write_text(text)
         return path
 
-    def transcripts(self, eval_set_id: str, out_dir: Path, limit: int | None = None) -> list[Path]:
+    async def transcripts(self, eval_set_id: str, out_dir: Path, limit: int | None = None) -> list[Path]:
         """Every sample's transcript in the set, written to out_dir."""
         out_dir.mkdir(parents=True, exist_ok=True)
         args = ["transcripts", eval_set_id, "--output-dir", str(out_dir)]
         if limit is not None:
             args += ["--limit", str(limit)]
-        self._run(*args, timeout=1800)
+        await self._run(*args, timeout=1800)
         return sorted(p for p in out_dir.iterdir() if p.is_file())
 
 
-def stage_logs_to_s3(
+async def stage_logs_to_s3(
     local_dir: Path, bucket: str, eval_set_id: str, profile: str | None
 ) -> str:
     """Stage the supplied logs once, under an eval-set prefix of their own.
@@ -227,16 +229,22 @@ def stage_logs_to_s3(
     scoped to the reading job's own prefix, so every child job can use this one copy
     whatever its own eval set id is. Returns the `hawk:` source to pass as `logs`.
     """
-    import os
-
     prefix = f"evals/{eval_set_id}/inputs/logs"
-    cmd = ["aws", "s3", "cp", "--recursive", "--only-show-errors", str(local_dir), f"s3://{bucket}/{prefix}/"]
-    env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_ACCESS") and k != "AWS_SECRET_ACCESS_KEY" and k != "AWS_API_KEY"} if profile else dict(os.environ)
-    if profile:
-        env["AWS_PROFILE"] = profile
-    result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=3600)
-    if result.returncode != 0:
-        raise RuntimeError(f"staging logs to S3 failed: {result.stderr[-1500:]}")
+    cmd = [
+        "aws", "s3", "cp", "--recursive", "--only-show-errors",
+        str(local_dir), f"s3://{bucket}/{prefix}/",
+    ]
+    # a named profile and ambient keys in the same environment is how you upload as
+    # the wrong identity; the keys are dropped when a profile is named
+    env = (
+        {k: "" for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")}
+        | {"AWS_PROFILE": profile}
+        if profile
+        else {}
+    )
+    result = await subprocess(cmd, text=True, env=env, timeout=3600)
+    if not result.success:
+        raise RuntimeError(f"staging logs to S3 failed: {str(result.stderr)[-1500:]}")
     return f"hawk:{eval_set_id}/inputs/logs"
 
 
@@ -629,13 +637,24 @@ def slug(text: str) -> str:
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]", "-", text.lower())).strip("-")[:30]
 
 
-def usage_cost(logs: list[Path]) -> tuple[float | None, dict[str, dict[str, int]]]:
-    """Total cost of a set of downloaded logs from Inspect's registered prices."""
+def usage_cost(logs: list[Path]) -> tuple[float | None, dict[str, dict[str, int]], bool]:
+    """What a finished job cost, from the logs it wrote.
+
+    The runner prices its own usage: every submitted config carries the prices, so
+    Inspect records `total_cost` per model in the log's stats. That number is the
+    measurement, and it is what the job was actually charged at the time it ran.
+
+    A log written before prices were supplied has no `total_cost`; then this recomputes
+    from the prices registered here, at today's rates, and says so through the third
+    return value, because a recomputation is an estimate and the ledger has to know the
+    difference. If a model has no price at all the total is None.
+    """
     from inspect_ai.log import read_eval_log
-    from inspect_ai.model._model_info import get_model_info
+    from inspect_ai.model import get_model_info
 
     total = 0.0
     priced = True
+    recomputed = False
     usage: dict[str, dict[str, int]] = {}
     for path in logs:
         header = read_eval_log(str(path), header_only=True)
@@ -644,6 +663,10 @@ def usage_cost(logs: list[Path]) -> tuple[float | None, dict[str, dict[str, int]
             usage[model]["input"] += u.input_tokens or 0
             usage[model]["cache_read"] += u.input_tokens_cache_read or 0
             usage[model]["output"] += u.output_tokens or 0
+            if u.total_cost is not None:
+                total += u.total_cost
+                continue
+            recomputed = True
             info = get_model_info(model)
             cost = info.cost if info else None
             if cost is None:
@@ -655,20 +678,27 @@ def usage_cost(logs: list[Path]) -> tuple[float | None, dict[str, dict[str, int]
                 + (u.input_tokens_cache_write or 0) * (cost.input_cache_write or 0)
                 + (u.output_tokens or 0) * (cost.output or 0)
             ) / 1_000_000
-    return (total if priced else None), usage
+    return (total if priced else None), usage, recomputed
 
 
-def wait_for(hawk: Hawk, eval_set_id: str, minutes: float, poll_seconds: float = 60) -> list[dict[str, str]]:
-    """Poll until every eval in the set is terminal or the wait expires. No model calls."""
+async def wait_for(
+    hawk: Hawk, eval_set_id: str, minutes: float, poll_seconds: float = 60
+) -> list[dict[str, str]]:
+    """Poll until every eval in the set is terminal or the wait expires. No model calls.
+
+    `anyio.sleep` rather than `time.sleep`: this waits for minutes at a time, and
+    holding a thread for that long stalls whatever else the eval is doing.
+    """
     deadline = time.monotonic() + minutes * 60
     rows: list[dict[str, str]] = []
     while True:
-        rows = hawk.evals(eval_set_id)
+        rows = await hawk.evals(eval_set_id)
         if rows and all(r["status"] in TERMINAL for r in rows):
             return rows
         if time.monotonic() >= deadline:
             return rows
-        time.sleep(poll_seconds)
+        display_counter("hawk", f"waiting on {eval_set_id}")
+        await anyio.sleep(poll_seconds)
 
 
 def copy_into_inputs(files: list[Path], inputs: Path, label: str) -> Path:

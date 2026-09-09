@@ -1,6 +1,5 @@
 """Local, artifact-first investigation using Inspect's standard agent and ACP."""
 
-import asyncio
 import errno
 import json
 import math
@@ -20,7 +19,7 @@ import yaml
 from inspect_ai import Task, task
 from inspect_ai.agent import AgentState, react
 from inspect_ai.dataset import Sample
-from inspect_ai.log import list_eval_logs
+from inspect_ai.log import list_eval_logs, transcript
 from inspect_ai.model import (
     CompactionSummary,
     GenerateConfig,
@@ -29,8 +28,9 @@ from inspect_ai.model import (
     set_model_info,
 )
 from inspect_ai.model._model import sample_model_usage
+from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import Tool, ToolError, bash, skill, tool
-from inspect_ai.util import sandbox, store_as
+from inspect_ai.util import LimitExceededError, sample_limits, sandbox, store_as
 
 from . import prompts
 from ._agent import SKILLS, SUPPORT_SKILLS, view_image
@@ -393,10 +393,14 @@ def render_report() -> Tool:
         # the template embeds resources, so every figure in the HTML is a data: URI
         # and its src says nothing. The files behind them are what view_image reads.
         listing = await sandbox().exec(
-            ["bash", "-lc", "ls -1 /workspace/report/evidence/*.{png,jpg,jpeg,svg,webp} 2>/dev/null | head -40"],
+            [
+                "find", "/workspace/report/evidence", "-maxdepth", "2", "-type", "f",
+                "-name", "*.png", "-o", "-name", "*.jpg", "-o", "-name", "*.jpeg",
+                "-o", "-name", "*.svg", "-o", "-name", "*.webp",
+            ],
             timeout=60,
         )
-        files = [line for line in (listing.stdout or "").splitlines() if line.strip()]
+        files = sorted(line for line in (listing.stdout or "").splitlines() if line.strip())[:40]
         return (
             f"Rendered ({len(text)} characters of text, {len(parser.images)} figures).\n"
             + (f"Quarto warnings:\n{warnings}\n" if warnings else "")
@@ -487,7 +491,7 @@ class Remote:
         the prices and the workers that have none: without a price a cost limit cannot
         bind, so that list is a refusal, not a warning.
         """
-        from inspect_ai.model._model_info import get_model_info
+        from inspect_ai.model import get_model_info
 
         costs: dict[str, dict[str, float]] = {}
         missing: list[str] = []
@@ -566,7 +570,7 @@ class Remote:
             for key, value in fields.items():
                 setattr(job, key, value)
 
-    def reconcile(self) -> list[str]:
+    async def reconcile(self) -> list[str]:
         """Resolve jobs left `pending` by a lost response or a killed process.
 
         A submission is written down before it is sent, so a job can be pending when
@@ -579,7 +583,7 @@ class Remote:
             if job.status != "pending":
                 continue
             try:
-                exists = self.hawk.eval_set_exists(job.eval_set_id)
+                exists = await self.hawk.eval_set_exists(job.eval_set_id)
             except Exception as ex:  # network or auth trouble: leave it pending
                 notes.append(f"{job.label}: could not reach Hawk to check ({ex})")
                 continue
@@ -618,10 +622,16 @@ def _models_named(config: dict[str, object]) -> set[str]:
 
 
 def _local_spend() -> tuple[float | None, list[str]]:
-    usage = sample_model_usage()
-    unpriced = [name for name, value in usage.items() if value.total_cost is None]
-    known = sum(value.total_cost for value in usage.values() if value.total_cost is not None)
-    return (None if unpriced else known), unpriced
+    """What this investigator has spent on its own calls, and what it could not price.
+
+    The total is Inspect's own: `sample_limits().cost.usage` is the same number the
+    cost limit is enforced against, so the tools and the limit cannot disagree. The
+    per-model breakdown has no public equivalent, and it is only used to name the
+    models whose price is missing, which is why an unpriced model makes the total
+    unknown rather than merely smaller.
+    """
+    unpriced = [name for name, value in sample_model_usage().items() if value.total_cost is None]
+    return (None if unpriced else sample_limits().cost.usage), unpriced
 
 
 @tool(name="budget")
@@ -633,15 +643,14 @@ def investigation_budget(
     async def execute() -> str:
         """Show the allowance, spend so far by model, and tokens used."""
         usage = sample_model_usage()
+        spend = sample_limits().cost
         lines = [f"Allowance: ${budget_usd:.2f}" + (" (enforced)" if enforce_cost_limit else " (planning only)")]
-        total = 0.0
+        total = spend.usage
         unpriced: list[str] = []
         for name, value in usage.items():
             cost = value.total_cost
             if cost is None:
                 unpriced.append(name)
-            else:
-                total += cost
             lines.append(
                 f"  {name}: in {value.input_tokens or 0:,} | cache read "
                 f"{value.input_tokens_cache_read or 0:,} | out {value.output_tokens or 0:,}"
@@ -654,7 +663,11 @@ def investigation_budget(
                 "true total and the remaining allowance are unknown"
             )
         else:
-            lines.append(f"Spent: ${total:.2f}   Remaining: ${max(0.0, budget_usd - total):.2f}")
+            remaining = spend.remaining
+            lines.append(
+                f"Spent: ${total:.2f}   Remaining: "
+                + (f"${max(0.0, remaining):.2f}" if remaining is not None else "unlimited")
+            )
         if remote is not None:
             remote.ledger.reload()
             jobs = remote.ledger.jobs
@@ -771,10 +784,10 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
         write_config(root, label, data)
 
         try:
-            returned = await asyncio.to_thread(remote.hawk.submit, submitted_path)
+            returned = await remote.hawk.submit(submitted_path)
         except Exception as ex:
             # the job is already written down as pending; ask Hawk whether it landed
-            notes = await asyncio.to_thread(remote.reconcile)
+            notes = await remote.reconcile()
             raise ToolError(
                 f"submission failed: {ex}\n" + ("\n".join(notes) if notes else "")
             ) from ex
@@ -855,29 +868,27 @@ def jobs(remote: Remote, root: Path) -> Tool:
         transcripts = root / "inputs" / "jobs" / label / "transcripts"
         try:
             if action == "logs":
-                return f"{label} ({job.eval_set_id}) runner log tail:\n" + await asyncio.to_thread(
-                    remote.hawk.logs, job.eval_set_id
+                return f"{label} ({job.eval_set_id}) runner log tail:\n" + await remote.hawk.logs(
+                    job.eval_set_id
                 )
             if action == "watch":
-                return f"{label} ({job.eval_set_id}) live status:\n" + await asyncio.to_thread(
-                    remote.hawk.watch, job.eval_set_id
+                return f"{label} ({job.eval_set_id}) live status:\n" + await remote.hawk.watch(
+                    job.eval_set_id
                 )
             if action == "trace":
-                return f"{label} ({job.eval_set_id}) runner trace:\n" + await asyncio.to_thread(
-                    remote.hawk.trace, job.eval_set_id
+                return f"{label} ({job.eval_set_id}) runner trace:\n" + await remote.hawk.trace(
+                    job.eval_set_id
                 )
             if action == "stacktrace":
-                return f"{label} ({job.eval_set_id}) runner stacks:\n" + await asyncio.to_thread(
-                    remote.hawk.stacktrace, job.eval_set_id
+                return f"{label} ({job.eval_set_id}) runner stacks:\n" + await remote.hawk.stacktrace(
+                    job.eval_set_id
                 )
             if action == "status":
-                return f"{label} ({job.eval_set_id}) monitoring report:\n" + await asyncio.to_thread(
-                    remote.hawk.status, job.eval_set_id
+                return f"{label} ({job.eval_set_id}) monitoring report:\n" + await remote.hawk.status(
+                    job.eval_set_id
                 )
             if action == "samples":
-                rows_json = await asyncio.to_thread(
-                    remote.hawk.samples, job.eval_set_id, limit or 500
-                )
+                rows_json = await remote.hawk.samples(job.eval_set_id, limit or 500)
                 if not rows_json:
                     return f"{label}: no samples listed yet"
                 out = [f"{len(rows_json)} sample(s) in {job.eval_set_id}:"]
@@ -893,21 +904,19 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     raise ToolError("action='transcript' needs sample=<uuid> from jobs(action='samples')")
                 # a sample uuid addresses any sample in the deployment, so membership in
                 # this job is checked here rather than trusted from the argument
-                known = await asyncio.to_thread(remote.hawk.samples, job.eval_set_id, 1000)
+                known = await remote.hawk.samples(job.eval_set_id, 1000)
                 if sample not in {str(row.get("uuid")) for row in known}:
                     raise ToolError(
                         f"sample {sample!r} is not in job {label!r}; jobs(action='samples', "
                         f"label='{label}') lists the ones you can read"
                     )
-                path = await asyncio.to_thread(remote.hawk.transcript, sample, transcripts)
+                path = await remote.hawk.transcript(sample, transcripts)
                 return (
                     f"wrote /inputs/jobs/{label}/transcripts/{path.name} "
                     f"({path.stat().st_size:,} bytes). Read it with your own tools."
                 )
             if action == "transcripts":
-                files = await asyncio.to_thread(
-                    remote.hawk.transcripts, job.eval_set_id, transcripts, limit
-                )
+                files = await remote.hawk.transcripts(job.eval_set_id, transcripts, limit)
                 if not files:
                     raise ToolError("no transcripts were written")
                 return (
@@ -916,22 +925,22 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     + (" …" if len(files) > 10 else "")
                 )
             if action == "evals":
-                rows = remote.hawk.evals(job.eval_set_id)
+                rows = await remote.hawk.evals(job.eval_set_id)
             elif action == "wait":
-                rows = await asyncio.to_thread(wait_for, remote.hawk, job.eval_set_id, wait_minutes)
+                rows = await wait_for(remote.hawk, job.eval_set_id, wait_minutes)
             elif action == "stop":
-                remote.hawk.stop(job.eval_set_id)
+                await remote.hawk.stop(job.eval_set_id)
                 remote.settle(label, status="stopped")
                 return f"stop requested for {label} ({job.eval_set_id})"
             elif action == "collect":
-                rows = remote.hawk.evals(job.eval_set_id)
+                rows = await remote.hawk.evals(job.eval_set_id)
                 if not rows or not all(r["status"] in ("success", "error", "cancelled") for r in rows):
                     raise ToolError("job is not finished; use action='wait' first")
-                files = await asyncio.to_thread(remote.hawk.download, job.eval_set_id, root / "jobs" / "downloads" / label)
+                files = await remote.hawk.download(job.eval_set_id, root / "jobs" / "downloads" / label)
                 if not files:
                     raise ToolError("no .eval files were downloaded")
                 dest = copy_into_inputs(files, root / "inputs", label)
-                cost, usage = usage_cost(files)
+                cost, usage, recomputed = usage_cost(files)
                 # an unpriced model leaves the real cost unknown: recording the
                 # estimate here would turn a guess into a measurement, so the
                 # reservation stands instead
@@ -946,7 +955,16 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 lines = [f"collected {len(files)} log(s) to /inputs/jobs/{label}/"]
                 lines += [f"  {r['task']} {r['model']}: {r['status']} {r['samples']}" for r in rows]
                 lines.append(
-                    f"cost: ${cost:.2f}, reservation of ${job.reserved_usd:.2f} released"
+                    (
+                        f"cost: ${cost:.2f} "
+                        + (
+                            "(recomputed from today's prices, an estimate: the logs "
+                            "recorded no cost)"
+                            if recomputed
+                            else "(as recorded by the runner)"
+                        )
+                        + f", reservation of ${job.reserved_usd:.2f} released"
+                    )
                     if cost is not None
                     else f"cost unknown: a model in this job has no registered price, so the "
                     f"${job.reserved_usd:.2f} reservation stays held"
@@ -977,20 +995,67 @@ def jobs(remote: Remote, root: Path) -> Tool:
     return execute
 
 
+@solver
+def stage_supplied_logs(remote: Remote, local_dir: Path, eval_set_id: str) -> Solver:
+    """Put the operator's logs where a Hawk job can read them, once.
+
+    The agent has no S3 capability and never sees these credentials. A marker file
+    makes the upload idempotent, so a resumed or retried run does not repeat it.
+    """
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        marker = remote.root / "staged.json"
+        if marker.is_file():
+            return state
+        source = await stage_logs_to_s3(
+            local_dir, remote.log_bucket, eval_set_id, remote.aws_profile
+        )
+        marker.write_text(json.dumps({"source": source, "at": utcnow()}))
+        transcript().info(f"staged the supplied logs at {source}")
+        return state
+
+    return solve
+
+
+@solver
+def reconcile_jobs(remote: Remote) -> Solver:
+    """Settle jobs an interrupted run left pending, before the agent does anything.
+
+    A `setup` solver rather than task construction: it needs to talk to Hawk, the
+    sample it belongs to is running by then, and what it finds belongs in that
+    sample's transcript rather than in a log line nobody reads.
+    """
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        for note in await remote.reconcile():
+            transcript().info(f"resume: {note}")
+        return state
+
+    return solve
+
+
 async def _continue(
     state: AgentState, interactive: bool, remote: Remote | None = None
 ) -> bool | str:
     over = remote.over_allowance() if remote is not None else None
     if over is not None:
-        # Inspect's cost limit only sees this agent's own calls, so a run whose
-        # children hold most of the allowance would otherwise carry on spending
-        # locally as though the money were still there
-        published = store_as(InvestigationState).published
-        if published:
-            return False
+        # Inspect's cost limit only sees this agent's own calls, so a run whose children
+        # hold most of the allowance would otherwise carry on spending locally as though
+        # the money were still there. Ask once; if the agent has already published, or
+        # asking did not stop it, end the sample the way Inspect ends any limit: the run
+        # is recorded as having hit a limit, and what exists is still scored.
+        investigation = store_as(InvestigationState)
+        if investigation.published or investigation.allowance_notified:
+            raise LimitExceededError(
+                "custom",
+                value=remote.committed_usd() if remote else 0.0,
+                limit=remote.allowance_usd if remote else 0.0,
+                message=over,
+            )
+        investigation.allowance_notified = True
         return (
             f"{over} Publish the report now with what you have, and say in it what you "
-            "could not finish and why."
+            "could not finish and why. This is your last chance to write it."
         )
     if not store_as(InvestigationState).published:
         return (
@@ -1114,15 +1179,15 @@ def investigate(
         seed = json.loads(seed_path.read_text())
         # the supplied logs are staged by us, once, at setup: the agent gets no S3
         # capability, and a resumed investigation reuses what is already up there
+        # the source is named here and uploaded by the setup solver: an upload is slow,
+        # credentialed work, and doing it while the task is merely being constructed
+        # means it happens again on every retry and before anything is running
         staged_logs: str | None = (seed.get("remote") or {}).get("supplied_logs")
         if logs and (root / "inputs" / "logs").is_dir() and not staged_logs:
-            eval_set_id = f"inv-inputs-{root.name[:8]}"
-            staged_logs = stage_logs_to_s3(root / "inputs" / "logs", log_bucket, eval_set_id, aws_profile)
-            remote.known_sources.add(eval_set_id)
+            inputs_id = f"inv-inputs-{root.name[:8]}"
+            staged_logs = f"hawk:{inputs_id}/inputs/logs"
+            remote.known_sources.add(inputs_id)
             remote.save_sources()
-        if resumed:
-            for note in remote.reconcile():
-                logger.info("resume: %s", note)
         seed["remote"] = {
             "hawk": hawk_api_url,
             "task_package": task_package,
@@ -1142,6 +1207,16 @@ def investigate(
             ),
         }
         seed_path.write_text(json.dumps(seed, indent=2))
+    setup_steps: list[Solver] = []
+    if remote is not None:
+        if staged_logs and logs:
+            setup_steps.append(
+                stage_supplied_logs(
+                    remote, root / "inputs" / "logs", staged_logs.removeprefix("hawk:").split("/")[0]
+                )
+            )
+        if resumed:
+            setup_steps.append(reconcile_jobs(remote))
     tools: list[Tool] = [
         bash(timeout=300),
         skill(skill_paths),
@@ -1159,6 +1234,7 @@ def investigate(
         return await _continue(state, interactive, remote)
 
     return Task(
+        setup=setup_steps or None,
         dataset=[
             Sample(
                 id="investigation",

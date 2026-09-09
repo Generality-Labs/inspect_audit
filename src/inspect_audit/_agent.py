@@ -5,9 +5,6 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, cast
 
-# `as_data_uri` is inspect's own encoding for media content; `computer` builds its
-# screenshots the same way, so a tool result here looks like any other to a provider.
-from inspect_ai._util.images import as_data_uri
 from inspect_ai.agent import Agent, AgentSubmit, agent, react
 from inspect_ai.model import GenerateConfig, Model, get_model
 from inspect_ai.scorer import (
@@ -349,7 +346,9 @@ def view_image() -> Tool:
             raise ToolError(f"{path!r} did not read back as bytes.")
         mime, _ = mimetypes.guess_type(path, strict=False)
         encoded = base64.b64encode(data).decode()
-        return [ContentImage(image=as_data_uri(mime or "image/png", encoded))]
+        # the same shape inspect's own media content uses, so a tool result here
+        # looks like any other to a provider
+        return [ContentImage(image=f"data:{mime or 'image/png'};base64,{encoded}")]
 
     return execute
 

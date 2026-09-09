@@ -20,15 +20,15 @@ from logging import getLogger
 from typing import Any, cast
 
 from inspect_ai import Task
-from inspect_ai._util.registry import (
-    create_registry_object,
-    is_registry_object,
-    registry_info,
-    registry_params,
-)
+
+# `registry_create` and `registry_info` are public; `registry_params` and
+# `is_registry_object` have no public equivalent, which is the one thing this module
+# needs from the private surface
+from inspect_ai._util.registry import is_registry_object, registry_params
 from inspect_ai.event import ModelEvent
 from inspect_ai.log import read_eval_log_samples
 from inspect_ai.tool import Tool, ToolDef
+from inspect_ai.util import registry_create, registry_info
 
 logger = getLogger(__name__)
 
@@ -126,7 +126,7 @@ def _walk_value(value: Any, contract: SolverContract, depth: int) -> None:
     kind, name, params = ref
     if kind == "tool":
         try:
-            contract.tools.append(ToolDef(cast(Tool, create_registry_object("tool", name, params))))
+            contract.tools.append(ToolDef(registry_create("tool", name, **params)))
         except Exception as ex:  # named but unbuildable: keep the name for the diff
             logger.warning(f"could not rebuild declared tool {name!r}: {ex}")
             contract.unrecovered.append(name)

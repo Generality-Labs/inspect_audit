@@ -30,55 +30,55 @@ class FakeHawk:
         self.eval_status = "running"
         self.stopped: list[str] = []
 
-    def submit(self, config_path: Path) -> str:
+    async def submit(self, config_path: Path) -> str:
         self.submitted.append(config_path)
         # real Hawk honours a pinned eval_set_id and echoes it back
         return str(yaml.safe_load(config_path.read_text())["eval_set_id"])
 
-    def evals(self, eval_set_id: str) -> list[dict[str, str]]:
+    async def evals(self, eval_set_id: str) -> list[dict[str, str]]:
         return [{"task": "t", "model": "m", "status": self.eval_status, "samples": "2/2"}]
 
-    def download(self, eval_set_id: str, out_dir: Path) -> list[Path]:
+    async def download(self, eval_set_id: str, out_dir: Path) -> list[Path]:
         out_dir.mkdir(parents=True, exist_ok=True)
         f = out_dir / "run.eval"
         f.write_bytes(b"x")
         return [f]
 
-    def stop(self, eval_set_id: str) -> None:
+    async def stop(self, eval_set_id: str) -> None:
         self.stopped.append(eval_set_id)
 
-    def watch(self, eval_set_id: str) -> str:
+    async def watch(self, eval_set_id: str) -> str:
         return "sample 1: running, 2 retries\n⚠ pods can't be scheduled"
 
-    def trace(self, eval_set_id: str, lines: int = 100) -> str:
+    async def trace(self, eval_set_id: str, lines: int = 100) -> str:
         return "enter generate ...\n"
 
-    def stacktrace(self, eval_set_id: str) -> str:
+    async def stacktrace(self, eval_set_id: str) -> str:
         return "Thread 1: asyncio ...\n"
 
-    def status(self, eval_set_id: str) -> str:
+    async def status(self, eval_set_id: str) -> str:
         return '{"pods": []}'
 
-    def samples(self, eval_set_id: str, limit: int = 500) -> list[dict[str, object]]:
+    async def samples(self, eval_set_id: str, limit: int = 500) -> list[dict[str, object]]:
         # each eval set has its own samples; a uuid from another set is not in this list
         return [{"uuid": f"{eval_set_id}-s1", "id": "item-1", "epoch": 1, "status": "success", "scores": []}]
 
-    def logs(self, eval_set_id: str, lines: int = 120) -> str:
+    async def logs(self, eval_set_id: str, lines: int = 120) -> str:
         return "uv pip install ... ok\nRunning Inspect eval-set"
 
-    def eval_set_exists(self, eval_set_id: str) -> bool:
+    async def eval_set_exists(self, eval_set_id: str) -> bool:
         return any(
             str(yaml.safe_load(c.read_text())["eval_set_id"]) == eval_set_id
             for c in self.submitted
         )
 
-    def transcript(self, sample_uuid: str, out_dir: Path) -> Path:
+    async def transcript(self, sample_uuid: str, out_dir: Path) -> Path:
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / f"{sample_uuid}.md"
         path.write_text("# transcript")
         return path
 
-    def transcripts(self, eval_set_id: str, out_dir: Path, limit: int | None = None) -> list[Path]:
+    async def transcripts(self, eval_set_id: str, out_dir: Path, limit: int | None = None) -> list[Path]:
         out_dir.mkdir(parents=True, exist_ok=True)
         paths = []
         for i in range(limit or 2):
@@ -260,13 +260,21 @@ def test_audit_over_supplied_logs_uses_the_staged_source_only(tmp_path: Path, mo
         run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "f.eval-set.yaml", foreign), estimated_usd=1.0))
 
 
-def test_supplied_logs_are_staged_at_setup_not_by_the_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_supplied_logs_are_staged_by_us_at_sample_setup_not_by_the_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The agent has no S3 capability, and the upload happens once, when the sample runs.
+
+    Constructing the task only names the source: an upload is slow, credentialed work
+    that must not happen while a task is merely being built, and must not repeat on a
+    retry or a resume.
+    """
     from inspect_audit import _investigate
 
     monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
     calls: list[tuple[str, str]] = []
 
-    def fake_stage(local_dir, bucket, eval_set_id, profile):  # noqa: ANN001, ANN202
+    async def fake_stage(local_dir, bucket, eval_set_id, profile):  # noqa: ANN001, ANN202
         calls.append((bucket, eval_set_id))
         return f"hawk:{eval_set_id}/inputs/logs"
 
@@ -287,10 +295,26 @@ def test_supplied_logs_are_staged_at_setup_not_by_the_agent(tmp_path: Path, monk
     )
     root = Path(target.metadata["investigation_dir"])
     seed = json.loads((root / "inputs/seed.json").read_text())
-    assert calls and calls[0][0] == "arcadia-impact-generality-inspect" and calls[0][1].startswith("inv-inputs-")
-    assert seed["remote"]["supplied_logs"] == f"hawk:{calls[0][1]}/inputs/logs"
-    assert calls[0][1] in json.loads((root / "log_sources.json").read_text())
+    inputs_id = seed["remote"]["supplied_logs"].removeprefix("hawk:").split("/")[0]
+    assert inputs_id.startswith("inv-inputs-")
+    assert inputs_id in json.loads((root / "log_sources.json").read_text())
+    assert calls == [], "constructing the task must not upload anything"
     assert "hawk_jobs" in target.metadata["capabilities"]
+
+    # the setup solver does the upload, once
+    async def noop_generate(state, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        return state
+
+    setup = target.setup
+    steps = setup if isinstance(setup, list) else [setup]
+    for step in steps:
+        run(step(None, noop_generate))  # type: ignore[arg-type]
+    assert calls == [("arcadia-impact-generality-inspect", inputs_id)]
+    for step in steps:
+        run(step(None, noop_generate))  # type: ignore[arg-type]
+    assert len(calls) == 1, "a resumed or retried run must not stage the logs again"
+    assert (root / "staged.json").is_file()
+
 
 
 def test_jobs_status_wait_collect_release_reservation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -299,7 +323,7 @@ def test_jobs_status_wait_collect_release_reservation(tmp_path: Path, monkeypatc
     from inspect_audit import _investigate
 
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
-    monkeypatch.setattr(_investigate, "usage_cost", lambda files: (0.42, {"openrouter/m": {"input": 1, "cache_read": 2, "output": 3}}))
+    monkeypatch.setattr(_investigate, "usage_cost", lambda files: (0.42, {"openrouter/m": {"input": 1, "cache_read": 2, "output": 3}}, False))
     r = remote(tmp_path)
     (tmp_path / "inputs").mkdir()
     run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "j.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-jj")), estimated_usd=3))
@@ -355,13 +379,19 @@ def test_jobs_babysitting_actions_are_read_only(tmp_path: Path, monkeypatch: pyt
 def test_hawk_cli_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     h = _jobs.Hawk("https://h", None)
     table = "Eval Set: x\n\nTask   Model   Status   Samples\n----  ----  ----  ----\naudit/bench/Chess Puzzles  gpt-5.6-terra  success   10/10\n"
-    monkeypatch.setattr(h, "_run", lambda *a, **k: table)
-    assert h.evals("x") == [{"task": "audit/bench/Chess Puzzles", "model": "gpt-5.6-terra", "status": "success", "samples": "10/10"}]
-    monkeypatch.setattr(h, "_run", lambda *a, **k: "Eval set ID: inv-abc-123\nSee your eval set log: https://...")
-    assert h.submit(Path("/tmp/c.yaml")) == "inv-abc-123"
-    monkeypatch.setattr(h, "_run", lambda *a, **k: 'noise\n[{"id": "1", "status": "success"}]')
-    assert h.samples("x") == [{"id": "1", "status": "success"}]
 
+    def returning(text: str):  # noqa: ANN202
+        async def _run(*args: str, **kwargs: object) -> str:
+            return text
+
+        return _run
+
+    monkeypatch.setattr(h, "_run", returning(table))
+    assert run(h.evals("x")) == [{"task": "audit/bench/Chess Puzzles", "model": "gpt-5.6-terra", "status": "success", "samples": "10/10"}]
+    monkeypatch.setattr(h, "_run", returning("Eval set ID: inv-abc-123\nSee your eval set log: https://..."))
+    assert run(h.submit(Path("/tmp/c.yaml"))) == "inv-abc-123"
+    monkeypatch.setattr(h, "_run", returning('noise\n[{"id": "1", "status": "success"}]'))
+    assert run(h.samples("x")) == [{"id": "1", "status": "success"}]
 
 RESERVE_SCRIPT = """
 import json, sys, time
@@ -451,12 +481,16 @@ def test_a_lost_submission_response_is_reconciled_not_resubmitted(
     (tmp_path / "inputs").mkdir(exist_ok=True)
     landed: list[str] = []
 
-    def submit_then_lose_the_answer(config_path: Path) -> str:
+    async def submit_then_lose_the_answer(config_path: Path) -> str:
         landed.append(str(yaml.safe_load(config_path.read_text())["eval_set_id"]))
         raise TimeoutError("connection reset while waiting for hawk")
 
+    async def exists(eval_set_id: str) -> bool:
+        return eval_set_id in landed
+
+    _price("openrouter/openai/gpt-5.6-luna")
     r.hawk.submit = submit_then_lose_the_answer  # type: ignore[assignment]
-    r.hawk.eval_set_exists = lambda eval_set_id: eval_set_id in landed  # type: ignore[assignment]
+    r.hawk.eval_set_exists = exists  # type: ignore[assignment]
     path = _write(tmp_path, "lost.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-lost"))
     with pytest.raises(ToolError, match="submission failed"):
         run(hawk_submit(r, tmp_path)(config=path, estimated_usd=1.0))
@@ -478,11 +512,15 @@ def test_a_submission_that_never_reached_hawk_releases_its_reservation(
     r = remote(tmp_path)
     (tmp_path / "inputs").mkdir(exist_ok=True)
 
-    def refuse(config_path: Path) -> str:
+    async def refuse(config_path: Path) -> str:
         raise RuntimeError("hawk eval-set run failed: could not resolve host")
 
+    async def missing(eval_set_id: str) -> bool:
+        return False
+
+    _price("openrouter/openai/gpt-5.6-luna")
     r.hawk.submit = refuse  # type: ignore[assignment]
-    r.hawk.eval_set_exists = lambda eval_set_id: False  # type: ignore[assignment]
+    r.hawk.eval_set_exists = missing  # type: ignore[assignment]
     path = _write(tmp_path, "gone.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-gone"))
     with pytest.raises(ToolError, match="never reached Hawk"):
         run(hawk_submit(r, tmp_path)(config=path, estimated_usd=1.0))
@@ -497,7 +535,7 @@ def test_collect_leaves_an_unpriced_cost_unknown_and_keeps_the_hold(
     from inspect_audit import _investigate
 
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
-    monkeypatch.setattr(_investigate, "usage_cost", lambda files: (None, {"openrouter/x": {"input": 1, "cache_read": 0, "output": 2}}))
+    monkeypatch.setattr(_investigate, "usage_cost", lambda files: (None, {"openrouter/x": {"input": 1, "cache_read": 0, "output": 2}}, True))
     r = remote(tmp_path)
     (tmp_path / "inputs").mkdir(exist_ok=True)
     run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "u.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-u")), estimated_usd=0.2))
@@ -716,16 +754,18 @@ def test_usage_cost_reads_real_logs_and_says_when_it_cannot_price_them(tmp_path:
     from inspect_audit._jobs import usage_cost
 
     log = Path(run_fixture_eval(str(tmp_path / "logs")))
-    cost, usage = usage_cost([log])
+    cost, usage, recomputed = usage_cost([log])
     assert "mockllm/model" in usage and usage["mockllm/model"]["output"] > 0
     assert cost is None, "an unpriced model leaves the total unknown"
+    assert recomputed, "no cost in the log means the number can only be recomputed"
 
     set_model_info(
         "mockllm/model",
         ModelInfo(cost=ModelCost(input=1000.0, output=1000.0, input_cache_read=0.0, input_cache_write=0.0)),
     )
-    priced, _ = usage_cost([log])
+    priced, _, recomputed = usage_cost([log])
     assert priced is not None and priced > 0
+    assert recomputed, "the log recorded no cost, so this total is an estimate"
 
 
 def test_eval_set_exists_parses_the_cli_and_does_not_match_a_different_id() -> None:
@@ -740,45 +780,44 @@ def test_eval_set_exists_parses_the_cli_and_does_not_match_a_different_id() -> N
     )
     calls: list[tuple[str, ...]] = []
 
-    def fake_run(*args: str, timeout: int = 600) -> str:
+    async def fake_run(*args: str, timeout: int = 600) -> str:
         calls.append(args)
         return table
 
     h._run = fake_run  # type: ignore[method-assign]
-    assert h.eval_set_exists("inv-smoke-1234abcd") is True
+    assert run(h.eval_set_exists("inv-smoke-1234abcd")) is True
     assert calls[0][:3] == ("list", "eval-sets", "--search")
-    assert h.eval_set_exists("inv-other-9999zzzz") is False
+    assert run(h.eval_set_exists("inv-other-9999zzzz")) is False
 
 
 def test_stage_logs_to_s3_builds_the_right_command_and_keeps_credentials_out(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Staging runs `aws s3 cp` with the operator's profile; nothing is shell-interpolated."""
-    import subprocess as sp
-
+    """Staging runs `aws s3 cp` as the named profile; nothing is shell-interpolated."""
     from inspect_audit import _jobs
 
     seen: dict[str, object] = {}
 
     class Result:
-        returncode = 0
+        success = True
+        stdout = ""
         stderr = ""
 
-    def fake_run(cmd, capture_output, text, env, timeout):  # noqa: ANN001, ANN202
-        seen["cmd"], seen["env"] = cmd, env
+    async def fake_subprocess(args, text=True, env=None, timeout=None, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        seen["args"], seen["env"] = args, env
         return Result()
 
-    monkeypatch.setattr(sp, "run", fake_run)
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "should-not-travel")
+    monkeypatch.setattr(_jobs, "subprocess", fake_subprocess)
     (tmp_path / "logs").mkdir()
-    source = _jobs.stage_logs_to_s3(tmp_path / "logs", "bucket", "inv-inputs-abc", "james-base")
+    source = run(_jobs.stage_logs_to_s3(tmp_path / "logs", "bucket", "inv-inputs-abc", "james-base"))
     assert source == "hawk:inv-inputs-abc/inputs/logs"
-    cmd = seen["cmd"]
+    cmd = seen["args"]
     assert isinstance(cmd, list) and cmd[:4] == ["aws", "s3", "cp", "--recursive"]
     assert cmd[-1] == "s3://bucket/evals/inv-inputs-abc/inputs/logs/"
     env = seen["env"]
     assert isinstance(env, dict) and env["AWS_PROFILE"] == "james-base"
-    assert "AWS_ACCESS_KEY_ID" not in env, "an ambient key must not override the profile"
+    # an ambient key alongside a named profile is how you upload as the wrong identity
+    assert env["AWS_ACCESS_KEY_ID"] == "" and env["AWS_SESSION_TOKEN"] == ""
 
 
 def test_the_fake_hawk_matches_the_real_one() -> None:
@@ -799,6 +838,9 @@ def test_the_fake_hawk_matches_the_real_one() -> None:
         assert list(theirs.parameters) == [p for p in signature.parameters if p != "self"], (
             f"FakeHawk.{name}{theirs} does not match Hawk.{name}{signature}"
         )
+        assert inspect_module.iscoroutinefunction(getattr(fake, name)), (
+            f"Hawk.{name} is async; a synchronous fake would hide a blocking call"
+        )
 
 
 def test_submit_passes_the_secrets_file_and_the_flags_the_run_needs() -> None:
@@ -807,13 +849,13 @@ def test_submit_passes_the_secrets_file_and_the_flags_the_run_needs() -> None:
 
     seen: list[tuple[str, ...]] = []
 
-    def fake_run(*args: str, timeout: int = 600) -> str:
+    async def fake_run(*args: str, timeout: int = 600) -> str:
         seen.append(args)
         return "Eval set ID: inv-abc-123\n"
 
     h = Hawk("https://hawk.example", "/path/to/.env")
     h._run = fake_run  # type: ignore[method-assign]
-    assert h.submit(Path("/tmp/c.yaml")) == "inv-abc-123"
+    assert run(h.submit(Path("/tmp/c.yaml"))) == "inv-abc-123"
     args = seen[0]
     assert args[:2] == ("eval-set", "run") and "/tmp/c.yaml" in args
     assert "--skip-confirm" in args and "--log-dir-allow-dirty" in args
@@ -821,33 +863,54 @@ def test_submit_passes_the_secrets_file_and_the_flags_the_run_needs() -> None:
 
     without = Hawk("https://hawk.example", None)
     without._run = fake_run  # type: ignore[method-assign]
-    without.submit(Path("/tmp/c.yaml"))
+    run(without.submit(Path("/tmp/c.yaml")))
     assert "--secrets-file" not in seen[1]
 
 
-def test_hawk_sends_the_api_url_and_never_the_operators_environment() -> None:
-    import subprocess as sp
-
+def test_hawk_runs_through_inspects_subprocess_with_the_api_url_it_was_given() -> None:
+    """Inspect's subprocess keeps the event loop free and counts against max_subprocesses."""
     from inspect_audit import _jobs
 
     captured: dict[str, object] = {}
 
     class Result:
-        returncode = 0
+        success = True
         stdout = "ok"
         stderr = ""
 
-    def fake_run(cmd, capture_output, text, timeout, env):  # noqa: ANN001, ANN202
-        captured["cmd"], captured["env"] = cmd, env
+    async def fake_subprocess(args, text=True, env=None, timeout=None, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        captured["args"], captured["env"], captured["timeout"] = args, env, timeout
         return Result()
 
     monkey = pytest.MonkeyPatch()
-    monkey.setattr(sp, "run", fake_run)
-    monkey.setenv("HAWK_API_URL", "https://someone-elses-deployment")
+    monkey.setattr(_jobs, "subprocess", fake_subprocess)
     try:
-        _jobs.Hawk("https://hawk.example", None).logs("inv-x")
+        run(_jobs.Hawk("https://hawk.example", None).logs("inv-x"))
     finally:
         monkey.undo()
     env = captured["env"]
     assert isinstance(env, dict) and env["HAWK_API_URL"] == "https://hawk.example"
-    assert captured["cmd"][:2] == ["hawk", "logs"]  # type: ignore[index]
+    assert captured["args"][:2] == ["hawk", "logs"]  # type: ignore[index]
+    assert captured["timeout"] == 120
+
+
+def test_a_cost_the_runner_recorded_is_used_as_measured(tmp_path: Path) -> None:
+    """The runner prices its own usage; recomputing here would re-price it at today's rates."""
+    from inspect_ai.log import read_eval_log, write_eval_log
+    from inspect_ai.model import ModelUsage
+    from test_helpers.logs import run_fixture_eval
+
+    from inspect_audit._jobs import usage_cost
+
+    path = Path(run_fixture_eval(str(tmp_path / "logs")))
+    log = read_eval_log(str(path))
+    log.stats.model_usage = {
+        "openrouter/openai/gpt-5.6-luna": ModelUsage(
+            input_tokens=1_000_000, output_tokens=1_000_000, total_tokens=2_000_000, total_cost=1.40
+        )
+    }
+    write_eval_log(log, str(path))
+
+    cost, usage, recomputed = usage_cost([path])
+    assert cost == 1.40 and not recomputed
+    assert usage["openrouter/openai/gpt-5.6-luna"]["input"] == 1_000_000

@@ -35,8 +35,13 @@ from inspect_ai.agent import AgentState, react
 from inspect_ai.dataset import Sample
 from inspect_ai.log import list_eval_logs
 from inspect_ai.tool import Tool, ToolError, bash, python, skill, tool
-from inspect_ai.util import StoreModel, request_input, sandbox, store_as
-from inspect_ai.util._sandbox.environment import SandboxEnvironmentType
+from inspect_ai.util import (
+    SandboxEnvironmentType,
+    StoreModel,
+    request_input,
+    sandbox,
+    store_as,
+)
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from . import prompts
@@ -160,6 +165,9 @@ class InvestigationState(StoreModel):
     """Publication state belongs to the sample, including across compaction."""
 
     published: str | None = None
+    # set when the agent has been told the shared allowance is gone; the next turn
+    # ends the sample rather than asking again
+    allowance_notified: bool = False
 
 
 class EvidenceRef(BaseModel):

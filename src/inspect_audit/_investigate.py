@@ -13,7 +13,6 @@ from html.parser import HTMLParser
 from importlib.metadata import version
 from logging import getLogger
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 import yaml
@@ -37,13 +36,14 @@ from ._jobs import (
     Hawk,
     Job,
     JobLedger,
-    audit_config,
-    benchmark_config,
+    Policy,
     copy_into_inputs,
     slug,
     stage_logs_to_s3,
+    task_package_name,
     usage_cost,
     utcnow,
+    validate_config,
     wait_for,
     write_config,
 )
@@ -399,6 +399,20 @@ class Remote:
         self.aws_profile = aws_profile
         self.allowance_usd = allowance_usd
         self.ledger = JobLedger(root)
+        self.policy = Policy(
+            packages=[task_package, audit_package],
+            task_names=[task_package_name(task_package), "inspect_audit"],
+            models=worker_models,
+            auditor_images=[auditor_image],
+            hawk_api_url=hawk_api_url,
+        )
+        self._sources_path = root / "log_sources.json"
+        self.known_sources: set[str] = set(
+            json.loads(self._sources_path.read_text()) if self._sources_path.is_file() else []
+        ) | {j.eval_set_id for j in self.ledger.jobs}
+
+    def save_sources(self) -> None:
+        self._sources_path.write_text(json.dumps(sorted(self.known_sources)))
 
     def check_model(self, model: str) -> None:
         if model not in self.worker_models:
@@ -479,186 +493,93 @@ def investigation_budget(
 
 
 @tool
-def run_benchmark(remote: Remote, target_task: str | None, root: Path) -> Tool:
-    """Run the benchmark under audit on Hawk."""
+def stage_logs(remote: Remote, root: Path) -> Tool:
+    """Make the supplied logs readable by a Hawk job."""
 
-    async def execute(
-        label: str,
-        models: list[str],
-        estimated_usd: float,
-        limit: int | None = None,
-        sample_ids: list[str] | None = None,
-        epochs: int = 1,
-        task: str | None = None,
-        task_args: dict[str, Any] | None = None,
-        reasoning_effort: str | None = None,
-        note: str = "",
-    ) -> str:
-        """Submit an eval-set that runs the benchmark task itself with the given models.
+    async def execute(label: str) -> str:
+        """Stage the supplied input logs where a Hawk job you submit can read them.
 
-        The job runs remotely on Hawk; this returns as soon as it is submitted.
-        Use jobs(action="wait") to block until it finishes and jobs(action="collect")
-        to bring its .eval logs under /inputs/jobs/<label>/. Start with one or two
-        samples to prove the configuration before spending on a full run.
+        A Hawk runner can only read its own eval set's storage, so the logs are copied
+        into a fresh eval set prefix now. Use the returned eval_set_id in your config
+        and the returned logs source as the audit task's `logs` argument.
 
         Args:
-            label: Short unique name for this job (letters, digits, hyphens).
-            models: Worker models to evaluate, from the allowed list, e.g.
-                "openai/gpt-5.6-luna".
-            estimated_usd: What you expect this job to cost; it is reserved against the
-                allowance until the job is collected and the real cost is known.
-            limit: Evaluate only the first N samples.
-            sample_ids: Evaluate exactly these sample ids instead.
-            epochs: Repeats per sample.
-            task: Registry name of the task (default: the task under audit).
-            task_args: Task arguments (e.g. a prompt variant the task exposes).
-            reasoning_effort: Reasoning effort for the worker models, if they take one.
-            note: Why you are running this; recorded in the ledger.
+            label: Short name (letters, digits, hyphens) used to build the eval set id.
         """
-        task_name = task or target_task
-        if not task_name:
-            raise ToolError("no task given and the seed names no target task")
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,30}", label):
             raise ToolError("label must be 2-31 lowercase letters, digits or hyphens")
-        if remote.ledger.get(label):
-            job = remote.ledger.get(label)
-            return f"a job labelled {label!r} already exists ({job.eval_set_id}, {job.status}); use jobs() on it"  # type: ignore[union-attr]
-        for m in models:
-            remote.check_model(m)
-        remote.reserve(estimated_usd)
-        config = benchmark_config(
-            name=f"inv-{slug(label)}",
-            task_package=remote.task_package,
-            task_name=task_name,
-            models=[{"model": m, "reasoning_effort": reasoning_effort} for m in models],
-            task_args=task_args,
-            limit=limit,
-            sample_ids=sample_ids,
-            epochs=epochs,
-            hawk_api_url=remote.hawk_api_url,
-        )
-        path = write_config(root, label, config)
+        local = root / "inputs" / "logs"
+        if not local.is_dir():
+            raise ToolError("no logs were supplied to this investigation")
+        eval_set_id = f"inv-{slug(label)}-{uuid4().hex[:6]}"
         try:
-            eval_set_id = remote.hawk.submit(path)
+            source = await asyncio.to_thread(
+                stage_logs_to_s3, local, remote.log_bucket, eval_set_id, remote.aws_profile
+            )
         except Exception as ex:
-            raise ToolError(f"submission failed: {ex}") from ex
-        remote.ledger.add(
-            Job(label=label, kind="benchmark", eval_set_id=eval_set_id, config_path=str(path),
-                submitted_at=utcnow(), estimated_usd=estimated_usd, note=note)
-        )
+            raise ToolError(str(ex)) from ex
+        remote.known_sources.add(eval_set_id)
+        remote.save_sources()
         return (
-            f"Submitted benchmark job {label!r} as Hawk eval set {eval_set_id} "
-            f"({len(models)} model(s), limit={limit}, samples={sample_ids}, epochs={epochs}). "
-            f"Config saved at jobs/{label}.eval-set.yaml. Reserved ${estimated_usd:.2f}."
+            f"staged {sum(1 for _ in local.rglob('*.eval'))} log(s). In your config set "
+            f"eval_set_id: {eval_set_id} and, in the audit task args, logs: {source}"
         )
 
     return execute
 
 
 @tool
-def run_audit(remote: Remote, target_task: str | None, root: Path) -> Tool:
-    """Run inspect_audit's sample auditors on Hawk over recorded attempts."""
+def hawk_submit(remote: Remote, root: Path) -> Tool:
+    """Submit an eval-set config you wrote to Hawk, after policy checks."""
 
-    async def execute(
-        label: str,
-        logs: str,
-        items: list[str],
-        auditor_model: str,
-        estimated_usd: float,
-        grader_model: str | None = None,
-        grader_reasoning_effort: str | None = None,
-        auditor_reasoning_effort: str | None = None,
-        limit: int | None = None,
-        sample_ids: list[str] | None = None,
-        notes: str | None = None,
-        task: str | None = None,
-        note: str = "",
-    ) -> str:
-        """Submit an eval-set that audits benchmark items, one auditor per item.
+    async def execute(config: str, estimated_usd: float, note: str = "") -> str:
+        """Submit a Hawk eval-set config file from your workspace.
 
-        Each auditor gets the item, its gold, the grader's source, the recorded
-        attempts sliced from the logs, and the tools to grade attempts with the
-        benchmark's own scorer. Its verdicts come back as scores in the job's .eval log.
+        Write the config yourself (see the investigating skill's examples; the Hawk
+        docs under /inputs/docs describe every field), save it under /workspace, and
+        pass its path. The file is checked against this investigation's policy: only
+        the allowed packages, task packages, models, images, secrets and environment
+        keys; limits present and capped; `logs` only from sources you staged or ran.
+        Anything else is refused with the reasons. On success the job's cost estimate
+        is reserved against the allowance until jobs(action="collect").
 
         Args:
-            label: Short unique name for this job.
-            logs: Where the recorded attempts come from: "inputs" for the logs supplied
-                to this investigation, the label of a benchmark job you ran, or
-                "hawk:<eval-set-id>" for any Hawk eval set.
-            items: Audit items to run, e.g. ["gold-answer", "answer-format",
-                "red-teaming", "insufficiently-specified", "other-findings",
-                "failure-attribution", "approach-census", "contamination",
-                "ground-truth-access", "environment-integrity"].
-            auditor_model: The model that audits, from the allowed list.
-            estimated_usd: Expected cost, reserved until collected.
-            grader_model: Model bound to the benchmark scorer's `grader` role when its
-                scorer calls a model; read which grader the logs used and choose deliberately.
-            grader_reasoning_effort: Reasoning effort for the grader model.
-            auditor_reasoning_effort: Reasoning effort for the auditor model.
-            limit: Audit only the first N items.
-            sample_ids: Audit exactly these item ids.
-            notes: Steer inserted into every auditor's system prompt (general, not answers).
-            task: Registry name of the audited task (default: the task under audit).
+            config: Path of the YAML file in /workspace, e.g. /workspace/jobs/smoke.eval-set.yaml.
+            estimated_usd: What you expect the job to cost; reserved until collected.
             note: Why you are running this; recorded in the ledger.
         """
-        task_name = task or target_task
-        if not task_name:
-            raise ToolError("no task given and the seed names no target task")
-        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,30}", label):
-            raise ToolError("label must be 2-31 lowercase letters, digits or hyphens")
+        if not config.startswith("/workspace/"):
+            raise ToolError("config must be a path under /workspace")
+        host_path = root / "work" / Path(config).relative_to("/workspace")
+        if not host_path.is_file():
+            raise ToolError(f"no such file: {config}")
+        try:
+            data = yaml.safe_load(host_path.read_text())
+        except yaml.YAMLError as ex:
+            raise ToolError(f"config is not valid YAML: {ex}") from ex
+        problems = validate_config(data, remote.policy, remote.known_sources)
+        if problems:
+            raise ToolError("config refused:\n- " + "\n- ".join(problems))
+        label = str(data["name"]).removeprefix(remote.policy.id_prefix)
         if remote.ledger.get(label):
             job = remote.ledger.get(label)
-            return f"a job labelled {label!r} already exists ({job.eval_set_id}, {job.status}); use jobs() on it"  # type: ignore[union-attr]
-        remote.check_model(auditor_model)
-        if grader_model:
-            remote.check_model(grader_model)
+            assert job is not None
+            return f"a job named {data['name']!r} already exists ({job.eval_set_id}, {job.status}); use jobs() on it or choose another name"
         remote.reserve(estimated_usd)
-        eval_set_id: str | None = None
-        if logs == "inputs":
-            local = root / "inputs" / "logs"
-            if not local.is_dir():
-                raise ToolError("no logs were supplied to this investigation")
-            eval_set_id = f"inv-{slug(label)}-{uuid4().hex[:6]}"
-            try:
-                logs_source = stage_logs_to_s3(local, remote.log_bucket, eval_set_id, remote.aws_profile)
-            except Exception as ex:
-                raise ToolError(str(ex)) from ex
-        elif logs.startswith("hawk:"):
-            logs_source = logs
-        else:
-            source_job = remote.ledger.get(logs)
-            if source_job is None:
-                raise ToolError(f"{logs!r} is neither 'inputs', a job label, nor 'hawk:<id>'")
-            logs_source = f"hawk:{source_job.eval_set_id}"
-        config = audit_config(
-            name=f"inv-{slug(label)}",
-            eval_set_id=eval_set_id,
-            audit_package=remote.audit_package,
-            task_package=remote.task_package,
-            audited_task=task_name,
-            logs_source=logs_source,
-            items=items,
-            limit=limit,
-            sample_ids=sample_ids,
-            auditor={"model": auditor_model, "reasoning_effort": auditor_reasoning_effort},
-            grader={"model": grader_model, "reasoning_effort": grader_reasoning_effort} if grader_model else None,
-            auditor_image=remote.auditor_image,
-            notes=notes,
-            hawk_api_url=remote.hawk_api_url,
-        )
-        path = write_config(root, label, config)
+        submitted_path = write_config(root, label, data)
         try:
-            submitted = remote.hawk.submit(path)
+            eval_set_id = await asyncio.to_thread(remote.hawk.submit, submitted_path)
         except Exception as ex:
             raise ToolError(f"submission failed: {ex}") from ex
         remote.ledger.add(
-            Job(label=label, kind="audit", eval_set_id=submitted, config_path=str(path),
+            Job(label=label, kind="eval-set", eval_set_id=eval_set_id, config_path=str(submitted_path),
                 submitted_at=utcnow(), estimated_usd=estimated_usd, note=note)
         )
+        remote.known_sources.add(eval_set_id)
+        remote.save_sources()
         return (
-            f"Submitted audit job {label!r} as Hawk eval set {submitted} over {logs_source} "
-            f"(items={items}, limit={limit}, samples={sample_ids}, auditor={auditor_model}, grader={grader_model}). "
-            f"Reserved ${estimated_usd:.2f}."
+            f"Submitted {data['name']!r} as Hawk eval set {eval_set_id}. Reserved ${estimated_usd:.2f}. "
+            f"jobs(action='wait', label='{label}') blocks until it finishes; jobs(action='collect', ...) brings the logs to /inputs/jobs/{label}/."
         )
 
     return execute
@@ -852,7 +773,9 @@ def investigate(
             "hawk": hawk_api_url,
             "task_package": task_package,
             "worker_models": worker_models or DEFAULT_WORKERS,
-            "note": "run_benchmark and run_audit submit jobs to Hawk; jobs() waits and collects into /inputs/jobs/<label>/",
+            "audit_package": audit_package,
+            "auditor_image": auditor_image,
+            "note": "write an eval-set config under /workspace and hawk_submit it; stage_logs makes the supplied logs readable by a job; jobs() waits and collects into /inputs/jobs/<label>/",
         }
         seed_path.write_text(json.dumps(seed, indent=2))
     tools: list[Tool] = [
@@ -864,11 +787,7 @@ def investigate(
         publish_report(str(root)),
     ]
     if remote is not None:
-        tools += [
-            run_benchmark(remote, target_task, root),
-            run_audit(remote, target_task, root),
-            jobs(remote, root),
-        ]
+        tools += [stage_logs(remote, root), hawk_submit(remote, root), jobs(remote, root)]
 
     async def on_continue(state: AgentState) -> bool | str:
         return await _continue(state, interactive)

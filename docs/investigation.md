@@ -2,19 +2,25 @@
 
 The registered `inspect_audit/investigate` task reads a benchmark's source and
 supplied Inspect logs, analyses them in a Docker workspace, and, when `hawk_api_url`
-is set, runs things: the benchmark itself on Hawk (`run_benchmark`), inspect_audit's
-sample auditors over recorded attempts (`run_audit`), with `jobs` to wait, collect
-and account for them. It writes a six-section Quarto HTML report and exits by default;
+is set, runs things on Hawk: the agent writes an ordinary Hawk eval-set config (the
+benchmark itself, or inspect_audit's sample auditors over recorded attempts) and
+`hawk_submit` checks it against a policy and submits it; `stage_logs` makes the supplied
+logs readable by a job; `jobs` waits, collects and accounts. It writes a six-section Quarto HTML report and exits by default;
 explicit interactive mode waits through ACP.
 
 ## Remote work
 
 The agent's shell runs in a container with no credentials. The dispatch tools run in
 the Inspect process on this machine and use the `hawk` CLI (your login, in its keyring)
-and, for staging supplied logs into an audit job's S3 prefix, your AWS profile. Every
-submission writes its eval-set config under `<investigation>/jobs/` and a line in
-`jobs.json`; a job label can only be submitted once, so a restarted session cannot
-relaunch the same batch. Each submission reserves the agent's own cost estimate against
+and, for staging supplied logs into an audit job's S3 prefix, your AWS profile. The
+config is treated as hostile input: allowlisted packages (the task package and
+inspect_audit only), task registry names, models, auditor images, secrets
+(`OPENROUTER_API_KEY` only) and runner environment keys; runner image, cpu, memory,
+agents, solvers and unknown keys refused; `limit`/`epochs`/`token_limit`/`time_limit`
+required and capped; `eval_set_id` prefixed `inv-`; `logs` only from sources this
+investigation staged or ran. Every accepted submission is saved under
+`<investigation>/jobs/` and recorded in `jobs.json`; a job name can only be submitted
+once, so a restarted session cannot relaunch the same batch. Each submission reserves the agent's own cost estimate against
 the shared allowance until `jobs(action="collect")` downloads the logs (to
 `/inputs/jobs/<label>/`, read-only in the box) and records the real cost from their
 recorded usage and OpenRouter's prices. Worker models are restricted to `worker_models`.

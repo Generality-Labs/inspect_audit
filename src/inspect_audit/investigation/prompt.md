@@ -62,16 +62,16 @@ few dollars per item depending on the model and how much they investigate. Stron
 still need primary evidence and controls. Scanner flags are leads, not prevalence;
 verify positives and inspect some unflagged cases when assessing detector quality.
 
-When the seed lists `remote`, you can run things. run_benchmark submits the benchmark
-itself on Hawk with the models and samples you choose; run_audit submits inspect_audit's
-sample auditors over recorded attempts (the supplied logs, a job you ran, or any Hawk
-eval set); jobs() reports status, waits without spending tokens, collects the .eval logs
-into /inputs/jobs/<label>/ and records the real cost. Each submission reserves the cost
-you estimate against the allowance until it is collected. Prove a configuration on one
-or two samples and read the result before you spend on a full run; read a collected job
-the way you read any log. Without `remote` in the seed, you cannot run anything: record
-the experiment you would have run as a proposal. Never claim a job ran because you wrote
-its configuration; the ledger and the collected logs are the record.
+When the seed lists `remote`, you can run things on Hawk: write an eval-set config
+yourself (examples in the investigating skill, Hawk docs under /inputs/docs), save it
+under /workspace, and hawk_submit it. It is checked against a policy and refused with
+reasons if it strays. stage_logs makes the supplied logs readable by a job; jobs()
+reports status, waits without spending tokens, collects .eval logs into
+/inputs/jobs/<label>/ and records the real cost. Each submission reserves your cost
+estimate against the allowance until collected. Prove a configuration on one or two
+samples and read the result before spending on a full run. Without `remote`, record the
+experiment you would have run as a proposal. Never claim a job ran because you wrote its
+configuration; the ledger and the collected logs are the record.
 
 Use budget() to monitor spending; it shows spend by model. When the allowance is
 enforced, reaching it ends the run, so publish before you approach it. Unknown cost is

@@ -152,110 +152,145 @@ def stage_logs_to_s3(
     return f"hawk:{eval_set_id}/inputs/logs"
 
 
-def _model_item(spec: dict[str, Any]) -> dict[str, Any]:
-    """One Hawk model item, routed straight to OpenRouter (no middleman)."""
-    item: dict[str, Any] = {"name": spec["model"], "args": {"base_url": OPENROUTER_BASE_URL}}
-    config = {k: v for k, v in spec.items() if k in ("reasoning_effort", "max_tokens", "temperature") and v is not None}
-    if config:
-        item["args"]["config"] = config
-    return item
+@dataclass
+class Policy:
+    """What a submitted eval-set config may contain. Enforced in code, not prompt.
+
+    A Hawk eval-set config runs arbitrary Python from `packages:` inside a runner that
+    holds the operator's provider key and S3 credentials, so the config is treated as
+    hostile input: allowlists for everything that names code or credentials, hard caps
+    on spend-shaped fields, and no unknown keys.
+    """
+
+    packages: list[str]  # exact git/pip specs allowed in packages: and tasks[].package
+    task_names: list[str]  # registry package names allowed in tasks[].name
+    models: list[str]  # OpenRouter model ids allowed anywhere a model is named
+    auditor_images: list[str]
+    hawk_api_url: str
+    secrets: tuple[str, ...] = ("OPENROUTER_API_KEY",)
+    env_keys: tuple[str, ...] = ("HAWK_API_URL", "HAWK_RUNNER_REFRESH_URL")
+    max_limit: int = 1000
+    max_epochs: int = 5
+    max_token_limit: int = 10_000_000
+    max_time_limit: int = 14_400
+    id_prefix: str = "inv-"
 
 
-def benchmark_config(
-    *,
-    name: str,
-    task_package: str,
-    task_name: str,
-    models: list[dict[str, Any]],
-    task_args: dict[str, Any] | None,
-    limit: int | None,
-    sample_ids: list[str] | None,
-    epochs: int,
-    hawk_api_url: str,
-    token_limit: int = 2_000_000,
-    time_limit: int = 3600,
-    max_connections: int = 10,
-) -> dict[str, Any]:
-    """An eval-set config that runs the audited benchmark itself on Hawk."""
-    item: dict[str, Any] = {"name": task_name.split("/")[-1]}
-    args = dict(task_args or {})
-    if sample_ids:
-        args["sample_id"] = sample_ids  # inspect's own selector, honoured by eval_set
-    if args:
-        item["args"] = args
-    config: dict[str, Any] = {
-        "name": name,
-        "packages": [task_package],
-        "tasks": [{"package": task_package, "name": task_name.split("/")[0], "items": [item]}],
-        "models": [{"package": "openai", "name": "openrouter", "items": [_model_item(m) for m in models]}],
-        "runner": {
-            "environment": {"HAWK_API_URL": hawk_api_url, "HAWK_RUNNER_REFRESH_URL": ""},
-            "secrets": [{"name": "OPENROUTER_API_KEY", "description": "direct provider access"}],
-        },
-        "epochs": epochs,
-        "token_limit": token_limit,
-        "time_limit": time_limit,
-        "max_connections": max_connections,
-        "max_retries": 10,
-        "retry_attempts": 0,
-    }
-    if limit is not None:
-        config["limit"] = limit
-    return config
+ALLOWED_TOP_LEVEL = {
+    "name", "eval_set_id", "packages", "tasks", "models", "model_roles", "runner", "limit",
+    "sample_shuffle", "epochs", "token_limit", "time_limit", "message_limit", "working_limit",
+    "max_connections", "max_retries", "retry_attempts", "timeout", "metadata", "tags",
+    "log_images", "score",
+}
+ALLOWED_RUNNER = {"environment", "secrets"}
 
 
-def audit_config(
-    *,
-    name: str,
-    eval_set_id: str | None,
-    audit_package: str,
-    task_package: str,
-    audited_task: str,
-    logs_source: str,
-    items: list[str],
-    limit: int | None,
-    sample_ids: list[str] | None,
-    auditor: dict[str, Any],
-    grader: dict[str, Any] | None,
-    auditor_image: str,
-    notes: str | None,
-    hawk_api_url: str,
-) -> dict[str, Any]:
-    """An eval-set config that runs inspect_audit/audit on Hawk over recorded logs."""
-    args: dict[str, Any] = {
-        "task": audited_task,
-        "logs": logs_source,
-        "items": items,
-        "auditor_image": auditor_image,
-    }
-    if limit is not None:
-        args["limit"] = limit
-    if sample_ids:
-        args["samples"] = sample_ids
-    if notes:
-        args["notes"] = notes
-    config: dict[str, Any] = {
-        "name": name,
-        "packages": [audit_package, task_package],
-        "tasks": [{"package": audit_package, "name": "inspect_audit", "items": [{"name": "audit", "args": args}]}],
-        "models": [{"package": "openai", "name": "openrouter", "items": [_model_item(auditor)]}],
-        "runner": {
-            "environment": {"HAWK_API_URL": hawk_api_url, "HAWK_RUNNER_REFRESH_URL": ""},
-            "secrets": [{"name": "OPENROUTER_API_KEY", "description": "auditor model and replayed grader"}],
-        },
-        "epochs": 1,
-        "token_limit": 4_000_000,
-        "time_limit": 7200,
-        "max_connections": 5,
-        "max_retries": 10,
-        "retry_attempts": 0,
-        "timeout": 600,
-    }
-    if eval_set_id:
-        config["eval_set_id"] = eval_set_id
-    if grader:
-        config["model_roles"] = {"grader": {"package": "openai", "name": "openrouter", "items": [_model_item(grader)]}}
-    return config
+def _model_items(config: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    found: list[tuple[str, dict[str, Any]]] = []
+    for group in config.get("models") or []:
+        found.append((f"models[{group.get('name')}]", group))
+    for role, group in (config.get("model_roles") or {}).items():
+        found.append((f"model_roles.{role}", group))
+    return found
+
+
+def validate_config(
+    config: dict[str, Any], policy: Policy, known_log_sources: set[str]
+) -> list[str]:
+    """Every way the config could do something other than run an allowed eval, as a list.
+
+    Empty list means submit. `known_log_sources` are the `hawk:` sources this
+    investigation created (staged inputs, its own finished jobs).
+    """
+    problems: list[str] = []
+    if not isinstance(config, dict):
+        return ["config must be a mapping"]
+    unknown = set(config) - ALLOWED_TOP_LEVEL
+    if unknown:
+        problems.append(f"keys not allowed: {sorted(unknown)}")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,40}", str(config.get("name", ""))):
+        problems.append("name must be lowercase letters, digits, hyphens (2-41 chars)")
+    if "eval_set_id" in config and not str(config["eval_set_id"]).startswith(policy.id_prefix):
+        problems.append(f"eval_set_id must start with {policy.id_prefix!r}")
+    for pkg in config.get("packages") or []:
+        if pkg not in policy.packages:
+            problems.append(f"package not allowed: {pkg!r}")
+    tasks = config.get("tasks") or []
+    if not tasks:
+        problems.append("tasks is required")
+    for t in tasks:
+        if t.get("package") not in policy.packages:
+            problems.append(f"task package not allowed: {t.get('package')!r}")
+        if t.get("name") not in policy.task_names:
+            problems.append(f"task registry package not allowed: {t.get('name')!r}")
+        for item in t.get("items") or []:
+            args = item.get("args") or {}
+            if "logs" in args:
+                logs = str(args["logs"])
+                if not logs.startswith("hawk:") or logs.split("/")[0].removeprefix("hawk:") not in known_log_sources:
+                    problems.append(
+                        f"logs must be a hawk: source this investigation staged or ran, not {logs!r}"
+                    )
+            if "auditor_image" in args and args["auditor_image"] not in policy.auditor_images:
+                problems.append(f"auditor_image not allowed: {args['auditor_image']!r}")
+            for forbidden in ("setup", "sandbox", "solver"):
+                if forbidden in args:
+                    problems.append(f"task arg not allowed: {forbidden!r}")
+    if not config.get("models"):
+        problems.append("models is required")
+    for where, group in _model_items(config):
+        if group.get("package") != "openai" or group.get("name") != "openrouter":
+            problems.append(f"{where}: models must use package openai, provider openrouter")
+        for item in group.get("items") or []:
+            if item.get("name") not in policy.models:
+                problems.append(f"{where}: model not allowed: {item.get('name')!r}")
+            args = item.get("args") or {}
+            if args.get("base_url") != OPENROUTER_BASE_URL:
+                problems.append(f"{where}: args.base_url must be {OPENROUTER_BASE_URL}")
+            extra = set(args) - {"base_url", "config"}
+            if extra:
+                problems.append(f"{where}: model args not allowed: {sorted(extra)}")
+            cfg_extra = set(args.get("config") or {}) - {"reasoning_effort", "max_tokens", "temperature", "reasoning_tokens"}
+            if cfg_extra:
+                problems.append(f"{where}: model config keys not allowed: {sorted(cfg_extra)}")
+    runner = config.get("runner") or {}
+    if set(runner) - ALLOWED_RUNNER:
+        problems.append(f"runner keys not allowed: {sorted(set(runner) - ALLOWED_RUNNER)} (no image, cpu, memory, cleanup)")
+    env = runner.get("environment") or {}
+    if set(env) - set(policy.env_keys):
+        problems.append(f"runner.environment keys not allowed: {sorted(set(env) - set(policy.env_keys))}")
+    if env.get("HAWK_RUNNER_REFRESH_URL", None) != "" or env.get("HAWK_API_URL") != policy.hawk_api_url:
+        problems.append(
+            f"runner.environment must set HAWK_API_URL to {policy.hawk_api_url} and HAWK_RUNNER_REFRESH_URL to ''"
+        )
+    for secret in runner.get("secrets") or []:
+        if secret.get("name") not in policy.secrets or set(secret) - {"name", "description", "type"} or secret.get("type", "env") != "env":
+            problems.append(f"runner secret not allowed: {secret}")
+    for key, cap in (("limit", policy.max_limit), ("epochs", policy.max_epochs), ("token_limit", policy.max_token_limit), ("time_limit", policy.max_time_limit)):
+        value = config.get(key)
+        if key in ("token_limit", "time_limit", "epochs") and value is None:
+            problems.append(f"{key} is required")
+        if isinstance(value, int) and value > cap:
+            problems.append(f"{key} {value} exceeds the cap {cap}")
+        if value is not None and not isinstance(value, int):
+            problems.append(f"{key} must be an integer")
+    if "limit" not in config and not any(
+        (item.get("args") or {}).get("sample_id") or (item.get("args") or {}).get("samples") or (item.get("args") or {}).get("limit")
+        for t in tasks for item in t.get("items") or []
+    ):
+        problems.append("set limit, or select samples in the task args: every job states its size")
+    return problems
+
+
+def task_package_name(spec: str) -> str:
+    """The registry name of a package from its git or pip spec.
+
+    git+https://.../inspect_evals@sha -> inspect_evals; inspect-evals==1.0 -> inspect_evals.
+    """
+    tail = spec.split("#")[0].rstrip("/").split("/")[-1]
+    tail = tail.split("@")[0].removesuffix(".git")
+    tail = re.split(r"[=<>!~ ]", tail)[0]
+    return tail.replace("-", "_")
 
 
 def write_config(root: Path, label: str, config: dict[str, Any]) -> Path:

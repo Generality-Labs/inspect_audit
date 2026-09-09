@@ -58,28 +58,35 @@ defect: what does it predict, and where would I see that prediction fail?
 
 ## Running things
 
-When the seed has a `remote` block, the benchmark can be run and its items audited.
-Two instruments, both submitted to Hawk and returning immediately:
+When the seed has a `remote` block, you can run the benchmark and audit its items on
+Hawk. You write the eval-set config yourself, the way any Inspect user does: Hawk's
+documentation is under /inputs/docs when supplied, and two worked configs sit next to
+this skill in examples/ (benchmark.eval-set.yaml, audit.eval-set.yaml). Copy one, fill
+in the values from the seed's `remote` block, save it under /workspace/jobs/, and call
+hawk_submit with its path and your cost estimate. The submission is checked against a
+policy (allowed packages, models, images, secrets; limits required and capped; `logs`
+only from sources you created) and refused with reasons if it strays; fix and resubmit.
 
-- run_benchmark: the benchmark task itself, with the models, samples, epochs and task
-  arguments you choose. Use it to generate attempts where the supplied logs are thin,
-  to rerun a model under a changed condition (one variable at a time, the unchanged
-  configuration as the control), or to reproduce a reported number.
-- run_audit: one sample auditor per benchmark item, each with the item, its gold, the
-  grader's source, the recorded attempts, and the benchmark's own scorer to grade
-  attempts it constructs. Choose the items (gold-answer, answer-format, red-teaming,
-  insufficiently-specified, failure-attribution, approach-census, contamination,
-  ground-truth-access, environment-integrity, other-findings) for the hypotheses you
-  hold; pass a general steer in `notes` when the benchmark's shape needs it, never an
-  answer. When the scorer calls a model, choose the `grader_model` deliberately: read
-  which grader the recorded logs used first.
+The benchmark task: run it with the models, samples, epochs and task arguments you
+choose, to generate attempts where the supplied logs are thin, to rerun a model under
+a changed condition (one variable at a time, the unchanged configuration as the
+control), or to reproduce a reported number.
 
-Procedure: smoke-test on one or two samples, wait, collect, and read the result as
-you would any log, checking that the job saw what you meant it to see. Then expand.
-jobs(action="wait") blocks without spending tokens; do other work while jobs run and
-collect when they finish. Every submission reserves the cost you estimate against the
-shared allowance; collect finished jobs to release reservations. The configs you
-submit are saved under jobs/ and the ledger in jobs.json is the record of what ran.
+The sample auditors (`inspect_audit/audit`): one auditor per benchmark item, each with
+the item, its gold, the grader's source, the recorded attempts sliced from the logs,
+and the benchmark's own scorer to grade attempts it constructs. Pick items for the
+hypotheses you hold: gold-answer, answer-format, red-teaming, insufficiently-specified,
+failure-attribution, approach-census, contamination, ground-truth-access,
+environment-integrity, other-findings. When the scorer calls a model, choose the grader
+role deliberately after reading which grader the recorded logs used. To audit the
+supplied logs, call stage_logs first and use the eval_set_id and logs source it returns;
+to audit attempts from a job you ran, use hawk:<that job's eval set id>.
+
+Procedure: one or two samples first, wait, collect, read the result as you would any
+log and check the job saw what you meant; then expand. jobs(action="wait") blocks
+without spending tokens; do other work while jobs run. Every submission reserves your
+estimate against the shared allowance until collected. The configs you submitted are
+saved under jobs/ and jobs.json is the record of what ran.
 
 ## Rules of evidence
 

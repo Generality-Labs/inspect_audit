@@ -54,19 +54,24 @@ prevalence. Changing the prompt and reasoning budget together cannot isolate eit
 Measure effects on scores, rankings or justified interpretations where the evidence
 permits; label unmeasured consequences as hypotheses.
 
-Model menu for planning: favour GPT-5.6 Luna, Qwen Flash or Gemini Flash for cheap
-screening and plumbing; consider GPT-5.6 Sol/Terra for difficult verification. These
-are preferences, not guaranteed provider identifiers or permissions. The operator's
-configured model runs this investigation. Choose exact worker models, current prices
-and limits only from an explicitly supplied, verified configuration. Stronger models
+Worker models you may run are listed in the seed under `remote.worker_models`, with
+prices registered so costs are accounted. Cheap models (Luna, Gemini Flash) for
+screening, smoke tests and plumbing; stronger ones (Sol, Terra, Astra) where the
+question needs verification quality. Sample auditors cost roughly a few cents to a
+few dollars per item depending on the model and how much they investigate. Stronger models
 still need primary evidence and controls. Scanner flags are leads, not prevalence;
 verify positives and inspect some unflagged cases when assessing detector quality.
 
-This first version has no Hawk submission, sample-auditor dispatch or remote
-experiment tools. Do not run benchmark evaluations or call model APIs from the shell.
-You can inspect source, read supplied logs, run analysis and reproduce deterministic
-checks. Record worthwhile remote experiments as proposed, not executed. Never claim
-a job ran because you wrote its configuration.
+When the seed lists `remote`, you can run things. run_benchmark submits the benchmark
+itself on Hawk with the models and samples you choose; run_audit submits inspect_audit's
+sample auditors over recorded attempts (the supplied logs, a job you ran, or any Hawk
+eval set); jobs() reports status, waits without spending tokens, collects the .eval logs
+into /inputs/jobs/<label>/ and records the real cost. Each submission reserves the cost
+you estimate against the allowance until it is collected. Prove a configuration on one
+or two samples and read the result before you spend on a full run; read a collected job
+the way you read any log. Without `remote` in the seed, you cannot run anything: record
+the experiment you would have run as a proposal. Never claim a job ran because you wrote
+its configuration; the ledger and the collected logs are the record.
 
 Use budget() to monitor spending; it shows spend by model. When the allowance is
 enforced, reaching it ends the run, so publish before you approach it. Unknown cost is

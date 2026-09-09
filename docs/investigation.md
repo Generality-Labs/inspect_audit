@@ -1,11 +1,26 @@
-# Local investigator (first slice)
+# The investigator
 
-The registered `inspect_audit/investigate` task reads a repository and explicitly
-supplied local Inspect logs, analyzes them in a Docker workspace, writes a Quarto
-HTML report, and exits by default. Explicit interactive mode waits through ACP. This version does **not** submit
-Hawk jobs, generate benchmark rollouts, or automatically run sample auditors.
-Existing benchmark and auditor logs can both be supplied. Remote execution and a
-budget covering child jobs are the next slice; no service account is created.
+The registered `inspect_audit/investigate` task reads a benchmark's source and
+supplied Inspect logs, analyses them in a Docker workspace, and, when `hawk_api_url`
+is set, runs things: the benchmark itself on Hawk (`run_benchmark`), inspect_audit's
+sample auditors over recorded attempts (`run_audit`), with `jobs` to wait, collect
+and account for them. It writes a six-section Quarto HTML report and exits by default;
+explicit interactive mode waits through ACP.
+
+## Remote work
+
+The agent's shell runs in a container with no credentials. The dispatch tools run in
+the Inspect process on this machine and use the `hawk` CLI (your login, in its keyring)
+and, for staging supplied logs into an audit job's S3 prefix, your AWS profile. Every
+submission writes its eval-set config under `<investigation>/jobs/` and a line in
+`jobs.json`; a job label can only be submitted once, so a restarted session cannot
+relaunch the same batch. Each submission reserves the agent's own cost estimate against
+the shared allowance until `jobs(action="collect")` downloads the logs (to
+`/inputs/jobs/<label>/`, read-only in the box) and records the real cost from their
+recorded usage and OpenRouter's prices. Worker models are restricted to `worker_models`.
+Models are routed straight to OpenRouter with `OPENROUTER_API_KEY` from `secrets_file`;
+the middleman is bypassed with `HAWK_RUNNER_REFRESH_URL: ""`. Required with
+`hawk_api_url`: `task_package`, the git spec Hawk runners install to run the audited task.
 
 ## Run
 

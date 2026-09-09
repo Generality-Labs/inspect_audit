@@ -56,6 +56,31 @@ refute it. Prefer what is already in the logs; then deterministic recomputation;
 anything you can verify independently with the tools you have. Ask of every candidate
 defect: what does it predict, and where would I see that prediction fail?
 
+## Running things
+
+When the seed has a `remote` block, the benchmark can be run and its items audited.
+Two instruments, both submitted to Hawk and returning immediately:
+
+- run_benchmark: the benchmark task itself, with the models, samples, epochs and task
+  arguments you choose. Use it to generate attempts where the supplied logs are thin,
+  to rerun a model under a changed condition (one variable at a time, the unchanged
+  configuration as the control), or to reproduce a reported number.
+- run_audit: one sample auditor per benchmark item, each with the item, its gold, the
+  grader's source, the recorded attempts, and the benchmark's own scorer to grade
+  attempts it constructs. Choose the items (gold-answer, answer-format, red-teaming,
+  insufficiently-specified, failure-attribution, approach-census, contamination,
+  ground-truth-access, environment-integrity, other-findings) for the hypotheses you
+  hold; pass a general steer in `notes` when the benchmark's shape needs it, never an
+  answer. When the scorer calls a model, choose the `grader_model` deliberately: read
+  which grader the recorded logs used first.
+
+Procedure: smoke-test on one or two samples, wait, collect, and read the result as
+you would any log, checking that the job saw what you meant it to see. Then expand.
+jobs(action="wait") blocks without spending tokens; do other work while jobs run and
+collect when they finish. Every submission reserves the cost you estimate against the
+shared allowance; collect finished jobs to release reservations. The configs you
+submit are saved under jobs/ and the ledger in jobs.json is the record of what ran.
+
 ## Rules of evidence
 
 A finding is a lead until you have checked it against the primary source: the code for

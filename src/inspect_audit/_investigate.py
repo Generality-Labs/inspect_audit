@@ -905,7 +905,7 @@ def investigation_budget(
 def hawk_submit(remote: Remote, root: Path) -> Tool:
     """Submit an eval-set config you wrote to Hawk, after policy checks."""
 
-    async def execute(config: str, estimated_usd: float, note: str = "") -> str:
+    async def execute(config: str, estimated_usd: float, note: str | None) -> str:
         """Submit a Hawk eval-set config file from your workspace.
 
         Write the config yourself (see the investigating skill's examples, and Hawk's
@@ -927,7 +927,7 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
             config: Path of the YAML file in /workspace, e.g. /workspace/jobs/smoke.eval-set.yaml.
             estimated_usd: What you expect this to really cost. Recorded and compared
                 with the outcome; the reservation is the worst case, not this number.
-            note: Why you are running this; recorded in the ledger.
+            note: Why you are running this; recorded in the ledger. Pass null for none.
         """
         if not config.startswith("/workspace/"):
             raise ToolError("config must be a path under /workspace")
@@ -980,7 +980,7 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
             estimated_usd=estimated_usd,
             reserved_usd=worst,
             status="pending",
-            note=note,
+            note=note or "",
         )
         remote.reserve_and_record(job)
         if submitted_path.exists():  # pragma: no cover - the ledger already refused this
@@ -1017,10 +1017,10 @@ def jobs(remote: Remote, root: Path) -> Tool:
 
     async def execute(
         action: str,
-        label: str | None = None,
-        sample: str | None = None,
-        wait_minutes: float = 20,
-        limit: int | None = None,
+        label: str | None,
+        sample: str | None,
+        wait_minutes: float | None,
+        limit: int | None,
     ) -> str:
         """Watch and manage the Hawk jobs this investigation launched.
 
@@ -1054,8 +1054,10 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 "stop" - gracefully stop a running job; completed samples are scored.
             label: Which job, for every action except "list".
             sample: Sample uuid, for action "transcript" (the "samples" action lists them).
-            wait_minutes: How long "wait" may block before returning the current state.
-            limit: For "samples" and "transcripts", how many samples to take.
+            wait_minutes: How long "wait" may block before returning the current state;
+                null means twenty.
+            limit: For "samples" and "transcripts", how many samples to take; null means
+                all of them. Pass null for every argument an action does not use.
         """
         ledger = remote.ledger
         if action == "list":
@@ -1131,7 +1133,7 @@ def jobs(remote: Remote, root: Path) -> Tool:
             if action == "evals":
                 rows = await remote.hawk.evals(job.eval_set_id)
             elif action == "wait":
-                rows = await wait_for(remote.hawk, job.eval_set_id, wait_minutes)
+                rows = await wait_for(remote.hawk, job.eval_set_id, wait_minutes or 20)
             elif action == "stop":
                 await remote.hawk.stop(job.eval_set_id)
                 remote.settle(label, status="stopped")
@@ -1248,7 +1250,7 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
     """Read log sources that are not on the agent's filesystem."""
 
     async def execute(
-        action: str, source: str | None = None, sample: str | None = None, limit: int = 200
+        action: str, source: str | None, sample: str | None, limit: int | None
     ) -> str:
         """Read the recorded runs that live somewhere else.
 
@@ -1268,7 +1270,8 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
                 /inputs/index/<source>/logs; say why, they are large).
             source: Which source, from action="list". Required except for "list".
             sample: The attempt's uuid, from the samples table, for "transcript".
-            limit: How many samples to read for "samples" (default 200).
+            limit: How many samples to read for "samples"; null means two hundred. Pass
+                null for every argument an action does not use.
         """
         known = {_alias(s): s for s in sources}
         if action == "list":
@@ -1294,7 +1297,7 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
         destination = root / "inputs" / "index" / source
         try:
             if action == "samples":
-                rows = await remote.hawk.samples(eval_set, limit)
+                rows = await remote.hawk.samples(eval_set, limit or 200)
                 if not rows:
                     return f"{source}: the warehouse lists no samples"
                 destination.mkdir(parents=True, exist_ok=True)

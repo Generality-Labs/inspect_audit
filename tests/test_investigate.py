@@ -782,3 +782,43 @@ def test_the_only_task_a_repository_declares_needs_no_naming(tmp_path: Path) -> 
     (several / "bench/a.py").write_text("@task\ndef one_thing():\n    ...\n")
     (several / "bench/b.py").write_text("@task\ndef another():\n    ...\n")
     assert _only_task(several) is None, "a collection must be told which task to audit"
+
+
+def test_every_tool_schema_survives_a_strict_provider() -> None:
+    """A schema whose `required` omits a property is refused by OpenAI-strict providers.
+
+    Azure, which is where OpenRouter routed sol, returns 400 with "'required' is
+    required to be supplied and to be an array including every key in properties". The
+    first real run died on that before its first turn. Optional arguments are expressed
+    as nullable and still required, which is the documented way to have both.
+    """
+    from pathlib import Path
+
+    from inspect_ai.tool._tool_def import ToolDef
+
+    from inspect_audit._agent import view_image
+    from inspect_audit._investigate import (
+        hawk_submit,
+        investigation_budget,
+        jobs,
+        render_report,
+        supplied_logs,
+    )
+    from inspect_audit._report import publish_report
+
+    ours = [
+        hawk_submit(None, Path("/tmp")),  # type: ignore[arg-type]
+        jobs(None, Path("/tmp")),  # type: ignore[arg-type]
+        supplied_logs(None, Path("/tmp"), []),
+        investigation_budget(10, True),
+        render_report(),
+        view_image(),
+        publish_report("/tmp"),
+    ]
+    for tool in ours:
+        definition = ToolDef(tool)
+        missing = set(definition.parameters.properties) - set(definition.parameters.required or [])
+        assert not missing, (
+            f"{definition.name} has optional parameters {sorted(missing)}; a strict "
+            "provider refuses the whole request. Make them nullable and required."
+        )

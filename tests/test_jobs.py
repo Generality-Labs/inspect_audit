@@ -231,15 +231,15 @@ def test_submit_reserves_records_and_refuses_duplicates_and_overspend(tmp_path: 
         }
     }
     with pytest.raises(ToolError, match="already exists"):
-        run(hawk_submit(r, tmp_path)(config=path, estimated_usd=0.5))
+        run(hawk_submit(r, tmp_path)(config=path, estimated_usd=0.5, note=None))
     other = _write(tmp_path, "two.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-two", limit=6))
     with pytest.raises(ToolError, match="cannot reserve"):
-        run(hawk_submit(r, tmp_path)(config=other, estimated_usd=0.1))
+        run(hawk_submit(r, tmp_path)(config=other, estimated_usd=0.1, note=None))
     bad = _write(tmp_path, "bad.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-bad", packages=["git+https://evil/x"]))
     with pytest.raises(ToolError, match="config refused"):
-        run(hawk_submit(r, tmp_path)(config=bad, estimated_usd=0.1))
+        run(hawk_submit(r, tmp_path)(config=bad, estimated_usd=0.1, note=None))
     with pytest.raises(ToolError, match="under /workspace"):
-        run(hawk_submit(r, tmp_path)(config="/etc/passwd", estimated_usd=0.1))
+        run(hawk_submit(r, tmp_path)(config="/etc/passwd", estimated_usd=0.1, note=None))
     assert len(r.hawk.submitted) == 1  # type: ignore[attr-defined]
 
 
@@ -254,11 +254,11 @@ def test_audit_over_supplied_logs_uses_the_staged_source_only(tmp_path: Path, mo
     _price("openrouter/openai/gpt-5-mini", input=0.25, output=2.0)
     r.known_sources.add("inv-staged-abc")  # what investigate() records after staging at setup
     config = filled_example("audit.eval-set.yaml")
-    assert "Submitted" in run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "audit.eval-set.yaml", config), estimated_usd=1.0))
+    assert "Submitted" in run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "audit.eval-set.yaml", config), estimated_usd=1.0, note=None))
     foreign = filled_example("audit.eval-set.yaml", name="inv-foreign")
     foreign["tasks"][0]["items"][0]["args"]["logs"] = "hawk:someone-elses-set"
     with pytest.raises(ToolError, match="staged or ran"):
-        run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "f.eval-set.yaml", foreign), estimated_usd=1.0))
+        run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "f.eval-set.yaml", foreign), estimated_usd=1.0, note=None))
 
 
 def test_supplied_logs_are_staged_by_us_at_sample_setup_not_by_the_agent(
@@ -329,23 +329,23 @@ def test_jobs_status_wait_collect_release_reservation(tmp_path: Path, monkeypatc
     monkeypatch.setattr(_investigate, "usage_cost", lambda files: (0.42, {"openrouter/m": {"input": 1, "cache_read": 2, "output": 3}}, False))
     r = remote(tmp_path)
     (tmp_path / "inputs").mkdir()
-    run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "j.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-jj")), estimated_usd=3))
+    run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "j.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-jj")), estimated_usd=3, note=None))
     tool = jobs(r, tmp_path)
-    assert "running" in run(tool(action="evals", label="jj"))
+    assert "running" in run(tool(action="evals", label="jj", sample=None, wait_minutes=None, limit=None))
     with pytest.raises(ToolError, match="not finished"):
-        run(tool(action="collect", label="jj"))
+        run(tool(action="collect", label="jj", sample=None, wait_minutes=None, limit=None))
     r.hawk.eval_status = "success"  # type: ignore[attr-defined]
     monkeypatch.setattr(_jobs.time, "sleep", lambda s: None)
-    assert "success" in run(tool(action="wait", label="jj", wait_minutes=1))
-    out = run(tool(action="collect", label="jj"))
+    assert "success" in run(tool(action="wait", label="jj", sample=None, wait_minutes=1, limit=None))
+    out = run(tool(action="collect", label="jj", sample=None, wait_minutes=None, limit=None))
     assert "collected 1 log(s) to /inputs/jobs/jj/" in out and "$0.42" in out
     assert (tmp_path / "inputs" / "jobs" / "jj" / "run.eval").is_file()
     ledger = JobLedger(tmp_path)
     assert ledger.get("jj").actual_usd == 0.42 and ledger.reserved_usd() == 0  # type: ignore[union-attr]
-    assert "jj (eval-set)" in run(tool(action="list"))
-    run(tool(action="stop", label="jj"))
+    assert "jj (eval-set)" in run(tool(action="list", label=None, sample=None, wait_minutes=None, limit=None))
+    run(tool(action="stop", label="jj", sample=None, wait_minutes=None, limit=None))
     assert r.hawk.stopped == [ledger.get("jj").eval_set_id]  # type: ignore[attr-defined,union-attr]
-    assert "Running Inspect eval-set" in run(tool(action="logs", label="jj"))
+    assert "Running Inspect eval-set" in run(tool(action="logs", label="jj", sample=None, wait_minutes=None, limit=None))
 
 
 def test_jobs_babysitting_actions_are_read_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -357,24 +357,24 @@ def test_jobs_babysitting_actions_are_read_only(tmp_path: Path, monkeypatch: pyt
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
     r = remote(tmp_path)
     (tmp_path / "inputs").mkdir()
-    run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "j.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-jj")), estimated_usd=3))
+    run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "j.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-jj")), estimated_usd=3, note=None))
     tool = jobs(r, tmp_path)
-    assert "pods can't be scheduled" in run(tool(action="watch", label="jj"))
-    assert "enter generate" in run(tool(action="trace", label="jj"))
-    assert "asyncio" in run(tool(action="stacktrace", label="jj"))
-    assert "pods" in run(tool(action="status", label="jj"))
+    assert "pods can't be scheduled" in run(tool(action="watch", label="jj", sample=None, wait_minutes=None, limit=None))
+    assert "enter generate" in run(tool(action="trace", label="jj", sample=None, wait_minutes=None, limit=None))
+    assert "asyncio" in run(tool(action="stacktrace", label="jj", sample=None, wait_minutes=None, limit=None))
+    assert "pods" in run(tool(action="status", label="jj", sample=None, wait_minutes=None, limit=None))
     mine = f"{JobLedger(tmp_path).get('jj').eval_set_id}-s1"  # type: ignore[union-attr]
-    assert mine in run(tool(action="samples", label="jj"))
+    assert mine in run(tool(action="samples", label="jj", sample=None, wait_minutes=None, limit=None))
     with pytest.raises(ToolError, match="needs sample="):
-        run(tool(action="transcript", label="jj"))
+        run(tool(action="transcript", label="jj", sample=None, wait_minutes=None, limit=None))
     # a uuid from another eval set: real Hawk would serve it, the tool must not
     with pytest.raises(ToolError, match="not in job"):
-        run(tool(action="transcript", label="jj", sample="inv-someone-else-s1"))
-    assert f"{mine}.md" in run(tool(action="transcript", label="jj", sample=mine))
+        run(tool(action="transcript", label="jj", sample="inv-someone-else-s1", wait_minutes=None, limit=None))
+    assert f"{mine}.md" in run(tool(action="transcript", label="jj", sample=mine, wait_minutes=None, limit=None))
     assert (tmp_path / "inputs" / "jobs" / "jj" / "transcripts" / f"{mine}.md").is_file()
-    assert "3 transcript(s)" in run(tool(action="transcripts", label="jj", limit=3))
+    assert "3 transcript(s)" in run(tool(action="transcripts", label="jj", sample=None, wait_minutes=None, limit=3))
     with pytest.raises(ToolError, match="action must be"):
-        run(tool(action="delete", label="jj"))
+        run(tool(action="delete", label="jj", sample=None, wait_minutes=None, limit=None))
     assert r.hawk.stopped == []  # type: ignore[attr-defined]
     assert JobLedger(tmp_path).get("jj").status == "submitted"  # type: ignore[union-attr]
 
@@ -462,7 +462,7 @@ def test_each_job_gets_its_own_eval_set_id(tmp_path: Path, monkeypatch: pytest.M
     ids = []
     for name in ("inv-one", "inv-two"):
         config = _write(tmp_path, f"{name}.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name=name))
-        run(hawk_submit(r, tmp_path)(config=config, estimated_usd=0.5))
+        run(hawk_submit(r, tmp_path)(config=config, estimated_usd=0.5, note=None))
         ids.append(JobLedger(tmp_path).get(name.removeprefix("inv-")).eval_set_id)  # type: ignore[union-attr]
     assert ids[0] != ids[1], "two jobs must not share an eval set id"
     assert all(i.startswith("inv-") for i in ids)
@@ -496,7 +496,7 @@ def test_a_lost_submission_response_is_reconciled_not_resubmitted(
     r.hawk.eval_set_exists = exists  # type: ignore[assignment]
     path = _write(tmp_path, "lost.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-lost"))
     with pytest.raises(ToolError, match="submission failed"):
-        run(hawk_submit(r, tmp_path)(config=path, estimated_usd=1.0))
+        run(hawk_submit(r, tmp_path)(config=path, estimated_usd=1.0, note=None))
 
     job = JobLedger(tmp_path).get("lost")
     assert job is not None and job.eval_set_id == landed[0]
@@ -526,7 +526,7 @@ def test_a_submission_that_never_reached_hawk_releases_its_reservation(
     r.hawk.eval_set_exists = missing  # type: ignore[assignment]
     path = _write(tmp_path, "gone.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-gone"))
     with pytest.raises(ToolError, match="never reached Hawk"):
-        run(hawk_submit(r, tmp_path)(config=path, estimated_usd=1.0))
+        run(hawk_submit(r, tmp_path)(config=path, estimated_usd=1.0, note=None))
     ledger = JobLedger(tmp_path)
     assert ledger.get("gone").status == "failed"  # type: ignore[union-attr]
     assert ledger.reserved_usd() == 0.0
@@ -541,9 +541,9 @@ def test_collect_leaves_an_unpriced_cost_unknown_and_keeps_the_hold(
     monkeypatch.setattr(_investigate, "usage_cost", lambda files: (None, {"openrouter/x": {"input": 1, "cache_read": 0, "output": 2}}, True))
     r = remote(tmp_path)
     (tmp_path / "inputs").mkdir(exist_ok=True)
-    run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "u.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-u")), estimated_usd=0.2))
+    run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "u.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-u")), estimated_usd=0.2, note=None))
     r.hawk.eval_status = "success"  # type: ignore[attr-defined]
-    out = run(jobs(r, tmp_path)(action="collect", label="u"))
+    out = run(jobs(r, tmp_path)(action="collect", label="u", sample=None, wait_minutes=None, limit=None))
     assert "cost unknown" in out
     ledger = JobLedger(tmp_path)
     job = ledger.get("u")
@@ -573,7 +573,7 @@ def test_submission_is_refused_when_a_named_model_has_no_registered_price(
     config = filled_example("benchmark.eval-set.yaml", name="inv-unpriced")
     config["models"][0]["items"][0]["name"] = unpriced
     with pytest.raises(ToolError, match=f"no registered price for openrouter/{unpriced}"):
-        run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "unpriced.eval-set.yaml", config), estimated_usd=1.0))
+        run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "unpriced.eval-set.yaml", config), estimated_usd=1.0, note=None))
     assert JobLedger(tmp_path).jobs == [], "a refused submission holds nothing"
 
 
@@ -589,7 +589,7 @@ def test_prices_cover_the_grader_role_as_well_as_the_workers(
     _price("openrouter/openai/gpt-5.6-luna")
     _price("openrouter/openai/gpt-5-mini", input=0.25, output=2.0)
     config = filled_example("audit.eval-set.yaml", name="inv-priced")
-    run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "priced.eval-set.yaml", config), estimated_usd=1.0))
+    run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "priced.eval-set.yaml", config), estimated_usd=1.0, note=None))
     job = JobLedger(tmp_path).get("priced")
     assert job is not None
     stamped = yaml.safe_load(Path(job.config_path).read_text())["model_cost_config"]
@@ -653,12 +653,12 @@ def test_a_refused_duplicate_does_not_overwrite_the_config_that_ran(
     r = remote(tmp_path, allowance=50.0)
     (tmp_path / "inputs").mkdir(exist_ok=True)
     ran = _write(tmp_path, "one.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-dup", limit=2))
-    run(hawk_submit(r, tmp_path)(config=ran, estimated_usd=0.5))
+    run(hawk_submit(r, tmp_path)(config=ran, estimated_usd=0.5, note=None))
     saved = Path(JobLedger(tmp_path).get("dup").config_path)  # type: ignore[union-attr]
     before = saved.read_text()
     other = _write(tmp_path, "two.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-dup", limit=8))
     with pytest.raises(ToolError, match="already exists"):
-        run(hawk_submit(r, tmp_path)(config=other, estimated_usd=0.5))
+        run(hawk_submit(r, tmp_path)(config=other, estimated_usd=0.5, note=None))
     assert saved.read_text() == before
     assert yaml.safe_load(saved.read_text())["limit"] == 2
 
@@ -671,7 +671,7 @@ def test_every_ledger_write_goes_through_the_lock(tmp_path: Path, monkeypatch: p
     _price("openrouter/openai/gpt-5.6-luna")
     r = remote(tmp_path, allowance=50.0)
     (tmp_path / "inputs").mkdir(exist_ok=True)
-    run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "a.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-mine", limit=2)), estimated_usd=0.5))
+    run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "a.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-mine", limit=2)), estimated_usd=0.5, note=None))
 
     # another process, sharing this investigation directory, reserves while we hold a
     # stale in-memory copy of the ledger
@@ -682,8 +682,8 @@ def test_every_ledger_write_goes_through_the_lock(tmp_path: Path, monkeypatch: p
                 submitted_at="now", estimated_usd=1.0, reserved_usd=20.0, status="submitted")
         )
 
-    run(jobs(r, tmp_path)(action="evals", label="mine"))
-    run(jobs(r, tmp_path)(action="stop", label="mine"))
+    run(jobs(r, tmp_path)(action="evals", label="mine", sample=None, wait_minutes=None, limit=None))
+    run(jobs(r, tmp_path)(action="stop", label="mine", sample=None, wait_minutes=None, limit=None))
     after = JobLedger(tmp_path)
     assert {j.label for j in after.jobs} == {"mine", "theirs"}
     assert after.reserved_usd() == 21.0
@@ -992,17 +992,17 @@ def test_reading_a_parked_log_source_stays_inside_the_investigation(
     address = "hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs"
     tool = supplied_logs(r, tmp_path, [address])
 
-    listing = run(tool(action="list"))
+    listing = run(tool(action="list", source=None, sample=None, limit=None))
     assert "audit-epoch-chess-p2-inputs-ep" in listing and address in listing
 
     # a source it was not given, however plausible
     with pytest.raises(ToolError, match="unknown log source"):
-        run(tool(action="samples", source="audit-chess-terra-review"))
+        run(tool(action="samples", source="audit-chess-terra-review", sample=None, limit=None))
     with pytest.raises(ToolError, match="unknown log source"):
-        run(tool(action="samples", source="../../etc"))
+        run(tool(action="samples", source="../../etc", sample=None, limit=None))
 
     alias = "audit-epoch-chess-p2-inputs-ep"
-    out = run(tool(action="samples", source=alias, limit=5))
+    out = run(tool(action="samples", source=alias, sample=None, limit=5))
     assert "samples.csv" in out
     written = tmp_path / "inputs" / "index" / alias / "samples.csv"
     assert written.is_file()
@@ -1012,13 +1012,13 @@ def test_reading_a_parked_log_source_stays_inside_the_investigation(
     # a transcript from another eval set is refused even though the operator's
     # credentials could fetch it
     with pytest.raises(ToolError, match="not in"):
-        run(tool(action="transcript", source=alias, sample="someone-elses-uuid"))
+        run(tool(action="transcript", source=alias, sample="someone-elses-uuid", limit=None))
     mine = f"{address.removeprefix('hawk:').split('/')[0]}-s1"
-    assert "transcripts/" in run(tool(action="transcript", source=alias, sample=mine))
+    assert "transcripts/" in run(tool(action="transcript", source=alias, sample=mine, limit=None))
     assert (tmp_path / "inputs" / "index" / alias / "transcripts" / f"{mine}.md").is_file()
 
     with pytest.raises(ToolError, match="action must be"):
-        run(tool(action="delete", source=alias))
+        run(tool(action="delete", source=alias, sample=None, limit=None))
 
 
 def test_a_local_only_investigation_has_no_log_reading_tool(

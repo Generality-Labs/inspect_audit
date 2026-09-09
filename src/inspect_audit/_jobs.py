@@ -425,6 +425,14 @@ def _string_problems(where: str, path: str, text: str, problems: list[str]) -> N
 
 
 def _known_log_source(logs: str, known_log_sources: set[str]) -> bool:
+    """Either an eval set this investigation created, or an address it was handed.
+
+    The operator may park logs somewhere a runner can read and name that address in
+    the investigation, in which case the address itself is the authorisation and is
+    matched exactly; nothing near it is implied.
+    """
+    if logs in known_log_sources:
+        return True
     return (
         logs.startswith("hawk:")
         and logs.removeprefix("hawk:").split("/")[0] in known_log_sources

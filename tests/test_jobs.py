@@ -287,15 +287,17 @@ def test_supplied_logs_are_staged_by_us_at_sample_setup_not_by_the_agent(
     (repo / "t.py").write_text("x")
     subprocess.run(["git", "-C", str(repo), "add", "t.py"], check=True)
     subprocess.run(["git", "-C", str(repo), "-c", "user.name=T", "-c", "user.email=t@e.org", "commit", "-qm", "c"], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "https://github.com/org/bench.git"], check=True)
     log = tmp_path / "a.eval"
     log.write_bytes(b"x")
     target = _investigate.investigate(
         str(repo), logs=[str(log)], output_dir=str(tmp_path / "runs"), enforce_cost_limit=False,
-        hawk_api_url=HAWK, task_package=TASK_PKG,
+        hawk_api_url=HAWK,
     )
     root = Path(target.metadata["investigation_dir"])
     seed = json.loads((root / "inputs/seed.json").read_text())
-    inputs_id = seed["remote"]["supplied_logs"].removeprefix("hawk:").split("/")[0]
+    (only,) = seed["remote"]["supplied_logs"]
+    inputs_id = only.removeprefix("hawk:").split("/")[0]
     assert inputs_id.startswith("inv-inputs-")
     assert inputs_id in json.loads((root / "log_sources.json").read_text())
     assert calls == [], "constructing the task must not upload anything"
@@ -914,3 +916,62 @@ def test_a_cost_the_runner_recorded_is_used_as_measured(tmp_path: Path) -> None:
     cost, usage, recomputed = usage_cost([path])
     assert cost == 1.40 and not recomputed
     assert usage["openrouter/openai/gpt-5.6-luna"]["input"] == 1_000_000
+
+
+def test_logs_already_parked_where_hawk_can_read_them_are_not_copied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A warehouse address is a reference, not a payload: nothing is downloaded or staged.
+
+    A benchmark's logs can be tens of gigabytes. Copying them onto a laptop to run an
+    investigation, and then uploading them again so a job can read them, is work nobody
+    wants twice.
+    """
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
+    staged: list[str] = []
+
+    async def fake_stage(local_dir, bucket, eval_set_id, profile):  # noqa: ANN001, ANN202
+        staged.append(eval_set_id)
+        return f"hawk:{eval_set_id}/inputs/logs"
+
+    monkeypatch.setattr(_investigate, "stage_logs_to_s3", fake_stage)
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "t.py").write_text("x")
+    subprocess.run(["git", "-C", str(repo), "add", "t.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=T", "-c", "user.email=t@e.org", "commit", "-qm", "c"], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "https://github.com/org/bench.git"], check=True)
+
+    target = _investigate.investigate(
+        str(repo),
+        logs=["hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs"],
+        output_dir=str(tmp_path / "runs"),
+        enforce_cost_limit=False,
+        hawk_api_url=HAWK,
+    )
+    root = Path(target.metadata["investigation_dir"])
+    seed = json.loads((root / "inputs/seed.json").read_text())
+    assert seed["logs"] == [
+        {
+            "source": "hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs",
+            "staged": None,
+            "remote": "hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs",
+        }
+    ]
+    assert not (root / "inputs" / "logs").exists(), "nothing was copied"
+    assert staged == [], "nothing was uploaded"
+    assert seed["remote"]["supplied_logs"] == ["hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs"]
+
+    # and a job may read exactly that address, not its neighbours
+    sources = set(json.loads((root / "log_sources.json").read_text()))
+    assert "hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs" in sources
+    config = filled_example("audit.eval-set.yaml", name="inv-parked")
+    config["tasks"][0]["items"][0]["args"]["logs"] = "hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs"
+    assert validate_config(config, policy(), sources) == []
+    config["tasks"][0]["items"][0]["args"]["logs"] = "hawk:audit-epoch-chess-p2/inputs/something-else"
+    assert any("staged or ran" in p for p in validate_config(config, policy(), sources))

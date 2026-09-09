@@ -537,12 +537,13 @@ def test_resume_reuses_the_directory_ledger_and_staged_logs(
         setup = target.setup
         for step in setup if isinstance(setup, list) else [setup]:
             asyncio.run(step(None, noop_generate))
-    repo = str(git_repo(tmp_path / "repo"))
+    repo_path = git_repo(tmp_path / "repo")
+    subprocess.run(["git", "-C", str(repo_path), "remote", "add", "origin", "https://github.com/org/bench.git"], check=True)
+    repo = str(repo_path)
     log = run_fixture_eval(str(tmp_path / "logs"))
     common = dict(
         logs=[str(log)],
         hawk_api_url="https://hawk.example",
-        task_package="git+https://github.com/x/inspect_evals@abc",
         output_dir=str(tmp_path / "runs"),
     )
     first = investigate(repo, **common)  # type: ignore[arg-type]
@@ -699,7 +700,7 @@ def test_remote_work_refuses_to_guess_a_package_it_cannot_derive(
 
     monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
     repo = git_repo(tmp_path / "repo")  # no origin remote
-    with pytest.raises(ValueError, match="pass task_package explicitly"):
+    with pytest.raises(ValueError, match="cannot say where from"):
         investigate(
             str(repo),
             output_dir=str(tmp_path / "runs"),

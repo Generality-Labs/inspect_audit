@@ -301,6 +301,11 @@ def _only_task(source: Path) -> str | None:
     return None
 
 
+def is_remote_logs(source: str) -> bool:
+    """Whether a log source is already parked somewhere a Hawk job can read it."""
+    return source.startswith(("hawk:", "s3://", "gs://", "http://", "https://"))
+
+
 def git_package_spec(repo: Path, revision: str | None = None) -> str | None:
     """The pip spec that installs this checkout's code somewhere else.
 
@@ -466,6 +471,11 @@ def prepare_workspace(
     seed: dict[str, object] = dict(_snapshot_repo(repo, revision, inputs, paths))
     log_index = []
     for index, source in enumerate(logs):
+        if is_remote_logs(source):
+            # already parked where a job can read it: nothing to copy, and the agent
+            # reads it by asking Hawk rather than off the filesystem
+            log_index.append({"source": source, "staged": None, "remote": source})
+            continue
         path = Path(source).expanduser().resolve()
         if not path.exists():
             raise ValueError(f"Local log source does not exist: {source}")
@@ -485,7 +495,7 @@ def prepare_workspace(
             )
             _link_or_copy(file, inputs / "logs" / relative)
             log_index.append(
-                {"source": str(file), "staged": f"/inputs/logs/{relative}"}
+                {"source": str(file), "staged": f"/inputs/logs/{relative}", "remote": None}
             )
     staged_paper = _fetch_paper(paper, inputs) if paper else None
     staged_docs = _stage_docs(docs, inputs)
@@ -1291,7 +1301,6 @@ def investigate(
     interactive: bool = False,
     extra_skills: list[str] | None = None,
     hawk_api_url: str | None = None,
-    task_package: str | None = None,
     audit_package: str | None = None,
     auditor_image: str = "ghcr.io/generality-labs/inspect-audit-auditor@sha256:072e50b2ea1c51e67644e97e08cff052a52a1d661294635e1c3e360d1371b9ee",
     worker_models: list[str] | None = None,
@@ -1333,9 +1342,6 @@ def investigate(
         hawk_api_url: Enable remote work through Hawk at this API, defaulting to
             HAWK_API_URL. The `hawk` CLI must be installed and logged in on this machine;
             its tools run here, never in the box.
-        task_package: pip/git spec of the package providing the audited task, installed in
-            every Hawk runner. Defaults to the audited repository's own origin at the
-            commit being snapshotted, so the code the agent reads is the code that runs.
         audit_package: git spec of inspect_audit for sample-audit jobs. Defaults to the
             commit this process is running.
         auditor_image: Published auditor image for sample-audit jobs on k8s.
@@ -1375,7 +1381,6 @@ def investigate(
     interactive = settings.get("interactive", interactive)
     extra_skills = settings.get("extra_skills", extra_skills)
     hawk_api_url = settings.get("hawk_api_url", hawk_api_url)
-    task_package = settings.get("task_package", task_package)
     audit_package = settings.get("audit_package", audit_package)
     auditor_image = settings.get("auditor_image", auditor_image)
     worker_models = settings.get("worker_models", worker_models)
@@ -1399,16 +1404,23 @@ def investigate(
         paper = paper or paper_from_metadata(local_repo, target_task)
     hawk_api_url = hawk_api_url or os.environ.get("HAWK_API_URL")
     aws_profile = aws_profile or os.environ.get("AWS_PROFILE")
+    task_package: str | None = None
     if hawk_api_url:
-        task_package = task_package or (
-            git_package_spec(local_repo, revision) if local_repo.is_dir() else None
+        # a runner installs the benchmark from git: a local checkout supplies its own
+        # origin and commit, and a repository given as a URL is already that answer
+        task_package = (
+            git_package_spec(local_repo, revision)
+            if local_repo.is_dir()
+            else f"git+{repo.removesuffix('.git')}@{revision}"
+            if revision
+            else None
         )
         audit_package = audit_package or own_package_spec()
         if not task_package:
             raise ValueError(
-                "remote work needs the pip spec that installs the audited task in a Hawk "
-                "runner. It is derived from the repository's origin and commit; this "
-                "repository has neither, so pass task_package explicitly."
+                "remote work installs the benchmark in a Hawk runner from git, and this "
+                "repository cannot say where from. Give a checkout with an origin remote, "
+                "or an https git URL with a revision."
             )
         if not audit_package:
             raise ValueError(
@@ -1444,22 +1456,31 @@ def investigate(
         # the source is named here and uploaded by the setup solver: an upload is slow,
         # credentialed work, and doing it while the task is merely being constructed
         # means it happens again on every retry and before anything is running
-        staged_logs: str | None = (seed.get("remote") or {}).get("supplied_logs")
-        if logs and (root / "inputs" / "logs").is_dir() and not staged_logs:
+        parked = [str(entry["remote"]) for entry in seed["logs"] if entry.get("remote")]
+        for address in parked:
+            remote.known_sources.add(address)
+        # a resumed investigation already named the prefix its own logs were staged to
+        previous = (seed.get("remote") or {}).get("supplied_logs") or []
+        staged_logs: str | None = next(
+            (s for s in previous if str(s).startswith("hawk:inv-inputs-")), None
+        )
+        if (root / "inputs" / "logs").is_dir() and not staged_logs:
             inputs_id = f"inv-inputs-{root.name[:8]}"
             staged_logs = f"hawk:{inputs_id}/inputs/logs"
             remote.known_sources.add(inputs_id)
-            remote.save_sources()
+        remote.save_sources()
         seed["remote"] = {
             "hawk": hawk_api_url,
             "task_package": task_package,
             "worker_models": worker_models or DEFAULT_WORKERS,
             "audit_package": audit_package,
             "auditor_image": auditor_image,
-            "supplied_logs": staged_logs,
+            # every log source a job may read: what we staged for you, and whatever you
+            # were told was already parked
+            "supplied_logs": [s for s in [staged_logs, *parked] if s],
             "note": (
                 "write an eval-set config under /workspace and hawk_submit it. To audit the "
-                "supplied logs, pass supplied_logs as the audit task's logs argument; to audit a "
+                "supplied logs, pass one of supplied_logs as the audit task's logs argument; to audit a "
                 "job you ran, use hawk:<its eval set id>. Do not set eval_set_id: submission "
                 "assigns a fresh one, and logs are fetched through the Hawk API, so a job reads "
                 "them whatever its own id is. Every config states cost_limit, the dollars a "
@@ -1471,10 +1492,12 @@ def investigate(
         seed_path.write_text(json.dumps(seed, indent=2))
     setup_steps: list[Solver] = []
     if remote is not None:
-        if staged_logs and logs:
+        if staged_logs:
             setup_steps.append(
                 stage_supplied_logs(
-                    remote, root / "inputs" / "logs", staged_logs.removeprefix("hawk:").split("/")[0]
+                    remote,
+                    root / "inputs" / "logs",
+                    staged_logs.removeprefix("hawk:").split("/")[0],
                 )
             )
         if resumed:

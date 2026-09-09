@@ -419,8 +419,15 @@ def _task_arg_problems(
             return
         if MODEL_ARG.search(lowered):
             for model in value if isinstance(value, list) else [value]:
-                if model is not None and model not in policy.models:
+                if model is None or not isinstance(model, str):
+                    continue
+                # a model reference names its provider; a bare word is a mode, not a
+                # model, and cannot reach a paid provider from a runner that holds one
+                # key. `scorer: original` is a real control and was being refused.
+                if "/" in model and model not in policy.models:
                     problems.append(f"{where}: {path}={model!r} is not an allowed model")
+                elif "/" not in model and model in policy.models:
+                    continue
             return
         if IMAGE_ARG.search(lowered):
             if value is not None and value not in policy.auditor_images:

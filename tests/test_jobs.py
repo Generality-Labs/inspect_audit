@@ -1165,3 +1165,21 @@ def test_reading_a_subdirectory_says_it_covers_the_whole_eval_set(
         )
     )
     assert "covers the whole set" in out and "epoch-chess-logs" in out
+
+
+def test_a_mode_name_is_not_a_model(tmp_path: Path) -> None:
+    """`scorer: original` is a control the live run wanted and the policy refused.
+
+    A model reference names its provider. A bare word cannot reach a paid provider from
+    a runner holding one key, so refusing it bought nothing and cost the investigation
+    its comparison against the benchmark's other scorer.
+    """
+    for args in ({"scorer": "original"}, {"grader": "default"}, {"judge": "strict"}):
+        config = filled_example("benchmark.eval-set.yaml")
+        config["tasks"][0]["items"][0]["args"] = {**config["tasks"][0]["items"][0]["args"], **args}
+        assert validate_config(config, policy(), set()) == [], args
+
+    # a provider-qualified name is still checked
+    config = filled_example("benchmark.eval-set.yaml")
+    config["tasks"][0]["items"][0]["args"] = {"grader_model": "openrouter/anthropic/claude-opus-5"}
+    assert any("not an allowed model" in p for p in validate_config(config, policy(), set()))

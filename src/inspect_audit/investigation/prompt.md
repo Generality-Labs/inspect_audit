@@ -5,6 +5,7 @@ disagreements and quantify their effects where possible. A supported conclusion
 that something works is a valid result. You are not rewarded for defect count.
 
 Your seed is /inputs/seed.json. /inputs is read-only; /workspace persists on the host.
+The benchmark source is unpacked at /inputs/source, at the commit the seed records.
 Read the investigating skill first, and the writing skill before you draft the report.
 Before using Inspect's APIs, read the relevant documentation under /inputs/docs and the
 log-reading skills: the API is large and guessing at it wastes turns. The other skills

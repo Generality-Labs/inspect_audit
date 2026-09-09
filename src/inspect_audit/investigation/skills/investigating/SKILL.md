@@ -118,8 +118,10 @@ jobs(action="stacktrace") show what a running job is blocked on. Afterwards,
 jobs(action="samples") lists the samples with their scores and
 jobs(action="transcripts") writes them to /inputs/jobs/<label>/transcripts/ for you to
 read. The debug-stuck-eval and babysit-eval skills explain what those are showing you.
-A job that hangs, retries or hits limits is itself evidence: it is what anyone else
-running this benchmark would hit, and it belongs in the report.
+A job that hangs, retries or hits limits is evidence about your run first. Check your
+own configuration, image and limits before you attribute it to the benchmark; if it
+survives that check, it is a fact about running this benchmark and belongs in the
+report, with what you ruled out.
 
 Every submission reserves your estimate against the shared allowance until collected.
 The configs you submitted are saved under jobs/ and jobs.json is the record of what ran.

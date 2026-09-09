@@ -28,8 +28,10 @@ limit, canceled, and `limit: token` means a sample halted on a limit you set, wh
 not a bug but is a fact your report may need: samples that stopped on a limit are not
 samples that failed the task. Retries are normal in ones, a signal in dozens.
 
-One thing this skill does not say, because its author is debugging their own eval: a
-stuck or retrying job is evidence about the benchmark too. Note it before you fix it.
+One thing this skill does not say, because its author is debugging their own eval: note
+what went wrong before you fix it. It is evidence about your run, and only about the
+benchmark once you have ruled out your own configuration, image and limits. That
+distinction is the difference between a finding and a self-inflicted wound.
 
 ## Quick Checklist
 

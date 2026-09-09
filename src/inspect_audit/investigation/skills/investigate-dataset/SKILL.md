@@ -11,7 +11,7 @@ This workflow helps you explore and understand datasets used in evaluations. It 
 
 ## In this container
 
-The dataset loading code is in the read-only snapshot under `/inputs/repo`. Downloading
+The dataset loading code is in the read-only snapshot under `/inputs/source`. Downloading
 the dataset itself needs network access, which the box may not have; if it fails, work
 from the items recorded in the supplied logs instead, and say in the report that you
 read the items as run rather than as published. The two are not always the same thing,

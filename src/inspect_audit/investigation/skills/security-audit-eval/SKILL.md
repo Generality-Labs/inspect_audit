@@ -28,7 +28,7 @@ what it lets a model do to its own score.
 Skip its setup and report format. Findings go in `/workspace/report/findings.json` with
 file:line evidence, which this skill is right to insist on. Its verdict rubric
 (safe / safe-with-caveats / unsafe) is not your rating scale; you have severity instead.
-The source is under `/inputs/repo`, already on disk, so ignore the instructions about
+The source is under `/inputs/source`, already on disk, so ignore the instructions about
 not cloning.
 
 ## Identifying the target

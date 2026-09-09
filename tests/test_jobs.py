@@ -276,6 +276,8 @@ def test_jobs_babysitting_actions_are_read_only(tmp_path: Path, monkeypatch: pyt
     assert "u-1" in run(tool(action="samples", label="jj"))
     with pytest.raises(ToolError, match="needs sample="):
         run(tool(action="transcript", label="jj"))
+    with pytest.raises(ToolError, match="not in job"):
+        run(tool(action="transcript", label="jj", sample="someone-elses-uuid"))
     assert "u-1.md" in run(tool(action="transcript", label="jj", sample="u-1"))
     assert (tmp_path / "inputs" / "jobs" / "jj" / "transcripts" / "u-1.md").is_file()
     assert "3 transcript(s)" in run(tool(action="transcripts", label="jj", limit=3))

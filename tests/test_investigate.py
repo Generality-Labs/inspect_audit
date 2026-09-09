@@ -29,6 +29,12 @@ def _no_price_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
 
 
+def _snapshot_names(root: Path) -> list[str]:
+    """Every file in the unpacked snapshot, relative to /inputs/source."""
+    source = root / "inputs" / "source"
+    return sorted(str(p.relative_to(source)) for p in source.rglob("*") if p.is_file())
+
+
 def test_headless_defaults_enforce_the_allowance_without_a_token_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -51,7 +57,6 @@ def test_headless_defaults_enforce_the_allowance_without_a_token_cap(
 def test_snapshot_paths_paper_download_and_docs_mount(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import tarfile
     import urllib.request
 
     from inspect_audit import _investigate
@@ -94,8 +99,7 @@ def test_snapshot_paths_paper_download_and_docs_mount(
         output_dir=str(tmp_path / "runs"),
     )
     root = Path(target.metadata["investigation_dir"])
-    with tarfile.open(root / "inputs/source.tar") as archive:
-        assert archive.getnames() == ["task.py"]
+    assert _snapshot_names(root) == ["task.py"]
     seed = json.loads((root / "inputs/seed.json").read_text())
     assert seed["paths"] == ["task.py"]
     assert fetched == ["https://arxiv.org/pdf/2509.07968v2"]
@@ -232,10 +236,7 @@ def test_snapshot_excludes_untracked_secrets_and_retains_publications(
         str(git_repo(tmp_path / "repo")), output_dir=str(tmp_path / "runs")
     )
     root = Path(target.metadata["investigation_dir"])
-    import tarfile
-
-    with tarfile.open(root / "inputs/source.tar") as archive:
-        assert archive.getnames() == ["task.py"]
+    assert _snapshot_names(root) == ["task.py"]
     seed = json.loads((root / "inputs/seed.json").read_text())
     assert len(seed["revision"]) == 40
     report = root / "work/report"
@@ -309,7 +310,7 @@ def render_probe(root: str) -> Solver:
             [
                 "bash",
                 "-c",
-                "mkdir -p /workspace/source && tar -xf /inputs/source.tar -C /workspace/source && test -f /workspace/source/task.py && test ! -e /workspace/source/.env",
+                "test -f /inputs/source/task.py && test ! -e /inputs/source/.env && test ! -w /inputs/source/task.py",
             ]
         )
         assert result.success, result.stderr

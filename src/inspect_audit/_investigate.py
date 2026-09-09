@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import tarfile
 import urllib.request
 from html.parser import HTMLParser
 from importlib.metadata import version
@@ -110,6 +111,7 @@ def _snapshot_repo(
         ).strip()
         # only the named paths when given: the task under audit, not the whole
         # collection it ships in -- other evals are noise the agent should not read
+        archive = inputs / "source.tar"
         subprocess.run(
             [
                 "git",
@@ -117,16 +119,23 @@ def _snapshot_repo(
                 str(source),
                 "archive",
                 "--format=tar",
-                f"--output={inputs / 'source.tar'}",
+                f"--output={archive}",
                 commit,
                 *(["--", *paths] if paths else []),
             ],
             check=True,
         )
+        # unpacked here rather than in the box: the agent should find files, not a tar
+        tree = inputs / "source"
+        tree.mkdir()
+        with tarfile.open(archive) as tar:
+            tar.extractall(tree, filter="data")
+        archive.unlink()
         return {
             "repo": str(source.resolve()),
             "revision": commit,
             "paths": paths or ["."],
+            "snapshot": "/inputs/source",
             "source": "committed snapshot; excludes working-tree changes and submodule contents",
         }
     if not repo.startswith("https://"):
@@ -135,7 +144,8 @@ def _snapshot_repo(
         "repo": repo,
         "revision": revision or "HEAD",
         "paths": paths or ["."],
-        "source": "clone at setup; resolved commit recorded in workspace",
+        "snapshot": None,
+        "source": "remote repository; clone it yourself into /workspace",
     }
 
 
@@ -652,16 +662,23 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     return f"{label}: no samples listed yet"
                 out = [f"{len(rows_json)} sample(s) in {job.eval_set_id}:"]
                 for row in rows_json:
-                    ident = row.get("uuid") or row.get("id") or "?"
                     out.append(
-                        f"  {ident} {row.get('task', '')} {row.get('model', '')} "
-                        f"id={row.get('sample_id', row.get('id', ''))} "
-                        f"{row.get('status', '')} score={row.get('score', row.get('scores', ''))}"
+                        f"  {row.get('uuid', '?')} id={row.get('id', '')} "
+                        f"epoch={row.get('epoch', '')} {row.get('status', '')} "
+                        f"scores={row.get('scores', '')}"
                     )
                 return "\n".join(out)
             if action == "transcript":
                 if not sample:
                     raise ToolError("action='transcript' needs sample=<uuid> from jobs(action='samples')")
+                # a sample uuid addresses any sample in the deployment, so membership in
+                # this job is checked here rather than trusted from the argument
+                known = await asyncio.to_thread(remote.hawk.samples, job.eval_set_id, 1000)
+                if sample not in {str(row.get("uuid")) for row in known}:
+                    raise ToolError(
+                        f"sample {sample!r} is not in job {label!r}; jobs(action='samples', "
+                        f"label='{label}') lists the ones you can read"
+                    )
                 path = await asyncio.to_thread(remote.hawk.transcript, sample, transcripts)
                 return (
                     f"wrote /inputs/jobs/{label}/transcripts/{path.name} "

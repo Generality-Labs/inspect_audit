@@ -23,12 +23,13 @@ This review is read-only. It produces a report with findings and recommendations
 
 This skill was written for people working inside a checkout of `inspect_evals`, with a
 user in the room to answer questions. You are in a container, on your own, and the
-source you are auditing is a read-only snapshot under `/inputs/repo` (the seed names
-the task). So:
+source you are auditing is the read-only snapshot at `/inputs/source` (the seed names
+the task and the commit). So:
 
-- Wherever it says the task's directory under `/inputs/repo`, read the task's own directory
-  inside `/inputs/repo`. `eval.yaml`, `report_config.yaml` and a per-eval README may
-  or may not exist; use what is there and note what is missing.
+- Wherever it says `src/inspect_evals/<eval_name>/`, read the task's own directory
+  inside `/inputs/source`, the unpacked snapshot of the repository at the audited
+  commit. `eval.yaml`, `report_config.yaml` and a per-eval README may or may not be in
+  it; use what is there and note what is missing.
 - Wherever it says to record something in `NOTES.md`, use `/workspace/journal.md`, and
   put the claims inventory table there.
 - Wherever it says to ask the user, decide yourself and record the decision. There is
@@ -52,7 +53,7 @@ Before making any judgements, read and record key facts about the evaluation. Yo
 
 ### 1.1 Task Definition
 
-Read the main task file(s) in the task's own directory under `/inputs/repo`. Record:
+Read the main task file(s) in the task's own directory under `/inputs/source`. Record:
 
 - All `@task` function names and their parameters
 - The task `version`

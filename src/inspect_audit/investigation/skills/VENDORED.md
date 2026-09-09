@@ -28,7 +28,7 @@ edits are the ones a reader in this container would otherwise have to make in th
 head.
 
 - **Paths.** `src/inspect_evals/<eval_name>/` is the task's directory under
-  `/inputs/repo`; `NOTES.md` is `/workspace/journal.md`; `agent_artefacts/…` output
+  `/inputs/source`; `NOTES.md` is `/workspace/journal.md`; `agent_artefacts/…` output
   directories are gone. `uv run python` is `python`.
 - **The user.** These skills stop to ask a user which eval to look at, whether to
   overwrite a file, how many samples to run. There is nobody to ask, so the preamble

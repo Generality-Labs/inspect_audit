@@ -673,7 +673,7 @@ def test_what_can_be_derived_is_derived(tmp_path: Path, monkeypatch: pytest.Monk
 
     chosen = paths_from_metadata(repo, "suite/thing_verified")
     assert chosen is not None
-    assert "src/suite/thing" in chosen and "src/suite/constants.py" in chosen
+    assert "src/suite/thing" in chosen
     assert "src/suite/other" not in chosen, "auditing one eval must not snapshot the rest"
     # the newest paper: an eval with two is one that was revised
     assert paper_from_metadata(repo, "suite/thing_verified") == "https://arxiv.org/abs/2222.22222"
@@ -918,3 +918,40 @@ def test_resume_runs_the_commit_it_reads(tmp_path: Path, monkeypatch: pytest.Mon
     assert seed["remote"]["task_package"].endswith(snapshotted), (
         "a resumed investigation must run the commit it reads, not the one HEAD moved to"
     )
+
+
+def test_the_snapshot_follows_what_the_task_imports(tmp_path: Path) -> None:
+    """A fixed list of shared filenames is a guess; the imports are the answer.
+
+    A scorer in an ordinary sibling module would have been left out of the snapshot,
+    and the agent would have audited a benchmark with a hole in it.
+    """
+    from inspect_audit._investigate import paths_from_metadata
+
+    repo = tmp_path / "suite"
+    package = repo / "src" / "suite"
+    for part in ("thing", "shared", "unrelated"):
+        (package / part).mkdir(parents=True)
+        (package / part / "__init__.py").write_text("")
+    (package / "__init__.py").write_text("")
+    (package / "oddly_named.py").write_text("def grade():\n    ...\n")
+    (package / "constants.py").write_text("X = 1\n")
+    (package / "thing" / "__init__.py").write_text(
+        "from suite.oddly_named import grade\n"
+        "from suite.shared.helpers import prepare\n"
+        '@task(name="Thing")\ndef thing():\n    ...\n'
+    )
+    (package / "shared" / "helpers.py").write_text("from suite.constants import X\n\ndef prepare():\n    ...\n")
+    (package / "unrelated" / "other.py").write_text("# another eval entirely\n")
+    (repo / "pyproject.toml").write_text("[project]\nname='suite'\n")
+
+    chosen = paths_from_metadata(repo, "suite/Thing")
+    assert chosen is not None
+    assert "src/suite/thing" in chosen
+    # imported directly, and it is not on anybody's list of likely names
+    assert "src/suite/oddly_named.py" in chosen
+    # imported through the module that was imported: the closure, not one hop
+    assert "src/suite/constants.py" in chosen
+    assert any(c in chosen for c in ("src/suite/shared", "src/suite/shared/helpers.py"))
+    # never named by the task's code
+    assert not any("unrelated" in c for c in chosen)

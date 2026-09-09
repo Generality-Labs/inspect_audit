@@ -392,16 +392,78 @@ def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | No
     directory = _task_directory(source, target_task)
     if directory is None:
         return None
-    chosen = [str(directory.relative_to(source))]
-    package = directory.parent
-    for shared in ("utils", "constants.py", "metadata.py", "_registry.py", "__init__.py"):
-        candidate = package / shared
-        if candidate.exists():
-            chosen.append(str(candidate.relative_to(source)))
+    chosen = {str(directory.relative_to(source))}
+    chosen |= {
+        str(path.relative_to(source)) for path in _imported_by(source, directory)
+    }
     for top in ("pyproject.toml", "README.md"):
         if (source / top).is_file():
-            chosen.append(top)
-    return chosen
+            chosen.add(top)
+    # a file inside a directory already named adds nothing to the snapshot
+    directories = {c for c in chosen if (source / c).is_dir()}
+    return sorted(
+        c for c in chosen if not any(c.startswith(f"{d}/") for d in directories)
+    )
+
+
+def _imported_by(source: Path, directory: Path, depth: int = 3) -> set[Path]:
+    """Everything in the package that the task's own code imports, transitively.
+
+    Naming the task's directory and a fixed list of likely shared filenames is a guess,
+    and the guess is wrong the moment a scorer lives in an ordinary sibling module. This
+    follows the imports instead: a module the code actually names is in the snapshot, and
+    a module it does not name is not.
+    """
+    package = _package_root(directory)
+    if package is None:
+        return set()
+    found: set[Path] = set()
+    frontier = [directory]
+    pattern = re.compile(rf"(?:from|import)\s+({re.escape(package.name)}(?:\.\w+)*)")
+    while frontier and depth > 0:
+        depth -= 1
+        imported: set[Path] = set()
+        for start in frontier:
+            files = sorted(start.rglob("*.py")) if start.is_dir() else [start]
+            for module in files:
+                try:
+                    text = module.read_text(errors="ignore")
+                except OSError:
+                    continue
+                for dotted in pattern.findall(text):
+                    target = _module_path(package, dotted)
+                    if target is not None and target not in found and directory not in target.parents:
+                        imported.add(target)
+        found |= imported
+        # a module's own imports count too: the scorer that imports the constants
+        frontier = list(imported)
+    # the package's own __init__ is how the registry finds any of it
+    if (package / "__init__.py").is_file():
+        found.add(package / "__init__.py")
+    return found
+
+
+def _package_root(directory: Path) -> Path | None:
+    """The importable package a directory belongs to: the outermost one with __init__."""
+    root = None
+    for candidate in [directory, *directory.parents]:
+        if (candidate / "__init__.py").is_file():
+            root = candidate
+        elif root is not None:
+            break
+    return root
+
+
+def _module_path(package: Path, dotted: str) -> Path | None:
+    """Where `package.a.b` lives on disk, as a directory or a module file."""
+    parts = dotted.split(".")[1:]
+    if not parts:
+        return None
+    path = package.joinpath(*parts)
+    if path.is_dir():
+        return path
+    module = path.with_suffix(".py")
+    return module if module.is_file() else None
 
 
 def _task_directory(source: Path, target_task: str | None) -> Path | None:

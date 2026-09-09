@@ -39,6 +39,7 @@ from inspect_ai.util import StoreModel, request_input, sandbox, store_as
 from inspect_ai.util._sandbox.environment import SandboxEnvironmentType
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from . import prompts
 from ._agent import SKILLS, SUPPORT_SKILLS
 from ._sandbox import COMPOSE, DOCKERFILE
 
@@ -48,25 +49,7 @@ REPORT_ROOT = "/report"
 # enumerated as audit items for auditors (see _agent.audit_skills)
 REPORT_SKILLS = Path(__file__).parent / "report_skills"
 
-REPORT_PROMPT = f"""You are the synthesis agent for a benchmark audit. You sit
-above the logs of a completed run and work with a human operator to turn them
-into findings.
 
-Your sandbox has the run's logs at {REPORT_ROOT}/logs, with inspect-ai and
-pandas installed.
-
-Invoke the `synthesis` skill and follow it. The reading-logs and analyzing-logs
-skills cover the log APIs (read headers and summaries before samples; never
-unzip .eval files).
-
-Work at the operator's direction. Ground every claim in something you actually
-read from the logs, and say so when you haven't. Never call submit() until the
-operator says the session is finished."""
-
-CHAT_ONLY_PROMPT = """You are the synthesis agent for a benchmark audit,
-running in plumbing-test mode: no logs were staged and you have no tools.
-Converse with the operator; never call submit() until they say the session is
-finished."""
 
 
 async def _operator_turn(state: AgentState) -> bool | str:
@@ -143,7 +126,7 @@ def report_task(logs: str | None = None) -> Task:
             solver=react(
                 name="report",
                 description="Synthesis agent (plumbing-test mode).",
-                prompt=CHAT_ONLY_PROMPT,
+                prompt=prompts.REPORT_CHAT_ONLY,
                 on_continue=_operator_turn,
             ),
         )
@@ -158,7 +141,7 @@ def report_task(logs: str | None = None) -> Task:
         solver=react(
             name="report",
             description="Synthesis agent over completed audit logs.",
-            prompt=REPORT_PROMPT,
+            prompt=prompts.REPORT.format(root=REPORT_ROOT),
             tools=[
                 bash(timeout=300),
                 python(timeout=300),

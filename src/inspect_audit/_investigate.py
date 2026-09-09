@@ -32,6 +32,7 @@ from inspect_ai.model._model import sample_model_usage
 from inspect_ai.tool import Tool, ToolError, bash, skill, tool
 from inspect_ai.util import sandbox, store_as
 
+from . import prompts
 from ._agent import SKILLS, SUPPORT_SKILLS, view_image
 from ._jobs import (
     Hawk,
@@ -67,7 +68,6 @@ from ._report import (
 logger = getLogger(__name__)
 
 ASSETS = Path(__file__).parent / "investigation"
-PROMPT = (ASSETS / "prompt.md").read_text()
 
 # Ours first, then the vendored ones, adapted for a container with no user in it and no
 # `hawk` binary. See investigation/skills/VENDORED.md for provenance and what changed.
@@ -1167,7 +1167,7 @@ def investigate(
         ],
         solver=react(
             name="investigator",
-            prompt=PROMPT,
+            prompt=prompts.INVESTIGATE,
             submit=False,
             tools=tools,
             compaction=CompactionSummary(threshold=0.8),

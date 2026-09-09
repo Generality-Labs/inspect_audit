@@ -200,14 +200,15 @@ def test_the_confidential_section_is_off_by_default_and_names_the_boundary() -> 
     reason the audit sandbox grants egress at all), so the confidential prompt has
     to draw the line at transmission and say what to do when that is not enough.
     """
-    from inspect_audit._agent import AUDIT_PROMPT, CONFIDENTIAL_SECTION
+    from inspect_audit import prompts
 
-    default = AUDIT_PROMPT.format(items="- `x`: y", confidential="", notes="")
+    default = prompts.AUDIT.format(root="/audit", items="- `x`: y", confidential="", notes="")
     assert "unpublished" not in default
 
-    on = AUDIT_PROMPT.format(
+    on = prompts.AUDIT.format(
+        root="/audit",
         items="- `x`: y",
-        confidential=CONFIDENTIAL_SECTION.format(root="/audit"),
+        confidential=prompts.AUDIT_CONFIDENTIAL.format(root="/audit"),
         notes="",
     )
     assert "must not transmit" in on
@@ -295,3 +296,37 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
     assert saved.debrief["environment_issues"][0].source == "tool-event-1"
     assert saved.debrief["unresolved"][0].observed == "Alternative judge not tested"
     assert saved.debrief["improvements"] == []
+
+
+def test_every_prompt_is_a_file_and_every_placeholder_gets_filled() -> None:
+    """Prose lives in markdown; a prompt that reaches a model with a stray {field} is a bug."""
+    import re
+
+    from inspect_audit import prompts
+
+    filled = {
+        "AUDIT": {"root": "/audit", "items": "- `x`: y", "confidential": "", "notes": ""},
+        "AUDIT_CONFIDENTIAL": {"root": "/audit"},
+        "AUDIT_NOTES": {"notes": "look at the grader"},
+        "INVESTIGATE": {},
+        "REPORT": {"root": "/report"},
+        "REPORT_CHAT_ONLY": {},
+    }
+    assert set(filled) == set(prompts.__all__)
+    for name, values in filled.items():
+        template = getattr(prompts, name)
+        assert (prompts.HERE / f"{name.lower()}.md").is_file(), f"{name} has no markdown file"
+        fields = set(re.findall(r"\{(\w+)\}", template))
+        assert fields == set(values), f"{name} placeholders {fields} do not match {set(values)}"
+        rendered = template.format(**values)
+        assert "{" not in rendered.replace("{{", ""), f"{name} rendered with a brace left in"
+
+
+def test_the_prompts_carry_no_python() -> None:
+    """A prompt file is read by people who are not reading the code around it."""
+    from inspect_audit import prompts
+
+    for path in prompts.HERE.glob("*.md"):
+        text = path.read_text()
+        assert not text.lstrip().startswith(("import ", "from ")), path.name
+        assert '"""' not in text, f"{path.name} still carries a Python string delimiter"

@@ -1,6 +1,7 @@
 """Local, artifact-first investigation using Inspect's standard agent and ACP."""
 
 import errno
+import inspect as inspect_module
 import json
 import math
 import os
@@ -13,9 +14,11 @@ from html.parser import HTMLParser
 from importlib.metadata import version
 from logging import getLogger
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import yaml
+from dotenv import find_dotenv
 from inspect_ai import Task, task
 from inspect_ai.agent import AgentState, react
 from inspect_ai.dataset import Sample
@@ -249,6 +252,53 @@ def register_openrouter_costs(timeout: float = 15) -> int:
             continue
         registered += 1
     return registered
+
+
+def _investigation_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
+    """Task settings from a YAML file, so an investigation is a document, not a command.
+
+    Every key is a parameter of this task, and an argument given on the command line
+    wins over the file, so a saved investigation can be re-run with one thing changed.
+    """
+    path = Path(config).expanduser()
+    if not path.is_file():
+        raise ValueError(f"no such investigation file: {config}")
+    loaded = yaml.safe_load(path.read_text()) or {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{config} must be a mapping of task settings")
+    signature = inspect_module.signature(investigate)
+    unknown = set(loaded) - set(signature.parameters) - {"config"}
+    if unknown:
+        raise ValueError(
+            f"{config} sets things this task does not take: {sorted(unknown)}. "
+            f"Available: {sorted(k for k in signature.parameters if k != 'config')}"
+        )
+    # a value given on the command line beats the file; "given" means "not the default"
+    return {
+        key: value
+        for key, value in loaded.items()
+        if key != "config" and passed.get(key) == signature.parameters[key].default
+    }
+
+
+def _only_task(source: Path) -> str | None:
+    """The task, when the repository declares exactly one and nobody said which."""
+    declared: set[str] = set()
+    for path in sorted(source.rglob("*.py")):
+        if any(part in {".git", "tests", "test", "build", ".venv"} for part in path.parts):
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        for match in re.finditer(r"@task(?:\([^)]*\))?\s*\ndef\s+(\w+)", text):
+            named = re.search(r'name\s*=\s*["\']([^"\']+)["\']', match.group(0))
+            declared.add(named.group(1) if named else match.group(1))
+    if len(declared) == 1:
+        only = declared.pop()
+        logger.info(f"auditing {only}: the only task {source} declares")
+        return only
+    return None
 
 
 def git_package_spec(repo: Path, revision: str | None = None) -> str | None:
@@ -1224,7 +1274,8 @@ def _resumable(resume: str) -> Path:
 
 @task
 def investigate(
-    repo: str,
+    repo: str | None = None,
+    config: str | None = None,
     logs: list[str] | None = None,
     paper: str | None = None,
     docs: list[str] | None = None,
@@ -1255,12 +1306,15 @@ def investigate(
 
     Args:
         repo: Local Git repository or HTTPS Git URL of the benchmark.
+        config: YAML file setting any of these arguments, so an investigation can be a
+            document rather than a command line. Anything also passed with -T wins.
         logs: Inspect log files or directories (hardlinked, read-only in the box).
         paper: Local file or URL; a URL is downloaded now (arXiv abs -> pdf). Defaults to
             the paper the eval names in its own metadata.
         docs: Documentation directories to mount read-only (inspect docs, Hawk docs).
         overview: Optional operator steer.
         target_task: The task under audit, e.g. `inspect_evals/simpleqa_verified`.
+            Defaults to the only task the repository declares, when there is one.
         revision: Commit to snapshot (default HEAD).
         paths: Repository paths to include in the snapshot. Defaults to the audited
             task's own directory and the modules its package shares, from the eval's
@@ -1287,7 +1341,9 @@ def investigate(
         auditor_image: Published auditor image for sample-audit jobs on k8s.
         worker_models: OpenRouter model ids the agent may run (benchmark workers, auditors,
             graders). Prices for these are registered so costs are accounted.
-        secrets_file: .env passed to Hawk jobs (OPENROUTER_API_KEY); never read by the agent.
+        secrets_file: .env passed to Hawk jobs (OPENROUTER_API_KEY); never read by the
+            agent. Defaults to the .env Inspect itself loaded, found from the working
+            directory upwards.
         log_bucket: Hawk's S3 log bucket, for staging supplied logs into an audit job's prefix.
         aws_profile: AWS profile with write access to that bucket, defaulting to
             AWS_PROFILE (else ambient credentials).
@@ -1302,10 +1358,42 @@ def investigate(
         if not (resolved / "SKILL.md").is_file():
             raise ValueError(f"Expected a skill directory containing SKILL.md: {path}")
         skill_paths.append(str(resolved))
+    settings = _investigation_file(config, locals()) if config else {}
+    repo = settings.get("repo", repo)
+    logs = settings.get("logs", logs)
+    paper = settings.get("paper", paper)
+    docs = settings.get("docs", docs)
+    overview = settings.get("overview", overview)
+    target_task = settings.get("target_task", target_task)
+    revision = settings.get("revision", revision)
+    paths = settings.get("paths", paths)
+    output_dir = settings.get("output_dir", output_dir)
+    resume = settings.get("resume", resume)
+    budget_usd = settings.get("budget_usd", budget_usd)
+    enforce_cost_limit = settings.get("enforce_cost_limit", enforce_cost_limit)
+    token_limit = settings.get("token_limit", token_limit)
+    interactive = settings.get("interactive", interactive)
+    extra_skills = settings.get("extra_skills", extra_skills)
+    hawk_api_url = settings.get("hawk_api_url", hawk_api_url)
+    task_package = settings.get("task_package", task_package)
+    audit_package = settings.get("audit_package", audit_package)
+    auditor_image = settings.get("auditor_image", auditor_image)
+    worker_models = settings.get("worker_models", worker_models)
+    secrets_file = settings.get("secrets_file", secrets_file)
+    log_bucket = settings.get("log_bucket", log_bucket)
+    aws_profile = settings.get("aws_profile", aws_profile)
+    if not repo:
+        raise ValueError("investigate needs a repo: the benchmark to audit, or a config naming one")
+
     # what can be worked out is worked out: the audited repository already says which
     # commit it is, which directory the task lives in and which paper it comes from,
     # and this package already knows its own commit. Passing any of them overrides.
     local_repo = Path(repo).expanduser()
+    if local_repo.is_dir():
+        target_task = target_task or _only_task(local_repo)
+    # the provider key reaches a Hawk runner from a file; the file is the one Inspect
+    # itself loaded to put that key in this process, unless another is named
+    secrets_file = secrets_file or (find_dotenv(usecwd=True) or None)
     if local_repo.is_dir():
         paths = paths or paths_from_metadata(local_repo, target_task)
         paper = paper or paper_from_metadata(local_repo, target_task)

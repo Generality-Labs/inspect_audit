@@ -732,3 +732,52 @@ def test_the_task_directory_is_found_without_inspect_evals_conventions(tmp_path:
     assert "bench/task/other" in (paths_from_metadata(repo, "bench/something_else") or [])
     # and nothing invented when the task cannot be found
     assert paths_from_metadata(repo, "bench/not_here") is None
+
+
+def test_an_investigation_can_be_a_file_and_the_command_line_still_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A saved investigation is a document; re-running it with one thing changed is -T."""
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
+    repo = git_repo(tmp_path / "repo")
+    config = tmp_path / "investigation.yaml"
+    config.write_text(
+        f"repo: {repo}\n"
+        f"output_dir: {tmp_path / 'runs'}\n"
+        "budget_usd: 100\n"
+        "overview: read the grader first\n"
+        "enforce_cost_limit: false\n"
+    )
+    from_file = investigate(config=str(config))
+    seed = json.loads((Path(from_file.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
+    assert seed["budget_usd"] == 100 and seed["overview"] == "read the grader first"
+
+    overridden = investigate(config=str(config), budget_usd=7)
+    seed = json.loads((Path(overridden.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
+    assert seed["budget_usd"] == 7, "an argument given on the command line beats the file"
+
+    typo = tmp_path / "typo.yaml"
+    typo.write_text(f"repo: {repo}\nbudget: 100\n")
+    with pytest.raises(ValueError, match="sets things this task does not take"):
+        investigate(config=str(typo))
+    with pytest.raises(ValueError, match="no such investigation file"):
+        investigate(config=str(tmp_path / "nowhere.yaml"))
+    with pytest.raises(ValueError, match="needs a repo"):
+        investigate()
+
+
+def test_the_only_task_a_repository_declares_needs_no_naming(tmp_path: Path) -> None:
+    from inspect_audit._investigate import _only_task
+
+    one = tmp_path / "one"
+    (one / "bench").mkdir(parents=True)
+    (one / "bench/task.py").write_text('@task(name="Chess Puzzles")\ndef chess_puzzles():\n    ...\n')
+    assert _only_task(one) == "Chess Puzzles"
+
+    several = tmp_path / "several"
+    (several / "bench").mkdir(parents=True)
+    (several / "bench/a.py").write_text("@task\ndef one_thing():\n    ...\n")
+    (several / "bench/b.py").write_text("@task\ndef another():\n    ...\n")
+    assert _only_task(several) is None, "a collection must be told which task to audit"

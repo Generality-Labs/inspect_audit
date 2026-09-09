@@ -134,6 +134,43 @@ class Hawk:
         out = self._run("logs", eval_set_id, "-n", str(lines), timeout=120)
         return out[-6000:]
 
+    def watch(self, eval_set_id: str) -> str:
+        """One-shot live status: per-task and per-sample phase, retries, limits, trouble."""
+        out = self._run("watch", eval_set_id, "--no-follow", timeout=180)
+        return out[-8000:]
+
+    def status(self, eval_set_id: str) -> str:
+        """The raw monitoring report: pod status, metrics, recent logs, as JSON."""
+        out = self._run("status", eval_set_id, timeout=300)
+        return out[-8000:]
+
+    def trace(self, eval_set_id: str, lines: int = 100) -> str:
+        """Runner's in-flight actions. An `enter` with no `exit` is what is hanging now."""
+        out = self._run("trace", eval_set_id, "-n", str(lines), timeout=180)
+        return out[-8000:]
+
+    def stacktrace(self, eval_set_id: str) -> str:
+        """py-spy dump of the live runner's thread stacks; running pod only."""
+        out = self._run("stacktrace", eval_set_id, timeout=300)
+        return out[-8000:]
+
+    def transcript(self, sample_uuid: str, out_dir: Path) -> Path:
+        """One sample's transcript as markdown, written to a file rather than returned."""
+        out_dir.mkdir(parents=True, exist_ok=True)
+        text = self._run("transcript", sample_uuid, timeout=600)
+        path = out_dir / f"{sample_uuid}.md"
+        path.write_text(text)
+        return path
+
+    def transcripts(self, eval_set_id: str, out_dir: Path, limit: int | None = None) -> list[Path]:
+        """Every sample's transcript in the set, written to out_dir."""
+        out_dir.mkdir(parents=True, exist_ok=True)
+        args = ["transcripts", eval_set_id, "--output-dir", str(out_dir)]
+        if limit is not None:
+            args += ["--limit", str(limit)]
+        self._run(*args, timeout=1800)
+        return sorted(p for p in out_dir.iterdir() if p.is_file())
+
 
 def stage_logs_to_s3(
     local_dir: Path, bucket: str, eval_set_id: str, profile: str | None

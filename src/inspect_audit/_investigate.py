@@ -64,6 +64,22 @@ logger = getLogger(__name__)
 
 ASSETS = Path(__file__).parent / "investigation"
 PROMPT = (ASSETS / "prompt.md").read_text()
+
+# Ours first, then the vendored ones, adapted for a container with no user in it and no
+# `hawk` binary. See investigation/skills/VENDORED.md for provenance and what changed.
+INVESTIGATION_SKILLS = (
+    "investigating",
+    "writing",
+    "eval-validity-review",
+    "investigate-dataset",
+    "security-audit-eval",
+    "check-trajectories-workflow",
+    "eval-report-workflow",
+    "read-eval-logs",
+    "view-results",
+    "debug-stuck-eval",
+    "babysit-eval",
+)
 OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"
 DEFAULT_WORKERS = [
     "openai/gpt-5.6-luna",
@@ -550,20 +566,49 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
 
 @tool
 def jobs(remote: Remote, root: Path) -> Tool:
-    """Status, waiting, collection and stopping of remote jobs."""
+    """Watching, reading, waiting on, collecting and stopping remote jobs."""
 
-    async def execute(action: str, label: str | None = None, wait_minutes: float = 20) -> str:
-        """Manage the jobs this investigation launched.
+    async def execute(
+        action: str,
+        label: str | None = None,
+        sample: str | None = None,
+        wait_minutes: float = 20,
+        limit: int | None = None,
+    ) -> str:
+        """Watch and manage the Hawk jobs this investigation launched.
+
+        Every action is the `hawk` command of the same name, run here on the operator's
+        login, restricted to your own jobs. Reads are always safe; the only actions that
+        change anything are "stop" and "collect".
 
         Args:
-            action: "list" (every job and its state), "status" (live per-eval status of
-                one job), "logs" (the runner's own log tail: install errors, crashes,
-                why a job has no evals yet), "wait" (block, without spending tokens,
-                until the job finishes or wait_minutes pass), "collect" (download its
-                .eval logs to /inputs/jobs/<label>/, record the real cost, release the
-                reservation), or "stop" (gracefully stop a running job).
-            label: The job, for every action except "list".
+            action: What to do.
+                "list" - every job of this investigation and its state (no network).
+                "evals" - task, model, status and sample counts per eval in the job.
+                "watch" - live snapshot: per-task and per-sample phase (waiting, init,
+                    running, scoring, completed, errored, limit), retries, scores, and
+                    any Kubernetes trouble reason. The first thing to look at when a job
+                    is slow or stuck.
+                "logs" - tail of the runner's own log: install failures, tracebacks, the
+                    reason a job has no evals at all.
+                "trace" - the runner's in-flight actions; an `enter` with no matching
+                    `exit` is what it is blocked on right now. Running pod only.
+                "stacktrace" - live thread stacks of the runner process. Running pod only.
+                "status" - the raw monitoring report (pod status, metrics, recent logs).
+                "samples" - one line per sample with its id, status and score.
+                "transcript" - one sample's full transcript, written to
+                    /inputs/jobs/<label>/transcripts/; pass `sample`.
+                "transcripts" - every sample's transcript, written to the same place;
+                    `limit` caps how many.
+                "wait" - block, spending no tokens, until the job finishes or
+                    wait_minutes pass.
+                "collect" - download the job's .eval logs to /inputs/jobs/<label>/,
+                    record the real cost, release the reservation.
+                "stop" - gracefully stop a running job; completed samples are scored.
+            label: Which job, for every action except "list".
+            sample: Sample uuid, for action "transcript" (the "samples" action lists them).
             wait_minutes: How long "wait" may block before returning the current state.
+            limit: For "samples" and "transcripts", how many samples to take.
         """
         ledger = remote.ledger
         if action == "list":
@@ -577,10 +622,63 @@ def jobs(remote: Remote, root: Path) -> Tool:
             )
         if not label or not (job := ledger.get(label)):
             raise ToolError(f"unknown job {label!r}; jobs(action='list') shows them")
+        transcripts = root / "inputs" / "jobs" / label / "transcripts"
         try:
             if action == "logs":
-                return f"{label} ({job.eval_set_id}) runner log tail:\n" + await asyncio.to_thread(remote.hawk.logs, job.eval_set_id)
+                return f"{label} ({job.eval_set_id}) runner log tail:\n" + await asyncio.to_thread(
+                    remote.hawk.logs, job.eval_set_id
+                )
+            if action == "watch":
+                return f"{label} ({job.eval_set_id}) live status:\n" + await asyncio.to_thread(
+                    remote.hawk.watch, job.eval_set_id
+                )
+            if action == "trace":
+                return f"{label} ({job.eval_set_id}) runner trace:\n" + await asyncio.to_thread(
+                    remote.hawk.trace, job.eval_set_id
+                )
+            if action == "stacktrace":
+                return f"{label} ({job.eval_set_id}) runner stacks:\n" + await asyncio.to_thread(
+                    remote.hawk.stacktrace, job.eval_set_id
+                )
             if action == "status":
+                return f"{label} ({job.eval_set_id}) monitoring report:\n" + await asyncio.to_thread(
+                    remote.hawk.status, job.eval_set_id
+                )
+            if action == "samples":
+                rows_json = await asyncio.to_thread(
+                    remote.hawk.samples, job.eval_set_id, limit or 500
+                )
+                if not rows_json:
+                    return f"{label}: no samples listed yet"
+                out = [f"{len(rows_json)} sample(s) in {job.eval_set_id}:"]
+                for row in rows_json:
+                    ident = row.get("uuid") or row.get("id") or "?"
+                    out.append(
+                        f"  {ident} {row.get('task', '')} {row.get('model', '')} "
+                        f"id={row.get('sample_id', row.get('id', ''))} "
+                        f"{row.get('status', '')} score={row.get('score', row.get('scores', ''))}"
+                    )
+                return "\n".join(out)
+            if action == "transcript":
+                if not sample:
+                    raise ToolError("action='transcript' needs sample=<uuid> from jobs(action='samples')")
+                path = await asyncio.to_thread(remote.hawk.transcript, sample, transcripts)
+                return (
+                    f"wrote /inputs/jobs/{label}/transcripts/{path.name} "
+                    f"({path.stat().st_size:,} bytes). Read it with your own tools."
+                )
+            if action == "transcripts":
+                files = await asyncio.to_thread(
+                    remote.hawk.transcripts, job.eval_set_id, transcripts, limit
+                )
+                if not files:
+                    raise ToolError("no transcripts were written")
+                return (
+                    f"wrote {len(files)} transcript(s) to /inputs/jobs/{label}/transcripts/: "
+                    + ", ".join(f.name for f in files[:10])
+                    + (" …" if len(files) > 10 else "")
+                )
+            if action == "evals":
                 rows = remote.hawk.evals(job.eval_set_id)
             elif action == "wait":
                 rows = await asyncio.to_thread(wait_for, remote.hawk, job.eval_set_id, wait_minutes)
@@ -611,7 +709,10 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 lines += [f"  {m}: in {u['input']:,} cache_read {u['cache_read']:,} out {u['output']:,}" for m, u in usage.items()]
                 return "\n".join(lines)
             else:
-                raise ToolError("action must be list, status, logs, wait, collect or stop")
+                raise ToolError(
+                    "action must be list, evals, watch, logs, trace, stacktrace, status, "
+                    "samples, transcript, transcripts, wait, collect or stop"
+                )
         except ToolError:
             raise
         except Exception as ex:
@@ -701,10 +802,9 @@ def investigate(
     """
     if not math.isfinite(budget_usd) or budget_usd <= 0:
         raise ValueError("budget_usd must be finite and positive")
-    skill_paths = [
-        str(ASSETS / "skills" / "investigating"),
-        str(ASSETS / "skills" / "writing"),
-    ] + [str(SKILLS / name) for name in SUPPORT_SKILLS]
+    skill_paths = [str(ASSETS / "skills" / name) for name in INVESTIGATION_SKILLS] + [
+        str(SKILLS / name) for name in SUPPORT_SKILLS
+    ]
     for path in extra_skills or []:
         resolved = Path(path).expanduser().resolve()
         if not (resolved / "SKILL.md").is_file():

@@ -40,6 +40,21 @@ method. Series are named plainly and directly labelled where there are few enoug
 caption carries the denominator. If a number matters, it goes in the prose, not on the
 plot. Prefer raw values to smoothed ones. Never draw an interval you did not compute.
 
+## What every report has to state
+
+Somewhere the reader can find it, and once only: what you ran and what you read. How
+many samples out of how many, on what dates, with what model versions and package
+revisions, the total tokens and the cost. If you ran jobs yourself, they are in the
+ledger and the collected logs; take the numbers from there, not from memory.
+
+Where a published number exists for this benchmark, put yours next to it: the reported
+figure, the figure you measured, the difference, and where the reference came from. An
+unexplained difference is worth stating as a difference. Do not explain it away.
+
+Say the size of what you tested. A hypothesis checked on eight samples is reported as
+eight samples. Anything under roughly twenty cases, or fewer than three cases per
+subgroup you are comparing, is examples rather than a rate, and the sentence says so.
+
 ## Two paragraphs
 
 Bad: "I carefully reviewed the grading configuration and found that there may be some

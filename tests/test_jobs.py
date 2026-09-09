@@ -21,7 +21,7 @@ EXAMPLES = Path(__file__).parent.parent / "src/inspect_audit/investigation/skill
 class FakeHawk:
     def __init__(self) -> None:
         self.submitted: list[Path] = []
-        self.status = "running"
+        self.eval_status = "running"
         self.stopped: list[str] = []
 
     def submit(self, config_path: Path) -> str:
@@ -29,7 +29,7 @@ class FakeHawk:
         return f"set-{len(self.submitted)}"
 
     def evals(self, eval_set_id: str) -> list[dict[str, str]]:
-        return [{"task": "t", "model": "m", "status": self.status, "samples": "2/2"}]
+        return [{"task": "t", "model": "m", "status": self.eval_status, "samples": "2/2"}]
 
     def download(self, eval_set_id: str, out_dir: Path) -> list[Path]:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -39,6 +39,36 @@ class FakeHawk:
 
     def stop(self, eval_set_id: str) -> None:
         self.stopped.append(eval_set_id)
+
+    def watch(self, eval_set_id: str) -> str:
+        return "sample 1: running, 2 retries\n⚠ pods can't be scheduled"
+
+    def trace(self, eval_set_id: str, lines: int = 100) -> str:
+        return "enter generate ...\n"
+
+    def stacktrace(self, eval_set_id: str) -> str:
+        return "Thread 1: asyncio ...\n"
+
+    def status(self, eval_set_id: str) -> str:
+        return '{"pods": []}'
+
+    def samples(self, eval_set_id: str, limit: int = 500) -> list[dict[str, object]]:
+        return [{"uuid": "u-1", "task": "t", "model": "m", "status": "success", "score": 1}]
+
+    def transcript(self, sample_uuid: str, out_dir: Path) -> Path:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{sample_uuid}.md"
+        path.write_text("# transcript")
+        return path
+
+    def transcripts(self, eval_set_id: str, out_dir: Path, limit: int | None = None) -> list[Path]:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for i in range(limit or 2):
+            f = out_dir / f"s-{i}.md"
+            f.write_text("# transcript")
+            paths.append(f)
+        return paths
 
 
 def remote(tmp_path: Path, allowance: float = 10.0) -> Remote:
@@ -210,10 +240,10 @@ def test_jobs_status_wait_collect_release_reservation(tmp_path: Path, monkeypatc
     (tmp_path / "inputs").mkdir()
     run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "j.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-jj")), estimated_usd=3))
     tool = jobs(r, tmp_path)
-    assert "running" in run(tool(action="status", label="jj"))
+    assert "running" in run(tool(action="evals", label="jj"))
     with pytest.raises(ToolError, match="not finished"):
         run(tool(action="collect", label="jj"))
-    r.hawk.status = "success"  # type: ignore[attr-defined]
+    r.hawk.eval_status = "success"  # type: ignore[attr-defined]
     monkeypatch.setattr(_jobs.time, "sleep", lambda s: None)
     assert "success" in run(tool(action="wait", label="jj", wait_minutes=1))
     out = run(tool(action="collect", label="jj"))
@@ -226,6 +256,33 @@ def test_jobs_status_wait_collect_release_reservation(tmp_path: Path, monkeypatc
     assert r.hawk.stopped == ["set-1"]  # type: ignore[attr-defined]
     r.hawk.logs = lambda eval_set_id, lines=120: "uv pip install ... ok\nRunning Inspect eval-set"  # type: ignore[attr-defined]
     assert "Running Inspect eval-set" in run(tool(action="logs", label="jj"))
+
+
+def test_jobs_babysitting_actions_are_read_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """watch/trace/stacktrace/status/samples/transcripts observe a job, they do not change it."""
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir()
+    run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "j.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-jj")), estimated_usd=3))
+    tool = jobs(r, tmp_path)
+    assert "pods can't be scheduled" in run(tool(action="watch", label="jj"))
+    assert "enter generate" in run(tool(action="trace", label="jj"))
+    assert "asyncio" in run(tool(action="stacktrace", label="jj"))
+    assert "pods" in run(tool(action="status", label="jj"))
+    assert "u-1" in run(tool(action="samples", label="jj"))
+    with pytest.raises(ToolError, match="needs sample="):
+        run(tool(action="transcript", label="jj"))
+    assert "u-1.md" in run(tool(action="transcript", label="jj", sample="u-1"))
+    assert (tmp_path / "inputs" / "jobs" / "jj" / "transcripts" / "u-1.md").is_file()
+    assert "3 transcript(s)" in run(tool(action="transcripts", label="jj", limit=3))
+    with pytest.raises(ToolError, match="action must be"):
+        run(tool(action="delete", label="jj"))
+    assert r.hawk.stopped == []  # type: ignore[attr-defined]
+    assert JobLedger(tmp_path).get("jj").status == "submitted"  # type: ignore[union-attr]
 
 
 def test_hawk_cli_parsing(monkeypatch: pytest.MonkeyPatch) -> None:

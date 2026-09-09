@@ -34,7 +34,9 @@ Establish that the paper, the code, the logs and any leaderboard describe the sa
 thing. Read grader identity, grading template, generation config and metric definition
 out of the logs, not out of the documentation; judges and configurations get swapped
 silently. Reproduce the headline number from the logs exactly before you perturb or
-interpret anything. If you cannot reproduce it, that is your first finding.
+interpret anything. If you cannot, you have an unresolved discrepancy: say what you
+computed, what was reported, and what you ruled out. It becomes a finding when you can
+name the cause or bound the effect, and stays a limitation when you cannot.
 
 ## Then the recorded runs
 
@@ -46,10 +48,32 @@ stand out are your leads. Patterns that cluster by model family or provider are 
 Do this before you read a single transcript, and before you write a word of prose.
 
 Transcripts second, and a lot of them. Sample across models, across outcome classes and
-across score range, and read enough that a pattern is a pattern: nothing below roughly
-fifteen to twenty cases is a rate. Record what you see per transcript in a table you keep.
-Hypotheses come from transcripts as much as from code; read some yourself rather than
-only counting.
+across score range, and read enough that a pattern is a pattern. Below roughly fifteen
+to twenty cases you are describing examples, not measuring a rate; say "three of the
+eleven I read" rather than a percentage, and say what you could not rule out. Record
+what you see per transcript in a table you keep. Hypotheses come from transcripts as
+much as from code; read some yourself rather than only counting.
+
+Classify what you find by which direction it moves the score. A pattern either
+invalidates successes (the model scored without doing the task: leaked gold, a scorer
+bug, an unintended route) or invalidates failures (the model did the task and scored
+zero anyway: a parser that rejects a valid answer, a dead dependency, a limit hit, a
+refusal the benchmark did not intend to measure). Keep the two counts separate. A report
+that pools them tells the reader a number is wrong without telling them which way, which
+is nearly useless to someone deciding whether to trust it. Per transcript the useful
+record is one line on why the attempt ended as it did, plus whether an external failure,
+a formatting failure, an unintended route or a refusal was involved.
+
+When you have the source in front of you and are deciding what to check, the
+eval-validity-review skill is the checklist: it collects every claim the benchmark makes
+and verifies them one at a time, asks whether a model can both succeed and fail at each
+item, and puts the scorer on a ladder from direct measurement down to substring matching
+on natural language. Its claims inventory is worth keeping literally, as a table in the
+journal: claim, where it is stated, category, what the evidence shows, severity. Include
+the claims that look obviously true; a benchmark's true-sounding claims are what make
+its false ones credible. For the items themselves rather than the code that loads them,
+the investigate-dataset skill; for a harness that runs model-authored code,
+security-audit-eval.
 
 Targeted checks third. For each live hypothesis, the cheapest observation that would
 refute it. Prefer what is already in the logs; then deterministic recomputation; then
@@ -85,10 +109,20 @@ attempts from a job you ran, use hawk:<that job's eval set id> and omit eval_set
 
 Procedure: one or two samples first, wait, collect, read the result as you would any
 log and check the job saw what you meant; then expand. jobs(action="wait") blocks
-without spending tokens; do other work while jobs run. When a job shows no evals or
-errors, jobs(action="logs") is the runner's own log: install failures and crashes are there. Every submission reserves your
-estimate against the shared allowance until collected. The configs you submitted are
-saved under jobs/ and jobs.json is the record of what ran.
+without spending tokens; do other work while jobs run.
+
+Watch what you launched. jobs(action="watch") is a live snapshot of every sample's
+phase, its retries and any Kubernetes trouble; jobs(action="logs") is the runner's own
+output, where an install failure or a traceback appears; jobs(action="trace") and
+jobs(action="stacktrace") show what a running job is blocked on. Afterwards,
+jobs(action="samples") lists the samples with their scores and
+jobs(action="transcripts") writes them to /inputs/jobs/<label>/transcripts/ for you to
+read. The debug-stuck-eval and babysit-eval skills explain what those are showing you.
+A job that hangs, retries or hits limits is itself evidence: it is what anyone else
+running this benchmark would hit, and it belongs in the report.
+
+Every submission reserves your estimate against the shared allowance until collected.
+The configs you submitted are saved under jobs/ and jobs.json is the record of what ran.
 
 ## Rules of evidence
 

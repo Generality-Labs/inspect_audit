@@ -441,3 +441,30 @@ def test_the_same_input_cited_twice_publishes_once(tmp_path: Path) -> None:
     saved = json.loads((destination / "findings.json").read_text())
     assert {e["path"] for f in saved for e in f["evidence"]} == {"_inputs/paper.pdf"}
     assert (destination / "_inputs/paper.pdf").read_bytes() == b"%PDF"
+
+
+def test_mounted_skills_are_wellformed_and_adapted() -> None:
+    """Every mounted skill parses, is named after its directory, and says where it is.
+
+    The nine borrowed skills were written for a repo checkout with a user to ask. Each
+    keeps its original text and gains an `In this container` section; the container has
+    no `uv`, so a stray `uv run` would send the agent down a dead end.
+    """
+    from inspect_audit._investigate import ASSETS, INVESTIGATION_SKILLS
+
+    ours = {"investigating", "writing"}
+    for name in INVESTIGATION_SKILLS:
+        text = (ASSETS / "skills" / name / "SKILL.md").read_text()
+        import yaml
+
+        front = yaml.safe_load(text.split("---")[1])
+        assert front["name"] == name, name
+        assert front["description"], name
+        if name not in ours:
+            assert "## In this container" in text, name
+            leftovers = [
+                line
+                for line in text.splitlines()
+                if "uv run" in line and "gnore" not in line
+            ]
+            assert not leftovers, (name, leftovers)

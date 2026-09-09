@@ -25,6 +25,9 @@ runner:
   secrets:
     - name: OPENROUTER_API_KEY
 limit: 2                        # start small; expand once the result reads right
+cost_limit: 0.50                # dollars per sample, enforced in the runner. Required:
+                                # cost_limit x samples x models x epochs is what the job
+                                # holds against your allowance until you collect it
 epochs: 1
 token_limit: 2000000
 time_limit: 3600

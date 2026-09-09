@@ -7,11 +7,14 @@ state is a JSON ledger in the investigation directory so a restarted session see
 was already submitted instead of launching it again.
 """
 
+import fcntl
 import json
 import re
 import shutil
 import subprocess
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from logging import getLogger
@@ -33,8 +36,11 @@ class Job:
     eval_set_id: str
     config_path: str
     submitted_at: str
-    estimated_usd: float
-    status: str = "submitted"  # submitted | running | success | error | cancelled | stopped
+    estimated_usd: float  # what the agent expected; kept to compare against reality
+    reserved_usd: float = 0.0  # what the config can cost at worst; held until collected
+    # pending: written before the CLI call, so a lost response is recoverable.
+    # failed: the submission never reached Hawk; its reservation is released.
+    status: str = "pending"
     actual_usd: float | None = None
     collected_to: str | None = None
     note: str = ""
@@ -42,13 +48,37 @@ class Job:
 
 
 class JobLedger:
-    """Append-mostly record of every remote job this investigation launched."""
+    """Every remote job this investigation launched, on disk, under a file lock.
+
+    Reservations are checked and written inside the same locked transaction, so two
+    submissions running at once cannot both fit into the last of the allowance.
+    """
 
     def __init__(self, root: Path) -> None:
         self.path = root / "jobs.json"
+        self.lock_path = root / "jobs.lock"
         self.jobs: list[Job] = []
-        if self.path.is_file():
-            self.jobs = [Job(**j) for j in json.loads(self.path.read_text())]
+        self.reload()
+
+    def reload(self) -> None:
+        self.jobs = (
+            [Job(**j) for j in json.loads(self.path.read_text())]
+            if self.path.is_file()
+            else []
+        )
+
+    @contextmanager
+    def transaction(self) -> Iterator["JobLedger"]:
+        """Exclusive access: re-read from disk, yield, write back on a clean exit."""
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.lock_path, "w") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                self.reload()
+                yield self
+                self.save()
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
     def save(self) -> None:
         self.path.write_text(json.dumps([asdict(j) for j in self.jobs], indent=2))
@@ -60,14 +90,25 @@ class JobLedger:
         if self.get(job.label) is not None:
             raise ValueError(f"a job labelled {job.label!r} already exists")
         self.jobs.append(job)
-        self.save()
 
     def reserved_usd(self) -> float:
-        """Money promised to jobs whose real cost is not yet known."""
-        return sum(j.estimated_usd for j in self.jobs if j.actual_usd is None)
+        """Money held against jobs that are alive and whose real cost is not yet known."""
+        return sum(
+            j.reserved_usd
+            for j in self.jobs
+            if j.actual_usd is None and j.status != "failed"
+        )
 
     def actual_usd(self) -> float:
         return sum(j.actual_usd or 0.0 for j in self.jobs)
+
+    def unpriced(self) -> list[str]:
+        """Collected jobs whose cost could not be computed; their reservation stands."""
+        return [
+            j.label
+            for j in self.jobs
+            if j.actual_usd is None and j.collected_to is not None
+        ]
 
 
 class Hawk:
@@ -103,6 +144,11 @@ class Hawk:
         if not match:
             raise RuntimeError(f"could not find the eval set id in hawk's output:\n{out[-800:]}")
         return match.group(1)
+
+    def eval_set_exists(self, eval_set_id: str) -> bool:
+        """Whether Hawk has this eval set, used to resolve a submission with no answer."""
+        out = self._run("list", "eval-sets", "--search", eval_set_id, "--limit", "50", timeout=120)
+        return eval_set_id in out
 
     def evals(self, eval_set_id: str) -> list[dict[str, str]]:
         """Task, model, status and sample counts per eval, parsed from the CLI table."""
@@ -201,13 +247,13 @@ class Policy:
     A Hawk eval-set config runs arbitrary Python from `packages:` inside a runner that
     holds the operator's provider key and S3 credentials, so the config is treated as
     hostile input: allowlists for everything that names code or credentials, hard caps
-    on spend-shaped fields, and no unknown keys.
+    on spend-shaped fields, and no unknown keys at any level.
     """
 
     packages: list[str]  # exact git/pip specs allowed in packages: and tasks[].package
     task_names: list[str]  # registry package names allowed in tasks[].name
     models: list[str]  # OpenRouter model ids allowed anywhere a model is named
-    auditor_images: list[str]
+    auditor_images: list[str]  # every image any task argument may name
     hawk_api_url: str
     secrets: tuple[str, ...] = ("OPENROUTER_API_KEY",)
     env_keys: tuple[str, ...] = ("HAWK_API_URL", "HAWK_RUNNER_REFRESH_URL")
@@ -215,16 +261,56 @@ class Policy:
     max_epochs: int = 5
     max_token_limit: int = 10_000_000
     max_time_limit: int = 14_400
+    # dollars per sample, enforced by the runner through Inspect's cost limit. The
+    # reservation a job holds is this multiplied by the samples the config asks for.
+    max_cost_limit_usd: float = 5.0
+    max_worst_case_usd: float = 200.0
     id_prefix: str = "inv-"
 
 
 ALLOWED_TOP_LEVEL = {
     "name", "eval_set_id", "packages", "tasks", "models", "model_roles", "runner", "limit",
     "sample_shuffle", "epochs", "token_limit", "time_limit", "message_limit", "working_limit",
-    "max_connections", "max_retries", "retry_attempts", "timeout", "metadata", "tags",
-    "log_images", "score",
+    "cost_limit", "max_connections", "max_retries", "retry_attempts", "timeout", "metadata",
+    "tags", "log_images", "score",
 }
 ALLOWED_RUNNER = {"environment", "secrets"}
+ALLOWED_MODEL_ARGS = {"base_url", "config"}
+ALLOWED_MODEL_CONFIG = {"reasoning_effort", "max_tokens", "temperature", "reasoning_tokens"}
+# task argument names that decide what runs, what it costs, or what it can reach.
+# Anything matching is checked against the policy; everything else is the task's own
+# parameter, executed by code that is already allowlisted.
+MODEL_ARG = re.compile(r"(^|_)model(s)?$")
+IMAGE_ARG = re.compile(r"(^|_)image$")
+SIZE_ARG = {"limit", "max_samples", "samples", "epochs", "n", "count"}
+LOG_ARG = {"logs", "log_dir", "log_file", "log_files"}
+FORBIDDEN_ARGS = {
+    "setup", "sandbox", "sandboxes", "solver", "agent", "approval", "secrets", "secret",
+    "env", "environment", "command", "entrypoint", "token", "key", "api_key",
+    "credentials", "aws_profile", "bucket",
+}
+
+
+def parse_config(config: dict[str, Any]) -> tuple[Any, list[str]]:
+    """Parse with Hawk's own schema, so the effective settings are what we check.
+
+    Returns the parsed EvalSetConfig, or the schema's complaints. Hawk allows extra
+    top-level keys, so this does not replace the allowlists; it resolves the shape.
+    """
+    try:
+        from hawk.core.types.evals import EvalSetConfig
+    except ImportError as ex:  # pragma: no cover - install-time problem, not a code path
+        raise RuntimeError(
+            "remote work needs Hawk's config schema: pip install 'inspect_audit[remote]'"
+        ) from ex
+    import pydantic
+
+    try:
+        return EvalSetConfig.model_validate(config), []
+    except pydantic.ValidationError as ex:
+        return None, [
+            f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in ex.errors()[:12]
+        ]
 
 
 def _model_items(config: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
@@ -234,6 +320,99 @@ def _model_items(config: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     for role, group in (config.get("model_roles") or {}).items():
         found.append((f"model_roles.{role}", group))
     return found
+
+
+def _task_arg_problems(
+    where: str, args: dict[str, Any], policy: Policy, known_log_sources: set[str]
+) -> list[str]:
+    """The task arguments are the configuration that actually executes."""
+    problems: list[str] = []
+    for key, value in args.items():
+        lowered = key.lower()
+        if lowered in FORBIDDEN_ARGS:
+            problems.append(f"{where}: task arg not allowed: {key!r}")
+            continue
+        if MODEL_ARG.search(lowered):
+            named = value if isinstance(value, list) else [value]
+            for model in named:
+                if model is not None and model not in policy.models:
+                    problems.append(f"{where}: {key}={model!r} is not an allowed model")
+            continue
+        if IMAGE_ARG.search(lowered):
+            if value is not None and value not in policy.auditor_images:
+                problems.append(f"{where}: {key}={value!r} is not an allowed image")
+            continue
+        if lowered in SIZE_ARG:
+            cap = policy.max_epochs if lowered == "epochs" else policy.max_limit
+            if value is not None and (not isinstance(value, int) or value > cap):
+                problems.append(f"{where}: {key}={value!r} must be an integer up to {cap}")
+            continue
+        if lowered in LOG_ARG:
+            for source in value if isinstance(value, list) else [value]:
+                if not _known_log_source(str(source), known_log_sources):
+                    problems.append(
+                        f"{where}: {key}={source!r} must be a hawk: source this "
+                        "investigation staged or ran"
+                    )
+            continue
+        for text in _strings(value):
+            if text.startswith(("s3://", "hawk:", "file://", "http://")) or text.startswith("/Users"):
+                problems.append(
+                    f"{where}: {key} points outside this investigation: {text[:60]!r}"
+                )
+    return problems
+
+
+def _strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+def _known_log_source(logs: str, known_log_sources: set[str]) -> bool:
+    return (
+        logs.startswith("hawk:")
+        and logs.removeprefix("hawk:").split("/")[0] in known_log_sources
+    )
+
+
+def _samples_in(item: Any, config_limit: int | None) -> int | None:
+    """How many samples one task item runs, or None when it does not say."""
+    if item.sample_ids:
+        return len(item.sample_ids)
+    args = item.args or {}
+    for key in ("limit", "max_samples", "samples"):
+        if isinstance(args.get(key), int):
+            return int(args[key])
+    return config_limit
+
+
+def worst_case_usd(parsed: Any, policy: Policy) -> float | None:
+    """The most a submitted config can spend: cost per sample times samples run.
+
+    Hawk runs every task item against every model, `epochs` times, and the runner
+    enforces `cost_limit` dollars per sample through Inspect. None means the config
+    does not bound itself, which is a refusal, not an unknown.
+    """
+    cost_limit = parsed.cost_limit
+    if not isinstance(cost_limit, (int, float)) or cost_limit <= 0:
+        return None
+    limit = parsed.limit if isinstance(parsed.limit, int) else None
+    epochs = parsed.epochs
+    epochs = epochs if isinstance(epochs, int) else getattr(epochs, "epochs", 1) or 1
+    models = sum(len(group.items) for group in parsed.models or []) or 1
+    samples = 0
+    for task in parsed.tasks:
+        for item in task.items:
+            per_item = _samples_in(item, limit)
+            if per_item is None:
+                return None
+            samples += per_item
+    return float(cost_limit) * samples * models * int(epochs)
 
 
 def validate_config(
@@ -252,49 +431,22 @@ def validate_config(
         problems.append(f"keys not allowed: {sorted(unknown)}")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,40}", str(config.get("name", ""))):
         problems.append("name must be lowercase letters, digits, hyphens (2-41 chars)")
-    if "eval_set_id" in config and not str(config["eval_set_id"]).startswith(policy.id_prefix):
-        problems.append(f"eval_set_id must start with {policy.id_prefix!r}")
+    if "eval_set_id" in config:
+        problems.append(
+            "remove eval_set_id: a fresh one is assigned at submission. Reusing an id makes "
+            "Hawk resume that eval set rather than run a new job, and `logs` reaches a "
+            "staged prefix through the Hawk API whatever this job's id is"
+        )
     for pkg in config.get("packages") or []:
         if pkg not in policy.packages:
             problems.append(f"package not allowed: {pkg!r}")
-    tasks = config.get("tasks") or []
-    if not tasks:
+    if not config.get("tasks"):
         problems.append("tasks is required")
-    for t in tasks:
-        if t.get("package") not in policy.packages:
-            problems.append(f"task package not allowed: {t.get('package')!r}")
-        if t.get("name") not in policy.task_names:
-            problems.append(f"task registry package not allowed: {t.get('name')!r}")
-        for item in t.get("items") or []:
-            args = item.get("args") or {}
-            if "logs" in args:
-                logs = str(args["logs"])
-                if not logs.startswith("hawk:") or logs.split("/")[0].removeprefix("hawk:") not in known_log_sources:
-                    problems.append(
-                        f"logs must be a hawk: source this investigation staged or ran, not {logs!r}"
-                    )
-            if "auditor_image" in args and args["auditor_image"] not in policy.auditor_images:
-                problems.append(f"auditor_image not allowed: {args['auditor_image']!r}")
-            for forbidden in ("setup", "sandbox", "solver"):
-                if forbidden in args:
-                    problems.append(f"task arg not allowed: {forbidden!r}")
     if not config.get("models"):
         problems.append("models is required")
-    for where, group in _model_items(config):
-        if group.get("package") != "openai" or group.get("name") != "openrouter":
-            problems.append(f"{where}: models must use package openai, provider openrouter")
-        for item in group.get("items") or []:
-            if item.get("name") not in policy.models:
-                problems.append(f"{where}: model not allowed: {item.get('name')!r}")
-            args = item.get("args") or {}
-            if args.get("base_url") != OPENROUTER_BASE_URL:
-                problems.append(f"{where}: args.base_url must be {OPENROUTER_BASE_URL}")
-            extra = set(args) - {"base_url", "config"}
-            if extra:
-                problems.append(f"{where}: model args not allowed: {sorted(extra)}")
-            cfg_extra = set(args.get("config") or {}) - {"reasoning_effort", "max_tokens", "temperature", "reasoning_tokens"}
-            if cfg_extra:
-                problems.append(f"{where}: model config keys not allowed: {sorted(cfg_extra)}")
+
+    # the raw-dict checks run before the parse, so a config that Hawk's schema also
+    # dislikes still hears the policy's objection rather than only the schema's
     runner = config.get("runner") or {}
     if set(runner) - ALLOWED_RUNNER:
         problems.append(f"runner keys not allowed: {sorted(set(runner) - ALLOWED_RUNNER)} (no image, cpu, memory, cleanup)")
@@ -308,21 +460,78 @@ def validate_config(
     for secret in runner.get("secrets") or []:
         if secret.get("name") not in policy.secrets or set(secret) - {"name", "description", "type"} or secret.get("type", "env") != "env":
             problems.append(f"runner secret not allowed: {secret}")
-    for key, cap in (("limit", policy.max_limit), ("epochs", policy.max_epochs), ("token_limit", policy.max_token_limit), ("time_limit", policy.max_time_limit)):
-        value = config.get(key)
-        if key in ("token_limit", "time_limit", "epochs") and value is None:
-            problems.append(f"{key} is required")
-        if isinstance(value, int) and value > cap:
-            problems.append(f"{key} {value} exceeds the cap {cap}")
-        if value is not None and not isinstance(value, int):
-            problems.append(f"{key} must be an integer")
-    if "limit" not in config and not any(
-        (item.get("args") or {}).get("sample_id") or (item.get("args") or {}).get("samples") or (item.get("args") or {}).get("limit")
-        for t in tasks for item in t.get("items") or []
-    ):
-        problems.append("set limit, or select samples in the task args: every job states its size")
-    return problems
+    if config.get("secrets"):
+        problems.append("top-level secrets are not allowed; runner.secrets holds the provider key")
+    for where, group in _model_items(config):
+        if group.get("package") != "openai" or group.get("name") != "openrouter":
+            problems.append(f"{where}: models must use package openai, provider openrouter")
+        for item in group.get("items") or []:
+            if item.get("name") not in policy.models:
+                problems.append(f"{where}: model not allowed: {item.get('name')!r}")
+            args = item.get("args") or {}
+            if args.get("base_url") != OPENROUTER_BASE_URL:
+                problems.append(f"{where}: args.base_url must be {OPENROUTER_BASE_URL}")
+            extra = set(args) - ALLOWED_MODEL_ARGS
+            if extra:
+                problems.append(f"{where}: model args not allowed: {sorted(extra)}")
+            cfg_extra = set(args.get("config") or {}) - ALLOWED_MODEL_CONFIG
+            if cfg_extra:
+                problems.append(f"{where}: model config keys not allowed: {sorted(cfg_extra)}")
 
+    parsed, schema_problems = parse_config(config)
+    if schema_problems:
+        return problems + [f"Hawk rejects this config: {p}" for p in schema_problems]
+
+    for task in parsed.tasks:
+        if task.package not in policy.packages:
+            problems.append(f"task package not allowed: {task.package!r}")
+        if task.name not in policy.task_names:
+            problems.append(f"task registry package not allowed: {task.name!r}")
+        for item in task.items:
+            where = f"tasks[{task.name}].{item.name}"
+            if item.secrets:
+                problems.append(f"{where}: task-level secrets are not allowed")
+            if item.isolation is not None:
+                problems.append(f"{where}: isolation is the operator's to set")
+            if item.sample_ids and len(item.sample_ids) > policy.max_limit:
+                problems.append(f"{where}: {len(item.sample_ids)} sample_ids exceeds {policy.max_limit}")
+            problems += _task_arg_problems(where, item.args or {}, policy, known_log_sources)
+
+    epochs = parsed.epochs if isinstance(parsed.epochs, int) else getattr(parsed.epochs, "epochs", None)
+    for key, value, cap in (
+        ("epochs", epochs, policy.max_epochs),
+        ("token_limit", parsed.token_limit, policy.max_token_limit),
+        ("time_limit", parsed.time_limit, policy.max_time_limit),
+    ):
+        if value is None:
+            problems.append(f"{key} is required")
+        elif not isinstance(value, int) or value > cap:
+            problems.append(f"{key} {value!r} must be an integer up to {cap}")
+    if isinstance(parsed.limit, int) and parsed.limit > policy.max_limit:
+        problems.append(f"limit {parsed.limit} exceeds the cap {policy.max_limit}")
+    if parsed.limit is not None and not isinstance(parsed.limit, int):
+        problems.append("limit must be an integer; a range is not allowed")
+    if parsed.cost_limit is None:
+        problems.append(
+            f"cost_limit is required: dollars per sample, up to {policy.max_cost_limit_usd}. "
+            "It is what makes the job's spend bounded, and what your reservation is computed from"
+        )
+    elif not (0 < parsed.cost_limit <= policy.max_cost_limit_usd):
+        problems.append(
+            f"cost_limit {parsed.cost_limit} must be above 0 and at most {policy.max_cost_limit_usd}"
+        )
+
+    worst = worst_case_usd(parsed, policy)
+    if worst is None and not problems:
+        problems.append(
+            "the job does not state its size: set limit, or sample_ids on every task item"
+        )
+    elif worst is not None and worst > policy.max_worst_case_usd:
+        problems.append(
+            f"worst case ${worst:,.2f} (cost_limit x samples x models x epochs) exceeds "
+            f"the ${policy.max_worst_case_usd:,.2f} a single job may hold; run it in parts"
+        )
+    return problems
 
 def task_package_name(spec: str) -> str:
     """The registry name of a package from its git or pip spec.

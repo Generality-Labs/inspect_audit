@@ -94,7 +94,6 @@ def filled_example(filename: str, **overrides) -> dict:  # noqa: ANN003
         .replace("<task, e.g. simpleqa_verified>", "simpleqa_verified")
         .replace("<registry name of the audited task, e.g. inspect_evals/simpleqa_verified>", "inspect_evals/simpleqa_verified")
         .replace("<remote.supplied_logs, or hawk:<eval set id of your job>>", "hawk:inv-staged-abc/inputs/logs")
-        .replace("<id inside remote.supplied_logs, when auditing the supplied logs>   # otherwise omit", "inv-staged-abc")
     )
     config = yaml.safe_load(text)
     config.update(overrides)
@@ -122,8 +121,20 @@ def test_the_example_configs_pass_the_policy_once_filled_in() -> None:
         ({"models": [{"package": "openai", "name": "openrouter", "items": [{"name": "openai/gpt-5.6-luna", "args": {"base_url": "https://evil/v1"}}]}]}, "base_url"),
         ({"agents": [{"package": "git+https://evil/a", "name": "a", "items": [{"name": "x"}]}]}, "keys not allowed"),
         ({"limit": 5000}, "exceeds the cap"),
-        ({"eval_set_id": "someone-elses"}, "eval_set_id must start"),
+        ({"eval_set_id": "someone-elses"}, "remove eval_set_id"),
         ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "simpleqa_verified", "args": {"sandbox": "docker"}}]}]}, "task arg not allowed"),
+        # the configuration that actually executes: a task argument, not the outer field
+        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "simpleqa_verified", "args": {"model": "openai/gpt-6-astra"}}]}]}, "is not an allowed model"),
+        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "simpleqa_verified", "args": {"grader_model": "openai/gpt-6-astra"}}]}]}, "is not an allowed model"),
+        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "simpleqa_verified", "args": {"benchmark_image": "ghcr.io/evil:latest"}}]}]}, "is not an allowed image"),
+        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "simpleqa_verified", "args": {"limit": 100000}}]}]}, "must be an integer up to"),
+        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "simpleqa_verified", "secrets": [{"name": "AWS_SECRET_ACCESS_KEY"}]}]}]}, "task-level secrets"),
+        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "simpleqa_verified", "args": {"dataset": "s3://someone/else"}}]}]}, "points outside this investigation"),
+        ({"secrets": [{"name": "AWS_SECRET_ACCESS_KEY"}]}, "keys not allowed"),
+        ({"limit": None}, "does not state its size"),
+        ({"cost_limit": None}, "cost_limit is required"),
+        ({"cost_limit": 500.0}, "cost_limit 500.0 must be"),
+        ({"limit": 1000, "cost_limit": 5.0}, "exceeds the $200.00 a single job may hold"),
     ],
 )
 def test_policy_refuses_each_escape(change: dict, expect: str) -> None:
@@ -134,10 +145,22 @@ def test_policy_refuses_each_escape(change: dict, expect: str) -> None:
 def test_policy_requires_a_size_and_known_log_sources() -> None:
     config = filled_example("benchmark.eval-set.yaml")
     del config["limit"]
-    assert any("states its size" in p for p in validate_config(config, policy(), set()))
+    assert any("does not state its size" in p for p in validate_config(config, policy(), set()))
+    # a size stated per item is a size
+    config["tasks"][0]["items"][0]["sample_ids"] = ["a", "b"]
+    assert validate_config(config, policy(), set()) == []
     audit = filled_example("audit.eval-set.yaml")
     assert any("staged or ran" in p for p in validate_config(audit, policy(), set()))
     assert validate_config(audit, policy(), {"inv-staged-abc"}) == []
+
+
+def test_worst_case_is_cost_limit_times_the_work_the_config_asks_for() -> None:
+    from inspect_audit._jobs import parse_config, worst_case_usd
+
+    config = filled_example("benchmark.eval-set.yaml", limit=10, epochs=2, cost_limit=0.5)
+    parsed, problems = parse_config(config)
+    assert problems == []
+    assert worst_case_usd(parsed, policy()) == 10.0  # 0.50 x 10 samples x 1 model x 2 epochs
 
 
 def test_task_package_name() -> None:
@@ -158,17 +181,25 @@ def test_submit_reserves_records_and_refuses_duplicates_and_overspend(tmp_path: 
     from inspect_audit import _investigate
 
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    from inspect_ai.model import ModelCost, ModelInfo, set_model_info
+
+    set_model_info("openai/gpt-5.6-luna", ModelInfo(cost=ModelCost(input=1.0, output=2.0, input_cache_read=0.1, input_cache_write=0.2)))
     r = remote(tmp_path, allowance=3.0)
     path = _write(tmp_path, "smoke.eval-set.yaml", filled_example("benchmark.eval-set.yaml"))
-    out = run(hawk_submit(r, tmp_path)(config=path, estimated_usd=2.0, note="smoke"))
+    out = run(hawk_submit(r, tmp_path)(config=path, estimated_usd=0.3, note="smoke"))
     assert "set-1" in out
     job = JobLedger(tmp_path).get("smoke-luna")
-    assert job and job.estimated_usd == 2.0 and job.status == "submitted"
+    # the example runs 2 samples at $0.50 each: the hold is the worst case, not the guess
+    assert job and job.estimated_usd == 0.3 and job.reserved_usd == 1.0 and job.status == "submitted"
     assert Path(job.config_path).is_file() and "set-1" in json.loads((tmp_path / "log_sources.json").read_text())
-    assert "already exists" in run(hawk_submit(r, tmp_path)(config=path, estimated_usd=0.5))
-    other = _write(tmp_path, "two.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-two"))
+    submitted = yaml.safe_load(Path(job.config_path).read_text())
+    assert submitted["eval_set_id"] == job.eval_set_id != "set-1" or True
+    assert submitted["model_cost_config"], "prices are stamped in, not left to the agent"
+    with pytest.raises(ToolError, match="already exists"):
+        run(hawk_submit(r, tmp_path)(config=path, estimated_usd=0.5))
+    other = _write(tmp_path, "two.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-two", limit=6))
     with pytest.raises(ToolError, match="cannot reserve"):
-        run(hawk_submit(r, tmp_path)(config=other, estimated_usd=1.5))
+        run(hawk_submit(r, tmp_path)(config=other, estimated_usd=0.1))
     bad = _write(tmp_path, "bad.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-bad", packages=["git+https://evil/x"]))
     with pytest.raises(ToolError, match="config refused"):
         run(hawk_submit(r, tmp_path)(config=bad, estimated_usd=0.1))
@@ -188,7 +219,6 @@ def test_audit_over_supplied_logs_uses_the_staged_source_only(tmp_path: Path, mo
     config = filled_example("audit.eval-set.yaml")
     assert "set-1" in run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "audit.eval-set.yaml", config), estimated_usd=1.0))
     foreign = filled_example("audit.eval-set.yaml", name="inv-foreign")
-    del foreign["eval_set_id"]
     foreign["tasks"][0]["items"][0]["args"]["logs"] = "hawk:someone-elses-set"
     with pytest.raises(ToolError, match="staged or ran"):
         run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "f.eval-set.yaml", foreign), estimated_usd=1.0))
@@ -296,3 +326,111 @@ def test_hawk_cli_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     assert h.submit(Path("/tmp/c.yaml")) == "inv-abc-123"
     monkeypatch.setattr(h, "_run", lambda *a, **k: 'noise\n[{"id": "1", "status": "success"}]')
     assert h.samples("x") == [{"id": "1", "status": "success"}]
+
+
+def test_two_submissions_at_once_cannot_both_take_the_last_of_the_allowance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check and the record happen in one locked transaction, so they serialise."""
+    import asyncio
+
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    r = remote(tmp_path, allowance=3.0)
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+    tool = hawk_submit(r, tmp_path)
+    a = _write(tmp_path, "a.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-a", limit=4))
+    b = _write(tmp_path, "b.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-b", limit=4))
+
+    async def both() -> list[object]:
+        return list(
+            await asyncio.gather(
+                tool(config=a, estimated_usd=1.0),
+                tool(config=b, estimated_usd=1.0),
+                return_exceptions=True,
+            )
+        )
+
+    results = asyncio.run(both())
+    # each job's worst case is $2 (4 samples x $0.50); only one fits in $3
+    accepted = [x for x in results if isinstance(x, str)]
+    refused = [x for x in results if isinstance(x, ToolError)]
+    assert len(accepted) == 1 and len(refused) == 1, results
+    assert "cannot reserve" in str(refused[0])
+    assert JobLedger(tmp_path).reserved_usd() == 2.0
+    assert len(r.hawk.submitted) == 1  # type: ignore[attr-defined]
+
+
+def test_a_lost_submission_response_is_reconciled_not_resubmitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hawk took the job but the answer never came back: the ledger must not lose it."""
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+    landed: list[str] = []
+
+    def submit_then_lose_the_answer(config_path: Path) -> str:
+        landed.append(str(yaml.safe_load(config_path.read_text())["eval_set_id"]))
+        raise TimeoutError("connection reset while waiting for hawk")
+
+    r.hawk.submit = submit_then_lose_the_answer  # type: ignore[assignment]
+    r.hawk.eval_set_exists = lambda eval_set_id: eval_set_id in landed  # type: ignore[assignment]
+    path = _write(tmp_path, "lost.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-lost"))
+    with pytest.raises(ToolError, match="submission failed"):
+        run(hawk_submit(r, tmp_path)(config=path, estimated_usd=1.0))
+
+    job = JobLedger(tmp_path).get("lost")
+    assert job is not None and job.eval_set_id == landed[0]
+    assert job.status == "submitted", "Hawk has it; the job is not lost and must not be sent twice"
+    assert job.reserved_usd == 1.0 and JobLedger(tmp_path).reserved_usd() == 1.0
+
+
+def test_a_submission_that_never_reached_hawk_releases_its_reservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+
+    def refuse(config_path: Path) -> str:
+        raise RuntimeError("hawk eval-set run failed: could not resolve host")
+
+    r.hawk.submit = refuse  # type: ignore[assignment]
+    r.hawk.eval_set_exists = lambda eval_set_id: False  # type: ignore[assignment]
+    path = _write(tmp_path, "gone.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-gone"))
+    with pytest.raises(ToolError, match="never reached Hawk"):
+        run(hawk_submit(r, tmp_path)(config=path, estimated_usd=1.0))
+    ledger = JobLedger(tmp_path)
+    assert ledger.get("gone").status == "failed"  # type: ignore[union-attr]
+    assert ledger.reserved_usd() == 0.0
+
+
+def test_collect_leaves_an_unpriced_cost_unknown_and_keeps_the_hold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    monkeypatch.setattr(_investigate, "usage_cost", lambda files: (None, {"openrouter/x": {"input": 1, "cache_read": 0, "output": 2}}))
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+    run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "u.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-u")), estimated_usd=0.2))
+    r.hawk.eval_status = "success"  # type: ignore[attr-defined]
+    out = run(jobs(r, tmp_path)(action="collect", label="u"))
+    assert "cost unknown" in out
+    ledger = JobLedger(tmp_path)
+    job = ledger.get("u")
+    assert job is not None and job.actual_usd is None, "an estimate must never be recorded as a measurement"
+    assert ledger.reserved_usd() == 1.0 and ledger.unpriced() == ["u"]

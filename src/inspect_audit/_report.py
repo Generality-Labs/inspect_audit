@@ -295,19 +295,18 @@ _PROCESS_NARRATION = re.compile(
 
 
 def lint_report_text(text: str) -> list[str]:
-    """Style checks the writing skill states; each hit names the offending sentence."""
+    """Blocking style problems in authored prose: dashes and drafting comments.
+
+    Only the report's own sentences are judged. Tables, code, quoted transcripts and
+    the table of contents are stripped before this sees the text, because a report
+    that has to reword its evidence to satisfy a style rule is a worse report.
+    """
     problems: list[str] = []
     if "\u2014" in text or "\u2013" in text:
         problems.append("em/en dashes present; use a comma or a full stop")
     if "<!--" in text:
         problems.append("drafting comments still present in the document")
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
-    long = [s for s in sentences if len(s.split()) > 40]
-    if long:
-        problems.append(
-            f"{len(long)} sentence(s) over 40 words, e.g. {long[0][:120]!r}"
-        )
-    narration = [s for s in sentences if _PROCESS_NARRATION.search(s)]
+    narration = [s for s in _sentences(text) if _PROCESS_NARRATION.search(s)]
     if len(narration) > 3:
         problems.append(
             f"{len(narration)} sentences narrate the process (\"I reviewed…\"); state findings, e.g. {narration[0][:120]!r}"
@@ -315,8 +314,43 @@ def lint_report_text(text: str) -> list[str]:
     return problems
 
 
+def lint_report_warnings(text: str) -> list[str]:
+    """Style notes that do not block publication; the agent sees them in the result."""
+    warnings: list[str] = []
+    long = [s for s in _sentences(text) if len(s.split()) > 40]
+    if long:
+        warnings.append(
+            f"{len(long)} sentence(s) over 40 words, e.g. {long[0][:120]!r}"
+        )
+    return warnings
+
+
+def _sentences(text: str) -> list[str]:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+
+
+# what is not the report's own prose: evidence, navigation, and rendered artefacts
+_NOT_PROSE = re.compile(
+    r"<(script|style|table|pre|code|blockquote|figcaption|nav)\b[^>]*>.*?</\1>",
+    re.S | re.I,
+)
+_TOC = re.compile(r'<(div|aside)[^>]*\bid="(TOC|toc)"[^>]*>.*?</\1>', re.S | re.I)
+
+
 def _rendered_text(html: str) -> str:
+    """Everything the reader sees, tags removed. Used for previews, not for linting."""
     text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.S | re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text)
+
+
+def _prose_text(html: str) -> str:
+    """The report's authored sentences: no tables, code, quotations or navigation."""
+    text = _TOC.sub(" ", html)
+    previous = ""
+    while previous != text:  # nested tables and code blocks inside them
+        previous = text
+        text = _NOT_PROSE.sub(" ", text)
     text = re.sub(r"<[^>]+>", " ", text)
     return re.sub(r"\s+", " ", text)
 
@@ -337,7 +371,8 @@ def publish_report(root: str) -> Tool:
             )
         qmd = await sandbox().read_file("/workspace/report/report.qmd")
         html = await sandbox().read_file("/workspace/report/report.html")
-        problems = lint_report_text(_rendered_text(html))
+        prose = _prose_text(html)
+        problems = lint_report_text(prose)
         if "<!--" in qmd:
             problems.append("drafting comments still present in report.qmd")
         if problems:
@@ -350,6 +385,11 @@ def publish_report(root: str) -> Tool:
         except (ValueError, OSError) as ex:
             raise ToolError(str(ex)) from ex
         store_as(InvestigationState).published = str(destination)
-        return f"Published {destination / 'report.html'}. Give the operator a concise summary and the report path."
+        warnings = lint_report_warnings(prose)
+        return (
+            f"Published {destination / 'report.html'}."
+            + (f" Style warnings, not blocking: {'; '.join(warnings)}." if warnings else "")
+            + " Give the operator a concise summary and the report path."
+        )
 
     return execute

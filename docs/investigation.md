@@ -12,18 +12,36 @@ explicit interactive mode waits through ACP.
 
 The agent's shell runs in a container with no credentials. The dispatch tools run in
 the Inspect process on this machine and use the `hawk` CLI (your login, in its keyring)
-and, for staging supplied logs into an audit job's S3 prefix, your AWS profile. The
-config is treated as hostile input: allowlisted packages (the task package and
-inspect_audit only), task registry names, models, auditor images, secrets
-(`OPENROUTER_API_KEY` only) and runner environment keys; runner image, cpu, memory,
-agents, solvers and unknown keys refused; `limit`/`epochs`/`token_limit`/`time_limit`
-required and capped; `eval_set_id` prefixed `inv-`; `logs` only from sources this
-investigation staged or ran. Every accepted submission is saved under
-`<investigation>/jobs/` and recorded in `jobs.json`; a job name can only be submitted
-once, so a restarted session cannot relaunch the same batch. Each submission reserves the agent's own cost estimate against
-the shared allowance until `jobs(action="collect")` downloads the logs (to
-`/inputs/jobs/<label>/`, read-only in the box) and records the real cost from their
-recorded usage and OpenRouter's prices. Worker models are restricted to `worker_models`.
+and, for staging the supplied logs once at setup, your AWS profile.
+
+A submitted config is treated as hostile input. It is parsed with Hawk's own schema and
+then checked as the thing that will actually run: allowlisted packages (the task package
+and inspect_audit only), task registry names, models, images, secrets
+(`OPENROUTER_API_KEY` only) and runner environment keys, with the same rules applied to
+task arguments, where a `model`, an `image`, a size or a log source can otherwise be
+overridden past the outer fields. Task-level secrets, isolation, runner image, cpu,
+memory, agents, solvers and unknown keys are refused. `epochs`, `token_limit` and
+`time_limit` are required and capped, and a null `limit` is not a size.
+
+Spend is bounded, not estimated. Every config states `cost_limit`, the dollars one
+sample may spend, which Inspect enforces inside the runner using prices stamped in at
+submission from the same registry the local allowance uses. The job holds
+`cost_limit x samples x models x epochs` against the shared allowance from submission
+until `jobs(action="collect")` downloads the logs (to `/inputs/jobs/<label>/`, read-only
+in the box) and records what it really cost. If a model in a collected job has no
+registered price the cost stays unknown and the reservation stands, rather than an
+estimate being written down as a measurement. The check and the record happen in one
+locked ledger transaction, so two submissions in flight cannot both take the last of the
+allowance.
+
+The eval set id is assigned at submission, one per job: a reused id makes Hawk resume
+that set. Supplied logs stay at the prefix they were staged to and are read through the
+Hawk API, so any job can read them whatever its own id is. Every accepted submission is
+saved under `<investigation>/jobs/` and recorded in `jobs.json`, written as `pending`
+before the CLI call, so a submission whose response is lost is reconciled against Hawk
+rather than lost or sent twice. `resume=<investigation dir>` carries on in an existing
+directory: same inputs, workspace, journal and ledger, no restaging, pending jobs
+reconciled first. Worker models are restricted to `worker_models`.
 Models are routed straight to OpenRouter with `OPENROUTER_API_KEY` from `secrets_file`;
 the middleman is bypassed with `HAWK_RUNNER_REFRESH_URL: ""`. Required with
 `hawk_api_url`: `task_package`, the git spec Hawk runners install to run the audited task.
@@ -127,7 +145,8 @@ The outer investigator is local-only. Task construction still creates the worksp
 before evaluation starts, and reconstructing the task creates a new directory.
 Log files are hardlinked into read-only inputs on the same filesystem, with copying
 only across filesystems; use completed immutable logs, since hardlinks share changes
-made by another host process. Automatic retry/resume workspace reuse is not implemented.
+made by another host process. Resuming is explicit: pass `resume=<investigation dir>`;
+there is no automatic retry.
 The research container uses a per-run Compose network with internet egress.
 Its Inspect image install still uses the host version; a development-only host build
 needs an explicit image strategy before this outer task is moved to Hawk.

@@ -1,8 +1,8 @@
 # Audit benchmark items with inspect_audit's sample auditors. Copy, edit, save, hawk_submit.
-# `logs` must be either the seed's remote.supplied_logs (then set eval_set_id to its id) or
-# hawk:<eval set id of a benchmark job you ran> (then omit eval_set_id).
+# `logs` is either the seed's remote.supplied_logs or hawk:<eval set id of a job you ran>.
+# Both are fetched through the Hawk API, so a job reads them whatever its own id is; the
+# id is assigned at submission and is not yours to set.
 name: inv-audit-smoke
-eval_set_id: <id inside remote.supplied_logs, when auditing the supplied logs>   # otherwise omit
 packages:
   - <remote.audit_package>
   - <remote.task_package>
@@ -41,6 +41,7 @@ runner:
     HAWK_RUNNER_REFRESH_URL: ""
   secrets:
     - name: OPENROUTER_API_KEY
+cost_limit: 2.00                           # dollars per audited item, enforced in the runner
 epochs: 1
 token_limit: 4000000
 time_limit: 7200

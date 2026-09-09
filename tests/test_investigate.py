@@ -20,6 +20,7 @@ from inspect_ai.util import sandbox
 from test_helpers.logs import run_fixture_eval
 
 from inspect_audit._investigate import investigate, publish_report, save_publication
+from inspect_audit._jobs import JobLedger
 
 
 @pytest.fixture(autouse=True)
@@ -410,7 +411,7 @@ PY"""
 
 
 def test_publish_lint_catches_dashes_comments_and_process_narration() -> None:
-    from inspect_audit._report import lint_report_text
+    from inspect_audit._report import lint_report_text, lint_report_warnings
 
     bad = (
         "I reviewed the logs. I inspected the grader. I examined the paper. I checked the "
@@ -419,9 +420,34 @@ def test_publish_lint_catches_dashes_comments_and_process_narration() -> None:
     problems = lint_report_text(bad)
     assert any("dash" in p for p in problems)
     assert any("drafting comments" in p for p in problems)
-    assert any("over 40 words" in p for p in problems)
     assert any("narrate" in p for p in problems)
+    # a long sentence is a note, not a refusal to publish
+    assert not any("over 40 words" in p for p in problems)
+    assert any("over 40 words" in w for w in lint_report_warnings(bad))
     assert lint_report_text("Claude Haiku 4.5 abstained on 812 of 1,000 attempts.") == []
+
+
+def test_lint_reads_prose_only_not_tables_code_or_quoted_evidence() -> None:
+    """Evidence must never be reworded to satisfy a style rule."""
+    from inspect_audit._report import (
+        _prose_text,
+        lint_report_text,
+        lint_report_warnings,
+    )
+
+    html = (
+        '<nav id="TOC"><ul><li>The task</li><li>The grader</li></ul></nav>'
+        "<p>The grader accepted 812 of 1,000 attempts.</p>"
+        "<table><tr><td>" + "</td><td>".join(["cell"] * 60) + "</td></tr></table>"
+        "<blockquote>the model wrote \u2014 with an em dash \u2014 exactly this</blockquote>"
+        "<pre><code>df = df[df.score \u2014 1]</code></pre>"
+        "<figcaption>Figure 1 \u2014 abstentions by model</figcaption>"
+    )
+    prose = _prose_text(html)
+    assert "812 of 1,000" in prose
+    assert "cell" not in prose and "em dash" not in prose and "df = df" not in prose
+    assert lint_report_text(prose) == []
+    assert lint_report_warnings(prose) == []
 
 
 def test_the_same_input_cited_twice_publishes_once(tmp_path: Path) -> None:
@@ -469,3 +495,54 @@ def test_mounted_skills_are_wellformed_and_adapted() -> None:
                 if "uv run" in line and "gnore" not in line
             ]
             assert not leftovers, (name, leftovers)
+
+
+def test_resume_reuses_the_directory_ledger_and_staged_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A restarted investigator must not stage its inputs again or lose its jobs."""
+    from inspect_audit import _investigate
+
+    staged: list[str] = []
+    monkeypatch.setattr(
+        _investigate,
+        "stage_logs_to_s3",
+        lambda local_dir, bucket, eval_set_id, profile: staged.append(eval_set_id)
+        or f"hawk:{eval_set_id}/inputs/logs",
+    )
+    repo = str(git_repo(tmp_path / "repo"))
+    log = run_fixture_eval(str(tmp_path / "logs"))
+    common = dict(
+        logs=[str(log)],
+        hawk_api_url="https://hawk.example",
+        task_package="git+https://github.com/x/inspect_evals@abc",
+        output_dir=str(tmp_path / "runs"),
+    )
+    first = investigate(repo, **common)  # type: ignore[arg-type]
+    root = Path(first.metadata["investigation_dir"])
+    (root / "jobs.json").write_text(
+        json.dumps(
+            [
+                {
+                    "label": "smoke",
+                    "kind": "eval-set",
+                    "eval_set_id": "inv-smoke-1234abcd",
+                    "config_path": str(root / "jobs" / "smoke.eval-set.yaml"),
+                    "submitted_at": "2026-09-09T00:00:00+00:00",
+                    "estimated_usd": 1.0,
+                    "reserved_usd": 2.0,
+                    "status": "submitted",
+                }
+            ]
+        )
+    )
+    assert len(staged) == 1
+
+    second = investigate(repo, resume=str(root), **common)  # type: ignore[arg-type]
+    assert Path(second.metadata["investigation_dir"]) == root
+    assert len(staged) == 1, "the supplied logs were staged once, at first setup"
+    ledger = JobLedger(root)
+    assert [j.label for j in ledger.jobs] == ["smoke"] and ledger.reserved_usd() == 2.0
+
+    with pytest.raises(ValueError, match="not an investigation directory"):
+        investigate(repo, resume=str(tmp_path / "nowhere"), **common)  # type: ignore[arg-type]

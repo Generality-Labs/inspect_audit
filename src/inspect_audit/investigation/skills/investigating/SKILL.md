@@ -87,9 +87,17 @@ Hawk. You write the eval-set config yourself, the way any Inspect user does: Haw
 documentation is under /inputs/docs when supplied, and two worked configs sit next to
 this skill in examples/ (benchmark.eval-set.yaml, audit.eval-set.yaml). Copy one, fill
 in the values from the seed's `remote` block, save it under /workspace/jobs/, and call
-hawk_submit with its path and your cost estimate. The submission is checked against a
-policy (allowed packages, models, images, secrets; limits required and capped; `logs`
-only from sources you created) and refused with reasons if it strays; fix and resubmit.
+hawk_submit with its path and your cost estimate. The submission is parsed with Hawk's
+own schema and checked against a policy (allowed packages, models, images and secrets,
+including in task arguments; limits required and capped; `logs` only from sources you
+created) and refused with reasons if it strays; fix and resubmit.
+
+Two fields decide what a job costs. `cost_limit` is dollars per sample, enforced inside
+the runner, and it is required. Your size is `limit`, or `sample_ids` on each task item.
+Their product, times models and epochs, is what the job holds against the allowance from
+submission until you collect it, so an over-generous cost_limit does not cost you money
+but does cost you room to launch anything else. The eval set id is assigned for you; do
+not set one.
 
 The benchmark task: run it with the models, samples, epochs and task arguments you
 choose, to generate attempts where the supplied logs are thin, to rerun a model under
@@ -104,8 +112,8 @@ failure-attribution, approach-census, contamination, ground-truth-access,
 environment-integrity, other-findings. When the scorer calls a model, choose the grader
 role deliberately after reading which grader the recorded logs used. The supplied logs
 are already staged for Hawk: the seed's `remote.supplied_logs` is the `logs` value to
-use and its id (after `hawk:`, before `/inputs`) is the `eval_set_id` to set. To audit
-attempts from a job you ran, use hawk:<that job's eval set id> and omit eval_set_id.
+use. To audit attempts from a job you ran, use hawk:<that job's eval set id>. Either way
+the runner fetches them through the Hawk API, so they are readable from any job.
 
 Procedure: one or two samples first, wait, collect, read the result as you would any
 log and check the job saw what you meant; then expand. jobs(action="wait") blocks

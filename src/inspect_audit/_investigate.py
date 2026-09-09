@@ -39,12 +39,15 @@ from ._jobs import (
     JobLedger,
     Policy,
     copy_into_inputs,
+    parse_config,
+    slug,
     stage_logs_to_s3,
     task_package_name,
     usage_cost,
     utcnow,
     validate_config,
     wait_for,
+    worst_case_usd,
     write_config,
 )
 from ._report import (
@@ -445,17 +448,95 @@ class Remote:
                 f"{model!r} is not an allowed worker model. Allowed: {', '.join(self.worker_models)}"
             )
 
-    def reserve(self, estimated_usd: float) -> None:
-        if not (estimated_usd > 0):
-            raise ToolError("estimated_usd must be a positive number: say what you expect this to cost")
+    def new_eval_set_id(self, label: str) -> str:
+        """A fresh id per job. Reusing one makes Hawk resume that set instead."""
+        return f"{self.policy.id_prefix}{slug(label)}-{uuid4().hex[:8]}"[:43]
+
+    def model_costs(self) -> dict[str, dict[str, float]]:
+        """Prices for the worker models, so the runner can enforce its cost limit.
+
+        The agent may not write these: a job whose prices are its own invention has a
+        cost limit that means nothing. They come from the same registry the local
+        allowance is accounted with.
+        """
+        from inspect_ai.model._model_info import get_model_info
+
+        costs: dict[str, dict[str, float]] = {}
+        for model in self.worker_models:
+            info = get_model_info(model)
+            cost = info.cost if info else None
+            if cost is None:
+                continue
+            costs[model] = {
+                "input": cost.input or 0.0,
+                "output": cost.output or 0.0,
+                "input_cache_read": cost.input_cache_read or 0.0,
+                "input_cache_write": cost.input_cache_write or 0.0,
+            }
+        return costs
+
+    def committed_usd(self) -> float:
+        """Spent locally, plus collected remote costs, plus live reservations."""
         local = _local_spend()[0] or 0.0
-        committed = local + self.ledger.actual_usd() + self.ledger.reserved_usd()
-        if committed + estimated_usd > self.allowance_usd:
-            raise ToolError(
-                f"cannot reserve ${estimated_usd:.2f}: ${committed:.2f} of the ${self.allowance_usd:.2f} "
-                "allowance is already spent or reserved. Collect finished jobs to release their "
-                "reservations, or scale the request down."
-            )
+        return local + self.ledger.actual_usd() + self.ledger.reserved_usd()
+
+    def reserve_and_record(self, job: Job) -> None:
+        """Hold a job's worst case against the allowance and write it down, atomically.
+
+        Both halves happen under the ledger's file lock, and the ledger is re-read
+        inside it, so two submissions in flight cannot both take the last of the money.
+        The job is written as `pending` before anything is sent to Hawk.
+        """
+        with self.ledger.transaction() as ledger:
+            if ledger.get(job.label) is not None:
+                raise ToolError(
+                    f"a job labelled {job.label!r} already exists; use jobs() on it or choose another name"
+                )
+            committed = self.committed_usd()
+            if committed + job.reserved_usd > self.allowance_usd:
+                raise ToolError(
+                    f"cannot reserve ${job.reserved_usd:.2f}: ${committed:.2f} of the "
+                    f"${self.allowance_usd:.2f} allowance is already spent or reserved. Collect "
+                    "finished jobs to release their reservations, or make this job smaller "
+                    "(fewer samples, a lower cost_limit)."
+                )
+            ledger.add(job)
+
+    def settle(self, label: str, **fields: object) -> None:
+        """Update one job under the lock; the ledger on disk is the record."""
+        with self.ledger.transaction() as ledger:
+            job = ledger.get(label)
+            if job is None:  # pragma: no cover - only if the file was edited underneath us
+                return
+            for key, value in fields.items():
+                setattr(job, key, value)
+
+    def reconcile(self) -> list[str]:
+        """Resolve jobs left `pending` by a lost response or a killed process.
+
+        A submission is written down before it is sent, so a job can be pending when
+        Hawk never saw it, or when Hawk took it and the answer never came back. Asking
+        Hawk which it was is the only way to know, and getting it wrong either loses a
+        running job or launches it twice.
+        """
+        notes: list[str] = []
+        for job in list(self.ledger.jobs):
+            if job.status != "pending":
+                continue
+            try:
+                exists = self.hawk.eval_set_exists(job.eval_set_id)
+            except Exception as ex:  # network or auth trouble: leave it pending
+                notes.append(f"{job.label}: could not reach Hawk to check ({ex})")
+                continue
+            if exists:
+                self.settle(job.label, status="submitted")
+                self.known_sources.add(job.eval_set_id)
+                self.save_sources()
+                notes.append(f"{job.label}: was submitted after all ({job.eval_set_id})")
+            else:
+                self.settle(job.label, status="failed")
+                notes.append(f"{job.label}: never reached Hawk; reservation released")
+        return notes
 
 
 def _local_spend() -> tuple[float | None, list[str]]:
@@ -497,16 +578,24 @@ def investigation_budget(
         else:
             lines.append(f"Spent: ${total:.2f}   Remaining: ${max(0.0, budget_usd - total):.2f}")
         if remote is not None:
+            remote.ledger.reload()
             jobs = remote.ledger.jobs
             lines.append(
-                f"Remote jobs: {len(jobs)} submitted, ${remote.ledger.actual_usd():.2f} collected cost, "
-                f"${remote.ledger.reserved_usd():.2f} reserved on jobs not yet collected"
+                f"Remote jobs: {len(jobs)} launched, ${remote.ledger.actual_usd():.2f} measured cost, "
+                f"${remote.ledger.reserved_usd():.2f} held against jobs not yet collected"
             )
             for j in jobs:
                 cost_text = (
-                    f"${j.actual_usd:.2f}" if j.actual_usd is not None else f"reserved ${j.estimated_usd:.2f}"
+                    f"${j.actual_usd:.2f} spent"
+                    if j.actual_usd is not None
+                    else f"holds ${j.reserved_usd:.2f} (you estimated ${j.estimated_usd:.2f})"
                 )
                 lines.append(f"  {j.label} ({j.kind}, {j.eval_set_id}): {j.status}, {cost_text}")
+            if remote.ledger.unpriced():
+                lines.append(
+                    "  collected but unpriced, so their real cost is unknown and their "
+                    f"reservation is still held: {', '.join(remote.ledger.unpriced())}"
+                )
             committed = (total if not unpriced else 0.0) + remote.ledger.actual_usd() + remote.ledger.reserved_usd()
             lines.append(f"Committed in total: ${committed:.2f} of ${budget_usd:.2f}")
         lines.append(
@@ -526,15 +615,23 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
 
         Write the config yourself (see the investigating skill's examples; the Hawk
         docs under /inputs/docs describe every field), save it under /workspace, and
-        pass its path. The file is checked against this investigation's policy: only
-        the allowed packages, task packages, models, images, secrets and environment
-        keys; limits present and capped; `logs` only from sources you staged or ran.
-        Anything else is refused with the reasons. On success the job's cost estimate
-        is reserved against the allowance until jobs(action="collect").
+        pass its path. It is parsed with Hawk's own schema and then checked against
+        this investigation's policy: only the allowed packages, task packages, models,
+        images, secrets and environment keys; task arguments that name a model, an
+        image, a size or a log source must satisfy the same rules; `cost_limit` is
+        required and capped; the job must state how many samples it runs. Anything
+        else is refused with the reasons.
+
+        The eval set id and the model prices are set here, not by you: a fresh id per
+        job (a reused one makes Hawk resume that set) and the prices the allowance is
+        accounted with, so the runner's cost limit means what it says. Your job holds
+        its worst case (cost per sample x samples x models x epochs) against the
+        allowance until jobs(action="collect").
 
         Args:
             config: Path of the YAML file in /workspace, e.g. /workspace/jobs/smoke.eval-set.yaml.
-            estimated_usd: What you expect the job to cost; reserved until collected.
+            estimated_usd: What you expect this to really cost. Recorded and compared
+                with the outcome; the reservation is the worst case, not this number.
             note: Why you are running this; recorded in the ledger.
         """
         if not config.startswith("/workspace/"):
@@ -546,29 +643,57 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
             data = yaml.safe_load(host_path.read_text())
         except yaml.YAMLError as ex:
             raise ToolError(f"config is not valid YAML: {ex}") from ex
+        if not isinstance(data, dict):
+            raise ToolError("config must be a YAML mapping")
+        if not (estimated_usd > 0):
+            raise ToolError("estimated_usd must be positive: say what you expect this to cost")
+
         problems = validate_config(data, remote.policy, remote.known_sources)
         if problems:
             raise ToolError("config refused:\n- " + "\n- ".join(problems))
+
         label = str(data["name"]).removeprefix(remote.policy.id_prefix)
-        if remote.ledger.get(label):
-            job = remote.ledger.get(label)
-            assert job is not None
-            return f"a job named {data['name']!r} already exists ({job.eval_set_id}, {job.status}); use jobs() on it or choose another name"
-        remote.reserve(estimated_usd)
+        eval_set_id = remote.new_eval_set_id(label)
+        data["eval_set_id"] = eval_set_id
+        data["model_cost_config"] = remote.model_costs()
+        parsed, _ = parse_config(data)
+        worst = worst_case_usd(parsed, remote.policy)
+        if worst is None:  # pragma: no cover - validate_config already refused this
+            raise ToolError("the job does not state its size")
+
         submitted_path = write_config(root, label, data)
-        try:
-            eval_set_id = await asyncio.to_thread(remote.hawk.submit, submitted_path)
-        except Exception as ex:
-            raise ToolError(f"submission failed: {ex}") from ex
-        remote.ledger.add(
-            Job(label=label, kind="eval-set", eval_set_id=eval_set_id, config_path=str(submitted_path),
-                submitted_at=utcnow(), estimated_usd=estimated_usd, note=note)
+        job = Job(
+            label=label,
+            kind="eval-set",
+            eval_set_id=eval_set_id,
+            config_path=str(submitted_path),
+            submitted_at=utcnow(),
+            estimated_usd=estimated_usd,
+            reserved_usd=worst,
+            status="pending",
+            note=note,
         )
+        remote.reserve_and_record(job)
+
+        try:
+            returned = await asyncio.to_thread(remote.hawk.submit, submitted_path)
+        except Exception as ex:
+            # the job is already written down as pending; ask Hawk whether it landed
+            notes = await asyncio.to_thread(remote.reconcile)
+            raise ToolError(
+                f"submission failed: {ex}\n" + ("\n".join(notes) if notes else "")
+            ) from ex
+        if returned != eval_set_id:  # Hawk renamed it; the ledger follows Hawk
+            eval_set_id = returned
+        remote.settle(label, status="submitted", eval_set_id=eval_set_id)
         remote.known_sources.add(eval_set_id)
         remote.save_sources()
         return (
-            f"Submitted {data['name']!r} as Hawk eval set {eval_set_id}. Reserved ${estimated_usd:.2f}. "
-            f"jobs(action='wait', label='{label}') blocks until it finishes; jobs(action='collect', ...) brings the logs to /inputs/jobs/{label}/."
+            f"Submitted {data['name']!r} as Hawk eval set {eval_set_id}. Reserved "
+            f"${worst:.2f}, the most it can spend (you estimated ${estimated_usd:.2f}). "
+            f"jobs(action='watch', label='{label}') shows it running; jobs(action='wait', "
+            f"label='{label}') blocks until it finishes; jobs(action='collect', ...) brings "
+            f"the logs to /inputs/jobs/{label}/ and releases what it did not spend."
         )
 
     return execute
@@ -713,15 +838,25 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     raise ToolError("no .eval files were downloaded")
                 dest = copy_into_inputs(files, root / "inputs", label)
                 cost, usage = usage_cost(files)
-                job.actual_usd = cost if cost is not None else job.estimated_usd
-                job.collected_to = str(dest)
-                job.evals = [dict(r) for r in rows]
-                job.status = "success" if all(r["status"] == "success" for r in rows) else "error"
-                ledger.save()
+                # an unpriced model leaves the real cost unknown: recording the
+                # estimate here would turn a guess into a measurement, so the
+                # reservation stands instead
+                remote.settle(
+                    label,
+                    actual_usd=cost,
+                    collected_to=str(dest),
+                    evals=[dict(r) for r in rows],
+                    status="success" if all(r["status"] == "success" for r in rows) else "error",
+                )
+                ledger.reload()
+                job = ledger.get(label) or job
                 lines = [f"collected {len(files)} log(s) to /inputs/jobs/{label}/"]
                 lines += [f"  {r['task']} {r['model']}: {r['status']} {r['samples']}" for r in rows]
                 lines.append(
-                    f"cost: ${cost:.2f}" if cost is not None else f"cost unknown for some models; reservation ${job.estimated_usd:.2f} kept"
+                    f"cost: ${cost:.2f}, reservation of ${job.reserved_usd:.2f} released"
+                    if cost is not None
+                    else f"cost unknown: a model in this job has no registered price, so the "
+                    f"${job.reserved_usd:.2f} reservation stays held"
                 )
                 lines += [f"  {m}: in {u['input']:,} cache_read {u['cache_read']:,} out {u['output']:,}" for m, u in usage.items()]
                 return "\n".join(lines)
@@ -759,6 +894,16 @@ async def _continue(state: AgentState, interactive: bool) -> bool | str:
     return await _operator_turn(state)
 
 
+def _resumable(resume: str) -> Path:
+    """An existing investigation directory, with its inputs, workspace and ledger."""
+    root = Path(resume).expanduser().resolve()
+    if not (root / "inputs" / "seed.json").is_file() or not (root / "work").is_dir():
+        raise ValueError(
+            f"{resume} is not an investigation directory: it has no inputs/seed.json and work/"
+        )
+    return root
+
+
 @task
 def investigate(
     repo: str,
@@ -770,6 +915,7 @@ def investigate(
     revision: str | None = None,
     paths: list[str] | None = None,
     output_dir: str = "investigations",
+    resume: str | None = None,
     budget_usd: float = 10,
     enforce_cost_limit: bool = True,
     token_limit: str | int | None = None,
@@ -799,6 +945,10 @@ def investigate(
         revision: Commit to snapshot (default HEAD).
         paths: Repository paths to include in the snapshot (default: everything).
         output_dir: Where the investigation directory is created.
+        resume: An existing investigation directory to carry on in, instead of creating
+            one. Its inputs, workspace, journal and job ledger are reused, supplied logs
+            are not staged again, and jobs left pending by an interrupted run are
+            reconciled with Hawk before the agent starts.
         budget_usd: Dollar allowance for this investigator's own model calls.
         enforce_cost_limit: Enforce `budget_usd` through Inspect's cost limit. Needs a
             price for the model; OpenRouter prices are registered automatically.
@@ -831,7 +981,8 @@ def investigate(
         register_openrouter_costs()
     if hawk_api_url and not task_package:
         raise ValueError("hawk_api_url needs task_package: the package Hawk runners install to run the audited task")
-    root = prepare_workspace(
+    resumed = _resumable(resume) if resume else None
+    root = resumed or prepare_workspace(
         repo,
         revision,
         paths,
@@ -850,16 +1001,19 @@ def investigate(
             root, hawk_api_url, secrets_file, task_package or "", audit_package, auditor_image,
             worker_models or DEFAULT_WORKERS, log_bucket, aws_profile, budget_usd,
         )
-        # the supplied logs are staged by us, once, at setup: a Hawk runner reads
-        # only its own eval set's storage, and the agent gets no S3 capability
-        staged_logs: str | None = None
-        if logs and (root / "inputs" / "logs").is_dir():
+        seed_path = root / "inputs" / "seed.json"
+        seed = json.loads(seed_path.read_text())
+        # the supplied logs are staged by us, once, at setup: the agent gets no S3
+        # capability, and a resumed investigation reuses what is already up there
+        staged_logs: str | None = (seed.get("remote") or {}).get("supplied_logs")
+        if logs and (root / "inputs" / "logs").is_dir() and not staged_logs:
             eval_set_id = f"inv-inputs-{root.name[:8]}"
             staged_logs = stage_logs_to_s3(root / "inputs" / "logs", log_bucket, eval_set_id, aws_profile)
             remote.known_sources.add(eval_set_id)
             remote.save_sources()
-        seed_path = root / "inputs" / "seed.json"
-        seed = json.loads(seed_path.read_text())
+        if resumed:
+            for note in remote.reconcile():
+                logger.info("resume: %s", note)
         seed["remote"] = {
             "hawk": hawk_api_url,
             "task_package": task_package,
@@ -868,10 +1022,14 @@ def investigate(
             "auditor_image": auditor_image,
             "supplied_logs": staged_logs,
             "note": (
-                "write an eval-set config under /workspace and hawk_submit it. To audit the supplied "
-                "logs, set eval_set_id to the id in supplied_logs and use supplied_logs as the audit "
-                "task's logs argument; to audit a job you ran, use hawk:<its eval set id>. "
-                "jobs() reports, waits, collects into /inputs/jobs/<label>/ and shows runner logs."
+                "write an eval-set config under /workspace and hawk_submit it. To audit the "
+                "supplied logs, pass supplied_logs as the audit task's logs argument; to audit a "
+                "job you ran, use hawk:<its eval set id>. Do not set eval_set_id: submission "
+                "assigns a fresh one, and logs are fetched through the Hawk API, so a job reads "
+                "them whatever its own id is. Every config states cost_limit, the dollars a "
+                "single sample may spend, and its size; the two decide what the job holds "
+                "against the allowance. jobs() watches, waits, collects into "
+                "/inputs/jobs/<label>/ and shows runner logs, traces and transcripts."
             ),
         }
         seed_path.write_text(json.dumps(seed, indent=2))

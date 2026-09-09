@@ -291,9 +291,10 @@ def test_supplied_logs_are_staged_by_us_at_sample_setup_not_by_the_agent(
     subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "https://github.com/org/bench.git"], check=True)
     log = tmp_path / "a.eval"
     log.write_bytes(b"x")
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-test\n")
     target = _investigate.investigate(
         str(repo), logs=[str(log)], output_dir=str(tmp_path / "runs"), enforce_cost_limit=False,
-        hawk_api_url=HAWK,
+        hawk_api_url=HAWK, secrets_file=str(tmp_path / ".env"),
     )
     root = Path(target.metadata["investigation_dir"])
     seed = json.loads((root / "inputs/seed.json").read_text())
@@ -948,12 +949,14 @@ def test_logs_already_parked_where_hawk_can_read_them_are_not_copied(
     subprocess.run(["git", "-C", str(repo), "-c", "user.name=T", "-c", "user.email=t@e.org", "commit", "-qm", "c"], check=True)
     subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "https://github.com/org/bench.git"], check=True)
 
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-test\n")
     target = _investigate.investigate(
         str(repo),
         logs=["hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs"],
         output_dir=str(tmp_path / "runs"),
         enforce_cost_limit=False,
         hawk_api_url=HAWK,
+        secrets_file=str(tmp_path / ".env"),
     )
     root = Path(target.metadata["investigation_dir"])
     seed = json.loads((root / "inputs/seed.json").read_text())
@@ -1038,3 +1041,82 @@ def test_a_local_only_investigation_has_no_log_reading_tool(
     )
     names = {t.__name__ if hasattr(t, "__name__") else "" for t in target.solver.__dict__.get("tools", [])}
     assert "logs" not in names
+
+
+def test_remote_work_refuses_to_start_without_a_secrets_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every job in the first real run failed with 401 because none was found.
+
+    The default looked only where Inspect looks, upwards from the working directory,
+    and the run was launched from a worktree with no .env in it. The agent then spent
+    twenty minutes discovering that its runners could not authenticate.
+    """
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
+    monkeypatch.setattr(_investigate, "find_dotenv", lambda usecwd=True: "")
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "t.py").write_text("x")
+    subprocess.run(["git", "-C", str(repo), "add", "t.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=T", "-c", "user.email=t@e.org", "commit", "-qm", "c"], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "https://github.com/org/bench.git"], check=True)
+
+    with pytest.raises(ValueError, match="needs a secrets file"):
+        _investigate.investigate(
+            str(repo), output_dir=str(tmp_path / "runs"), hawk_api_url=HAWK, enforce_cost_limit=False
+        )
+
+    # beside the benchmark is one of the places it looks
+    (repo / ".env").write_text("OPENROUTER_API_KEY=sk-test\n")
+    target = _investigate.investigate(
+        str(repo), output_dir=str(tmp_path / "runs2"), hawk_api_url=HAWK, enforce_cost_limit=False
+    )
+    assert target.metadata["investigation_dir"]
+
+    # and beside the investigation file, which wins
+    (repo / ".env").unlink()
+    config = tmp_path / "here" / "investigation.yaml"
+    config.parent.mkdir()
+    config.write_text(f"repo: {repo}\noutput_dir: {tmp_path / 'runs3'}\nhawk_api_url: {HAWK}\nenforce_cost_limit: false\n")
+    (config.parent / ".env").write_text("OPENROUTER_API_KEY=sk-test\n")
+    assert _investigate.investigate(config=str(config)).metadata["investigation_dir"]
+
+
+def test_a_name_is_free_again_when_its_submission_never_reached_hawk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first run lost a job name to a failed submission and had to invent v2."""
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    _price("openrouter/openai/gpt-5.6-luna")
+    r = remote(tmp_path, allowance=50.0)
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+    path = _write(tmp_path, "j.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-once"))
+
+    async def refuse(config_path: Path) -> str:
+        raise RuntimeError("hawk eval-set run failed: Missing secrets")
+
+    async def missing(eval_set_id: str) -> bool:
+        return False
+
+    r.hawk.submit = refuse  # type: ignore[assignment]
+    r.hawk.eval_set_exists = missing  # type: ignore[assignment]
+    with pytest.raises(ToolError, match="never reached Hawk"):
+        run(hawk_submit(r, tmp_path)(config=path, estimated_usd=1.0, note=None))
+    assert JobLedger(tmp_path).get("once").status == "failed"  # type: ignore[union-attr]
+
+    # the operator fixes the secrets and the agent submits the same job again
+    r.hawk = FakeHawk()  # type: ignore[assignment]
+    out = run(hawk_submit(r, tmp_path)(config=path, estimated_usd=1.0, note=None))
+    assert "Submitted" in out
+    ledger = JobLedger(tmp_path)
+    assert len([j for j in ledger.jobs if j.label == "once"]) == 1
+    assert ledger.get("once").status == "submitted"  # type: ignore[union-attr]

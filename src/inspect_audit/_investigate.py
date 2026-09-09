@@ -254,6 +254,20 @@ def register_openrouter_costs(timeout: float = 15) -> int:
     return registered
 
 
+def _find_secrets(config: str | None, repo: Path) -> str | None:
+    """The .env a Hawk runner should be given, looked for where one is kept.
+
+    Beside the investigation file, beside the benchmark, then Inspect's own search from
+    the working directory. The working directory alone is not enough: a run launched
+    from a checkout of this package finds nothing, and the failure lands in every
+    runner as a 401 rather than here.
+    """
+    for directory in [Path(config).expanduser().parent if config else None, repo, repo.parent]:
+        if directory and (directory / ".env").is_file():
+            return str(directory / ".env")
+    return find_dotenv(usecwd=True) or None
+
+
 def _investigation_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
     """Task settings from a YAML file, so an investigation is a document, not a command.
 
@@ -751,10 +765,14 @@ class Remote:
         The job is written as `pending` before anything is sent to Hawk.
         """
         with self.ledger.transaction() as ledger:
-            if ledger.get(job.label) is not None:
+            existing = ledger.get(job.label)
+            if existing is not None and existing.status != "failed":
                 raise ToolError(
                     f"a job labelled {job.label!r} already exists; use jobs() on it or choose another name"
                 )
+            if existing is not None:
+                # it never reached Hawk, so the name is free and its hold was released
+                ledger.jobs.remove(existing)
             committed = self.committed_usd()
             if committed + job.reserved_usd > self.allowance_usd:
                 raise ToolError(
@@ -982,8 +1000,9 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
             status="pending",
             note=note or "",
         )
+        replacing_failed = (remote.ledger.get(label) or Job("", "", "", "", "", 0)).status == "failed"
         remote.reserve_and_record(job)
-        if submitted_path.exists():  # pragma: no cover - the ledger already refused this
+        if submitted_path.exists() and not replacing_failed:
             raise ToolError(f"{submitted_path.name} already exists; choose another name")
         write_config(root, label, data)
 
@@ -1141,7 +1160,11 @@ def jobs(remote: Remote, root: Path) -> Tool:
             elif action == "collect":
                 rows = await remote.hawk.evals(job.eval_set_id)
                 if not rows or not all(r["status"] in ("success", "error", "cancelled") for r in rows):
-                    raise ToolError("job is not finished; use action='wait' first")
+                    state = ", ".join(f"{r['task']} {r['status']} {r['samples']}" for r in rows) or "no evals yet"
+                    raise ToolError(
+                        f"{label} is not finished ({state}); jobs(action='wait') blocks "
+                        "until it is, without spending anything"
+                    )
                 files = await remote.hawk.download(job.eval_set_id, root / "jobs" / "downloads" / label)
                 if not files:
                     raise ToolError("no .eval files were downloaded")
@@ -1185,6 +1208,13 @@ def jobs(remote: Remote, root: Path) -> Tool:
         except ToolError:
             raise
         except Exception as ex:
+            message = str(ex)
+            if "403" in message or "404" in message:
+                raise ToolError(
+                    f"Hawk has nothing to show for {label} ({job.eval_set_id}): it is "
+                    f"{job.status}. A job that never started has no pod to watch and no "
+                    "monitoring to report; jobs(action='list') shows what happened to it."
+                ) from ex
             raise ToolError(f"hawk error: {ex}") from ex
         if rows:
             status = "success" if all(r["status"] == "success" for r in rows) else (
@@ -1527,9 +1557,10 @@ def investigate(
     local_repo = Path(repo).expanduser()
     if local_repo.is_dir():
         target_task = target_task or _only_task(local_repo)
-    # the provider key reaches a Hawk runner from a file; the file is the one Inspect
-    # itself loaded to put that key in this process, unless another is named
-    secrets_file = secrets_file or (find_dotenv(usecwd=True) or None)
+    # the provider key reaches a Hawk runner from a file. Look beside the investigation
+    # first, then beside the benchmark, then where Inspect itself looks: a run launched
+    # from a worktree found nothing there and every job it started failed with 401.
+    secrets_file = secrets_file or _find_secrets(config, local_repo)
     if local_repo.is_dir():
         paths = paths or paths_from_metadata(local_repo, target_task)
         paper = paper or paper_from_metadata(local_repo, target_task)
@@ -1547,6 +1578,13 @@ def investigate(
             else None
         )
         audit_package = audit_package or own_package_spec()
+        if not secrets_file:
+            raise ValueError(
+                "remote work needs a secrets file holding OPENROUTER_API_KEY: a Hawk "
+                "runner has no environment of yours, and every job would fail to "
+                "authenticate. Looked beside the config, beside the repository, and "
+                "upwards from here. Pass secrets_file."
+            )
         if not task_package:
             raise ValueError(
                 "remote work installs the benchmark in a Hawk runner from git, and this "

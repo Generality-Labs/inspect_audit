@@ -741,3 +741,26 @@ def test_task_pins_follow_the_install_source(monkeypatch) -> None:  # noqa: ANN0
             "importlib.metadata.distribution", lambda name, d=direct: Dist(d)
         )
         assert _sandbox._direct_url_requirement(dist) == expected
+
+
+def test_the_container_templates_are_files_that_render() -> None:
+    """A Dockerfile kept as a Python string is invisible to every tool that reads one."""
+    from inspect_audit import containers
+
+    assert (containers.HERE / "auditor.Dockerfile").is_file()
+    assert (containers.HERE / "auditor.compose.yaml").is_file()
+    assert (containers.HERE / "egress.helm.yaml").is_file()
+
+    rendered = containers.DOCKERFILE.format(requirements="inspect_evals==1.0")
+    assert rendered.startswith("#") and "FROM python:" in rendered
+    assert "inspect_evals==1.0" in rendered and "{" not in rendered
+
+    compose = yaml.safe_load(containers.COMPOSE)
+    assert compose["services"]["default"]["network_mode"] == "bridge"
+    assert compose["services"]["default"]["build"]["dockerfile"] == "Dockerfile"
+
+    # the egress policy is Helm-templated YAML: it is not valid YAML on its own, but it
+    # must stay a single `additionalResources` block that names the auditor's service
+    assert containers.EGRESS_POLICY.startswith("additionalResources:")
+    assert "inspect/service: default" in containers.EGRESS_POLICY
+    assert "kube-dns" in containers.EGRESS_POLICY

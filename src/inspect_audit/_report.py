@@ -41,7 +41,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from . import prompts
 from ._agent import SKILLS, SUPPORT_SKILLS
-from ._sandbox import COMPOSE, DOCKERFILE
+from .containers import COMPOSE, DOCKERFILE
 
 REPORT_ROOT = "/report"
 

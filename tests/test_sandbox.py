@@ -754,6 +754,11 @@ def test_the_container_templates_are_files_that_render() -> None:
     rendered = containers.DOCKERFILE.format(requirements="inspect_evals==1.0")
     assert rendered.startswith("#") and "FROM python:" in rendered
     assert "inspect_evals==1.0" in rendered and "{" not in rendered
+    # a line continuation must be one backslash: two is a literal, and docker build
+    # fails on it. This is what four docker tests caught when the file was extracted.
+    assert "\\\\" not in rendered
+    for line in rendered.splitlines():
+        assert not line.rstrip().endswith("\\\\"), line
 
     compose = yaml.safe_load(containers.COMPOSE)
     assert compose["services"]["default"]["network_mode"] == "bridge"

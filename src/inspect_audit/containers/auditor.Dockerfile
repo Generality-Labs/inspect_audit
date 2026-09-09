@@ -2,8 +2,8 @@
 # auditor can read and run the real grading code in place.
 FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-        ca-certificates curl git jq ripgrep \\
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git jq ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
 # pandas + pyarrow so `samples_df` works over the sliced logs (the log-reading

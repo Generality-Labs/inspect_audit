@@ -119,6 +119,7 @@ class Hawk:
         self.env = {"HAWK_API_URL": api_url}
         self.secrets_file = secrets_file
         self.binary = binary
+        self._token = ""
 
     async def _run(self, *args: str, timeout: int = 600) -> str:
         """One `hawk` invocation, through Inspect's subprocess rather than blocking.
@@ -164,10 +165,54 @@ class Hawk:
                 )
         return rows
 
-    async def samples(self, eval_set_id: str, limit: int = 500) -> list[dict[str, Any]]:
-        out = await self._run("list", "samples", eval_set_id, "--json", "--limit", str(limit), timeout=180)
-        start = out.find("[")
-        return list(json.loads(out[start:])) if start >= 0 else []
+    # the API refuses a page larger than this (`--limit 1000` is a 422, not a
+    # truncation) and the CLI cannot ask for a second page, so paging goes through the
+    # same API the CLI uses, with a token the CLI hands us
+    PAGE = 250
+
+    async def samples(self, eval_set_id: str, limit: int | None = None) -> list[dict[str, Any]]:
+        """Every sample in the set, or the first `limit`, a page at a time.
+
+        A run of a thousand items over seven models is seven thousand samples; a single
+        page of it is not a population, and a request for all of it is refused.
+        """
+        collected: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            want = self.PAGE if limit is None else min(self.PAGE, limit - len(collected))
+            if want <= 0:
+                break
+            rows = await self._samples_page(eval_set_id, page, want)
+            collected += rows
+            if len(rows) < want:
+                break
+            page += 1
+        return collected
+
+    async def _samples_page(self, eval_set_id: str, page: int, limit: int) -> list[dict[str, Any]]:
+        import urllib.parse
+        import urllib.request
+
+        token = await self.access_token()
+        query = urllib.parse.urlencode(
+            {"eval_set_id": eval_set_id, "page": page, "limit": limit}
+        )
+        request = urllib.request.Request(
+            f"{self.env['HAWK_API_URL'].rstrip('/')}/meta/samples?{query}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        def fetch() -> list[dict[str, Any]]:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                return list(json.load(response).get("items", []))
+
+        return await anyio.to_thread.run_sync(fetch)
+
+    async def access_token(self) -> str:
+        """The operator's Hawk token, from the CLI that holds their login."""
+        if not self._token:
+            self._token = (await self._run("auth", "access-token", timeout=60)).strip()
+        return self._token
 
     async def download(self, eval_set_id: str, out_dir: Path) -> list[Path]:
         out_dir.mkdir(parents=True, exist_ok=True)

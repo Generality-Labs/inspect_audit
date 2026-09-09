@@ -822,3 +822,99 @@ def test_every_tool_schema_survives_a_strict_provider() -> None:
             f"{definition.name} has optional parameters {sorted(missing)}; a strict "
             "provider refuses the whole request. Make them nullable and required."
         )
+
+
+def test_the_config_file_decides_before_anything_is_built(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A setting in the file must be able to change what loads, not arrive too late.
+
+    Skills were assembled and the budget validated before the file was read, so
+    `extra_skills` in a config was silently ignored and a bad budget in a config was
+    accepted.
+    """
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
+    repo = git_repo(tmp_path / "repo")
+    skill = tmp_path / "house-style"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text("---\nname: house-style\ndescription: ours\n---\n\nRead this.\n")
+    config = tmp_path / "investigation.yaml"
+    config.write_text(
+        f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\nenforce_cost_limit: false\n"
+        f"extra_skills: ['{skill}']\n"
+    )
+    assert investigate(config=str(config)).metadata["investigation_dir"]
+
+    # a skill directory named by the file is checked like one named on the command line;
+    # before the reordering the file's extra_skills were read after the list was built
+    # and went unnoticed entirely
+    not_a_skill = tmp_path / "empty"
+    not_a_skill.mkdir()
+    broken = tmp_path / "broken.yaml"
+    broken.write_text(
+        f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\nextra_skills: ['{not_a_skill}']\n"
+    )
+    with pytest.raises(ValueError, match="containing SKILL.md"):
+        investigate(config=str(broken))
+
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(f"repo: {repo}\nbudget_usd: 0\noutput_dir: {tmp_path / 'runs'}\n")
+    with pytest.raises(ValueError, match="finite and positive"):
+        investigate(config=str(bad))
+
+
+def test_a_value_equal_to_a_default_is_still_an_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """"Given" cannot mean "different from the default", or a file wins arguments it should not."""
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
+    repo = git_repo(tmp_path / "repo")
+    config = tmp_path / "investigation.yaml"
+    config.write_text(
+        f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\nbudget_usd: 7\n"
+        "interactive: true\nenforce_cost_limit: false\n"
+    )
+    # the file's values
+    from_file = investigate(config=str(config))
+    seed = json.loads((Path(from_file.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
+    assert seed["budget_usd"] == 7
+
+    # the same values the defaults would have used, passed deliberately
+    overridden = investigate(config=str(config), budget_usd=10, interactive=False)
+    seed = json.loads((Path(overridden.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
+    assert seed["budget_usd"] == 10, "an explicit allowance must beat the file"
+
+
+def test_resume_runs_the_commit_it_reads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The snapshot is not retaken, so a job must install the commit it was taken at."""
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
+    monkeypatch.setattr(_investigate, "stage_logs_to_s3", lambda *a, **k: None)
+    repo = git_repo(tmp_path / "repo")
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "https://github.com/org/bench.git"], check=True)
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-test\n")
+    common = dict(
+        output_dir=str(tmp_path / "runs"), hawk_api_url="https://hawk.example",
+        secrets_file=str(tmp_path / ".env"), enforce_cost_limit=False,
+    )
+    first = investigate(str(repo), **common)  # type: ignore[arg-type]
+    root = Path(first.metadata["investigation_dir"])
+    snapshotted = json.loads((root / "inputs/seed.json").read_text())["revision"]
+
+    # the checkout moves on
+    (repo / "later.py").write_text("# a later commit\n")
+    subprocess.run(["git", "-C", str(repo), "add", "later.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=T", "-c", "user.email=t@e.org", "commit", "-qm", "later"], check=True)
+    moved = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    assert moved != snapshotted
+
+    resumed = investigate(str(repo), resume=str(root), **common)  # type: ignore[arg-type]
+    seed = json.loads((Path(resumed.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
+    assert seed["remote"]["task_package"].endswith(snapshotted), (
+        "a resumed investigation must run the commit it reads, not the one HEAD moved to"
+    )

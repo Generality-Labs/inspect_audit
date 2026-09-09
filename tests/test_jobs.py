@@ -60,12 +60,15 @@ class FakeHawk:
     async def status(self, eval_set_id: str) -> str:
         return '{"pods": []}'
 
-    async def samples(self, eval_set_id: str, limit: int = 500) -> list[dict[str, object]]:
+    async def samples(self, eval_set_id: str, limit: int | None = None) -> list[dict[str, object]]:
         # each eval set has its own samples; a uuid from another set is not in this list
         return [{"uuid": f"{eval_set_id}-s1", "id": "item-1", "epoch": 1, "status": "success", "scores": []}]
 
     async def logs(self, eval_set_id: str, lines: int = 120) -> str:
         return "uv pip install ... ok\nRunning Inspect eval-set"
+
+    async def access_token(self) -> str:
+        return "test-token"
 
     async def eval_set_exists(self, eval_set_id: str) -> bool:
         return any(
@@ -380,6 +383,10 @@ def test_jobs_babysitting_actions_are_read_only(tmp_path: Path, monkeypatch: pyt
     assert JobLedger(tmp_path).get("jj").status == "submitted"  # type: ignore[union-attr]
 
 
+async def _returns(value):  # noqa: ANN001, ANN202
+    return value
+
+
 def test_hawk_cli_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     h = _jobs.Hawk("https://h", None)
     table = "Eval Set: x\n\nTask   Model   Status   Samples\n----  ----  ----  ----\naudit/bench/Chess Puzzles  gpt-5.6-terra  success   10/10\n"
@@ -394,7 +401,9 @@ def test_hawk_cli_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     assert run(h.evals("x")) == [{"task": "audit/bench/Chess Puzzles", "model": "gpt-5.6-terra", "status": "success", "samples": "10/10"}]
     monkeypatch.setattr(h, "_run", returning("Eval set ID: inv-abc-123\nSee your eval set log: https://..."))
     assert run(h.submit(Path("/tmp/c.yaml"))) == "inv-abc-123"
-    monkeypatch.setattr(h, "_run", returning('noise\n[{"id": "1", "status": "success"}]'))
+    # samples pages through the API rather than the CLI: the CLI cannot ask for page 2
+    pages = [[{"id": "1", "status": "success"}], []]
+    monkeypatch.setattr(h, "_samples_page", lambda *a, **k: _returns(pages.pop(0)))
     assert run(h.samples("x")) == [{"id": "1", "status": "success"}]
 
 RESERVE_SCRIPT = """
@@ -995,8 +1004,11 @@ def test_reading_a_parked_log_source_stays_inside_the_investigation(
     address = "hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs"
     tool = supplied_logs(r, tmp_path, [address])
 
+    from inspect_audit._investigate import _alias
+
+    alias = _alias(address)
     listing = run(tool(action="list", source=None, sample=None, limit=None))
-    assert "audit-epoch-chess-p2-inputs-ep" in listing and address in listing
+    assert alias in listing and address in listing
 
     # a source it was not given, however plausible
     with pytest.raises(ToolError, match="unknown log source"):
@@ -1004,7 +1016,6 @@ def test_reading_a_parked_log_source_stays_inside_the_investigation(
     with pytest.raises(ToolError, match="unknown log source"):
         run(tool(action="samples", source="../../etc", sample=None, limit=None))
 
-    alias = "audit-epoch-chess-p2-inputs-ep"
     out = run(tool(action="samples", source=alias, sample=None, limit=5))
     assert "samples.csv" in out
     written = tmp_path / "inputs" / "index" / alias / "samples.csv"
@@ -1120,3 +1131,37 @@ def test_a_name_is_free_again_when_its_submission_never_reached_hawk(
     ledger = JobLedger(tmp_path)
     assert len([j for j in ledger.jobs if j.label == "once"]) == 1
     assert ledger.get("once").status == "submitted"  # type: ignore[union-attr]
+
+
+def test_two_log_sources_cannot_share_a_name(tmp_path: Path) -> None:
+    """Truncated aliases collided and the second source vanished from the mapping."""
+    from inspect_audit._investigate import _alias, supplied_logs
+
+    a = "hawk:simpleqa-verified-sweep-2026-05-luna-abcdefgh/inputs/logs"
+    b = "hawk:simpleqa-verified-sweep-2026-05-terra-ijklmnop/inputs/logs"
+    assert _alias(a) != _alias(b)
+    assert len(_alias(a)) <= 31
+
+    (tmp_path / "work").mkdir()
+    tool = supplied_logs(None, tmp_path, [a, b])
+    listing = run(tool(action="list", source=None, sample=None, limit=None))
+    assert a in listing and b in listing
+    assert _alias(a) in listing and _alias(b) in listing
+
+
+def test_reading_a_subdirectory_says_it_covers_the_whole_eval_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The warehouse indexes by eval set, so a narrower address is not a narrower read."""
+    from inspect_audit._investigate import _alias, supplied_logs
+
+    (tmp_path / "work").mkdir()
+    (tmp_path / "inputs").mkdir()
+    r = remote(tmp_path)
+    address = "hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs"
+    out = run(
+        supplied_logs(r, tmp_path, [address])(
+            action="samples", source=_alias(address), sample=None, limit=None
+        )
+    )
+    assert "covers the whole set" in out and "epoch-chess-logs" in out

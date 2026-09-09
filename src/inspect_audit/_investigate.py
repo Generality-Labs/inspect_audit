@@ -74,6 +74,12 @@ ASSETS = Path(__file__).parent / "investigation"
 
 # Ours first, then the vendored ones, adapted for a container with no user in it and no
 # `hawk` binary. See investigation/skills/VENDORED.md for provenance and what changed.
+DEFAULT_AUDITOR_IMAGE = (
+    "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
+    "072e50b2ea1c51e67644e97e08cff052a52a1d661294635e1c3e360d1371b9ee"
+)
+DEFAULT_LOG_BUCKET = "arcadia-impact-generality-inspect"
+
 INVESTIGATION_SKILLS = (
     "investigating",
     "writing",
@@ -287,11 +293,13 @@ def _investigation_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
             f"{config} sets things this task does not take: {sorted(unknown)}. "
             f"Available: {sorted(k for k in signature.parameters if k != 'config')}"
         )
-    # a value given on the command line beats the file; "given" means "not the default"
+    # a value given on the command line beats the file. Every overridable parameter
+    # defaults to None, so "given" is "not None": passing the same value the default
+    # would have used is still passing it, and a file cannot turn something back on
     return {
         key: value
         for key, value in loaded.items()
-        if key != "config" and passed.get(key) == signature.parameters[key].default
+        if key != "config" and passed.get(key) is None
     }
 
 
@@ -1271,8 +1279,17 @@ def reconcile_jobs(remote: Remote) -> Solver:
 
 
 def _alias(source: str) -> str:
-    """A short, filesystem-safe name for a log source the agent can type."""
-    return slug(source.removeprefix("hawk:").removeprefix("s3://").replace("/", "-")) or "logs"
+    """A short, filesystem-safe, unique name for a log source the agent can type.
+
+    Truncating an address to thirty characters made two runs of the same benchmark the
+    same name, and the second silently replaced the first in the mapping. The digest
+    keeps them apart without making the name unreadable.
+    """
+    import hashlib
+
+    stem = slug(source.removeprefix("hawk:").removeprefix("s3://").replace("/", "-")) or "logs"
+    digest = hashlib.sha256(source.encode()).hexdigest()[:6]
+    return f"{stem[:24]}-{digest}"
 
 
 @tool(name="logs")
@@ -1323,8 +1340,17 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
                 "Read the files under /inputs/logs, or ask the operator to supply it as a "
                 "Hawk eval set."
             )
-        eval_set = address.removeprefix("hawk:").split("/")[0]
+        eval_set, _, within = address.removeprefix("hawk:").partition("/")
         destination = root / "inputs" / "index" / source
+        # the warehouse indexes samples by eval set, not by prefix: an address naming a
+        # subdirectory still lists the whole set, and the agent is told so rather than
+        # left to assume the narrower scope it asked for
+        scope = (
+            f"\nNote: {address} names {within!r} inside eval set {eval_set}; the "
+            "warehouse lists samples per eval set, so this covers the whole set."
+            if within
+            else ""
+        )
         try:
             if action == "samples":
                 rows = await remote.hawk.samples(eval_set, limit or 200)
@@ -1333,7 +1359,10 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
                 destination.mkdir(parents=True, exist_ok=True)
                 table = destination / "samples.csv"
                 _write_samples_csv(rows, table)
-                return f"{len(rows)} sample(s) in {source}, written to /inputs/index/{source}/samples.csv\n" + _samples_summary(rows)
+                return (
+                    f"{len(rows)} sample(s) in {source}, written to "
+                    f"/inputs/index/{source}/samples.csv\n" + _samples_summary(rows) + scope
+                )
             if action == "transcript":
                 if not sample:
                     raise ToolError("action='transcript' needs sample=<uuid> from the samples table")
@@ -1450,23 +1479,23 @@ def investigate(
     logs: list[str] | None = None,
     paper: str | None = None,
     docs: list[str] | None = None,
-    overview: str = "",
+    overview: str | None = None,
     target_task: str | None = None,
     revision: str | None = None,
     paths: list[str] | None = None,
-    output_dir: str = "investigations",
+    output_dir: str | None = None,
     resume: str | None = None,
-    budget_usd: float = 10,
-    enforce_cost_limit: bool = True,
+    budget_usd: float | None = None,
+    enforce_cost_limit: bool | None = None,
     token_limit: str | int | None = None,
-    interactive: bool = False,
+    interactive: bool | None = None,
     extra_skills: list[str] | None = None,
     hawk_api_url: str | None = None,
     audit_package: str | None = None,
-    auditor_image: str = "ghcr.io/generality-labs/inspect-audit-auditor@sha256:072e50b2ea1c51e67644e97e08cff052a52a1d661294635e1c3e360d1371b9ee",
+    auditor_image: str | None = None,
     worker_models: list[str] | None = None,
     secrets_file: str | None = None,
-    log_bucket: str = "arcadia-impact-generality-inspect",
+    log_bucket: str | None = None,
     aws_profile: str | None = None,
 ) -> Task:
     """Investigate source and existing logs locally, publish HTML, then discuss.
@@ -1515,16 +1544,10 @@ def investigate(
         aws_profile: AWS profile with write access to that bucket, defaulting to
             AWS_PROFILE (else ambient credentials).
     """
-    if not math.isfinite(budget_usd) or budget_usd <= 0:
-        raise ValueError("budget_usd must be finite and positive")
-    skill_paths = [str(ASSETS / "skills" / name) for name in INVESTIGATION_SKILLS] + [
-        str(SKILLS / name) for name in SUPPORT_SKILLS
-    ]
-    for path in extra_skills or []:
-        resolved = Path(path).expanduser().resolve()
-        if not (resolved / "SKILL.md").is_file():
-            raise ValueError(f"Expected a skill directory containing SKILL.md: {path}")
-        skill_paths.append(str(resolved))
+    # the file is read before anything else is decided: a setting it carries must be
+    # able to change what gets validated, which skills load and how much may be spent.
+    # An argument is "given" only when it is not None, so a value equal to a default is
+    # still an override.
     settings = _investigation_file(config, locals()) if config else {}
     repo = settings.get("repo", repo)
     logs = settings.get("logs", logs)
@@ -1548,8 +1571,35 @@ def investigate(
     secrets_file = settings.get("secrets_file", secrets_file)
     log_bucket = settings.get("log_bucket", log_bucket)
     aws_profile = settings.get("aws_profile", aws_profile)
+
+    overview = overview if overview is not None else ""
+    output_dir = output_dir if output_dir is not None else "investigations"
+    budget_usd = budget_usd if budget_usd is not None else 10.0
+    enforce_cost_limit = enforce_cost_limit if enforce_cost_limit is not None else True
+    interactive = bool(interactive)
+    auditor_image = auditor_image or DEFAULT_AUDITOR_IMAGE
+    log_bucket = log_bucket or DEFAULT_LOG_BUCKET
+
+    if not math.isfinite(budget_usd) or budget_usd <= 0:
+        raise ValueError("budget_usd must be finite and positive")
+    skill_paths = [str(ASSETS / "skills" / name) for name in INVESTIGATION_SKILLS] + [
+        str(SKILLS / name) for name in SUPPORT_SKILLS
+    ]
+    for path in extra_skills or []:
+        resolved = Path(path).expanduser().resolve()
+        if not (resolved / "SKILL.md").is_file():
+            raise ValueError(f"Expected a skill directory containing SKILL.md: {path}")
+        skill_paths.append(str(resolved))
     if not repo:
         raise ValueError("investigate needs a repo: the benchmark to audit, or a config naming one")
+
+    resumed = _resumable(resume) if resume else None
+    if resumed and revision is None:
+        # the snapshot is not retaken, so the commit a runner installs is the one that
+        # snapshot was taken at, not wherever the checkout has moved to since
+        revision = str(
+            json.loads((resumed / "inputs" / "seed.json").read_text()).get("revision") or ""
+        ) or None
 
     # what can be worked out is worked out: the audited repository already says which
     # commit it is, which directory the task lives in and which paper it comes from,
@@ -1598,7 +1648,6 @@ def investigate(
             )
     if enforce_cost_limit or hawk_api_url:
         register_openrouter_costs()
-    resumed = _resumable(resume) if resume else None
     root = resumed or prepare_workspace(
         repo,
         revision,

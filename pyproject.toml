@@ -11,9 +11,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT License" }
 dependencies = [
-    # 0.3.247 is the first version we've validated `load_tasks` and the skills
-    # tools (`install_skills`, `skill`) against.
-    "inspect-ai>=0.3.247",
+    # Investigator ACP, compaction and cost limits are validated on 0.3.259.
+    "inspect-ai>=0.3.259",
     "pandas>=2.0.0",
     # inspect_ai.analysis (samples_df, used to read attempts) imports pyarrow but
     # inspect-ai only lists it under its own dev extra
@@ -54,6 +53,13 @@ strict = true
 mypy_path = "src"
 files = ["src"]
 exclude = ["src/inspect_audit/skills/"]
+
+# These are optional runtime integrations: plotting is installed in the research
+# image, and SWE-bench users install Inspect Evals separately. Type-check their
+# callers without requiring either integration in the package's dev environment.
+[[tool.mypy.overrides]]
+module = ["matplotlib", "matplotlib.*", "inspect_evals", "inspect_evals.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]

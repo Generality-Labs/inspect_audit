@@ -1,0 +1,4 @@
+body { color: #20252b; }
+.transcript { border-left: 3px solid #66788a; padding: .8rem 1rem; margin: 1rem 0; background: #f6f7f8; }
+.transcript pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .5rem 0; }
+.transcript .source { font-size: .85rem; color: #505b66; }

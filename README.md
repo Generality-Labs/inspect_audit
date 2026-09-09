@@ -33,6 +33,10 @@ Known constraints:
 
 ## Development
 
+The new local investigator reads a repository and existing logs, publishes a Quarto
+report, and supports ACP follow-up. See [the setup and limitations](docs/investigation.md).
+Hawk dispatch from the investigator is not implemented yet.
+
 ```bash
 make install      # uv venv + editable install
 make check        # ruff + strict mypy

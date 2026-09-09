@@ -1,0 +1,38 @@
+---
+title: "Benchmark audit"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    theme: cosmo
+    css: styles.css
+execute:
+  echo: false
+---
+
+<!-- Adapted from Generality-Labs.github.io/blog/posts/simpleqa-audit-v2/index.qmd.
+Use its editorial structure, not its benchmark-specific assertions or site-only assets.
+Opening: what this benchmark is good for, what the evidence supports, and the most
+consequential qualification. Include strengths where established. -->
+
+## The benchmark
+
+<!-- Explain intended capability, task construction, what the model sees, how it
+acts, how scoring works, and the revisions of source/data actually examined. -->
+
+## How models respond
+
+<!-- Establish the available run population, configurations, errors and coverage.
+Show the main patterns with computed denominators and appropriately scoped figures. -->
+
+## Issues
+
+<!-- One named subsection per consequential finding: mechanism, primary evidence,
+affected population, measured consequence and remaining uncertainty. Distinguish
+historical observations from experiments and source-only hypotheses. If nothing is
+established, say so; do not invent issues to fill this section. -->
+
+## Bottom line
+
+<!-- Explain which uses/conclusions are justified, what needs qualification, what
+remains untested, and the most useful next check. Read findings.json before writing. -->

@@ -1,6 +1,7 @@
 # data, never in git
 cells/
 out/
+investigations/
 reference/
 calibration/suite/
 *.eval

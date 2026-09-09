@@ -393,7 +393,8 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
     # Skill metadata describes fields but does not declare JSON types. Keep the
     # object extensible rather than emitting untyped property schemas rejected
     # by providers. Advertise every field's meaning in the parameter description.
-    definition.parameters.properties["details"].description += "\n" + "\n".join(
+    details = definition.parameters.properties["details"]
+    details.description = (details.description or "") + "\n" + "\n".join(
         f"{key}: {'; '.join(descriptions)}" for key, descriptions in fields.items()
     )
     return definition.as_tool()

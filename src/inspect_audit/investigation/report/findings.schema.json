@@ -1,0 +1,105 @@
+{
+  "$defs": {
+    "EvidenceRef": {
+      "additionalProperties": false,
+      "description": "A local primary artifact, with an optional location and literal quotation.",
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "location": {
+          "minLength": 1,
+          "title": "Location",
+          "type": "string"
+        },
+        "quote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quote"
+        }
+      },
+      "required": [
+        "path",
+        "location"
+      ],
+      "title": "EvidenceRef",
+      "type": "object"
+    },
+    "Finding": {
+      "additionalProperties": false,
+      "description": "One revisable finding; publication snapshots this same register.",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "claim": {
+          "minLength": 1,
+          "title": "Claim",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "hypothesis",
+            "supported",
+            "qualified",
+            "retracted"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "origin": {
+          "enum": [
+            "historical",
+            "experiment",
+            "source",
+            "audit_limitation"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "reproduce": {
+          "minLength": 1,
+          "title": "Reproduce",
+          "type": "string"
+        },
+        "limitations": {
+          "title": "Limitations",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "claim",
+        "status",
+        "origin",
+        "evidence",
+        "reproduce",
+        "limitations"
+      ],
+      "title": "Finding",
+      "type": "object"
+    }
+  },
+  "items": {
+    "$ref": "#/$defs/Finding"
+  },
+  "type": "array"
+}

@@ -40,8 +40,10 @@ name the cause or bound the effect, and stays a limitation when you cannot.
 
 ## Then the recorded runs
 
-Population first. For every model and configuration, compute everything the logs let
-you compute: every outcome category the grader produces, every terminal state, every
+Population first. Logs supplied as files are under /inputs/logs and you read them with
+Inspect's own API; logs supplied as an address are read with logs(), whose samples
+action is already a population table and costs nothing to ask for. For every model and
+configuration, compute everything the logs let you compute: every outcome category the grader produces, every terminal state, every
 error class, every resource limit hit, attempted and completed counts. Put it in one
 table with explicit denominators, then sort that table by every column. The rows that
 stand out are your leads. Patterns that cluster by model family or provider are leads.

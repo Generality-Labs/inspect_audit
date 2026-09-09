@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from test_investigate import git_repo
 
 from inspect_audit import _jobs
 from inspect_audit._investigate import Remote, hawk_submit, jobs
@@ -975,3 +976,65 @@ def test_logs_already_parked_where_hawk_can_read_them_are_not_copied(
     assert validate_config(config, policy(), sources) == []
     config["tasks"][0]["items"][0]["args"]["logs"] = "hawk:audit-epoch-chess-p2/inputs/something-else"
     assert any("staged or ran" in p for p in validate_config(config, policy(), sources))
+
+
+def test_reading_a_parked_log_source_stays_inside_the_investigation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The agent may read the sources it was given, by name, and nothing else."""
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit._investigate import supplied_logs
+
+    (tmp_path / "work").mkdir()
+    (tmp_path / "inputs").mkdir()
+    r = remote(tmp_path)
+    address = "hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs"
+    tool = supplied_logs(r, tmp_path, [address])
+
+    listing = run(tool(action="list"))
+    assert "audit-epoch-chess-p2-inputs-ep" in listing and address in listing
+
+    # a source it was not given, however plausible
+    with pytest.raises(ToolError, match="unknown log source"):
+        run(tool(action="samples", source="audit-chess-terra-review"))
+    with pytest.raises(ToolError, match="unknown log source"):
+        run(tool(action="samples", source="../../etc"))
+
+    alias = "audit-epoch-chess-p2-inputs-ep"
+    out = run(tool(action="samples", source=alias, limit=5))
+    assert "samples.csv" in out
+    written = tmp_path / "inputs" / "index" / alias / "samples.csv"
+    assert written.is_file()
+    header = written.read_text().splitlines()[0]
+    assert header.startswith("uuid,id,epoch,model,task_name,status")
+
+    # a transcript from another eval set is refused even though the operator's
+    # credentials could fetch it
+    with pytest.raises(ToolError, match="not in"):
+        run(tool(action="transcript", source=alias, sample="someone-elses-uuid"))
+    mine = f"{address.removeprefix('hawk:').split('/')[0]}-s1"
+    assert "transcripts/" in run(tool(action="transcript", source=alias, sample=mine))
+    assert (tmp_path / "inputs" / "index" / alias / "transcripts" / f"{mine}.md").is_file()
+
+    with pytest.raises(ToolError, match="action must be"):
+        run(tool(action="delete", source=alias))
+
+
+def test_a_local_only_investigation_has_no_log_reading_tool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Files under /inputs/logs are read with bash; a tool for them would be noise."""
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
+    log = tmp_path / "a.eval"
+    log.write_bytes(b"x")
+    target = _investigate.investigate(
+        str(git_repo(tmp_path / "repo")),
+        logs=[str(log)],
+        output_dir=str(tmp_path / "runs"),
+        enforce_cost_limit=False,
+    )
+    names = {t.__name__ if hasattr(t, "__name__") else "" for t in target.solver.__dict__.get("tools", [])}
+    assert "logs" not in names

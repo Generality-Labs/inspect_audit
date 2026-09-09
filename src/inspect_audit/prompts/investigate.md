@@ -72,7 +72,13 @@ yourself (examples in the investigating skill, and Hawk's docs under /inputs/doc
 they were supplied), save it
 under /workspace, and hawk_submit it. It is checked against a policy and refused with
 reasons if it strays. The supplied logs are already staged where a job can read them
-(`remote.supplied_logs`). jobs() is your window on a job while it runs and after: live
+(`remote.supplied_logs`). A log source given as an address rather than files is read
+with logs(): its samples come back as one row per recorded attempt with every scorer's
+value and its token counts, which is the population table, and a transcript comes back
+one at a time. Nothing of it is on your filesystem and a full set is tens of gigabytes,
+so read the table first and fetch only what you decide to read.
+
+jobs() is your window on a job while it runs and after: live
 per-sample progress, the runner's own log, its in-flight actions and stacks when it is
 stuck, the sample list, transcripts written to /inputs/jobs/<label>/transcripts/, a wait
 that spends no tokens, and collection of .eval logs into /inputs/jobs/<label>/ with the

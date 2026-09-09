@@ -1238,6 +1238,134 @@ def reconcile_jobs(remote: Remote) -> Solver:
     return solve
 
 
+def _alias(source: str) -> str:
+    """A short, filesystem-safe name for a log source the agent can type."""
+    return slug(source.removeprefix("hawk:").removeprefix("s3://").replace("/", "-")) or "logs"
+
+
+@tool(name="logs")
+def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool:
+    """Read log sources that are not on the agent's filesystem."""
+
+    async def execute(
+        action: str, source: str | None = None, sample: str | None = None, limit: int = 200
+    ) -> str:
+        """Read the recorded runs that live somewhere else.
+
+        Logs supplied as an address are not copied into this box: a benchmark's logs
+        can be tens of gigabytes, and almost all of that is transcripts nobody reads.
+        This reads them where they are, through the operator's credentials, and brings
+        back only what you ask for. Logs supplied as files are already under
+        /inputs/logs and want no tool at all.
+
+        Args:
+            action: "list" (the sources this investigation has, and which are files),
+                "samples" (one row per recorded attempt: model, status, every scorer's
+                value, tokens, timings, whether it hit a limit; written to a CSV under
+                /inputs/index/ for you to load, with a summary returned), "transcript"
+                (one attempt in full, written under /inputs/index/<source>/, needs
+                `sample`), or "fetch" (download the whole set's .eval logs to
+                /inputs/index/<source>/logs; say why, they are large).
+            source: Which source, from action="list". Required except for "list".
+            sample: The attempt's uuid, from the samples table, for "transcript".
+            limit: How many samples to read for "samples" (default 200).
+        """
+        known = {_alias(s): s for s in sources}
+        if action == "list":
+            if not known:
+                return "no supplied log sources; the logs given to you are files under /inputs/logs"
+            lines = ["source                          address"]
+            lines += [f"{alias:31} {address}" for alias, address in sorted(known.items())]
+            lines.append("Files under /inputs/logs are read directly; these are not.")
+            return "\n".join(lines)
+        if source not in known:
+            raise ToolError(
+                f"unknown log source {source!r}. This investigation may read: "
+                + (", ".join(sorted(known)) or "none")
+            )
+        address = known[source]
+        if remote is None or not address.startswith("hawk:"):
+            raise ToolError(
+                f"{source} is at {address}, which this investigation cannot read for you. "
+                "Read the files under /inputs/logs, or ask the operator to supply it as a "
+                "Hawk eval set."
+            )
+        eval_set = address.removeprefix("hawk:").split("/")[0]
+        destination = root / "inputs" / "index" / source
+        try:
+            if action == "samples":
+                rows = await remote.hawk.samples(eval_set, limit)
+                if not rows:
+                    return f"{source}: the warehouse lists no samples"
+                destination.mkdir(parents=True, exist_ok=True)
+                table = destination / "samples.csv"
+                _write_samples_csv(rows, table)
+                return f"{len(rows)} sample(s) in {source}, written to /inputs/index/{source}/samples.csv\n" + _samples_summary(rows)
+            if action == "transcript":
+                if not sample:
+                    raise ToolError("action='transcript' needs sample=<uuid> from the samples table")
+                known_uuids = {str(r.get("uuid")) for r in await remote.hawk.samples(eval_set, 1000)}
+                if sample not in known_uuids:
+                    raise ToolError(f"sample {sample!r} is not in {source}")
+                path = await remote.hawk.transcript(sample, destination / "transcripts")
+                return f"wrote /inputs/index/{source}/transcripts/{path.name} ({path.stat().st_size:,} bytes)"
+            if action == "fetch":
+                files = await remote.hawk.download(eval_set, destination / "logs")
+                size = sum(f.stat().st_size for f in files)
+                return (
+                    f"downloaded {len(files)} log(s), {size / 1e6:,.0f} MB, to "
+                    f"/inputs/index/{source}/logs/"
+                )
+            raise ToolError("action must be list, samples, transcript or fetch")
+        except ToolError:
+            raise
+        except Exception as ex:
+            raise ToolError(f"reading {source} failed: {ex}") from ex
+
+    return execute
+
+
+def _write_samples_csv(rows: list[dict[str, Any]], path: Path) -> None:
+    """One row per attempt, with each scorer as its own column."""
+    import csv
+
+    scorers = sorted({s.get("scorer", "") for r in rows for s in (r.get("scores") or [])})
+    columns = [
+        "uuid", "id", "epoch", "model", "task_name", "status", "limit", "error_message",
+        "input_tokens", "output_tokens", "reasoning_tokens", "total_tokens",
+        "message_count", "action_count", "total_time_seconds", "is_invalid",
+    ]
+    with path.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(columns + scorers)
+        for row in rows:
+            scored = {s.get("scorer"): s.get("value") for s in (row.get("scores") or [])}
+            writer.writerow(
+                [row.get(c) for c in columns] + [scored.get(s) for s in scorers]
+            )
+
+
+def _samples_summary(rows: list[dict[str, Any]]) -> str:
+    """Enough of the population to know what to look at next, in the tool result."""
+    from collections import Counter
+
+    lines: list[str] = []
+    for field in ("model", "status", "limit"):
+        counts = Counter(str(r.get(field)) for r in rows if r.get(field) is not None)
+        if counts:
+            lines.append(f"  {field}: " + ", ".join(f"{k} {v}" for k, v in counts.most_common(8)))
+    grades: dict[str, Counter[str]] = {}
+    for row in rows:
+        for score in row.get("scores") or []:
+            grades.setdefault(str(score.get("scorer")), Counter())[str(score.get("value"))] += 1
+    for scorer, counts in sorted(grades.items()):
+        lines.append(f"  {scorer}: " + ", ".join(f"{k} {v}" for k, v in counts.most_common(8)))
+    errored = [r for r in rows if r.get("error_message")]
+    if errored:
+        lines.append(f"  errors: {len(errored)}, e.g. {str(errored[0]['error_message'])[:80]}")
+    return "\n".join(lines)
+
+
 async def _continue(
     state: AgentState, interactive: bool, remote: Remote | None = None
 ) -> bool | str:
@@ -1510,6 +1638,10 @@ def investigate(
         view_image(),
         publish_report(str(root)),
     ]
+    seed_logs = json.loads((root / "inputs" / "seed.json").read_text()).get("logs") or []
+    remote_sources = [str(e["remote"]) for e in seed_logs if isinstance(e, dict) and e.get("remote")]
+    if remote_sources:
+        tools.append(supplied_logs(remote, root, remote_sources))
     if remote is not None:
         tools += [hawk_submit(remote, root), jobs(remote, root)]
 

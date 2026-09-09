@@ -38,7 +38,6 @@ from ._jobs import (
     JobLedger,
     Policy,
     copy_into_inputs,
-    slug,
     stage_logs_to_s3,
     task_package_name,
     usage_cost,
@@ -493,42 +492,6 @@ def investigation_budget(
 
 
 @tool
-def stage_logs(remote: Remote, root: Path) -> Tool:
-    """Make the supplied logs readable by a Hawk job."""
-
-    async def execute(label: str) -> str:
-        """Stage the supplied input logs where a Hawk job you submit can read them.
-
-        A Hawk runner can only read its own eval set's storage, so the logs are copied
-        into a fresh eval set prefix now. Use the returned eval_set_id in your config
-        and the returned logs source as the audit task's `logs` argument.
-
-        Args:
-            label: Short name (letters, digits, hyphens) used to build the eval set id.
-        """
-        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,30}", label):
-            raise ToolError("label must be 2-31 lowercase letters, digits or hyphens")
-        local = root / "inputs" / "logs"
-        if not local.is_dir():
-            raise ToolError("no logs were supplied to this investigation")
-        eval_set_id = f"inv-{slug(label)}-{uuid4().hex[:6]}"
-        try:
-            source = await asyncio.to_thread(
-                stage_logs_to_s3, local, remote.log_bucket, eval_set_id, remote.aws_profile
-            )
-        except Exception as ex:
-            raise ToolError(str(ex)) from ex
-        remote.known_sources.add(eval_set_id)
-        remote.save_sources()
-        return (
-            f"staged {sum(1 for _ in local.rglob('*.eval'))} log(s). In your config set "
-            f"eval_set_id: {eval_set_id} and, in the audit task args, logs: {source}"
-        )
-
-    return execute
-
-
-@tool
 def hawk_submit(remote: Remote, root: Path) -> Tool:
     """Submit an eval-set config you wrote to Hawk, after policy checks."""
 
@@ -594,10 +557,11 @@ def jobs(remote: Remote, root: Path) -> Tool:
 
         Args:
             action: "list" (every job and its state), "status" (live per-eval status of
-                one job), "wait" (block, without spending tokens, until the job finishes
-                or wait_minutes pass), "collect" (download its .eval logs to
-                /inputs/jobs/<label>/, record the real cost, release the reservation),
-                or "stop" (gracefully stop a running job).
+                one job), "logs" (the runner's own log tail: install errors, crashes,
+                why a job has no evals yet), "wait" (block, without spending tokens,
+                until the job finishes or wait_minutes pass), "collect" (download its
+                .eval logs to /inputs/jobs/<label>/, record the real cost, release the
+                reservation), or "stop" (gracefully stop a running job).
             label: The job, for every action except "list".
             wait_minutes: How long "wait" may block before returning the current state.
         """
@@ -614,6 +578,8 @@ def jobs(remote: Remote, root: Path) -> Tool:
         if not label or not (job := ledger.get(label)):
             raise ToolError(f"unknown job {label!r}; jobs(action='list') shows them")
         try:
+            if action == "logs":
+                return f"{label} ({job.eval_set_id}) runner log tail:\n" + await asyncio.to_thread(remote.hawk.logs, job.eval_set_id)
             if action == "status":
                 rows = remote.hawk.evals(job.eval_set_id)
             elif action == "wait":
@@ -645,7 +611,7 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 lines += [f"  {m}: in {u['input']:,} cache_read {u['cache_read']:,} out {u['output']:,}" for m, u in usage.items()]
                 return "\n".join(lines)
             else:
-                raise ToolError("action must be list, status, wait, collect or stop")
+                raise ToolError("action must be list, status, logs, wait, collect or stop")
         except ToolError:
             raise
         except Exception as ex:
@@ -767,6 +733,14 @@ def investigate(
             root, hawk_api_url, secrets_file, task_package or "", audit_package, auditor_image,
             worker_models or DEFAULT_WORKERS, log_bucket, aws_profile, budget_usd,
         )
+        # the supplied logs are staged by us, once, at setup: a Hawk runner reads
+        # only its own eval set's storage, and the agent gets no S3 capability
+        staged_logs: str | None = None
+        if logs and (root / "inputs" / "logs").is_dir():
+            eval_set_id = f"inv-inputs-{root.name[:8]}"
+            staged_logs = stage_logs_to_s3(root / "inputs" / "logs", log_bucket, eval_set_id, aws_profile)
+            remote.known_sources.add(eval_set_id)
+            remote.save_sources()
         seed_path = root / "inputs" / "seed.json"
         seed = json.loads(seed_path.read_text())
         seed["remote"] = {
@@ -775,7 +749,13 @@ def investigate(
             "worker_models": worker_models or DEFAULT_WORKERS,
             "audit_package": audit_package,
             "auditor_image": auditor_image,
-            "note": "write an eval-set config under /workspace and hawk_submit it; stage_logs makes the supplied logs readable by a job; jobs() waits and collects into /inputs/jobs/<label>/",
+            "supplied_logs": staged_logs,
+            "note": (
+                "write an eval-set config under /workspace and hawk_submit it. To audit the supplied "
+                "logs, set eval_set_id to the id in supplied_logs and use supplied_logs as the audit "
+                "task's logs argument; to audit a job you ran, use hawk:<its eval set id>. "
+                "jobs() reports, waits, collects into /inputs/jobs/<label>/ and shows runner logs."
+            ),
         }
         seed_path.write_text(json.dumps(seed, indent=2))
     tools: list[Tool] = [
@@ -787,7 +767,7 @@ def investigate(
         publish_report(str(root)),
     ]
     if remote is not None:
-        tools += [stage_logs(remote, root), hawk_submit(remote, root), jobs(remote, root)]
+        tools += [hawk_submit(remote, root), jobs(remote, root)]
 
     async def on_continue(state: AgentState) -> bool | str:
         return await _continue(state, interactive)

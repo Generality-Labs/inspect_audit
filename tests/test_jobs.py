@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from inspect_audit import _jobs
-from inspect_audit._investigate import Remote, hawk_submit, jobs, stage_logs
+from inspect_audit._investigate import Remote, hawk_submit, jobs
 from inspect_audit._jobs import JobLedger, Policy, task_package_name, validate_config
 
 TASK_PKG = "git+https://github.com/UKGovernmentBEIS/inspect_evals@abc"
@@ -63,8 +63,8 @@ def filled_example(filename: str, **overrides) -> dict:  # noqa: ANN003
         .replace("<registry package, e.g. inspect_evals>", "inspect_evals")
         .replace("<task, e.g. simpleqa_verified>", "simpleqa_verified")
         .replace("<registry name of the audited task, e.g. inspect_evals/simpleqa_verified>", "inspect_evals/simpleqa_verified")
-        .replace("<hawk:... from stage_logs or hawk:<eval set id of your job>>", "hawk:inv-staged-abc/inputs/logs")
-        .replace("<from stage_logs, when auditing the supplied logs>   # otherwise omit", "inv-staged-abc")
+        .replace("<remote.supplied_logs, or hawk:<eval set id of your job>>", "hawk:inv-staged-abc/inputs/logs")
+        .replace("<id inside remote.supplied_logs, when auditing the supplied logs>   # otherwise omit", "inv-staged-abc")
     )
     config = yaml.safe_load(text)
     config.update(overrides)
@@ -147,35 +147,56 @@ def test_submit_reserves_records_and_refuses_duplicates_and_overspend(tmp_path: 
     assert len(r.hawk.submitted) == 1  # type: ignore[attr-defined]
 
 
-def test_stage_logs_then_audit_over_them(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_audit_over_supplied_logs_uses_the_staged_source_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from inspect_ai.tool import ToolError
+
     from inspect_audit import _investigate
 
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
-    staged: list[str] = []
-
-    def fake_stage(local_dir, bucket, eval_set_id, profile):  # noqa: ANN001, ANN202
-        staged.append(eval_set_id)
-        return f"hawk:{eval_set_id}/inputs/logs"
-
-    monkeypatch.setattr(_investigate, "stage_logs_to_s3", fake_stage)
-    (tmp_path / "inputs" / "logs").mkdir(parents=True)
-    (tmp_path / "inputs" / "logs" / "a.eval").write_bytes(b"x")
     r = remote(tmp_path)
-    out = run(stage_logs(r, tmp_path)(label="sqav"))
-    eval_set_id = staged[0]
-    assert eval_set_id.startswith("inv-sqav-") and eval_set_id in out
-    config = filled_example("audit.eval-set.yaml", eval_set_id=eval_set_id)
-    config["tasks"][0]["items"][0]["args"]["logs"] = f"hawk:{eval_set_id}/inputs/logs"
-    path = _write(tmp_path, "audit.eval-set.yaml", config)
-    assert "set-1" in run(hawk_submit(r, tmp_path)(config=path, estimated_usd=1.0))
-    # a source this investigation did not create is refused
+    r.known_sources.add("inv-staged-abc")  # what investigate() records after staging at setup
+    config = filled_example("audit.eval-set.yaml")
+    assert "set-1" in run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "audit.eval-set.yaml", config), estimated_usd=1.0))
     foreign = filled_example("audit.eval-set.yaml", name="inv-foreign")
     del foreign["eval_set_id"]
     foreign["tasks"][0]["items"][0]["args"]["logs"] = "hawk:someone-elses-set"
-    from inspect_ai.tool import ToolError
-
     with pytest.raises(ToolError, match="staged or ran"):
         run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "f.eval-set.yaml", foreign), estimated_usd=1.0))
+
+
+def test_supplied_logs_are_staged_at_setup_not_by_the_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
+    calls: list[tuple[str, str]] = []
+
+    def fake_stage(local_dir, bucket, eval_set_id, profile):  # noqa: ANN001, ANN202
+        calls.append((bucket, eval_set_id))
+        return f"hawk:{eval_set_id}/inputs/logs"
+
+    monkeypatch.setattr(_investigate, "stage_logs_to_s3", fake_stage)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "t.py").write_text("x")
+    subprocess.run(["git", "-C", str(repo), "add", "t.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=T", "-c", "user.email=t@e.org", "commit", "-qm", "c"], check=True)
+    log = tmp_path / "a.eval"
+    log.write_bytes(b"x")
+    target = _investigate.investigate(
+        str(repo), logs=[str(log)], output_dir=str(tmp_path / "runs"), enforce_cost_limit=False,
+        hawk_api_url=HAWK, task_package=TASK_PKG,
+    )
+    root = Path(target.metadata["investigation_dir"])
+    seed = json.loads((root / "inputs/seed.json").read_text())
+    assert calls and calls[0][0] == "arcadia-impact-generality-inspect" and calls[0][1].startswith("inv-inputs-")
+    assert seed["remote"]["supplied_logs"] == f"hawk:{calls[0][1]}/inputs/logs"
+    assert calls[0][1] in json.loads((root / "log_sources.json").read_text())
+    assert "hawk_jobs" in target.metadata["capabilities"]
+    names = {t.__name__ if hasattr(t, "__name__") else str(t) for t in []}
+    assert names == set()
 
 
 def test_jobs_status_wait_collect_release_reservation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -203,6 +224,8 @@ def test_jobs_status_wait_collect_release_reservation(tmp_path: Path, monkeypatc
     assert "jj (eval-set)" in run(tool(action="list"))
     run(tool(action="stop", label="jj"))
     assert r.hawk.stopped == ["set-1"]  # type: ignore[attr-defined]
+    r.hawk.logs = lambda eval_set_id, lines=120: "uv pip install ... ok\nRunning Inspect eval-set"  # type: ignore[attr-defined]
+    assert "Running Inspect eval-set" in run(tool(action="logs", label="jj"))
 
 
 def test_hawk_cli_parsing(monkeypatch: pytest.MonkeyPatch) -> None:

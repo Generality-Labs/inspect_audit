@@ -78,13 +78,15 @@ and the benchmark's own scorer to grade attempts it constructs. Pick items for t
 hypotheses you hold: gold-answer, answer-format, red-teaming, insufficiently-specified,
 failure-attribution, approach-census, contamination, ground-truth-access,
 environment-integrity, other-findings. When the scorer calls a model, choose the grader
-role deliberately after reading which grader the recorded logs used. To audit the
-supplied logs, call stage_logs first and use the eval_set_id and logs source it returns;
-to audit attempts from a job you ran, use hawk:<that job's eval set id>.
+role deliberately after reading which grader the recorded logs used. The supplied logs
+are already staged for Hawk: the seed's `remote.supplied_logs` is the `logs` value to
+use and its id (after `hawk:`, before `/inputs`) is the `eval_set_id` to set. To audit
+attempts from a job you ran, use hawk:<that job's eval set id> and omit eval_set_id.
 
 Procedure: one or two samples first, wait, collect, read the result as you would any
 log and check the job saw what you meant; then expand. jobs(action="wait") blocks
-without spending tokens; do other work while jobs run. Every submission reserves your
+without spending tokens; do other work while jobs run. When a job shows no evals or
+errors, jobs(action="logs") is the runner's own log: install failures and crashes are there. Every submission reserves your
 estimate against the shared allowance until collected. The configs you submitted are
 saved under jobs/ and jobs.json is the record of what ran.
 

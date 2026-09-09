@@ -65,9 +65,10 @@ verify positives and inspect some unflagged cases when assessing detector qualit
 When the seed lists `remote`, you can run things on Hawk: write an eval-set config
 yourself (examples in the investigating skill, Hawk docs under /inputs/docs), save it
 under /workspace, and hawk_submit it. It is checked against a policy and refused with
-reasons if it strays. stage_logs makes the supplied logs readable by a job; jobs()
-reports status, waits without spending tokens, collects .eval logs into
-/inputs/jobs/<label>/ and records the real cost. Each submission reserves your cost
+reasons if it strays. The supplied logs are already staged where a job can read them
+(`remote.supplied_logs`). jobs() reports status, shows the runner's own log, waits
+without spending tokens, collects .eval logs into /inputs/jobs/<label>/ and records
+the real cost. Each submission reserves your cost
 estimate against the allowance until collected. Prove a configuration on one or two
 samples and read the result before spending on a full run. Without `remote`, record the
 experiment you would have run as a proposal. Never claim a job ran because you wrote its

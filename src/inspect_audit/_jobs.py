@@ -129,6 +129,11 @@ class Hawk:
     def stop(self, eval_set_id: str) -> None:
         self._run("stop", eval_set_id, timeout=300)
 
+    def logs(self, eval_set_id: str, lines: int = 120) -> str:
+        """Tail of the runner's own log, the place install failures and crashes show up."""
+        out = self._run("logs", eval_set_id, "-n", str(lines), timeout=120)
+        return out[-6000:]
+
 
 def stage_logs_to_s3(
     local_dir: Path, bucket: str, eval_set_id: str, profile: str | None

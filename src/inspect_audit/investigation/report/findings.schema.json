@@ -33,86 +33,97 @@
       ],
       "title": "EvidenceRef",
       "type": "object"
-    },
-    "Finding": {
-      "additionalProperties": false,
-      "description": "One revisable finding; publication snapshots this same register.",
-      "properties": {
-        "id": {
-          "minLength": 1,
-          "title": "Id",
-          "type": "string"
-        },
-        "section": {
-          "enum": [
-            "task",
-            "grader",
-            "harness_environment",
-            "aggregation_limits",
-            "agent_behaviour",
-            "construction"
-          ],
-          "title": "Section",
-          "type": "string"
-        },
-        "claim": {
-          "minLength": 1,
-          "title": "Claim",
-          "type": "string"
-        },
-        "status": {
-          "enum": [
-            "hypothesis",
-            "supported",
-            "qualified",
-            "retracted"
-          ],
-          "title": "Status",
-          "type": "string"
-        },
-        "origin": {
-          "enum": [
-            "historical",
-            "experiment",
-            "source",
-            "audit_limitation"
-          ],
-          "title": "Origin",
-          "type": "string"
-        },
-        "evidence": {
-          "items": {
-            "$ref": "#/$defs/EvidenceRef"
-          },
-          "title": "Evidence",
-          "type": "array"
-        },
-        "reproduce": {
-          "minLength": 1,
-          "title": "Reproduce",
-          "type": "string"
-        },
-        "limitations": {
-          "title": "Limitations",
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "section",
-        "claim",
-        "status",
-        "origin",
-        "evidence",
-        "reproduce",
-        "limitations"
-      ],
-      "title": "Finding",
-      "type": "object"
     }
   },
-  "items": {
-    "$ref": "#/$defs/Finding"
+  "additionalProperties": false,
+  "description": "One revisable finding; publication snapshots this same register.",
+  "properties": {
+    "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "section": {
+      "enum": [
+        "task",
+        "grader",
+        "harness_environment",
+        "aggregation_limits",
+        "agent_behaviour",
+        "construction"
+      ],
+      "title": "Section",
+      "type": "string"
+    },
+    "claim": {
+      "minLength": 1,
+      "title": "Claim",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "hypothesis",
+        "supported",
+        "qualified",
+        "retracted"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "origin": {
+      "enum": [
+        "historical",
+        "experiment",
+        "source",
+        "audit_limitation"
+      ],
+      "title": "Origin",
+      "type": "string"
+    },
+    "severity": {
+      "anyOf": [
+        {
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Severity"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/EvidenceRef"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "reproduce": {
+      "minLength": 1,
+      "title": "Reproduce",
+      "type": "string"
+    },
+    "limitations": {
+      "title": "Limitations",
+      "type": "string"
+    }
   },
-  "type": "array"
+  "required": [
+    "id",
+    "section",
+    "claim",
+    "status",
+    "origin",
+    "evidence",
+    "reproduce",
+    "limitations"
+  ],
+  "title": "Finding",
+  "type": "object"
 }

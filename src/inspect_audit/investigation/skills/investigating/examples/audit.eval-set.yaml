@@ -16,7 +16,7 @@ tasks:
           logs: <remote.supplied_logs, or hawk:<eval set id of your job>>
           items: [gold-answer, answer-format, red-teaming, insufficiently-specified, other-findings]
           auditor_image: <remote.auditor_image>
-          limit: 1                       # or samples: ["<id>", ...]
+          # samples: ["<benchmark item id>", ...]   # audit named items instead of the first N
           # notes: a general steer for every auditor; never an answer
 models:
   - package: openai
@@ -41,6 +41,7 @@ runner:
     HAWK_RUNNER_REFRESH_URL: ""
   secrets:
     - name: OPENROUTER_API_KEY
+limit: 1                                   # audited items; the size the reservation uses
 cost_limit: 2.00                           # dollars per audited item, enforced in the runner
 epochs: 1
 token_limit: 4000000

@@ -436,7 +436,10 @@ def test_lint_reads_prose_only_not_tables_code_or_quoted_evidence() -> None:
     )
 
     html = (
-        '<nav id="TOC"><ul><li>The task</li><li>The grader</li></ul></nav>'
+        '<div id="TOC"><ul>'
+        + "".join(f"<li>Section {i} of this report</li>" for i in range(20))
+        + "</ul></div>"
+        '<nav><a href="#x">skip</a></nav>'
         "<p>The grader accepted 812 of 1,000 attempts.</p>"
         "<table><tr><td>" + "</td><td>".join(["cell"] * 60) + "</td></tr></table>"
         "<blockquote>the model wrote \u2014 with an em dash \u2014 exactly this</blockquote>"
@@ -446,6 +449,7 @@ def test_lint_reads_prose_only_not_tables_code_or_quoted_evidence() -> None:
     prose = _prose_text(html)
     assert "812 of 1,000" in prose
     assert "cell" not in prose and "em dash" not in prose and "df = df" not in prose
+    assert "Section 7" not in prose, "the table of contents is navigation, not prose"
     assert lint_report_text(prose) == []
     assert lint_report_warnings(prose) == []
 
@@ -538,7 +542,25 @@ def test_resume_reuses_the_directory_ledger_and_staged_logs(
     )
     assert len(staged) == 1
 
+    # a job left pending by an interrupted run: resume must settle it with Hawk before
+    # the agent starts, or it is either lost or launched twice
+    ledger_before = json.loads((root / "jobs.json").read_text())
+    ledger_before[0]["status"] = "pending"
+    (root / "jobs.json").write_text(json.dumps(ledger_before))
+    asked: list[str] = []
+
+    class RecordingHawk:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def eval_set_exists(self, eval_set_id: str) -> bool:
+            asked.append(eval_set_id)
+            return True
+
+    monkeypatch.setattr(_investigate, "Hawk", RecordingHawk)
     second = investigate(repo, resume=str(root), **common)  # type: ignore[arg-type]
+    assert asked == ["inv-smoke-1234abcd"], "resume did not ask Hawk about the pending job"
+    assert JobLedger(root).get("smoke").status == "submitted"  # type: ignore[union-attr]
     assert Path(second.metadata["investigation_dir"]) == root
     assert len(staged) == 1, "the supplied logs were staged once, at first setup"
     ledger = JobLedger(root)
@@ -546,3 +568,53 @@ def test_resume_reuses_the_directory_ledger_and_staged_logs(
 
     with pytest.raises(ValueError, match="not an investigation directory"):
         investigate(repo, resume=str(tmp_path / "nowhere"), **common)  # type: ignore[arg-type]
+
+
+def test_a_remote_reservation_stops_the_investigator_spending_the_same_money_locally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inspect's cost limit only counts this agent's own calls, so the tools must count both."""
+    from inspect_audit import _investigate
+    from inspect_audit._investigate import Remote, _continue
+    from inspect_audit._jobs import Job
+
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (3.0, []))
+    r = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], "bucket", None, 10.0)
+    assert r.over_allowance() is None
+
+    with r.ledger.transaction() as ledger:
+        ledger.add(
+            Job(label="big", kind="eval-set", eval_set_id="inv-big-1", config_path="x",
+                submitted_at="now", estimated_usd=5.0, reserved_usd=8.0, status="submitted")
+        )
+    message = r.over_allowance()
+    assert message is not None and "$11.00" in message and "$8.00" in message
+
+    class _State:
+        pass
+
+    from inspect_ai.util._store import Store, init_subtask_store
+
+    init_subtask_store(Store())  # a fresh sample store: nothing published yet
+    told = asyncio.run(_continue(_State(), interactive=False, remote=r))  # type: ignore[arg-type]
+    assert isinstance(told, str) and "Publish the report now" in told
+
+
+def test_a_resumed_investigation_remembers_what_it_already_spent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit import _investigate
+    from inspect_audit._investigate import Remote
+
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (2.0, []))
+    first = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], "bucket", None, 10.0)
+    first.record_local_spend()
+    assert first.local_usd() == 2.0
+
+    # a second run of the same investigation: Inspect's usage starts from zero again
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (1.5, []))
+    resumed = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], "bucket", None, 10.0)
+    assert resumed.prior_local_usd == 2.0
+    assert resumed.local_usd() == 3.5, "the earlier run's spend must still count against the allowance"

@@ -27,9 +27,11 @@ what it lets a model do to its own score.
 
 Skip its setup and report format. Findings go in `/workspace/report/findings.json` with
 file:line evidence, which this skill is right to insist on. Its verdict rubric
-(safe / safe-with-caveats / unsafe) is not your rating scale; you have severity instead.
-The source is under `/inputs/source`, already on disk, so ignore the instructions about
-not cloning.
+(safe / safe-with-caveats / unsafe) is not your rating scale. Each finding carries a
+severity instead: high, medium or low, in the `severity` field of the register.
+The source is at the seed's `snapshot` path, usually `/inputs/source` and already on
+disk, so ignore the instructions about not cloning. There is no `gh` and no `Read`
+tool: read files with bash.
 
 ## Identifying the target
 

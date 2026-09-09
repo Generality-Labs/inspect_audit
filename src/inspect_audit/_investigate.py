@@ -390,10 +390,22 @@ def render_report() -> Tool:
         warnings = "\n".join(
             line for line in (result.stderr or "").splitlines() if "WARN" in line
         )
+        # the template embeds resources, so every figure in the HTML is a data: URI
+        # and its src says nothing. The files behind them are what view_image reads.
+        listing = await sandbox().exec(
+            ["bash", "-lc", "ls -1 /workspace/report/evidence/*.{png,jpg,jpeg,svg,webp} 2>/dev/null | head -40"],
+            timeout=60,
+        )
+        files = [line for line in (listing.stdout or "").splitlines() if line.strip()]
         return (
             f"Rendered ({len(text)} characters of text, {len(parser.images)} figures).\n"
             + (f"Quarto warnings:\n{warnings}\n" if warnings else "")
-            + f"Figures: {parser.images}\n\n{text[:6000]}"
+            + (
+                "Figure files to look at with view_image:\n  " + "\n  ".join(files) + "\n"
+                if files
+                else "No figure files under /workspace/report/evidence/.\n"
+            )
+            + f"\n{text[:6000]}"
             + ("\n…" if len(text) > 6000 else "")
         )
 
@@ -434,6 +446,15 @@ class Remote:
             auditor_images=[auditor_image],
             hawk_api_url=hawk_api_url,
         )
+        self._spend_path = root / "local_spend.json"
+        spent = (
+            json.loads(self._spend_path.read_text()) if self._spend_path.is_file() else {}
+        )
+        # a resumed run starts Inspect's usage accounting from zero; what earlier runs
+        # of this investigation spent is carried forward from disk
+        self.prior_local_usd = float(spent.get("prior_usd", 0.0)) + float(
+            spent.get("this_run_usd", 0.0)
+        )
         self._sources_path = root / "log_sources.json"
         self.known_sources: set[str] = set(
             json.loads(self._sources_path.read_text()) if self._sources_path.is_file() else []
@@ -452,33 +473,67 @@ class Remote:
         """A fresh id per job. Reusing one makes Hawk resume that set instead."""
         return f"{self.policy.id_prefix}{slug(label)}-{uuid4().hex[:8]}"[:43]
 
-    def model_costs(self) -> dict[str, dict[str, float]]:
+    def model_costs(self) -> tuple[dict[str, dict[str, float]], list[str]]:
         """Prices for the worker models, so the runner can enforce its cost limit.
 
         The agent may not write these: a job whose prices are its own invention has a
         cost limit that means nothing. They come from the same registry the local
         allowance is accounted with.
+
+        Both the key and the lookup use the name the job will run under. A worker is
+        named in a config the way Hawk composes it, provider group then item, so
+        `openai/gpt-5.6-luna` under the `openrouter` group is `openrouter/openai/
+        gpt-5.6-luna` to Inspect, in the runner's cost table and in its logs. Returns
+        the prices and the workers that have none: without a price a cost limit cannot
+        bind, so that list is a refusal, not a warning.
         """
         from inspect_ai.model._model_info import get_model_info
 
         costs: dict[str, dict[str, float]] = {}
+        missing: list[str] = []
         for model in self.worker_models:
-            info = get_model_info(model)
+            qualified = qualified_model_name(model)
+            info = get_model_info(qualified)
             cost = info.cost if info else None
-            if cost is None:
+            if cost is None or not (cost.input or cost.output):
+                missing.append(model)
                 continue
-            costs[model] = {
+            costs[qualified] = {
                 "input": cost.input or 0.0,
                 "output": cost.output or 0.0,
                 "input_cache_read": cost.input_cache_read or 0.0,
                 "input_cache_write": cost.input_cache_write or 0.0,
             }
-        return costs
+        return costs, missing
+
+    def record_local_spend(self) -> None:
+        """Keep this run's own spend on disk, so a resumed investigation inherits it."""
+        local = _local_spend()[0]
+        if local is None:
+            return
+        self._spend_path.write_text(
+            json.dumps({"prior_usd": self.prior_local_usd, "this_run_usd": local})
+        )
+
+    def local_usd(self) -> float:
+        """Every dollar this investigation has spent on its own model calls."""
+        return self.prior_local_usd + (_local_spend()[0] or 0.0)
 
     def committed_usd(self) -> float:
         """Spent locally, plus collected remote costs, plus live reservations."""
-        local = _local_spend()[0] or 0.0
-        return local + self.ledger.actual_usd() + self.ledger.reserved_usd()
+        return self.local_usd() + self.ledger.actual_usd() + self.ledger.reserved_usd()
+
+    def over_allowance(self) -> str | None:
+        """The message to give the agent when the shared allowance is gone, else None."""
+        committed = self.committed_usd()
+        if committed < self.allowance_usd:
+            return None
+        return (
+            f"The ${self.allowance_usd:.2f} allowance is spent or committed "
+            f"(${committed:.2f}: ${self.local_usd():.2f} on your own calls, "
+            f"${self.ledger.actual_usd():.2f} measured on remote jobs, "
+            f"${self.ledger.reserved_usd():.2f} held against jobs not yet collected)."
+        )
 
     def reserve_and_record(self, job: Job) -> None:
         """Hold a job's worst case against the allowance and write it down, atomically.
@@ -537,6 +592,29 @@ class Remote:
                 self.settle(job.label, status="failed")
                 notes.append(f"{job.label}: never reached Hawk; reservation released")
         return notes
+
+
+def qualified_model_name(model: str) -> str:
+    """The name a worker runs under: the OpenRouter group, then the model's own id."""
+    return model if model.startswith("openrouter/") else f"openrouter/{model}"
+
+
+def _models_named(config: dict[str, object]) -> set[str]:
+    """Every model the config will actually construct, qualified as Hawk composes it."""
+    named: set[str] = set()
+    models = config.get("models")
+    groups: list[object] = list(models) if isinstance(models, list) else []
+    roles = config.get("model_roles")
+    if isinstance(roles, dict):
+        groups += list(roles.values())
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        provider = str(group.get("name", ""))
+        for item in group.get("items") or []:
+            if isinstance(item, dict) and item.get("name"):
+                named.add(f"{provider}/{item['name']}")
+    return named
 
 
 def _local_spend() -> tuple[float | None, list[str]]:
@@ -613,9 +691,9 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
     async def execute(config: str, estimated_usd: float, note: str = "") -> str:
         """Submit a Hawk eval-set config file from your workspace.
 
-        Write the config yourself (see the investigating skill's examples; the Hawk
-        docs under /inputs/docs describe every field), save it under /workspace, and
-        pass its path. It is parsed with Hawk's own schema and then checked against
+        Write the config yourself (see the investigating skill's examples, and Hawk's
+        own documentation under /inputs/docs when the operator supplied it), save it
+        under /workspace, and pass its path. It is parsed with Hawk's own schema and then checked against
         this investigation's policy: only the allowed packages, task packages, models,
         images, secrets and environment keys; task arguments that name a model, an
         image, a size or a log source must satisfy the same rules; `cost_limit` is
@@ -655,13 +733,27 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
         label = str(data["name"]).removeprefix(remote.policy.id_prefix)
         eval_set_id = remote.new_eval_set_id(label)
         data["eval_set_id"] = eval_set_id
-        data["model_cost_config"] = remote.model_costs()
+        costs, unpriced = remote.model_costs()
+        named = _models_named(data)
+        blind = sorted(named & {qualified_model_name(m) for m in unpriced})
+        if blind:
+            raise ToolError(
+                f"no registered price for {', '.join(blind)}, so cost_limit could not be "
+                "enforced in the runner and the job's spend would be unbounded. Use a model "
+                "that is priced, or ask the operator to register a price for this one."
+            )
+        # every worker's price, not only the ones named here: a task that builds its
+        # own grader still charges the same key, and an unpriced model is invisible to
+        # the runner's cost limit
+        data["model_cost_config"] = costs
         parsed, _ = parse_config(data)
         worst = worst_case_usd(parsed, remote.policy)
         if worst is None:  # pragma: no cover - validate_config already refused this
             raise ToolError("the job does not state its size")
 
-        submitted_path = write_config(root, label, data)
+        # the identity is claimed before anything is written: a refused duplicate must
+        # not overwrite the config of the job that actually ran under that name
+        submitted_path = root / "jobs" / f"{label}.eval-set.yaml"
         job = Job(
             label=label,
             kind="eval-set",
@@ -674,6 +766,9 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
             note=note,
         )
         remote.reserve_and_record(job)
+        if submitted_path.exists():  # pragma: no cover - the ledger already refused this
+            raise ToolError(f"{submitted_path.name} already exists; choose another name")
+        write_config(root, label, data)
 
         try:
             returned = await asyncio.to_thread(remote.hawk.submit, submitted_path)
@@ -826,8 +921,7 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 rows = await asyncio.to_thread(wait_for, remote.hawk, job.eval_set_id, wait_minutes)
             elif action == "stop":
                 remote.hawk.stop(job.eval_set_id)
-                job.status = "stopped"
-                ledger.save()
+                remote.settle(label, status="stopped")
                 return f"stop requested for {label} ({job.eval_set_id})"
             elif action == "collect":
                 rows = remote.hawk.evals(job.eval_set_id)
@@ -848,8 +942,7 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     evals=[dict(r) for r in rows],
                     status="success" if all(r["status"] == "success" for r in rows) else "error",
                 )
-                ledger.reload()
-                job = ledger.get(label) or job
+                job = remote.ledger.get(label) or job
                 lines = [f"collected {len(files)} log(s) to /inputs/jobs/{label}/"]
                 lines += [f"  {r['task']} {r['model']}: {r['status']} {r['samples']}" for r in rows]
                 lines.append(
@@ -870,11 +963,13 @@ def jobs(remote: Remote, root: Path) -> Tool:
         except Exception as ex:
             raise ToolError(f"hawk error: {ex}") from ex
         if rows:
-            job.status = "success" if all(r["status"] == "success" for r in rows) else (
+            status = "success" if all(r["status"] == "success" for r in rows) else (
                 "error" if any(r["status"] in ("error", "cancelled") for r in rows) and all(r["status"] in ("success", "error", "cancelled") for r in rows) else "running"
             )
-            job.evals = [dict(r) for r in rows]
-            ledger.save()
+            # every write goes through the lock: a bare save() here would rewrite the
+            # whole file from a stale copy and could drop another process's reservation
+            remote.settle(label, status=status, evals=[dict(r) for r in rows])
+            job.status, job.evals = status, [dict(r) for r in rows]
         return f"{label} ({job.eval_set_id}): {job.status}\n" + "\n".join(
             f"  {r['task']} {r['model']}: {r['status']} {r['samples']}" for r in rows
         ) if rows else f"{label} ({job.eval_set_id}): no evals listed yet (runner still starting)"
@@ -882,7 +977,21 @@ def jobs(remote: Remote, root: Path) -> Tool:
     return execute
 
 
-async def _continue(state: AgentState, interactive: bool) -> bool | str:
+async def _continue(
+    state: AgentState, interactive: bool, remote: Remote | None = None
+) -> bool | str:
+    over = remote.over_allowance() if remote is not None else None
+    if over is not None:
+        # Inspect's cost limit only sees this agent's own calls, so a run whose
+        # children hold most of the allowance would otherwise carry on spending
+        # locally as though the money were still there
+        published = store_as(InvestigationState).published
+        if published:
+            return False
+        return (
+            f"{over} Publish the report now with what you have, and say in it what you "
+            "could not finish and why."
+        )
     if not store_as(InvestigationState).published:
         return (
             True
@@ -1045,7 +1154,9 @@ def investigate(
         tools += [hawk_submit(remote, root), jobs(remote, root)]
 
     async def on_continue(state: AgentState) -> bool | str:
-        return await _continue(state, interactive)
+        if remote is not None:
+            remote.record_local_spend()
+        return await _continue(state, interactive, remote)
 
     return Task(
         dataset=[

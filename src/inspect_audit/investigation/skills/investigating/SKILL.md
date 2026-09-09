@@ -69,7 +69,8 @@ eval-validity-review skill is the checklist: it collects every claim the benchma
 and verifies them one at a time, asks whether a model can both succeed and fail at each
 item, and puts the scorer on a ladder from direct measurement down to substring matching
 on natural language. Its claims inventory is worth keeping literally, as a table in the
-journal: claim, where it is stated, category, what the evidence shows, severity. Include
+journal: claim, where it is stated, category, what the evidence shows, severity. A claim that
+becomes a finding carries that severity into the register's `severity` field. Include
 the claims that look obviously true; a benchmark's true-sounding claims are what make
 its false ones credible. For the items themselves rather than the code that loads them,
 the investigate-dataset skill; for a harness that runs model-authored code,
@@ -131,8 +132,10 @@ own configuration, image and limits before you attribute it to the benchmark; if
 survives that check, it is a fact about running this benchmark and belongs in the
 report, with what you ruled out.
 
-Every submission reserves your estimate against the shared allowance until collected.
-The configs you submitted are saved under jobs/ and jobs.json is the record of what ran.
+Every submission holds its worst case against the shared allowance until collected.
+What you submitted is recorded outside the container, so jobs(action="list") and
+budget() are how you see it: what ran, under which eval set id, what it holds and what
+it turned out to cost. Keep your own copy of each config under /workspace/jobs/.
 
 ## Rules of evidence
 
@@ -162,8 +165,9 @@ Keep two files. /workspace/journal.md is append-only: what you did, what you saw
 you corrected, in order. /workspace/report/findings.json is the register of what is
 supported now: id, section (task | grader | harness_environment | aggregation_limits |
 agent_behaviour | construction), claim, status (hypothesis | supported | qualified |
-retracted), origin (historical | experiment | source | audit_limitation), evidence
-(path, location, optional quote), reproduce, limitations. Paths are report-relative
+retracted), origin (historical | experiment | source | audit_limitation), severity
+(high | medium | low, once it is more than a hypothesis), evidence (path, location,
+optional quote), reproduce, limitations. Paths are report-relative
 (evidence/counts.csv) or /inputs paths. Supported and qualified findings need evidence.
 Neither file substitutes for re-reading the primary source when a conclusion is
 challenged or after your context has been compacted.

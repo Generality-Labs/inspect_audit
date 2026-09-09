@@ -23,8 +23,9 @@ This review is read-only. It produces a report with findings and recommendations
 
 This skill was written for people working inside a checkout of `inspect_evals`, with a
 user in the room to answer questions. You are in a container, on your own, and the
-source you are auditing is the read-only snapshot at `/inputs/source` (the seed names
-the task and the commit). So:
+source you are auditing is the read-only snapshot at the seed's `snapshot` path,
+`/inputs/source` when there is one (the seed also names the task and the commit; when
+`snapshot` is null, clone the repository the seed names into /workspace first). So:
 
 - Wherever it says `src/inspect_evals/<eval_name>/`, read the task's own directory
   inside `/inputs/source`, the unpacked snapshot of the repository at the audited
@@ -43,9 +44,10 @@ the task and the commit). So:
   claim you can settle from 4,000 recorded attempts beats a claim you settle by
   reading the scorer.
 
-Its severity vocabulary is worth keeping: High means results cannot be trusted for the
-affected samples, Medium means the signal is noisy or imprecise, Low means a minor
-edge case. One High-severity false claim outweighs clean mechanics.
+Its severity vocabulary is the register's own: high means the affected results cannot
+be trusted, medium that they are noisy or imprecise, low that it is an edge case worth
+recording. Write it in the `severity` field of each finding, lowercase. One high-severity
+false claim outweighs clean mechanics.
 
 ## Phase 1: Gather Context
 

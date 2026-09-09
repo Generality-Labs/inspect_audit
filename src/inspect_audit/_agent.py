@@ -446,14 +446,16 @@ def audit_probe() -> Tool:
 @tool
 def view_image() -> Tool:
     async def execute(path: str) -> ToolResult:
-        """Look at one of this item's images, as the evaluated model saw it.
+        """Look at an image: an item's media, or a figure you have drawn.
 
-        The item's media is staged under `/audit/media/` and `sample.json` points at
-        it. Reading those bytes with `bash` establishes nothing -- call this to see
-        the picture. Use `python` with pillow when you would rather measure it.
+        Reading the bytes with bash establishes nothing; call this to see the picture.
+        Auditing an item, the media is staged under `/audit/media/` and `sample.json`
+        gives the path. Writing a report, this is how you check a figure before you
+        publish it, from the file your script wrote under
+        `/workspace/report/evidence/`.
 
         Args:
-            path: The image's path, exactly as `sample.json` gives it.
+            path: The image's path in this box.
         """
         try:
             data = await sandbox().read_file(path, text=False)

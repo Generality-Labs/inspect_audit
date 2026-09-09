@@ -30,10 +30,19 @@ inspect_audit = "inspect_audit._registry"
 
 [project.optional-dependencies]
 # Hawk's own config schema, so a config is validated as the thing Hawk will run
-# rather than as a dict that looks right. The core package is two wheels; the
-# `hawk` CLI itself is the operator's, installed separately.
-remote = ["hawk>=2.5,<3"]
-dev = ["ruff", "mypy", "pytest", "pytest-xdist", "pandas-stubs", "types-PyYAML", "hawk>=2.5,<3"]
+# rather than as a dict that looks right. Hawk itself needs 3.13, which this package
+# does not, so the marker keeps `inspect_audit` installable on 3.11 and 3.12 without
+# remote work; `parse_config` says what to install if it is missing.
+remote = ["hawk>=2.5,<3; python_version >= '3.13'"]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "pytest-xdist",
+    "pandas-stubs",
+    "types-PyYAML",
+    "hawk>=2.5,<3; python_version >= '3.13'",
+]
 # frontend/server.py: fastapi + uvicorn arrive via inspect-ai; uvicorn needs a
 # websocket protocol library that plain (non-[standard]) uvicorn doesn't ship
 frontend = ["websockets"]

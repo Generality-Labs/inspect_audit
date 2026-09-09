@@ -221,11 +221,11 @@ class Hawk:
 def stage_logs_to_s3(
     local_dir: Path, bucket: str, eval_set_id: str, profile: str | None
 ) -> str:
-    """Copy supplied logs into the child job's own S3 prefix.
+    """Stage the supplied logs once, under an eval-set prefix of their own.
 
-    A Hawk runner's credentials reach only `evals/<its eval set id>/`, so logs an
-    audit job must read are placed inside that prefix before the job is submitted,
-    and the job pins its eval set id. Returns the `hawk:` source the audit reads.
+    Jobs read them back through the Hawk API (`hawk:<id>/inputs/logs`), which is not
+    scoped to the reading job's own prefix, so every child job can use this one copy
+    whatever its own eval set id is. Returns the `hawk:` source to pass as `logs`.
     """
     import os
 
@@ -265,6 +265,12 @@ class Policy:
     # reservation a job holds is this multiplied by the samples the config asks for.
     max_cost_limit_usd: float = 5.0
     max_worst_case_usd: float = 200.0
+    # knobs that multiply the work or the request rate. Retries repeat a failed task,
+    # so they multiply the reservation as well as being capped here.
+    max_retry_attempts: int = 3
+    max_message_limit: int = 10_000
+    max_connections: int = 50
+    max_retries: int = 20
     id_prefix: str = "inv-"
 
 
@@ -280,10 +286,13 @@ ALLOWED_MODEL_CONFIG = {"reasoning_effort", "max_tokens", "temperature", "reason
 # task argument names that decide what runs, what it costs, or what it can reach.
 # Anything matching is checked against the policy; everything else is the task's own
 # parameter, executed by code that is already allowlisted.
-MODEL_ARG = re.compile(r"(^|_)model(s)?$")
-IMAGE_ARG = re.compile(r"(^|_)image$")
-SIZE_ARG = {"limit", "max_samples", "samples", "epochs", "n", "count"}
-LOG_ARG = {"logs", "log_dir", "log_file", "log_files"}
+# Substring, not suffix: `model_name`, `judge`, `image_uri` and `num_samples` all decide
+# what runs or what it costs, and an allowlist keyed on exact spellings is walked around
+# by renaming the argument. Anything that mentions one of these concepts is checked.
+MODEL_ARG = re.compile(r"model|judge|grader|scorer|extractor|llm")
+IMAGE_ARG = re.compile(r"image|container|registry")
+SIZE_ARG = re.compile(r"^(n|count|limit|epochs)$|limit|sample|epoch|item|batch|repeat|attempt")
+LOG_ARG = re.compile(r"^logs?$|log_dir|log_file|transcript")
 FORBIDDEN_ARGS = {
     "setup", "sandbox", "sandboxes", "solver", "agent", "approval", "secrets", "secret",
     "env", "environment", "command", "entrypoint", "token", "key", "api_key",
@@ -325,52 +334,86 @@ def _model_items(config: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
 def _task_arg_problems(
     where: str, args: dict[str, Any], policy: Policy, known_log_sources: set[str]
 ) -> list[str]:
-    """The task arguments are the configuration that actually executes."""
+    """The task arguments are the configuration that actually executes.
+
+    Checked at every depth. Tasks pass nested mappings through to other constructors
+    (inspect_audit's own `audit` task hands `task_args` straight to the audited task),
+    so a rule applied only to the outer keys is a rule an inner key walks around: a
+    grader model, an image or a size nested one level down would otherwise reach the
+    runner unexamined.
+    """
     problems: list[str] = []
-    for key, value in args.items():
+
+    def walk(prefix: str, value: Any, depth: int = 0) -> None:
+        if depth > 8:  # a config this deep is not a task argument
+            problems.append(f"{where}: {prefix} is nested too deeply to check")
+            return
+        if isinstance(value, dict):
+            for key, inner in value.items():
+                check(f"{prefix}.{key}" if prefix else str(key), str(key), inner, depth)
+            return
+        if isinstance(value, list):
+            for index, inner in enumerate(value):
+                walk(f"{prefix}[{index}]", inner, depth + 1)
+            return
+        if isinstance(value, str):
+            _string_problems(where, prefix, value, problems)
+
+    def check(path: str, key: str, value: Any, depth: int) -> None:
         lowered = key.lower()
         if lowered in FORBIDDEN_ARGS:
-            problems.append(f"{where}: task arg not allowed: {key!r}")
-            continue
+            problems.append(f"{where}: task arg not allowed: {path!r}")
+            return
         if MODEL_ARG.search(lowered):
-            named = value if isinstance(value, list) else [value]
-            for model in named:
+            for model in value if isinstance(value, list) else [value]:
                 if model is not None and model not in policy.models:
-                    problems.append(f"{where}: {key}={model!r} is not an allowed model")
-            continue
+                    problems.append(f"{where}: {path}={model!r} is not an allowed model")
+            return
         if IMAGE_ARG.search(lowered):
             if value is not None and value not in policy.auditor_images:
-                problems.append(f"{where}: {key}={value!r} is not an allowed image")
-            continue
-        if lowered in SIZE_ARG:
-            cap = policy.max_epochs if lowered == "epochs" else policy.max_limit
-            if value is not None and (not isinstance(value, int) or value > cap):
-                problems.append(f"{where}: {key}={value!r} must be an integer up to {cap}")
-            continue
-        if lowered in LOG_ARG:
+                problems.append(f"{where}: {path}={value!r} is not an allowed image")
+            return
+        if SIZE_ARG.search(lowered):
+            if not isinstance(value, (int, bool)) or value is True or value is False:
+                # a name-shaped size argument holding something else (a list of ids, a
+                # path, a flag) is checked as whatever it is, not as a number
+                walk(path, value, depth + 1)
+                return
+            cap = policy.max_epochs if "epoch" in lowered else policy.max_limit
+            if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool) or not (0 < value <= cap)
+            ):
+                problems.append(f"{where}: {path}={value!r} must be a whole number from 1 to {cap}")
+            return
+        if LOG_ARG.search(lowered):
             for source in value if isinstance(value, list) else [value]:
                 if not _known_log_source(str(source), known_log_sources):
                     problems.append(
-                        f"{where}: {key}={source!r} must be a hawk: source this "
+                        f"{where}: {path}={source!r} must be a hawk: source this "
                         "investigation staged or ran"
                     )
-            continue
-        for text in _strings(value):
-            if text.startswith(("s3://", "hawk:", "file://", "http://")) or text.startswith("/Users"):
-                problems.append(
-                    f"{where}: {key} points outside this investigation: {text[:60]!r}"
-                )
+            return
+        walk(path, value, depth + 1)
+
+    walk("", args)
     return problems
 
 
-def _strings(value: Any) -> list[str]:
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        return [s for v in value.values() for s in _strings(v)]
-    if isinstance(value, list):
-        return [s for v in value for s in _strings(v)]
-    return []
+# a task argument may name data, a prompt or a flag; it may not name a location outside
+# the job, because the runner holds credentials that reach some of those locations
+_OUTSIDE = re.compile(r"^(s3://|gs://|hawk:|file://|https?://|ftp://|//)")
+_ALLOWED_ABSOLUTE = ("/inputs/", "/workspace/", "/tmp/")
+
+
+def _string_problems(where: str, path: str, text: str, problems: list[str]) -> None:
+    if (
+        _OUTSIDE.match(text)
+        or text.startswith("~")
+        or (text.startswith("/") and not text.startswith(_ALLOWED_ABSOLUTE))
+    ):
+        problems.append(
+            f"{where}: {path} points outside this investigation: {text[:60]!r}"
+        )
 
 
 def _known_log_source(logs: str, known_log_sources: set[str]) -> bool:
@@ -381,38 +424,48 @@ def _known_log_source(logs: str, known_log_sources: set[str]) -> bool:
 
 
 def _samples_in(item: Any, config_limit: int | None) -> int | None:
-    """How many samples one task item runs, or None when it does not say."""
+    """How many samples one task item runs, or None when it does not say.
+
+    Only `sample_ids` and the eval set's own `limit` are trusted. A task argument
+    called `limit` is the task's business and may mean something else entirely, so
+    believing it would let a job that runs a whole dataset reserve the price of one
+    sample.
+    """
     if item.sample_ids:
         return len(item.sample_ids)
-    args = item.args or {}
-    for key in ("limit", "max_samples", "samples"):
-        if isinstance(args.get(key), int):
-            return int(args[key])
     return config_limit
 
 
 def worst_case_usd(parsed: Any, policy: Policy) -> float | None:
-    """The most a submitted config can spend: cost per sample times samples run.
+    """What a submitted config is expected to cost at its own stated ceiling.
 
-    Hawk runs every task item against every model, `epochs` times, and the runner
-    enforces `cost_limit` dollars per sample through Inspect. None means the config
-    does not bound itself, which is a refusal, not an unknown.
+    Hawk runs every task item against every model, `epochs` times, and re-runs a
+    failed task up to `retry_attempts` times; the runner stops a sample once Inspect
+    sees it pass `cost_limit` dollars. It is a stopping threshold rather than a hard
+    ceiling, so the sample in flight can overshoot it, and a model the task builds for
+    itself out of an unpriced name is not counted by it at all. Treat this as the
+    number to hold against the allowance, not as a guarantee.
+
+    None means the config does not bound itself, which is a refusal, not an unknown.
     """
     cost_limit = parsed.cost_limit
     if not isinstance(cost_limit, (int, float)) or cost_limit <= 0:
         return None
-    limit = parsed.limit if isinstance(parsed.limit, int) else None
+    limit = parsed.limit if isinstance(parsed.limit, int) and parsed.limit > 0 else None
     epochs = parsed.epochs
     epochs = epochs if isinstance(epochs, int) else getattr(epochs, "epochs", 1) or 1
+    if not isinstance(epochs, int) or epochs < 1:
+        return None
     models = sum(len(group.items) for group in parsed.models or []) or 1
+    attempts = 1 + max(0, parsed.retry_attempts or 0)
     samples = 0
     for task in parsed.tasks:
         for item in task.items:
             per_item = _samples_in(item, limit)
-            if per_item is None:
+            if per_item is None or per_item < 1:
                 return None
             samples += per_item
-    return float(cost_limit) * samples * models * int(epochs)
+    return float(cost_limit) * samples * models * int(epochs) * attempts
 
 
 def validate_config(
@@ -507,10 +560,30 @@ def validate_config(
             problems.append(f"{key} is required")
         elif not isinstance(value, int) or value > cap:
             problems.append(f"{key} {value!r} must be an integer up to {cap}")
-    if isinstance(parsed.limit, int) and parsed.limit > policy.max_limit:
-        problems.append(f"limit {parsed.limit} exceeds the cap {policy.max_limit}")
-    if parsed.limit is not None and not isinstance(parsed.limit, int):
-        problems.append("limit must be an integer; a range is not allowed")
+    if parsed.limit is not None and (
+        not isinstance(parsed.limit, int) or not (0 < parsed.limit <= policy.max_limit)
+    ):
+        problems.append(
+            f"limit {parsed.limit!r} must be a whole number from 1 to {policy.max_limit}; "
+            "a range is not allowed"
+        )
+    for task in parsed.tasks:
+        for item in task.items:
+            if item.sample_ids is not None and not item.sample_ids:
+                problems.append(f"tasks[{task.name}].{item.name}: sample_ids is empty")
+    for key, cap in (
+        ("retry_attempts", policy.max_retry_attempts),
+        ("message_limit", policy.max_message_limit),
+        ("working_limit", policy.max_time_limit),
+        ("max_connections", policy.max_connections),
+        ("max_retries", policy.max_retries),
+        ("timeout", policy.max_time_limit),
+    ):
+        value = config.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, int) or isinstance(value, bool) or not (0 <= value <= cap):
+            problems.append(f"{key} {value!r} must be a whole number up to {cap}")
     if parsed.cost_limit is None:
         problems.append(
             f"cost_limit is required: dollars per sample, up to {policy.max_cost_limit_usd}. "

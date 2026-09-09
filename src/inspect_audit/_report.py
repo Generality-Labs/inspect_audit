@@ -207,6 +207,10 @@ class Finding(BaseModel):
     claim: str = Field(min_length=1)
     status: Literal["hypothesis", "supported", "qualified", "retracted"]
     origin: Literal["historical", "experiment", "source", "audit_limitation"]
+    # how much of the reported result this finding puts in question: high means the
+    # affected results cannot be trusted, medium that they are noisy or imprecise, low
+    # that it is an edge case worth recording. Absent while a finding is a hypothesis.
+    severity: Literal["high", "medium", "low"] | None = None
     evidence: list[EvidenceRef]
     reproduce: str = Field(min_length=1)
     limitations: str

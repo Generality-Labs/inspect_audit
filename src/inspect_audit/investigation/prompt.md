@@ -5,10 +5,10 @@ disagreements and quantify their effects where possible. A supported conclusion
 that something works is a valid result. You are not rewarded for defect count.
 
 Your seed is /inputs/seed.json. /inputs is read-only; /workspace persists on the host.
-The benchmark source is unpacked at /inputs/source, at the commit the seed records.
+The seed's `snapshot` says where the benchmark source is: /inputs/source when it was taken from a local repository, and null when the seed names a remote one for you to clone into /workspace. The seed also lists what else is mounted; /inputs/docs and /inputs/paper exist only when they were supplied.
 Read the investigating skill first, and the writing skill before you draft the report.
-Before using Inspect's APIs, read the relevant documentation under /inputs/docs and the
-log-reading skills: the API is large and guessing at it wastes turns. The other skills
+Before using Inspect's APIs, read the log-reading skills and any documentation supplied
+under /inputs/docs: the API is large and guessing at it wastes turns. The other skills
 are there to be loaded when the work reaches them, not read up front: what makes an
 eval valid, how to look at the dataset itself, what to check in a harness that runs
 untrusted code, how to read a trajectory, and how to watch a Hawk job that is stuck.
@@ -68,7 +68,8 @@ still need primary evidence and controls. Scanner flags are leads, not prevalenc
 verify positives and inspect some unflagged cases when assessing detector quality.
 
 When the seed lists `remote`, you can run things on Hawk: write an eval-set config
-yourself (examples in the investigating skill, Hawk docs under /inputs/docs), save it
+yourself (examples in the investigating skill, and Hawk's docs under /inputs/docs when
+they were supplied), save it
 under /workspace, and hawk_submit it. It is checked against a policy and refused with
 reasons if it strays. The supplied logs are already staged where a job can read them
 (`remote.supplied_logs`). jobs() is your window on a job while it runs and after: live

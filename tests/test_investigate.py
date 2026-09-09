@@ -22,17 +22,87 @@ from test_helpers.logs import run_fixture_eval
 from inspect_audit._investigate import investigate, publish_report, save_publication
 
 
-def test_headless_defaults_and_explicit_cost_limit(tmp_path: Path) -> None:
+@pytest.fixture(autouse=True)
+def _no_price_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
+
+
+def test_headless_defaults_enforce_the_allowance_without_a_token_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
     repo = str(git_repo(tmp_path / "repo"))
     target = investigate(repo, output_dir=str(tmp_path / "runs"))
     assert target.metadata["interactive"] is False
-    assert target.cost_limit is None
-    assert target.token_limit == 500_000
-    assert target.token_limit_type == "output"
-    limited = investigate(
-        repo, output_dir=str(tmp_path / "runs"), enforce_cost_limit=True, budget_usd=7
+    assert target.cost_limit == 10
+    assert target.token_limit is None
+    planning = investigate(
+        repo, output_dir=str(tmp_path / "runs"), enforce_cost_limit=False, token_limit="output:500k"
     )
-    assert limited.cost_limit == 7
+    assert planning.cost_limit is None
+    assert planning.token_limit == 500_000
+    assert planning.token_limit_type == "output"
+
+
+def test_snapshot_paths_paper_download_and_docs_mount(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tarfile
+    import urllib.request
+
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
+    repo = git_repo(tmp_path / "repo")
+    (repo / "other_eval").mkdir()
+    (repo / "other_eval" / "noise.py").write_text("# not under audit\n")
+    subprocess.run(["git", "-C", str(repo), "add", "other_eval"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=T", "-c", "user.email=t@e.org", "commit", "-qm", "more"], check=True)
+    docs = tmp_path / "inspect-docs"
+    docs.mkdir()
+    (docs / "index.md").write_text("# docs\n")
+
+    class Response:
+        def __init__(self, body: bytes) -> None:
+            self.body = body
+
+        def read(self) -> bytes:
+            return self.body
+
+        def __enter__(self):  # noqa: ANN204
+            return self
+
+        def __exit__(self, *exc):  # noqa: ANN002
+            return False
+
+    fetched: list[str] = []
+
+    def urlopen(request, timeout=None):  # noqa: ANN001
+        fetched.append(request.full_url)
+        return Response(b"%PDF-1.4 fake")
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    target = investigate(
+        str(repo),
+        paths=["task.py"],
+        paper="https://arxiv.org/abs/2509.07968v2",
+        docs=[str(docs)],
+        output_dir=str(tmp_path / "runs"),
+    )
+    root = Path(target.metadata["investigation_dir"])
+    with tarfile.open(root / "inputs/source.tar") as archive:
+        assert archive.getnames() == ["task.py"]
+    seed = json.loads((root / "inputs/seed.json").read_text())
+    assert seed["paths"] == ["task.py"]
+    assert fetched == ["https://arxiv.org/pdf/2509.07968v2"]
+    assert seed["paper"] == "/inputs/paper/2509.07968v2.pdf"
+    assert (root / "inputs/paper/2509.07968v2.pdf").read_bytes().startswith(b"%PDF")
+    assert seed["docs"] == ["/inputs/docs/inspect-docs"]
+    assert (root / "inputs/docs/inspect-docs/index.md").is_file()
 
 
 @pytest.mark.parametrize("missing", [True, False])
@@ -58,11 +128,13 @@ def test_budget_does_not_turn_missing_prices_into_zero(
             ),
         },
     )
-    result = json.loads(asyncio.run(_investigate.investigation_budget(10)()))
-    assert result["inspect_recorded_usd"] == (None if missing else 3)
-    assert result["remaining_usd"] == (None if missing else 7)
-    assert result["known_cost_subtotal_usd"] == (2 if missing else 3)
-    assert result["unpriced_models"] == (["other"] if missing else [])
+    text = asyncio.run(_investigate.investigation_budget(10, True)())
+    assert "Allowance: $10.00 (enforced)" in text
+    if missing:
+        assert "at least $2.00" in text and "other unpriced" in text
+        assert "Remaining" not in text
+    else:
+        assert "Spent: $3.00   Remaining: $7.00" in text
 
 
 def test_findings_validate_and_bundle_input_evidence(tmp_path: Path) -> None:
@@ -77,6 +149,7 @@ def test_findings_validate_and_bundle_input_evidence(tmp_path: Path) -> None:
     (report / "report.html").write_text("<p>Report</p>")
     finding = dict(
         id="F1",
+        section="grader",
         claim="A claim",
         status="supported",
         origin="historical",
@@ -97,6 +170,7 @@ def test_findings_validate_and_bundle_input_evidence(tmp_path: Path) -> None:
     )
     for change in [
         dict(status="confirmed"),
+        dict(section="vibes"),
         dict(evidence=[]),
         dict(evidence=[dict(path="../escape", location="line 1")]),
         dict(evidence=[dict(path="/etc/passwd", location="line 1")]),

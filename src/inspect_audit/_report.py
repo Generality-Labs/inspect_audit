@@ -20,6 +20,7 @@ With no `logs` argument the task degrades to the sandbox-less chat skeleton
 
 import atexit
 import json
+import os
 import shutil
 import tempfile
 from importlib.metadata import version
@@ -186,11 +187,22 @@ class EvidenceRef(BaseModel):
     quote: str | None = None
 
 
+Section = Literal[
+    "task",
+    "grader",
+    "harness_environment",
+    "aggregation_limits",
+    "agent_behaviour",
+    "construction",
+]
+
+
 class Finding(BaseModel):
     """One revisable finding; publication snapshots this same register."""
 
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1)
+    section: Section
     claim: str = Field(min_length=1)
     status: Literal["hypothesis", "supported", "qualified", "retracted"]
     origin: Literal["historical", "experiment", "source", "audit_limitation"]
@@ -258,7 +270,14 @@ def save_publication(root: Path) -> Path:
                 relative = path.relative_to("/inputs")
                 dest = destination / "_inputs" / relative
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile((root / "inputs" / relative).resolve(), dest)
+                source = (root / "inputs" / relative).resolve()
+                # hardlink, not copy: a cited .eval log is tens of MB and a
+                # bundle citing every log would otherwise duplicate the inputs
+                # per published version. inputs are immutable, so sharing is safe
+                try:
+                    os.link(source, dest)
+                except OSError:
+                    shutil.copyfile(source, dest)
                 evidence.path = str(dest.relative_to(destination))
     (destination / "findings.json").write_text(
         json.dumps([f.model_dump() for f in findings], indent=2)

@@ -10,29 +10,46 @@ execute:
   echo: false
 ---
 
-<!-- Adapted from Generality-Labs.github.io/blog/posts/simpleqa-audit-v2/index.qmd.
-Use its editorial structure, not its benchmark-specific assertions or site-only assets.
-Opening: what this benchmark is good for, what the evidence supports, and the most
-consequential qualification. Include strengths where established. -->
+<!-- Structure is fixed; prose is yours. Remove every drafting comment before publishing.
+Findings live in findings.json first, with a `section` matching the heading they belong
+under; the prose here explains them. Every number has a denominator and a source. -->
 
-## The benchmark
+<!-- SUMMARY. Three paragraphs, no heading: what the benchmark is and what the evidence
+examined was; the findings that matter, with magnitudes; what a reader should and should
+not conclude from the benchmark's scores. -->
 
-<!-- Explain intended capability, task construction, what the model sees, how it
-acts, how scoring works, and the revisions of source/data actually examined. -->
+## The task
 
-## How models respond
+<!-- Is the ground truth correct? Is each item well described, with one defensible answer?
+Is it solvable as given, with what the agent is actually allowed? Can the answer be reached
+without doing the task: from the environment, by guessing, from memory? One literal example
+item. Cite items by id. -->
 
-<!-- Establish the available run population, configurations, errors and coverage.
-Show the main patterns with computed denominators and appropriately scoped figures. -->
+## The grader
 
-## Issues
+<!-- Does it credit only correct answers? Does it reject correct ones? Is it stable:
+deterministic, the same judge across the leaderboard, reproducible today? Does it capture
+what the task is for, or a proxy? Name the judge model(s) actually recorded in the logs. -->
 
-<!-- One named subsection per consequential finding: mechanism, primary evidence,
-affected population, measured consequence and remaining uncertainty. Distinguish
-historical observations from experiments and source-only hypotheses. If nothing is
-established, say so; do not invent issues to fill this section. -->
+## The harness and environment
 
-## Bottom line
+<!-- Configured as the paper and code say (versions, tools, network, data present)? Fair
+across models (same tools, budgets, prompts, termination)? Any leak that should not be
+there: web access, stale state, answer files? Did the environment break attempts? -->
 
-<!-- Explain which uses/conclusions are justified, what needs qualification, what
-remains untested, and the most useful next check. Read findings.json before writing. -->
+## Aggregation and limits
+
+<!-- What was excluded before the headline number, and why? Do turn, token or time limits
+cut off capable work, unequally across models? Is the number informative: saturation,
+a ceiling from broken items, statistical power? Attempted and completed populations. -->
+
+## How agents approach it
+
+<!-- Where do they converge, diverge, get confused? Does behaviour disagree with the paper's
+account? Label the failed attempts: capability failure, or one of the causes above, with
+counts per model and denominators. -->
+
+## How it is built
+
+<!-- Code quality of task, scorer and harness; divergence between paper, README and
+implementation; things a maintainer should fix. Low weight; keep it short. -->

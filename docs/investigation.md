@@ -26,8 +26,12 @@ inspect eval inspect_audit/investigate \
 # Then attach from another terminal with: inspect acp
 ```
 
-`repo` also accepts an HTTPS Git URL. Optional arguments: `revision`, `target_task`,
-`paper` (local file or URL), and `extra_skills` (list of local skill directories).
+`repo` also accepts an HTTPS Git URL. Optional arguments: `revision`; `paths` (repository
+paths to include, so the snapshot holds the task under audit rather than every eval in a
+collection); `target_task`; `paper` (a local file, or a URL downloaded at setup, arXiv
+abstract pages resolving to their PDF); `docs` (documentation directories mounted read-only
+at `/inputs/docs/<name>`, e.g. the Inspect docs and Hawk's, which the agent is told to read
+before using the APIs); `extra_skills` (skill directories); `token_limit` (none by default).
 Local repositories are snapshotted with `git archive` at HEAD or `revision`: dirty
 files, untracked files and submodule contents are excluded. Remote cloning is done
 by the investigator in its sandbox; it records the resolved commit. Read access to
@@ -52,12 +56,13 @@ The image installs Inspect, pandas, pyarrow, matplotlib, Jupyter, PDF text extra
 and Quarto 1.9.38. The first build downloads dependencies. No host Docker socket,
 home directory or provider credentials are mounted into the research container.
 
-`budget_usd` is a planning allowance by default. The budget tool displays Inspect's
-accounting, returning null for total spend and remaining budget if any used model
-has unknown cost; the known subtotal and unpriced models are listed separately.
-Use `-T enforce_cost_limit=true` to enforce the allowance through Inspect. This
-requires prices for all models: supply `--model-cost-config` for unregistered
-OpenRouter/Middleman IDs. No stale model price table is built into the package.
+`budget_usd` is enforced by default through Inspect's cost limit, covering this
+investigator's own model calls (child jobs, when they exist, will be budgeted separately).
+OpenRouter's current prices are registered at setup so any `openrouter/...` model has a
+price; for other providers supply `--model-cost-config`. Set `-T enforce_cost_limit=false`
+to make it a planning number only. The `budget` tool shows spend by model and says
+"unknown" rather than zero when a model has no price. There is no token cap unless
+`token_limit` is set.
 A 500k **output-token** limit (including reasoning, excluding repeated/cache-read
 input) applies independently and can
 be overridden through Inspect. Limits include follow-up conversation; reaching one

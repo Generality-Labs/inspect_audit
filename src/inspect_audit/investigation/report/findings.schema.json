@@ -2,7 +2,7 @@
   "$defs": {
     "EvidenceRef": {
       "additionalProperties": false,
-      "description": "A local primary artifact, with an optional location and literal quotation.",
+      "description": "A local primary artifact with a location and optional literal quotation.",
       "properties": {
         "path": {
           "minLength": 1,
@@ -41,6 +41,18 @@
         "id": {
           "minLength": 1,
           "title": "Id",
+          "type": "string"
+        },
+        "section": {
+          "enum": [
+            "task",
+            "grader",
+            "harness_environment",
+            "aggregation_limits",
+            "agent_behaviour",
+            "construction"
+          ],
+          "title": "Section",
           "type": "string"
         },
         "claim": {
@@ -87,6 +99,7 @@
       },
       "required": [
         "id",
+        "section",
         "claim",
         "status",
         "origin",

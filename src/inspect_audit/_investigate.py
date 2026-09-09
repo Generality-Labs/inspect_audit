@@ -251,6 +251,120 @@ def register_openrouter_costs(timeout: float = 15) -> int:
     return registered
 
 
+def git_package_spec(repo: Path, revision: str | None = None) -> str | None:
+    """The pip spec that installs this checkout's code somewhere else.
+
+    A Hawk runner is a fresh pod: it installs the benchmark to run it. That spec is
+    the same repository the agent reads, at the same commit, so deriving it here
+    removes the chance of the agent auditing one commit while the jobs run another.
+    """
+    try:
+        origin = subprocess.check_output(
+            ["git", "-C", str(repo), "remote", "get-url", "origin"], text=True
+        ).strip()
+        commit = subprocess.check_output(
+            ["git", "-C", str(repo), "rev-parse", "--verify", f"{revision or 'HEAD'}^{{commit}}"],
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    if not origin.startswith(("https://", "git@", "ssh://")):
+        return None
+    url = origin.removesuffix(".git").replace("git@github.com:", "https://github.com/")
+    on_remote = subprocess.run(
+        ["git", "-C", str(repo), "branch", "-r", "--contains", commit],
+        capture_output=True, text=True,
+    )
+    if on_remote.returncode != 0 or not on_remote.stdout.strip():
+        logger.warning(
+            f"{url}@{commit[:8]} is not on any remote branch: a Hawk runner will not be "
+            "able to install it. Push the commit, or pass the package spec explicitly."
+        )
+    return f"git+{url}@{commit}"
+
+
+def own_package_spec() -> str | None:
+    """The spec that installs the inspect_audit a runner should use: this one."""
+    from importlib.metadata import Distribution, PackageNotFoundError
+
+    try:
+        dist = Distribution.from_name("inspect_audit")
+    except PackageNotFoundError:  # pragma: no cover - not installed
+        return None
+    direct_url = dist.read_text("direct_url.json")
+    if direct_url:
+        data = json.loads(direct_url)
+        vcs = data.get("vcs_info") or {}
+        if vcs.get("vcs") == "git" and vcs.get("commit_id"):
+            return f"git+{data['url'].removesuffix('.git')}@{vcs['commit_id']}"
+        # an editable or local install: the code is a working tree, so ask git
+        local = data.get("url", "")
+        if local.startswith("file://"):
+            return git_package_spec(Path(local.removeprefix("file://")))
+    return None
+
+
+def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | None:
+    """The task's own directory, plus what the package shares with it.
+
+    Auditing one eval out of a collection, the rest of the collection is noise: the
+    agent reads a hundred other tasks' code looking for the one it was asked about.
+    The eval's own metadata says which directory is its own; the shared modules next
+    to it are included because the task imports them.
+    """
+    directory = _task_directory(source, target_task)
+    if directory is None:
+        return None
+    chosen = [str(directory.relative_to(source))]
+    package = directory.parent
+    for shared in ("utils", "constants.py", "metadata.py", "_registry.py", "__init__.py"):
+        candidate = package / shared
+        if candidate.exists():
+            chosen.append(str(candidate.relative_to(source)))
+    for top in ("pyproject.toml", "README.md"):
+        if (source / top).is_file():
+            chosen.append(top)
+    return chosen
+
+
+def _task_directory(source: Path, target_task: str | None) -> Path | None:
+    """Where an eval's own code lives, from the metadata it publishes about itself."""
+    if not target_task:
+        return None
+    name = target_task.split("/")[-1]
+    for path in sorted(source.rglob("eval.yaml")):
+        tasks = _safe_yaml(path).get("tasks")
+        names = {
+            str(entry.get("name", ""))
+            for entry in (tasks if isinstance(tasks, list) else [])
+            if isinstance(entry, dict)
+        }
+        if name in names or path.parent.name == name:
+            return path.parent
+    return None
+
+
+def _safe_yaml(path: Path) -> dict[str, object]:
+    try:
+        loaded = yaml.safe_load(path.read_text())
+    except (yaml.YAMLError, OSError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def paper_from_metadata(source: Path, target_task: str | None) -> str | None:
+    """The paper an eval names in its own metadata, when it names one."""
+    if not target_task:
+        return None
+    directory = _task_directory(source, target_task)
+    if directory is not None:
+        arxiv = str(_safe_yaml(directory / "eval.yaml").get("arxiv") or "").strip()
+        if arxiv:
+            # several papers means the eval was revised; the last is the current one
+            return arxiv.split(",")[-1].strip()
+    return None
+
+
 def prepare_workspace(
     repo: str,
     revision: str | None,
@@ -1097,7 +1211,7 @@ def investigate(
     extra_skills: list[str] | None = None,
     hawk_api_url: str | None = None,
     task_package: str | None = None,
-    audit_package: str = "git+https://github.com/Generality-Labs/inspect_audit@codex/attempt-review",
+    audit_package: str | None = None,
     auditor_image: str = "ghcr.io/generality-labs/inspect-audit-auditor@sha256:072e50b2ea1c51e67644e97e08cff052a52a1d661294635e1c3e360d1371b9ee",
     worker_models: list[str] | None = None,
     secrets_file: str | None = None,
@@ -1112,12 +1226,15 @@ def investigate(
     Args:
         repo: Local Git repository or HTTPS Git URL of the benchmark.
         logs: Inspect log files or directories (hardlinked, read-only in the box).
-        paper: Local file or URL; a URL is downloaded now (arXiv abs -> pdf).
+        paper: Local file or URL; a URL is downloaded now (arXiv abs -> pdf). Defaults to
+            the paper the eval names in its own metadata.
         docs: Documentation directories to mount read-only (inspect docs, Hawk docs).
         overview: Optional operator steer.
         target_task: The task under audit, e.g. `inspect_evals/simpleqa_verified`.
         revision: Commit to snapshot (default HEAD).
-        paths: Repository paths to include in the snapshot (default: everything).
+        paths: Repository paths to include in the snapshot. Defaults to the audited
+            task's own directory and the modules its package shares, from the eval's
+            metadata; everything, when that cannot be determined.
         output_dir: Where the investigation directory is created.
         resume: An existing investigation directory to carry on in, instead of creating
             one. Its inputs, workspace, journal and job ledger are reused, supplied logs
@@ -1129,17 +1246,21 @@ def investigate(
         token_limit: Optional Inspect token limit (e.g. "output:500k"); none by default.
         interactive: Wait for the operator over ACP after publishing.
         extra_skills: Additional skill directories to load.
-        hawk_api_url: Enable remote work through Hawk at this API. The `hawk` CLI must be
-            installed and logged in on this machine; its tools run here, never in the box.
-        task_package: pip/git spec of the package providing the audited task, installed
-            in every Hawk runner (e.g. git+https://github.com/UKGovernmentBEIS/inspect_evals@<commit>).
-        audit_package: git spec of inspect_audit for sample-audit jobs.
+        hawk_api_url: Enable remote work through Hawk at this API, defaulting to
+            HAWK_API_URL. The `hawk` CLI must be installed and logged in on this machine;
+            its tools run here, never in the box.
+        task_package: pip/git spec of the package providing the audited task, installed in
+            every Hawk runner. Defaults to the audited repository's own origin at the
+            commit being snapshotted, so the code the agent reads is the code that runs.
+        audit_package: git spec of inspect_audit for sample-audit jobs. Defaults to the
+            commit this process is running.
         auditor_image: Published auditor image for sample-audit jobs on k8s.
         worker_models: OpenRouter model ids the agent may run (benchmark workers, auditors,
             graders). Prices for these are registered so costs are accounted.
         secrets_file: .env passed to Hawk jobs (OPENROUTER_API_KEY); never read by the agent.
         log_bucket: Hawk's S3 log bucket, for staging supplied logs into an audit job's prefix.
-        aws_profile: AWS profile with write access to that bucket (else ambient credentials).
+        aws_profile: AWS profile with write access to that bucket, defaulting to
+            AWS_PROFILE (else ambient credentials).
     """
     if not math.isfinite(budget_usd) or budget_usd <= 0:
         raise ValueError("budget_usd must be finite and positive")
@@ -1151,10 +1272,33 @@ def investigate(
         if not (resolved / "SKILL.md").is_file():
             raise ValueError(f"Expected a skill directory containing SKILL.md: {path}")
         skill_paths.append(str(resolved))
+    # what can be worked out is worked out: the audited repository already says which
+    # commit it is, which directory the task lives in and which paper it comes from,
+    # and this package already knows its own commit. Passing any of them overrides.
+    local_repo = Path(repo).expanduser()
+    if local_repo.is_dir():
+        paths = paths or paths_from_metadata(local_repo, target_task)
+        paper = paper or paper_from_metadata(local_repo, target_task)
+    hawk_api_url = hawk_api_url or os.environ.get("HAWK_API_URL")
+    aws_profile = aws_profile or os.environ.get("AWS_PROFILE")
+    if hawk_api_url:
+        task_package = task_package or (
+            git_package_spec(local_repo, revision) if local_repo.is_dir() else None
+        )
+        audit_package = audit_package or own_package_spec()
+        if not task_package:
+            raise ValueError(
+                "remote work needs the pip spec that installs the audited task in a Hawk "
+                "runner. It is derived from the repository's origin and commit; this "
+                "repository has neither, so pass task_package explicitly."
+            )
+        if not audit_package:
+            raise ValueError(
+                "remote work needs the pip spec that installs inspect_audit in a Hawk "
+                "runner, and this install is not one git can describe. Pass audit_package."
+            )
     if enforce_cost_limit or hawk_api_url:
         register_openrouter_costs()
-    if hawk_api_url and not task_package:
-        raise ValueError("hawk_api_url needs task_package: the package Hawk runners install to run the audited task")
     resumed = _resumable(resume) if resume else None
     root = resumed or prepare_workspace(
         repo,
@@ -1172,7 +1316,7 @@ def investigate(
     remote: Remote | None = None
     if hawk_api_url:
         remote = Remote(
-            root, hawk_api_url, secrets_file, task_package or "", audit_package, auditor_image,
+            root, hawk_api_url, secrets_file, task_package or "", audit_package or "", auditor_image,
             worker_models or DEFAULT_WORKERS, log_bucket, aws_profile, budget_usd,
         )
         seed_path = root / "inputs" / "seed.json"

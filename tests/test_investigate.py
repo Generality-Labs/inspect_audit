@@ -643,3 +643,65 @@ def test_a_resumed_investigation_remembers_what_it_already_spent(
     resumed = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], "bucket", None, 10.0)
     assert resumed.prior_local_usd == 2.0
     assert resumed.local_usd() == 3.5, "the earlier run's spend must still count against the allowance"
+
+
+def test_what_can_be_derived_is_derived(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The audited repository already says which commit, which directory, which paper.
+
+    Every one of these was a parameter someone had to pass correctly, and a wrong pin
+    means the agent reads one commit while its jobs run another.
+    """
+    from inspect_audit._investigate import (
+        git_package_spec,
+        paper_from_metadata,
+        paths_from_metadata,
+    )
+
+    repo = tmp_path / "evals"
+    (repo / "src/suite/thing").mkdir(parents=True)
+    (repo / "src/suite/utils").mkdir()
+    (repo / "src/suite/constants.py").write_text("X = 1\n")
+    (repo / "src/suite/thing/thing.py").write_text("# the task\n")
+    (repo / "src/suite/other").mkdir()
+    (repo / "src/suite/other/other.py").write_text("# a different eval\n")
+    (repo / "src/suite/thing/eval.yaml").write_text(
+        "arxiv: https://arxiv.org/abs/1111.11111,https://arxiv.org/abs/2222.22222\n"
+        "tasks:\n  - name: thing_verified\n"
+    )
+    (repo / "pyproject.toml").write_text("[project]\nname='suite'\n")
+
+    chosen = paths_from_metadata(repo, "suite/thing_verified")
+    assert chosen is not None
+    assert "src/suite/thing" in chosen and "src/suite/constants.py" in chosen
+    assert "src/suite/other" not in chosen, "auditing one eval must not snapshot the rest"
+    # the newest paper: an eval with two is one that was revised
+    assert paper_from_metadata(repo, "suite/thing_verified") == "https://arxiv.org/abs/2222.22222"
+    assert paths_from_metadata(repo, "suite/not_here") is None
+
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "git@github.com:org/suite.git"], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=T", "-c", "user.email=t@e.org", "commit", "-qm", "c"], check=True)
+    commit = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    assert git_package_spec(repo) == f"git+https://github.com/org/suite@{commit}"
+
+    # a repository with no remote cannot be installed in a runner, and says so
+    bare = tmp_path / "local"
+    bare.mkdir()
+    subprocess.run(["git", "init", "-q", str(bare)], check=True)
+    assert git_package_spec(bare) is None
+
+
+def test_remote_work_refuses_to_guess_a_package_it_cannot_derive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
+    repo = git_repo(tmp_path / "repo")  # no origin remote
+    with pytest.raises(ValueError, match="pass task_package explicitly"):
+        investigate(
+            str(repo),
+            output_dir=str(tmp_path / "runs"),
+            hawk_api_url="https://hawk.example",
+        )

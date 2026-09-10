@@ -10,13 +10,25 @@ execute:
   echo: false
 ---
 
-<!-- Structure is fixed; prose is yours. Remove every drafting comment before publishing.
-Findings live in findings.json first, with a `section` matching the heading they belong
-under; the prose here explains them. Every number has a denominator and a source. -->
+## Summary {.unnumbered}
 
-<!-- SUMMARY. Three paragraphs, no heading: what the benchmark is and what the evidence
-examined was; the findings that matter, with magnitudes; what a reader should and should
-not conclude from the benchmark's scores. -->
+<!-- Two or three sentences: what the benchmark asks the model to do, what information
+and tools it receives, and how success is measured. Then one linked bullet per
+substantive finding, including positive findings. Lead with the conclusion and give
+its magnitude/evidence and scope. Group instances of the same defect together.
+Link each bullet to an explicit anchor in the full audit. End with one short coverage
+statement. Do not put a full methods narrative here. -->
+
+## Benchmark architecture {.unnumbered}
+
+<!-- Use components.architecture with evidence/architecture.json to draw the actual
+information flow, including the agent-visible boundary and hidden scoring inputs.
+Cite source evidence for connections. Mark uncertain connections as unverified.
+Embed the resulting SVG here. Do not invent tools or feedback loops. -->
+
+---
+
+# Full audit
 
 ## The task
 

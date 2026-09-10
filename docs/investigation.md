@@ -4,15 +4,22 @@ The registered `inspect_audit/investigate` task reads a benchmark's source and
 supplied Inspect logs, analyses them in a Docker workspace, and, when `hawk_api_url`
 is set, runs things on Hawk: the agent writes an ordinary Hawk eval-set config (the
 benchmark itself, or inspect_audit's sample auditors over recorded attempts) and
-`hawk_submit` checks it against a policy and submits it; `stage_logs` makes the supplied
-logs readable by a job; `jobs` waits, collects and accounts. It writes a six-section Quarto HTML report and exits by default;
+`hawk_submit` checks it against a policy and submits it; `jobs` waits, collects and accounts.
+It writes a Quarto HTML report with a short finding brief, a benchmark architecture
+diagram, and the full six-section audit, then exits by default;
 explicit interactive mode waits through ACP.
 
 ## Remote work
 
 The agent's shell runs in a container with no credentials. The dispatch tools run in
 the Inspect process on this machine and use the `hawk` CLI (your login, in its keyring)
-and, for staging the supplied logs once at setup, your AWS profile.
+without exposing that login to the container. Local input logs remain local. For remote
+auditors, import the corpus once with `hawk import /path/to/logs --name my-corpus`,
+then pass the resulting `hawk:imported-...` address in `logs`. Reuse that address
+across investigations. Hawk establishes the access metadata and warehouse records;
+a raw upload to an arbitrary S3 prefix does neither reliably. Existing imported logs
+should be referenced, not reimported. Historical model names must be registered in
+Middleman for their log access permissions to resolve.
 
 A submitted config is treated as hostile input. It is parsed with Hawk's own schema and
 then checked as the thing that will actually run: allowlisted packages (the task package
@@ -20,13 +27,15 @@ and inspect_audit only), task registry names, models, images, secrets
 (`OPENROUTER_API_KEY` only) and runner environment keys, with the same rules applied to
 task arguments, where a `model`, an `image`, a size or a log source can otherwise be
 overridden past the outer fields. Task-level secrets, isolation, runner image, cpu,
-memory, agents, solvers and unknown keys are refused. `epochs`, `token_limit` and
+agents, solvers and unknown keys are refused. Runner memory and log_model_api are allowed. `epochs`, `token_limit` and
 `time_limit` are required and capped, and a null `limit` is not a size.
 
-Spend is bounded, not estimated. Every config states `cost_limit`, the dollars one
-sample may spend, which Inspect enforces inside the runner using prices stamped in at
-submission from the same registry the local allowance uses. The job holds
-`cost_limit x samples x models x epochs` against the shared allowance from submission
+Remote spend uses reservations, not a guaranteed dollar ceiling. Inspect enforces
+`cost_limit` during solving; scoring occurs outside that scope, and in-flight calls
+can overshoot. We reserve `cost_limit x samples x models x epochs x retry attempts`,
+multiplied by `1 + number of model_roles` as a scoring buffer. That buffer is a
+planning assumption, not an enforced cap on arbitrary scorer code. Set conservative
+grader generation limits and keep experiments small. The reservation stays held
 until `jobs(action="collect")` downloads the logs (to `/inputs/jobs/<label>/`, read-only
 in the box) and records what it really cost. If a model in a collected job has no
 registered price the cost stays unknown and the reservation stands, rather than an
@@ -35,8 +44,11 @@ locked ledger transaction, so two submissions in flight cannot both take the las
 allowance.
 
 The eval set id is assigned at submission, one per job: a reused id makes Hawk resume
-that set. Supplied logs stay at the prefix they were staged to and are read through the
-Hawk API, so any job can read them whatever its own id is. Every accepted submission is
+that set. Imported logs keep their existing Hawk source. Storage, warehouse indexing
+and read permission are separate: a staged prefix is not necessarily a readable
+Hawk eval set. Remote inputs are checked at setup by listing a sample and retrieving
+its transcript; `seed.evidence_access` records unavailable sources before the lead
+model starts. This probe does not establish complete corpus coverage. Every accepted submission is
 saved under `<investigation>/jobs/` and recorded in `jobs.json`, written as `pending`
 before the CLI call, so a submission whose response is lost is reconciled against Hawk
 rather than lost or sent twice. `resume=<investigation dir>` carries on in an existing
@@ -102,17 +114,20 @@ price; for other providers supply `--model-cost-config`. Set `-T enforce_cost_li
 to make it a planning number only. The `budget` tool shows spend by model and says
 "unknown" rather than zero when a model has no price. There is no token cap unless
 `token_limit` is set.
-A 500k **output-token** limit (including reasoning, excluding repeated/cache-read
-input) applies independently and can
-be overridden through Inspect. Limits include follow-up conversation; reaching one
+A four-hour working-time limit applies independently, including when dollar enforcement
+is disabled. Override it through Inspect when deliberately running longer. Limits include follow-up conversation; reaching one
 can end the session before publication, but the draft workspace remains on disk.
 Docker/storage costs are not included. This is not a global or provider-enforced cap.
 
-The report follows the editorial structure of
-`Generality-Labs.github.io/blog/posts/simpleqa-audit-v2/index.qmd`: opening
-assessment, The benchmark, How models respond, Issues, Bottom line. Its site-only
-JavaScript/assets and benchmark findings are not copied. Components enforce simple
-chart styling and escape transcript HTML; editorial judgement remains in the skill.
+The report starts with 2–3 sentences introducing the benchmark and linked finding
+bullets, including positive findings. A standard architecture diagram shows agent-visible
+inputs, hidden scorer inputs and feedback. A divider separates the brief from the full
+audit: The task; The grader; The harness and environment; Aggregation and limits;
+How agents approach it; How it is built. Shared components cover outcome bars, paired
+comparisons, response matrices and transcript excerpts, retaining the plotted data.
+Optional IRT screens for adequate comparable configurations before fitting; it is not
+a required report section. Graphviz and the optional reporting dependencies are installed
+in the investigator image. Editorial judgement remains in the writing skill.
 
 There are two working memory artifacts: `work/journal.md` and
 `work/report/findings.json`. Publication validates the register against the bundled
@@ -156,3 +171,31 @@ publication, findings validation and ACP input handling now live in `_report.py`
 `investigate` adds source orientation and autonomous work. This is not yet a unified
 replacement for every report entry point. Rediscovery input/web exposure policy must
 be selected before a graded run; no graded run is launched by this command.
+
+## Experiment configuration and checks
+
+When the target task is known, `work/jobs/templates/benchmark.yaml` and `audit.yaml`
+are generated from the active worker menu and policy and validated with Hawk's
+installed schema. Copy one, choose the judge deliberately, then set task arguments
+and sample selection. The audit starter does not attach logs automatically.
+
+`working_limit` measures active work, excluding semaphore/rate-limit waits;
+`time_limit` includes those waits. Use a generous wall-clock allowance and expand in
+bounded batches. The installed Hawk runner controls `max_samples` in infrastructure
+configuration, so it cannot be overridden at job top level.
+
+The verdict tool transports its extensible `details` object as a JSON string for
+strict-provider compatibility. The tool decodes and validates the object before
+recording it; stored verdicts still contain structured dictionaries.
+
+Run the ordinary checks with `make check`, `make test`, and `make test-docker`.
+The opt-in provider check sends synthetic inputs, incurs a small model charge, and
+requires `OPENROUTER_API_KEY` in the environment:
+
+```bash
+INSPECT_AUDIT_LIVE_TESTS=1 .venv/bin/pytest tests/test_provider_smoke.py
+```
+
+Remote worker fixes must be committed/published and `audit_package` pinned to that
+revision before a Hawk run can use them. A local editable install alone does not
+update a runner's package.

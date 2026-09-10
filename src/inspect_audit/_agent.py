@@ -30,7 +30,13 @@ from inspect_ai.tool import (
     tool,
 )
 from inspect_ai.tool._tools._execute import code_viewer
-from inspect_ai.util import StoreModel, sandbox, sandbox_default, store_as
+from inspect_ai.util import (
+    LimitExceededError,
+    StoreModel,
+    sandbox,
+    sandbox_default,
+    store_as,
+)
 from pydantic import BaseModel, Field, JsonValue
 
 from . import prompts
@@ -197,7 +203,7 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
         tried: str,
         remarks: str,
         grade: str,
-        details: dict[str, Any],
+        details: str,
     ) -> str:
         """Record your verdict on one audit item.
 
@@ -210,8 +216,8 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
             tried: What you did to try to break the item, including what failed.
             remarks: What you actually think, including anything you were not asked about.
             grade: Your grade for this item.
-            details: Object containing the required fields listed for this item.
-                Pass an object, not an encoded JSON string.
+            details: JSON-encoded object containing the required fields listed for
+                this item. Use "{}" when no fields are required.
         """
         # a ToolError is fed back to the model as recoverable, so a submission that
         # misses the contract becomes a retry rather than a lost verdict
@@ -220,9 +226,14 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
             raise ToolError(
                 f"Unknown item {item!r}. Expected one of {', '.join(lookup)}."
             )
-        if not isinstance(details, dict):
-            raise ToolError("details must be an object, not a JSON string.")
-        recorded_details = details
+        try:
+            # Accept dictionaries from existing Python callers, while the model-facing
+            # schema uses a string: arbitrary objects cannot use OpenAI strict schemas.
+            recorded_details = json.loads(details) if isinstance(details, str) else details
+        except ValueError as ex:
+            raise ToolError("details must encode a valid JSON object") from ex
+        if not isinstance(recorded_details, dict):
+            raise ToolError("details must encode a JSON object")
         if grade not in skill.grades:
             raise ToolError(
                 f"Grade for {item} must be one of {', '.join(skill.grades)}."
@@ -262,16 +273,13 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
         for key, description in item.details.items():
             fields.setdefault(key, []).append(f"{item.name}: {description}")
     definition.parameters.properties["details"] = ToolParam(
-        type="object",
-        description="Required fields by item:\n"
+        type="string",
+        description="JSON-encoded object. Required fields by item:\n"
         + "\n".join(
             f"{item.name}: {', '.join(item.details) or '(none)'}" for item in items
         ),
-        additionalProperties=True,
     )
-    # Skill metadata describes fields but does not declare JSON types. Keep the
-    # object extensible rather than emitting untyped property schemas rejected
-    # by providers. Advertise every field's meaning in the parameter description.
+    # Keep arbitrary nested skill data inside the JSON string and validate it above.
     details = definition.parameters.properties["details"]
     details.description = (details.description or "") + "\n" + "\n".join(
         f"{key}: {'; '.join(descriptions)}" for key, descriptions in fields.items()
@@ -394,6 +402,8 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
             for scorer in scorers:
                 try:
                     score = await scorer(graded, graded.target)
+                except LimitExceededError:
+                    raise
                 except Exception as ex:
                     # a grader that cannot run (its judge model is gone, its
                     # sandbox call failed) is a fact for the auditor to record,
@@ -505,9 +515,9 @@ async def _phoenix(script: str | None, files: dict[str, str] | None) -> str:
 @tool
 def submit_audit(items: list[AuditItemSkill]) -> Tool:
     async def execute(
-        environment_issues: list[Evidence] | None = None,
-        unresolved: list[Evidence] | None = None,
-        improvements: list[Evidence] | None = None,
+        environment_issues: list[Evidence],
+        unresolved: list[Evidence],
+        improvements: list[Evidence],
     ) -> str:
         """Submit your audit, once every item has a recorded verdict.
 

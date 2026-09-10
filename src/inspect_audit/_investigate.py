@@ -28,6 +28,7 @@ from inspect_ai.model import (
     GenerateConfig,
     ModelCost,
     ModelInfo,
+    get_model_info,
     set_model_info,
 )
 from inspect_ai.model._model import sample_model_usage
@@ -45,7 +46,6 @@ from ._jobs import (
     copy_into_inputs,
     parse_config,
     slug,
-    stage_logs_to_s3,
     task_package_name,
     usage_cost,
     utcnow,
@@ -251,7 +251,10 @@ def register_openrouter_costs(timeout: float = 15) -> int:
         try:
             # set_model_info creates the entry; set_model_cost needs one to exist
             set_model_info(
-                f"openrouter/{model['id']}", ModelInfo(cost=ModelCost(**per_million))
+                f"openrouter/{model['id']}",
+                (get_model_info(f"openrouter/{model['id']}") or ModelInfo()).model_copy(
+                    update={"cost": ModelCost(**per_million)}
+                )
             )
         except Exception as ex:  # one odd listing must not lose the rest
             logger.debug(f"skipping price for {model.get('id')}: {ex}")
@@ -802,14 +805,15 @@ class Remote:
         """Keep this run's own spend on disk, so a resumed investigation inherits it."""
         local = _local_spend()[0]
         if local is None:
-            return
+            local = sample_limits().cost.usage
         self._spend_path.write_text(
             json.dumps({"prior_usd": self.prior_local_usd, "this_run_usd": local})
         )
 
     def local_usd(self) -> float:
         """Every dollar this investigation has spent on its own model calls."""
-        return self.prior_local_usd + (_local_spend()[0] or 0.0)
+        local, _ = _local_spend()
+        return self.prior_local_usd + (local if local is not None else sample_limits().cost.usage)
 
     def committed_usd(self) -> float:
         """Spent locally, plus collected remote costs, plus live reservations."""
@@ -817,6 +821,9 @@ class Remote:
 
     def over_allowance(self) -> str | None:
         """The message to give the agent when the shared allowance is gone, else None."""
+        _, unpriced = _local_spend()
+        if unpriced:
+            return "Cannot enforce the shared allowance: missing prices for " + ", ".join(unpriced)
         committed = self.committed_usd()
         if committed < self.allowance_usd:
             return None
@@ -834,6 +841,8 @@ class Remote:
         inside it, so two submissions in flight cannot both take the last of the money.
         The job is written as `pending` before anything is sent to Hawk.
         """
+        if _local_spend()[1]:
+            raise ToolError("Cannot reserve more work while local model costs are unknown")
         with self.ledger.transaction() as ledger:
             existing = ledger.get(job.label)
             if existing is not None and existing.status != "failed":
@@ -979,10 +988,10 @@ def investigation_budget(
                     "  collected but unpriced, so their real cost is unknown and their "
                     f"reservation is still held: {', '.join(remote.ledger.unpriced())}"
                 )
-            committed = (total if not unpriced else 0.0) + remote.ledger.actual_usd() + remote.ledger.reserved_usd()
-            lines.append(f"Committed in total: ${committed:.2f} of ${budget_usd:.2f}")
+            committed = remote.prior_local_usd + total + remote.ledger.actual_usd() + remote.ledger.reserved_usd()
+            lines.append(f"Committed {'at least' if unpriced else 'in total'}: ${committed:.2f} of ${budget_usd:.2f}")
         lines.append(
-            "Scope: this investigator's own model calls plus remote jobs it launched. The allowance is shared across both."
+            "Scope: this investigator's own model calls plus remote jobs it launched. The allowance is shared. Remote reservations include a buffer for model roles; Inspect's solver cost_limit does not cap scoring or in-flight overshoot."
         )
         return "\n".join(lines)
 
@@ -1071,9 +1080,9 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
             note=note or "",
         )
         replacing_failed = (remote.ledger.get(label) or Job("", "", "", "", "", 0)).status == "failed"
-        remote.reserve_and_record(job)
         if submitted_path.exists() and not replacing_failed:
             raise ToolError(f"{submitted_path.name} already exists; choose another name")
+        remote.reserve_and_record(job)
         write_config(root, label, data)
 
         try:
@@ -1183,7 +1192,7 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     job.eval_set_id
                 )
             if action == "samples":
-                rows_json = await remote.hawk.samples(job.eval_set_id, limit or 500)
+                rows_json = await remote.hawk.samples(job.eval_set_id, limit)
                 if not rows_json:
                     return f"{label}: no samples listed yet"
                 out = [f"{len(rows_json)} sample(s) in {job.eval_set_id}:"]
@@ -1199,7 +1208,7 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     raise ToolError("action='transcript' needs sample=<uuid> from jobs(action='samples')")
                 # a sample uuid addresses any sample in the deployment, so membership in
                 # this job is checked here rather than trusted from the argument
-                known = await remote.hawk.samples(job.eval_set_id, 1000)
+                known = await remote.hawk.samples(job.eval_set_id)
                 if sample not in {str(row.get("uuid")) for row in known}:
                     raise ToolError(
                         f"sample {sample!r} is not in job {label!r}; jobs(action='samples', "
@@ -1231,9 +1240,10 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 rows = await remote.hawk.evals(job.eval_set_id)
                 if not rows or not all(r["status"] in ("success", "error", "cancelled") for r in rows):
                     state = ", ".join(f"{r['task']} {r['status']} {r['samples']}" for r in rows) or "no evals yet"
-                    raise ToolError(
-                        f"{label} is not finished ({state}); jobs(action='wait') blocks "
-                        "until it is, without spending anything"
+                    return (
+                        f"{label} is not finished ({state}). No files downloaded. "
+                        f"Use jobs(action='wait', label='{label}') before collecting. "
+                        "If there are no evals, inspect watch/logs once for a startup failure."
                     )
                 files = await remote.hawk.download(job.eval_set_id, root / "jobs" / "downloads" / label)
                 if not files:
@@ -1296,31 +1306,85 @@ def jobs(remote: Remote, root: Path) -> Tool:
             job.status, job.evals = status, [dict(r) for r in rows]
         return f"{label} ({job.eval_set_id}): {job.status}\n" + "\n".join(
             f"  {r['task']} {r['model']}: {r['status']} {r['samples']}" for r in rows
-        ) if rows else f"{label} ({job.eval_set_id}): no evals listed yet (runner still starting)"
+        ) if rows else f"{label} ({job.eval_set_id}): no evals listed; use jobs(action='watch') or jobs(action='logs') to diagnose"
 
     return execute
 
 
 @solver
-def stage_supplied_logs(remote: Remote, local_dir: Path, eval_set_id: str) -> Solver:
-    """Put the operator's logs where a Hawk job can read them, once.
-
-    The agent has no S3 capability and never sees these credentials. A marker file
-    makes the upload idempotent, so a resumed or retried run does not repeat it.
-    """
-
+def check_evidence_access(remote: Remote | None, root: Path, sources: list[str]) -> Solver:
+    """Check supplied remote evidence before spending on the lead model."""
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        marker = remote.root / "staged.json"
-        if marker.is_file():
-            return state
-        source = await stage_logs_to_s3(
-            local_dir, remote.log_bucket, eval_set_id, remote.aws_profile
-        )
-        marker.write_text(json.dumps({"source": source, "at": utcnow()}))
-        transcript().info(f"staged the supplied logs at {source}")
+        checks = []
+        for address in sources:
+            check = {"source": address, "status": "unavailable", "reason": ""}
+            try:
+                if remote is None or not address.startswith("hawk:"):
+                    raise ValueError("No supported reader: supply an indexed Hawk eval set or local logs")
+                eval_set = address.removeprefix("hawk:").split("/")[0]
+                rows = await remote.hawk.samples(eval_set, 1)
+                if not rows:
+                    raise ValueError("No indexed samples. A storage prefix is not necessarily an imported eval set")
+                await remote.hawk.transcript(
+                    str(rows[0]["uuid"]), root / "inputs" / "index" / _alias(address) / "transcripts"
+                )
+                check.update(status="readable", reason="Sample index and one transcript retrieved; not a complete coverage check")
+            except Exception as ex:
+                check["reason"] = str(ex)[-1500:]
+            checks.append(check)
+        seed_path = root / "inputs" / "seed.json"
+        seed = json.loads(seed_path.read_text())
+        seed["evidence_access"] = checks
+        seed_path.write_text(json.dumps(seed, indent=2))
+        transcript().info(json.dumps({"evidence_access": checks}))
         return state
 
     return solve
+
+
+def write_experiment_templates(remote: Remote, root: Path, target: str) -> None:
+    """Generate starting configs from the active policy and validate with Hawk."""
+    import copy
+
+    if not remote.worker_models or "/" not in target:
+        return
+    package_name, task_name = target.split("/", 1)
+    def model(name: str) -> dict[str, Any]:
+        return {"package": "openai", "name": "openrouter", "items": [
+            {"name": name, "args": {"base_url": "https://openrouter.ai/api/v1"}}
+        ]}
+    config: dict[str, Any] = {
+        "name": "inv-benchmark-smoke", "packages": [remote.task_package],
+        "tasks": [{"package": remote.task_package, "name": package_name,
+                   "items": [{"name": task_name, "args": {}}]}],
+        "models": [model(remote.worker_models[0])],
+        "model_roles": {"grader": model(remote.worker_models[-1])},
+        "runner": {"environment": {"HAWK_API_URL": remote.hawk_api_url,
+                                    "HAWK_RUNNER_REFRESH_URL": ""},
+                   "secrets": [{"name": "OPENROUTER_API_KEY"}]},
+        "limit": 2, "epochs": 1, "cost_limit": 0.5,
+        "token_limit": 200000, "working_limit": 600, "time_limit": 14400,
+        "max_connections": 5, "max_retries": 3, "retry_attempts": 0,
+    }
+    config["model_roles"]["grader"]["items"][0]["args"]["config"] = {"max_tokens": 2048}
+    audit = copy.deepcopy(config)
+    audit.update(name="inv-audit-smoke", limit=1, cost_limit=2.0,
+                 token_limit=2000000, working_limit=3600)
+    audit["packages"].append(remote.audit_package)
+    audit["tasks"] = [{"package": remote.audit_package, "name": "inspect_audit",
+                       "items": [{"name": "audit", "args": {
+                           "task": target, "items": ["gold-answer", "answer-format"],
+                           "auditor_image": remote.auditor_image}}]}]
+    destination = root / "work" / "jobs" / "templates"
+    destination.mkdir(parents=True, exist_ok=True)
+    for name, value in [("benchmark", config), ("audit", audit)]:
+        problems = validate_config(value, remote.policy, remote.known_sources)
+        if problems:
+            logger.warning("Skipping invalid %s convenience template: %s", name, problems)
+            continue
+        path = destination / f"{name}.yaml"
+        if not path.exists():
+            path.write_text(yaml.safe_dump(value, sort_keys=False))
 
 
 @solver
@@ -1379,7 +1443,7 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
                 /inputs/index/<source>/logs; say why, they are large).
             source: Which source, from action="list". Required except for "list".
             sample: The attempt's uuid, from the samples table, for "transcript".
-            limit: How many samples to read for "samples"; null means two hundred. Pass
+            limit: How many samples to read for "samples"; null means the complete population. Pass
                 null for every argument an action does not use.
         """
         known = {_alias(s): s for s in sources}
@@ -1415,9 +1479,9 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
         )
         try:
             if action == "samples":
-                rows = await remote.hawk.samples(eval_set, limit or 200)
+                rows = await remote.hawk.samples(eval_set, limit)
                 if not rows:
-                    return f"{source}: the warehouse lists no samples"
+                    raise ToolError(f"{source}: no accessible indexed samples; this may be an indexing or permission problem, not an empty benchmark")
                 destination.mkdir(parents=True, exist_ok=True)
                 table = destination / "samples.csv"
                 _write_samples_csv(rows, table)
@@ -1428,8 +1492,7 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
             if action == "transcript":
                 if not sample:
                     raise ToolError("action='transcript' needs sample=<uuid> from the samples table")
-                known_uuids = {str(r.get("uuid")) for r in await remote.hawk.samples(eval_set, 1000)}
-                if sample not in known_uuids:
+                if not await remote.hawk.has_sample(eval_set, sample):
                     raise ToolError(f"sample {sample!r} is not in {source}")
                 path = await remote.hawk.transcript(sample, destination / "transcripts")
                 return f"wrote /inputs/index/{source}/transcripts/{path.name} ({path.stat().st_size:,} bytes)"
@@ -1602,9 +1665,8 @@ def investigate(
         secrets_file: .env passed to Hawk jobs (OPENROUTER_API_KEY); never read by the
             agent. Defaults to the .env Inspect itself loaded, found from the working
             directory upwards.
-        log_bucket: Hawk's S3 log bucket, for staging supplied logs into an audit job's prefix.
-        aws_profile: AWS profile with write access to that bucket, defaulting to
-            AWS_PROFILE (else ambient credentials).
+        log_bucket: Retained for compatibility; local logs are no longer uploaded.
+        aws_profile: Retained for compatibility; job-readable inputs use native Hawk import.
     """
     # the file is read before anything else is decided: a setting it carries must be
     # able to change what gets validated, which skills load and how much may be spent.
@@ -1731,23 +1793,13 @@ def investigate(
         )
         seed_path = root / "inputs" / "seed.json"
         seed = json.loads(seed_path.read_text())
-        # the supplied logs are staged by us, once, at setup: the agent gets no S3
-        # capability, and a resumed investigation reuses what is already up there
-        # the source is named here and uploaded by the setup solver: an upload is slow,
-        # credentialed work, and doing it while the task is merely being constructed
-        # means it happens again on every retry and before anything is running
+        # Local evidence stays local. A remote worker receives only a source
+        # created by Hawk's native import or a previous Hawk evaluation.
         parked = [str(entry["remote"]) for entry in seed["logs"] if entry.get("remote")]
         for address in parked:
             remote.known_sources.add(address)
-        # a resumed investigation already named the prefix its own logs were staged to
-        previous = (seed.get("remote") or {}).get("supplied_logs") or []
-        staged_logs: str | None = next(
-            (s for s in previous if str(s).startswith("hawk:inv-inputs-")), None
-        )
-        if (root / "inputs" / "logs").is_dir() and not staged_logs:
-            inputs_id = f"inv-inputs-{root.name[:8]}"
-            staged_logs = f"hawk:{inputs_id}/inputs/logs"
-            remote.known_sources.add(inputs_id)
+        if target_task and "/" in target_task:
+            remote.policy.task_names.append(target_task.split("/", 1)[0])
         remote.save_sources()
         seed["remote"] = {
             "hawk": hawk_api_url,
@@ -1755,11 +1807,12 @@ def investigate(
             "worker_models": worker_models or DEFAULT_WORKERS,
             "audit_package": audit_package,
             "auditor_image": auditor_image,
-            # every log source a job may read: what we staged for you, and whatever you
-            # were told was already parked
-            "supplied_logs": [s for s in [staged_logs, *parked] if s],
+            # every remote log source explicitly supplied by the operator
+            "supplied_logs": parked,
             "note": (
-                "write an eval-set config under /workspace and hawk_submit it. To audit the "
+                "Local /inputs/logs files are for local analysis only. Remote audits need an "
+                "operator-imported Hawk source (hawk import), listed in supplied_logs. "
+                "Write an eval-set config under /workspace and hawk_submit it. To audit the "
                 "supplied logs, pass one of supplied_logs as the audit task's logs argument; to audit a "
                 "job you ran, use hawk:<its eval set id>. Do not set eval_set_id: submission "
                 "assigns a fresh one, and logs are fetched through the Hawk API, so a job reads "
@@ -1772,14 +1825,6 @@ def investigate(
         seed_path.write_text(json.dumps(seed, indent=2))
     setup_steps: list[Solver] = []
     if remote is not None:
-        if staged_logs:
-            setup_steps.append(
-                stage_supplied_logs(
-                    remote,
-                    root / "inputs" / "logs",
-                    staged_logs.removeprefix("hawk:").split("/")[0],
-                )
-            )
         if resumed:
             setup_steps.append(reconcile_jobs(remote))
     tools: list[Tool] = [
@@ -1793,8 +1838,11 @@ def investigate(
     seed_logs = json.loads((root / "inputs" / "seed.json").read_text()).get("logs") or []
     remote_sources = [str(e["remote"]) for e in seed_logs if isinstance(e, dict) and e.get("remote")]
     if remote_sources:
+        setup_steps.append(check_evidence_access(remote, root, remote_sources))
         tools.append(supplied_logs(remote, root, remote_sources))
     if remote is not None:
+        if target_task:
+            write_experiment_templates(remote, root, target_task)
         tools += [hawk_submit(remote, root), jobs(remote, root)]
 
     async def on_continue(state: AgentState) -> bool | str:
@@ -1816,6 +1864,7 @@ def investigate(
             submit=False,
             tools=tools,
             compaction=CompactionSummary(threshold=0.8),
+            truncation="auto",
             on_continue=on_continue,
         ),
         sandbox=("docker", str(root / "compose.yaml")),
@@ -1825,6 +1874,7 @@ def investigate(
         config=GenerateConfig(max_tool_output=200 * 1024),
         cost_limit=budget_usd if enforce_cost_limit else None,
         token_limit=token_limit,
+        working_limit=4 * 3600,
         metadata={
             "investigation_dir": str(root),
             "interactive": interactive,

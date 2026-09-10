@@ -97,7 +97,7 @@ created) and refused with reasons if it strays; fix and resubmit.
 
 Two fields decide what a job costs. `cost_limit` is dollars per sample, enforced inside
 the runner, and it is required. Your size is `limit`, or `sample_ids` on each task item.
-Their product, times models and epochs, is what the job holds against the allowance from
+Their product, times models, epochs, retries and the model-role buffer, is what the job holds against the allowance from
 submission until you collect it, so an over-generous cost_limit does not cost you money
 but does cost you room to launch anything else. The eval set id is assigned for you; do
 not set one.
@@ -113,9 +113,9 @@ and the benchmark's own scorer to grade attempts it constructs. Pick items for t
 hypotheses you hold: gold-answer, answer-format, red-teaming, insufficiently-specified,
 failure-attribution, approach-census, contamination, ground-truth-access,
 environment-integrity, other-findings. When the scorer calls a model, choose the grader
-role deliberately after reading which grader the recorded logs used. The supplied logs
-are already staged for Hawk: the seed's `remote.supplied_logs` is the `logs` value to
-use. To audit attempts from a job you ran, use hawk:<that job's eval set id>. Either way
+role deliberately after reading which grader the recorded logs used. Only sources listed in the seed's `remote.supplied_logs` are available to remote
+auditors: use one as the task's `logs` argument. Local `/inputs/logs` files remain
+local and are not automatically uploaded. To audit attempts from a job you ran, use hawk:<that job's eval set id>. Either way
 the runner fetches them through the Hawk API, so they are readable from any job.
 
 Procedure: one or two samples first, with retries off, so a configuration that cannot
@@ -140,7 +140,9 @@ own configuration, image and limits before you attribute it to the benchmark; if
 survives that check, it is a fact about running this benchmark and belongs in the
 report, with what you ruled out.
 
-Every submission holds its worst case against the shared allowance until collected.
+Every submission holds a reserved allowance until collected. Scoring is outside
+Inspect's solver cost_limit; a per-role buffer is reserved, but it is not a hard cap.
+Set grader generation limits and verify observed costs before scaling.
 What you submitted is recorded outside the container, so jobs(action="list") and
 budget() are how you see it: what ran, under which eval set id, what it holds and what
 it turned out to cost. Keep your own copy of each config under /workspace/jobs/.
@@ -191,9 +193,20 @@ allowance with budget() and plan to spend the bulk of it on reading and checking
 
 ## The report
 
-Read the writing skill before drafting. The structure is fixed: a three-paragraph
-summary, then The task, The grader, The harness and environment, Aggregation and
-limits, How agents approach it, How it is built. Each section answers its questions
-with evidence; say "not assessed" with a reason where you could not check. Findings
-appear under their section. Render with render_report and read it back, look at every
-figure with view_image, then publish_report. Rendering is not verification.
+Read the writing skill before drafting. Use the supplied template and visual
+components: brief, architecture diagram, then the detailed audit. During orientation,
+record the benchmark's information flow with source locators. Keep hidden targets
+outside the agent-visible boundary and draw feedback only when it exists. The writing
+skill carries the presentation rules. Render and inspect figures before publishing.
+
+## Starting remote work
+
+Prefer `/workspace/jobs/templates/benchmark.yaml` and `audit.yaml`, generated from the
+active policy. Copy before editing. Check `seed.evidence_access`: staged storage is
+not necessarily an indexed, authorised Hawk source. Audit template defaults do not
+attach logs; select an accessible source and verify item identities before adding it.
+
+Use `working_limit` for active time and a generous `time_limit` for wall time including
+queueing. Hawk controls sample concurrency centrally; `max_samples` is not a job
+setting. Expand in bounded batches. Diagnose a deterministic tool-schema failure once;
+switching models on the same strict endpoint will not fix the request.

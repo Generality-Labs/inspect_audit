@@ -522,21 +522,14 @@ def test_resume_reuses_the_directory_ledger_and_staged_logs(
     """A restarted investigator must not stage its inputs again or lose its jobs."""
     from inspect_audit import _investigate
 
-    staged: list[str] = []
-
-    async def fake_stage(local_dir, bucket, eval_set_id, profile):  # noqa: ANN001, ANN202
-        staged.append(eval_set_id)
-        return f"hawk:{eval_set_id}/inputs/logs"
-
-    monkeypatch.setattr(_investigate, "stage_logs_to_s3", fake_stage)
-
     async def noop_generate(state, **kwargs):  # noqa: ANN001, ANN003, ANN202
         return state
 
     def run_setup(target) -> None:  # noqa: ANN001
         setup = target.setup
         for step in setup if isinstance(setup, list) else [setup]:
-            asyncio.run(step(None, noop_generate))
+            if step is not None:
+                asyncio.run(step(None, noop_generate))
     repo_path = git_repo(tmp_path / "repo")
     subprocess.run(["git", "-C", str(repo_path), "remote", "add", "origin", "https://github.com/org/bench.git"], check=True)
     repo = str(repo_path)
@@ -565,7 +558,7 @@ def test_resume_reuses_the_directory_ledger_and_staged_logs(
             ]
         )
     )
-    assert len(staged) == 1
+    assert not (root / "staged.json").exists()
 
     # a job left pending by an interrupted run: resume must settle it with Hawk before
     # the agent starts, or it is either lost or launched twice
@@ -588,7 +581,7 @@ def test_resume_reuses_the_directory_ledger_and_staged_logs(
     assert asked == ["inv-smoke-1234abcd"], "resume did not ask Hawk about the pending job"
     assert JobLedger(root).get("smoke").status == "submitted"  # type: ignore[union-attr]
     assert Path(second.metadata["investigation_dir"]) == root
-    assert len(staged) == 1, "the supplied logs were staged once, at first setup"
+    assert not (root / "staged.json").exists()
     ledger = JobLedger(root)
     assert [j.label for j in ledger.jobs] == ["smoke"] and ledger.reserved_usd() == 2.0
 
@@ -894,7 +887,6 @@ def test_resume_runs_the_commit_it_reads(tmp_path: Path, monkeypatch: pytest.Mon
     from inspect_audit import _investigate
 
     monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
-    monkeypatch.setattr(_investigate, "stage_logs_to_s3", lambda *a, **k: None)
     repo = git_repo(tmp_path / "repo")
     subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "https://github.com/org/bench.git"], check=True)
     (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-test\n")

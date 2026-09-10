@@ -224,7 +224,7 @@ async def _probe_grade(state: TaskState, checks: dict[str, str]) -> None:
         checks["gold_applied"] = "ok" if applied.success else f"FAILED {applied.stderr[:120]}"
         checks["grade_gold"] = await grade_value(grade)
 
-        await reset_benchmark()()
+        await reset_benchmark()(hard=False)
         checks["grade_reset"] = await grade_value(grade)
     except Exception as ex:
         checks["grade"] = f"EXCEPTION {type(ex).__name__}: {ex}"[:200]

@@ -68,11 +68,14 @@ still need primary evidence and controls. Scanner flags are leads, not prevalenc
 verify positives and inspect some unflagged cases when assessing detector quality.
 
 When the seed lists `remote`, you can run things on Hawk: write an eval-set config
-yourself (examples in the investigating skill, and Hawk's docs under /inputs/docs when
-they were supplied), save it
+starting from /workspace/jobs/templates/benchmark.yaml or audit.yaml when present
+(these were generated and validated for this investigation; set task arguments,
+explicit candidate/judge choices and sample selection before submission), save it
 under /workspace, and hawk_submit it. It is checked against a policy and refused with
-reasons if it strays. The supplied logs are already staged where a job can read them
-(`remote.supplied_logs`). A log source given as an address rather than files is read
+reasons if it strays. Check `seed.evidence_access` before planning around supplied remote logs. Unavailable
+sources are an audit limitation, not an empty benchmark. Do not repeatedly fetch a
+source whose access check failed. `remote.supplied_logs` names sources for jobs, but
+a storage prefix alone does not establish indexing or permission to read it. A log source given as an address rather than files is read
 with logs(): its samples come back as one row per recorded attempt with every scorer's
 value and its token counts, which is the population table, and a transcript comes back
 one at a time. Nothing of it is on your filesystem and a full set is tens of gigabytes,
@@ -82,12 +85,27 @@ jobs() is your window on a job while it runs and after: live
 per-sample progress, the runner's own log, its in-flight actions and stacks when it is
 stuck, the sample list, transcripts written to /inputs/jobs/<label>/transcripts/, a wait
 that spends no tokens, and collection of .eval logs into /inputs/jobs/<label>/ with the
-real cost. Watch a job you launched rather than waiting blind; a job behaving oddly is
-evidence about the benchmark, not only about the job. Each submission reserves your cost
-estimate against the allowance until collected. Prove a configuration on one or two
+measured cost (or an explicit unknown). Inspect startup once, then use jobs(wait) while healthy work runs. Repeated watch or
+collect calls before completion add no evidence. Diagnose a changed or failed state;
+separate our infrastructure failures from benchmark findings. Each submission reserves a planned allowance against the allowance until collected. Prove a configuration on one or two
 samples and read the result before spending on a full run. Without `remote`, record the
 experiment you would have run as a proposal. Never claim a job ran because you wrote its
 configuration; the ledger and the collected logs are the record.
+
+Before expanding an experiment, state the hypothesis, the variable changed, and which
+possible outcomes would change your conclusion. Use the smallest discriminating
+comparison. Reuse fixed candidate answers when comparing graders or target repairs;
+regenerating answers confounds those comparisons. A new model's headline score is
+not automatically worth a full benchmark run. Scale in bounded batches after a smoke
+test. working_limit meters active work excluding semaphore/rate-limit waiting;
+time_limit includes waiting. Hawk controls max_samples centrally, so do not put it
+in a job config. Keep wall time generous and distinguish token, working and time limits.
+A deterministic schema/configuration error needs repair, not a retry on another model.
+
+Compare the pinned dataset and implementation with the authoritative release early.
+Retain hashes, stable item identifiers and consequential differences. A local defect
+may already be fixed upstream. Do not join shuffled runs by generated sample IDs
+without checking question or dataset identity.
 
 Use budget() to monitor spending; it shows spend by model. When the allowance is
 enforced, reaching it ends the run, so publish before you approach it. Unknown cost is
@@ -112,12 +130,12 @@ check alleged defects. Record exposure to prior audits; verification after readi
 a published finding is not independent discovery. Do not seek hidden reference
 reports. Any graded rediscovery run needs an operator-defined exposure policy.
 
-Write /workspace/report/report.qmd in its fixed structure: a three-paragraph summary,
-then The task, The grader, The harness and environment, Aggregation and limits, How
-agents approach it, How it is built. Each section answers its questions with evidence;
-say "not assessed" with a reason where you could not check. Findings carry a `section`
-and appear under it. Use the provided figure and table components. Short titles, clear
-axis units, plain series labels; put interpretation in prose rather than annotation dumps.
+Write /workspace/report/report.qmd using the writing skill and supplied template:
+a digestible summary with linked finding bullets, a benchmark architecture diagram,
+and a detailed full audit. During orientation record nodes, information flows, hidden
+inputs and feedback with source locators in report/evidence/architecture.json; revise
+it when evidence changes. Use the shared components; IRT is available when diverse,
+comparable logs support it, not mandatory. Positive findings need evidence and scope.
 Render with render_report and read it back before publishing.
 
 Before publishing, reconcile numbers against saved tables and the findings register.
@@ -130,3 +148,23 @@ Call publish_report to render and save a version. Batch mode ends after publicat
 When interactive mode is explicitly enabled, briefly explain the findings and wait
 for the operator through ACP; follow-up work can publish another version. If the
 available evidence is insufficient, publish a scoped report with unresolved questions.
+
+In the report, distinguish intended mechanisms, source-supported behaviour and observed
+working behaviour. Do not describe a scorer as reliable merely because its design uses
+structured output. Reconcile every numerical claim with a saved table, including the
+separate types of limit hits. Omit numerical gaps between unmatched model/configuration
+results when those gaps have no interpretable meaning. Individual transcript verdicts
+need individual observations, not conclusions assigned from the sampling category.
+
+Operational reminders: read the log-reading skill before using log APIs. Start with
+`read_eval_log(..., header_only=True)` and `read_eval_log_sample_summaries`; use
+`samples_df` for cross-log aggregates and load full samples only for selected evidence.
+Use `all_samples_required=False` for unfinished or errored logs. Never unzip .eval files.
+Local logs are not automatically uploaded; remote audits require an imported Hawk source
+from the seed. An inaccessible source is missing evidence, not an empty benchmark.
+Remote cost reservations include a scoring buffer, but Inspect's solver cost_limit does
+not cap the scorer. Set grader args.config.max_tokens and run small tests before scaling.
+Before publishing, inspect the rendered figures with view_image. Publication checks reject
+em/en dashes, drafting comments and process narration; put those in your journal instead.
+The findings register requires section as well as id, claim, status, evidence, reproduce
+and limitations. Keep figure titles short, label axes, and put explanations in captions.

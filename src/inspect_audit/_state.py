@@ -40,7 +40,15 @@ from inspect_ai.model import (
 )
 from inspect_ai.solver import TaskState
 from inspect_ai.solver._task_state import sample_state
-from inspect_ai.tool import Tool, ToolCall, ToolDef, ToolError, ToolResult, tool
+from inspect_ai.tool import (
+    Tool,
+    ToolCall,
+    ToolDef,
+    ToolError,
+    ToolParams,
+    ToolResult,
+    tool,
+)
 from inspect_ai.util import StoreModel, sandbox, sandbox_default, store_as
 from pydantic import BaseModel, Field, JsonValue
 
@@ -462,7 +470,46 @@ def benchmark_tools(defs: list[ToolDef], root: str) -> list[Tool]:
     ]
 
 
+def _strict_parameters(schema: dict[str, Any]) -> dict[str, Any]:
+    """Make omitted arguments expressible as null for strict providers."""
+    schema = dict(schema)
+    schema.pop("default", None)
+    if "properties" in schema:
+        required = set(schema.get("required", []))
+        properties = {}
+        for name, value in schema["properties"].items():
+            value = _strict_parameters(value)
+            if name not in required:
+                value = {"description": value.get("description", ""),
+                         "anyOf": [value, {"type": "null"}]}
+            properties[name] = value
+        schema.update(properties=properties, required=list(properties), additionalProperties=False)
+    if isinstance(schema.get("items"), dict):
+        schema["items"] = _strict_parameters(schema["items"])
+    for union in ("anyOf", "oneOf", "allOf"):
+        if union in schema:
+            schema[union] = [_strict_parameters(value) for value in schema[union]]
+    return schema
+
+
+def _restore_omissions(value: Any, schema: dict[str, Any]) -> Any:
+    """Preserve the original callable's defaults when the mirror sends null."""
+    if isinstance(value, dict) and "properties" in schema:
+        required = set(schema.get("required", []))
+        properties = schema["properties"]
+        return {
+            key: _restore_omissions(item, properties.get(key, {}))
+            for key, item in value.items()
+            if item is not None or key in required
+        }
+    if isinstance(value, list):
+        return [_restore_omissions(item, schema.get("items", {})) for item in value]
+    return value
+
+
 def _mirror_tool(d: ToolDef, root: str) -> Tool:
+    original = d.parameters.model_dump(exclude_none=True)
+
     async def execute(**kwargs: Any) -> ToolResult:
         # an explicit membership check: `sandbox(name)` resolves to the DEFAULT
         # environment on a one-environment sample, so the try/except this
@@ -472,6 +519,7 @@ def _mirror_tool(d: ToolDef, root: str) -> Tool:
                 f"{d.name!r} runs in the benchmark environment, which this item "
                 "does not have."
             )
+        kwargs = _restore_omissions(kwargs, original)
         with sandbox_default(BENCHMARK_SERVICE):
             result = cast(ToolResult, await d.tool(**kwargs))
         session = store_as(BenchmarkState)
@@ -486,7 +534,7 @@ def _mirror_tool(d: ToolDef, root: str) -> Tool:
             f"The evaluated agent's `{d.name}` tool, run for real in the benchmark "
             "environment and recorded into the attempt. " + (d.description or "")
         ).strip(),
-        parameters=d.parameters,
+        parameters=ToolParams.model_validate(_strict_parameters(original)),
     ).as_tool()
 
 

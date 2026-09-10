@@ -29,16 +29,34 @@ Say "not assessed" and why, in one sentence, when you did not check something.
 
 ## Structure and figures
 
-Follow the template's sections and headings exactly. Each finding in a section gives
-its mechanism in a sentence, the evidence with a locator, the affected population as a
-count over a denominator, the consequence for the score (or "unmeasured"), and what
-would change the conclusion.
+The report is one document: Summary, Benchmark architecture, a divider, then Full
+audit with the supplied detailed sections. The summary introduces the benchmark in
+2–3 sentences, then gives one linked bullet per substantive finding, positive or
+negative. Each bullet leads with the conclusion and evidence or magnitude, with its
+scope. Finish with a short coverage statement. Put execution failures and detailed
+methods in the full audit; mention them briefly above only when they limit findings.
 
-A figure gets a one-line title that states the takeaway, labelled axes with units, and
-nothing else on the canvas: no annotations, no stats boxes, no subtitle explaining the
-method. Series are named plainly and directly labelled where there are few enough. The
-caption carries the denominator. If a number matters, it goes in the prose, not on the
-plot. Prefer raw values to smoothed ones. Never draw an interval you did not compute.
+Every detailed finding explains the mechanism, evidence locator, affected population,
+score consequence (or unmeasured consequence), and limitations. Add explicit anchors
+so the brief links directly to the relevant finding. Group repeated instances.
+
+Use components.py and styles.css for consistent graphics. Read the component APIs
+before plotting. Architecture uses Graphviz automatic layout: visible agent context
+in a shaded boundary, hidden scoring inputs outside, labelled information flows.
+Keep evidence/architecture.json with source locators and mark unverified edges.
+
+Use outcome_bars for outcome populations, paired_plot for controlled comparisons,
+response_matrix for model-by-item responses, and the existing chart/table/transcript
+helpers where appropriate. Components retain data/settings beside graphics. Captions
+state denominators and uncertainty methods; narrative interpretation belongs in prose.
+Use labels as well as colour. Never invent error bars or add a graphic to fill space.
+
+irt_analysis.py provides optional GIRTH Rasch/2PL fitting from a binary response CSV.
+Read its API and diagnostics. Only use it with diverse, comparable model configurations
+and enough coverage. Repeated epochs are not independent models. Error/missing records
+must not become incorrect responses. Document the score encoding, model families,
+settings and assumptions; a fit does not establish unidimensionality or independence.
+Report unstable or unsuitable fits as such. No IRT analysis is required.
 
 ## What every report has to state
 
@@ -47,24 +65,13 @@ many samples out of how many, on what dates, with what model versions and packag
 revisions, the total tokens and the cost. If you ran jobs yourself, they are in the
 ledger and the collected logs; take the numbers from there, not from memory.
 
-Where a published number exists for this benchmark, put yours next to it: the reported
-figure, the figure you measured, the difference, and where the reference came from. An
-unexplained difference is worth stating as a difference. Do not explain it away.
+Compare scores numerically only when the conditions support an interpretable
+comparison. Otherwise state which candidate, judge, dataset or budget differs without
+subtracting unrelated headline scores.
 
 Say the size of what you tested. A hypothesis checked on eight samples is reported as
 eight samples. Anything under roughly twenty cases, or fewer than three cases per
 subgroup you are comparing, is examples rather than a rate, and the sentence says so.
-
-## Two paragraphs
-
-Bad: "I carefully reviewed the grading configuration and found that there may be some
-differences between the paper and the implementation which could potentially affect the
-comparability of the results, although the magnitude of this effect is not assessed."
-
-Good: "The logs were graded by a different judge from the paper's: every one of the 49
-records `model-a` as grader, the paper-faithful config specifies `model-b`. The scores
-are therefore not paper reproductions. How much the judge choice moves scores is
-unmeasured here; a paired regrade of one model's 1,000 attempts would measure it."
 
 ## Before publishing
 

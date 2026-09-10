@@ -172,7 +172,7 @@ def test_verdicts_are_validated_and_scored_per_item(monkeypatch) -> None:
                 details={},
             )
         with pytest.raises(ToolError, match="No verdict recorded"):
-            await submit()
+            await submit(environment_issues=[], unresolved=[], improvements=[])
 
         # an unevidenced grade may go without evidence; submit then passes
         await record(
@@ -184,7 +184,7 @@ def test_verdicts_are_validated_and_scored_per_item(monkeypatch) -> None:
             grade="INCORRECT",
             details={},
         )
-        await submit()
+        await submit(environment_issues=[], unresolved=[], improvements=[])
 
     asyncio.run(run())
 
@@ -258,7 +258,7 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
     init_subtask_store(Store())
     record = record_verdict([item])
     schema = ToolDef(record).parameters.properties["details"]
-    assert schema.type == "object"
+    assert schema.type == "string"
     assert "Exact log, sample, epoch references" in schema.description
     assert "answer-format: examined" in schema.description
     quote = Evidence(
@@ -276,8 +276,9 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
         )
         with pytest.raises(ToolError, match="examined"):
             await record(**args, details={})
-        with pytest.raises(ToolError, match="not a JSON string"):
-            await record(**args, details='{"examined": []}')
+        with pytest.raises(ToolError, match="valid JSON object"):
+            await record(**args, details="invalid JSON")
+        await record(**args, details='{"examined": ["run.eval#sample=1"]}')
         await record(**args, details={"examined": [quote.source]})
         await submit_audit([item])(
             environment_issues=[
@@ -288,6 +289,7 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
             unresolved=[
                 Evidence(observed="Alternative judge not tested", source="tool-event-2")
             ],
+            improvements=[],
         )
 
     asyncio.run(run())
@@ -330,3 +332,28 @@ def test_the_prompts_carry_no_python() -> None:
         text = path.read_text()
         assert not text.lstrip().startswith(("import ", "from ")), path.name
         assert '"""' not in text, f"{path.name} still carries a Python string delimiter"
+
+
+def test_verdict_schema_survives_openrouter_serialization() -> None:
+    from inspect_ai.model._openai import openai_chat_tool_param
+    from inspect_ai.tool import ToolDef, ToolInfo
+
+    from inspect_audit._agent import audit_items, record_verdict
+
+    definition = ToolDef(record_verdict(audit_items()))
+    wire = openai_chat_tool_param(ToolInfo(
+        name=definition.name, description=definition.description,
+        parameters=definition.parameters,
+    ))["function"]["parameters"]
+
+    def check(schema):
+        if schema.get("type") == "object":
+            assert set(schema.get("required", [])) == set(schema["properties"])
+            assert schema.get("additionalProperties") is False
+        for child in schema.get("properties", {}).values():
+            check(child)
+        if "items" in schema:
+            check(schema["items"])
+
+    check(wire)
+    assert wire["properties"]["details"]["type"] == "string"

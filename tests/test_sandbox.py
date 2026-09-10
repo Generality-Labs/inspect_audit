@@ -769,3 +769,18 @@ def test_the_container_templates_are_files_that_render() -> None:
     assert containers.EGRESS_POLICY.startswith("additionalResources:")
     assert "inspect/service: default" in containers.EGRESS_POLICY
     assert "kube-dns" in containers.EGRESS_POLICY
+
+
+@pytest.mark.parametrize('combined', [False, True])
+def test_git_requirement_is_one_shell_argument(tmp_path, monkeypatch, combined) -> None:
+    import shlex
+    requirement = 'inspect_evals @ git+https://github.com/org/inspect_evals@abc123'
+    monkeypatch.setattr(sandbox_module, 'task_requirements', lambda task: [requirement])
+    if combined:
+        _, config = audit_compose(make_task(), None, stage=tmp_path / 'stage')
+    else:
+        _, config = sandbox_module.audit_sandbox(make_task())
+    dockerfile = (Path(config).parent / 'Dockerfile').read_text()
+    command = next(line[4:] for line in dockerfile.splitlines() if line.startswith('RUN pip install'))
+    assert requirement in shlex.split(command)
+    assert '@' not in shlex.split(command)

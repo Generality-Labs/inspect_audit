@@ -17,7 +17,12 @@ from inspect_ai.tool._tool_def import tool_defs
 from inspect_ai.util import Store
 
 import inspect_audit._agent as agent_module
-from inspect_audit._agent import audit_items, auditor_tools, reset_benchmark
+from inspect_audit._agent import (
+    audit_items,
+    auditor_tools,
+    reset_benchmark,
+    submit_audit,
+)
 from inspect_audit._contract import SolverContract
 from inspect_audit._state import (
     BenchmarkState,
@@ -194,16 +199,17 @@ def test_every_auditor_tool_is_strict_schema_valid() -> None:
     mirrored tools included.
     """
     from inspect_ai.scorer import match
-    from inspect_ai.tool import ToolDef, bash
+    from inspect_ai.tool import ToolDef, bash, python, text_editor, think
     from inspect_ai.tool._tool_def import tool_defs
 
     from inspect_audit._agent import audit_items, auditor_tools
     from inspect_audit._contract import SolverContract
 
-    contract = SolverContract(tools=[ToolDef(bash())])
+    contract = SolverContract(tools=[ToolDef(t()) for t in (bash, python, text_editor, think)])
     tools = auditor_tools(
         audit_items(), benchmark_scorers=match(), media=True, contract=contract, benchmark=True
     )
+    tools.append(submit_audit(audit_items()))
     for d in anyio.run(tool_defs, tools):
         props = set(d.parameters.properties or {})
         required = set(d.parameters.required or [])
@@ -258,3 +264,18 @@ def test_audit_probe_renders_as_bash_and_runs_in_parallel() -> None:
     d = ToolDef(audit_probe())
     assert d.parallel is True
     assert d.viewer is not None
+
+
+def test_mirrored_optional_arguments_preserve_callable_defaults() -> None:
+    from inspect_ai.tool import ToolDef, text_editor
+
+    from inspect_audit._state import _restore_omissions, _strict_parameters
+
+    original = ToolDef(text_editor()).parameters.model_dump(exclude_none=True)
+    strict = _strict_parameters(original)
+    assert set(strict['required']) == set(strict['properties'])
+    assert set(original['required']) < set(original['properties'])
+    args = dict(command='view', path='/test.txt', file_text=None, insert_line=None,
+                new_str=None, old_str=None, view_range=None, undo_edit=None)
+    restored = _restore_omissions(args, original)
+    assert restored == {'command': 'view', 'path': '/test.txt'}

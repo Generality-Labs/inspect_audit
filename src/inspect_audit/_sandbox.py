@@ -3,6 +3,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import tempfile
 from importlib.metadata import PackageNotFoundError, packages_distributions, version
@@ -545,7 +546,7 @@ def audit_sandbox(task: Task) -> SandboxEnvironmentType:
     if not os.environ.get("INSPECT_AUDIT_KEEP_STAGING"):
         atexit.register(shutil.rmtree, out, ignore_errors=True)
     (out / "Dockerfile").write_text(
-        DOCKERFILE.format(requirements=" ".join(task_requirements(task)))
+        DOCKERFILE.format(requirements=shlex.join(task_requirements(task)))
     )
     compose = out / "compose.yaml"
     compose.write_text(COMPOSE)
@@ -671,7 +672,7 @@ def audit_compose(
     # network is allocated. the benchmark's own networks (if any) are preserved.
     stage.mkdir(parents=True, exist_ok=True)
     (stage / "Dockerfile").write_text(
-        DOCKERFILE.format(requirements=" ".join(task_requirements(task)))
+        DOCKERFILE.format(requirements=shlex.join(task_requirements(task)))
     )
     auditor = dict(AUDITOR_SERVICE)
     auditor["build"] = {"context": str(stage), "dockerfile": "Dockerfile"}

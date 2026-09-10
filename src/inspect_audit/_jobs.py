@@ -2,13 +2,15 @@
 
 The investigator's shell lives in a container with no credentials. Everything here runs
 in the trusted Inspect process on the host, using the operator's Hawk login (the `hawk`
-CLI and its keyring) and the operator's AWS credentials for staging input logs. Job
+CLI and its keyring). Job
 state is a JSON ledger in the investigation directory so a restarted session sees what
 was already submitted instead of launching it again.
 """
 
 import fcntl
 import json
+import os
+import posixpath
 import re
 import shutil
 import time
@@ -78,11 +80,16 @@ class JobLedger:
                 self.reload()
                 yield self
                 self.save()
+            except BaseException:
+                self.reload()
+                raise
             finally:
                 fcntl.flock(handle, fcntl.LOCK_UN)
 
     def save(self) -> None:
-        self.path.write_text(json.dumps([asdict(j) for j in self.jobs], indent=2))
+        temporary = self.path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps([asdict(j) for j in self.jobs], indent=2))
+        os.replace(temporary, self.path)
 
     def get(self, label: str) -> Job | None:
         return next((j for j in self.jobs if j.label == label), None)
@@ -154,20 +161,25 @@ class Hawk:
         return eval_set_id in out
 
     async def evals(self, eval_set_id: str) -> list[dict[str, str]]:
-        """Task, model, status and sample counts per eval, parsed from the CLI table."""
-        out = await self._run("list", "evals", eval_set_id, timeout=120)
+        """Read every eval through Hawk's paginated metadata endpoint."""
         rows: list[dict[str, str]] = []
-        for line in out.splitlines():
-            parts = [p for p in re.split(r"\s{2,}", line.strip()) if p]
-            if len(parts) >= 4 and re.fullmatch(r"\d+/\d+", parts[-1]):
-                rows.append(
-                    {"task": parts[0], "model": parts[1], "status": parts[2], "samples": parts[3]}
-                )
-        return rows
+        page = 1
+        seen: set[str] = set()
+        while True:
+            batch = await self._metadata_page("evals", eval_set_id, page, self.PAGE)
+            signature = json.dumps(batch, sort_keys=True)
+            if batch and signature in seen:
+                raise RuntimeError("Hawk repeated an eval page; completion is unknown")
+            seen.add(signature)
+            rows.extend({"task": str(r["task_name"]), "model": str(r["model"]),
+                         "status": str(r["status"]),
+                         "samples": f"{r['completed_samples']}/{r['total_samples']}"}
+                        for r in batch)
+            if len(batch) < self.PAGE:
+                return rows
+            page += 1
 
-    # the API refuses a page larger than this (`--limit 1000` is a 422, not a
-    # truncation) and the CLI cannot ask for a second page, so paging goes through the
-    # same API the CLI uses, with a token the CLI hands us
+    # Keep a stable page size (Hawk accepts up to 500).
     PAGE = 250
 
     async def samples(self, eval_set_id: str, limit: int | None = None) -> list[dict[str, Any]]:
@@ -178,35 +190,56 @@ class Hawk:
         """
         collected: list[dict[str, Any]] = []
         page = 1
+        seen: set[str] = set()
         while True:
             want = self.PAGE if limit is None else min(self.PAGE, limit - len(collected))
             if want <= 0:
                 break
-            rows = await self._samples_page(eval_set_id, page, want)
-            collected += rows
-            if len(rows) < want:
+            rows = await self._samples_page(eval_set_id, page, self.PAGE)
+            signature = json.dumps(rows, sort_keys=True)
+            if rows and signature in seen:
+                raise RuntimeError("Hawk repeated a sample page; population coverage is unknown")
+            seen.add(signature)
+            collected += rows[:want]
+            if len(rows) < self.PAGE:
                 break
             page += 1
         return collected
 
     async def _samples_page(self, eval_set_id: str, page: int, limit: int) -> list[dict[str, Any]]:
+        return await self._metadata_page("samples", eval_set_id, page, limit)
+
+    async def has_sample(self, eval_set_id: str, sample_uuid: str) -> bool:
+        rows = await self._metadata_page("samples", eval_set_id, 1, self.PAGE, search=sample_uuid)
+        return any(str(row.get("uuid")) == sample_uuid for row in rows)
+
+    async def _metadata_page(self, resource: str, eval_set_id: str, page: int, limit: int, *, search: str | None = None) -> list[dict[str, Any]]:
+        import urllib.error
         import urllib.parse
         import urllib.request
 
-        token = await self.access_token()
         query = urllib.parse.urlencode(
             {"eval_set_id": eval_set_id, "page": page, "limit": limit}
+            | ({"search": search} if search else {})
         )
-        request = urllib.request.Request(
-            f"{self.env['HAWK_API_URL'].rstrip('/')}/meta/samples?{query}",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        for attempt in range(2):
+            token = await self.access_token()
+            request = urllib.request.Request(
+                f"{self.env['HAWK_API_URL'].rstrip('/')}/meta/{resource}?{query}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
-        def fetch() -> list[dict[str, Any]]:
-            with urllib.request.urlopen(request, timeout=180) as response:
-                return list(json.load(response).get("items", []))
+            def fetch(request: urllib.request.Request = request) -> list[dict[str, Any]]:
+                with urllib.request.urlopen(request, timeout=180) as response:
+                    return list(json.load(response).get("items", []))
 
-        return await anyio.to_thread.run_sync(fetch)
+            try:
+                return await anyio.to_thread.run_sync(fetch)
+            except urllib.error.HTTPError as ex:
+                if ex.code != 401 or attempt:
+                    raise
+                self._token = ""
+        raise AssertionError("unreachable")
 
     async def access_token(self) -> str:
         """The operator's Hawk token, from the CLI that holds their login."""
@@ -265,34 +298,6 @@ class Hawk:
         return sorted(p for p in out_dir.iterdir() if p.is_file())
 
 
-async def stage_logs_to_s3(
-    local_dir: Path, bucket: str, eval_set_id: str, profile: str | None
-) -> str:
-    """Stage the supplied logs once, under an eval-set prefix of their own.
-
-    Jobs read them back through the Hawk API (`hawk:<id>/inputs/logs`), which is not
-    scoped to the reading job's own prefix, so every child job can use this one copy
-    whatever its own eval set id is. Returns the `hawk:` source to pass as `logs`.
-    """
-    prefix = f"evals/{eval_set_id}/inputs/logs"
-    cmd = [
-        "aws", "s3", "cp", "--recursive", "--only-show-errors",
-        str(local_dir), f"s3://{bucket}/{prefix}/",
-    ]
-    # a named profile and ambient keys in the same environment is how you upload as
-    # the wrong identity; the keys are dropped when a profile is named
-    env = (
-        {k: "" for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")}
-        | {"AWS_PROFILE": profile}
-        if profile
-        else {}
-    )
-    result = await subprocess(cmd, text=True, env=env, timeout=3600)
-    if not result.success:
-        raise RuntimeError(f"staging logs to S3 failed: {str(result.stderr)[-1500:]}")
-    return f"hawk:{eval_set_id}/inputs/logs"
-
-
 @dataclass
 class Policy:
     """What a submitted eval-set config may contain. Enforced in code, not prompt.
@@ -331,9 +336,9 @@ ALLOWED_TOP_LEVEL = {
     "name", "eval_set_id", "packages", "tasks", "models", "model_roles", "runner", "limit",
     "sample_shuffle", "epochs", "token_limit", "time_limit", "message_limit", "working_limit",
     "cost_limit", "max_connections", "max_retries", "retry_attempts", "timeout", "metadata",
-    "tags", "log_images", "score",
+    "tags", "log_images", "log_model_api", "score",
 }
-ALLOWED_RUNNER = {"environment", "secrets"}
+ALLOWED_RUNNER = {"environment", "secrets", "memory"}
 ALLOWED_MODEL_ARGS = {"base_url", "config"}
 ALLOWED_MODEL_CONFIG = {"reasoning_effort", "max_tokens", "temperature", "reasoning_tokens"}
 # task argument names that decide what runs, what it costs, or what it can reach.
@@ -419,7 +424,8 @@ def _task_arg_problems(
             return
         if MODEL_ARG.search(lowered):
             for model in value if isinstance(value, list) else [value]:
-                if model is None or not isinstance(model, str):
+                if not isinstance(model, str):
+                    walk(path, model, depth + 1)
                     continue
                 # a model reference names its provider; a bare word is a mode, not a
                 # model, and cannot reach a paid provider from a runner that holds one
@@ -434,7 +440,7 @@ def _task_arg_problems(
                 problems.append(f"{where}: {path}={value!r} is not an allowed image")
             return
         if SIZE_ARG.search(lowered):
-            if not isinstance(value, (int, bool)) or value is True or value is False:
+            if not isinstance(value, (int, float)) or value is True or value is False:
                 # a name-shaped size argument holding something else (a list of ids, a
                 # path, a flag) is checked as whatever it is, not as a number
                 walk(path, value, depth + 1)
@@ -469,7 +475,7 @@ def _string_problems(where: str, path: str, text: str, problems: list[str]) -> N
     if (
         _OUTSIDE.match(text)
         or text.startswith("~")
-        or (text.startswith("/") and not text.startswith(_ALLOWED_ABSOLUTE))
+        or (text.startswith("/") and not posixpath.normpath(text).startswith(_ALLOWED_ABSOLUTE))
     ):
         problems.append(
             f"{where}: {path} points outside this investigation: {text[:60]!r}"
@@ -525,6 +531,10 @@ def worst_case_usd(parsed: Any, policy: Policy) -> float | None:
     if not isinstance(epochs, int) or epochs < 1:
         return None
     models = sum(len(group.items) for group in parsed.models or []) or 1
+    # Scoring is outside Inspect's solver cost limit. Reserve an additional
+    # allowance per declared role per evaluated model; this is a planning
+    # buffer, not an enforced ceiling on arbitrary scorer code.
+    models *= 1 + len(parsed.model_roles or {})
     attempts = 1 + max(0, parsed.retry_attempts or 0)
     samples = 0
     for task in parsed.tasks:
@@ -547,7 +557,16 @@ def validate_config(
     problems: list[str] = []
     if not isinstance(config, dict):
         return ["config must be a mapping"]
+    parsed, schema_problems = parse_config(config)
+    if schema_problems:
+        return [f"Hawk rejects this config: {p}" for p in schema_problems]
     unknown = set(config) - ALLOWED_TOP_LEVEL
+    if {"generate_config", "max_tokens"} & unknown:
+        problems.append("Put generation settings under models[].items[].args.config (and the corresponding model_roles item), e.g. args.config.max_tokens.")
+    if "max_samples" in unknown:
+        problems.append("max_samples is controlled by Hawk infrastructure, not this job. "
+                        "Use smaller limit batches, working_limit for active work, and "
+                        "a generous time_limit for queued wall time.")
     if unknown:
         problems.append(f"keys not allowed: {sorted(unknown)}")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,40}", str(config.get("name", ""))):
@@ -556,7 +575,7 @@ def validate_config(
         problems.append(
             "remove eval_set_id: a fresh one is assigned at submission. Reusing an id makes "
             "Hawk resume that eval set rather than run a new job, and `logs` reaches a "
-            "staged prefix through the Hawk API whatever this job's id is"
+            "separately imported source through the Hawk API whatever this job's id is"
         )
     for pkg in config.get("packages") or []:
         if pkg not in policy.packages:
@@ -570,7 +589,7 @@ def validate_config(
     # dislikes still hears the policy's objection rather than only the schema's
     runner = config.get("runner") or {}
     if set(runner) - ALLOWED_RUNNER:
-        problems.append(f"runner keys not allowed: {sorted(set(runner) - ALLOWED_RUNNER)} (no image, cpu, memory, cleanup)")
+        problems.append(f"runner keys not allowed: {sorted(set(runner) - ALLOWED_RUNNER)} (no image, cpu, cleanup)")
     env = runner.get("environment") or {}
     if set(env) - set(policy.env_keys):
         problems.append(f"runner.environment keys not allowed: {sorted(set(env) - set(policy.env_keys))}")
@@ -625,7 +644,7 @@ def validate_config(
         ("time_limit", parsed.time_limit, policy.max_time_limit),
     ):
         if value is None:
-            problems.append(f"{key} is required")
+            problems.append(f"{key} is required by the investigation policy")
         elif not isinstance(value, int) or value > cap:
             problems.append(f"{key} {value!r} must be an integer up to {cap}")
     if parsed.limit is not None and (
@@ -655,7 +674,7 @@ def validate_config(
     if parsed.cost_limit is None:
         problems.append(
             f"cost_limit is required: dollars per sample, up to {policy.max_cost_limit_usd}. "
-            "It is what makes the job's spend bounded, and what your reservation is computed from"
+            "It limits solver spending and determines the reservation; scoring and in-flight calls can exceed it"
         )
     elif not (0 < parsed.cost_limit <= policy.max_cost_limit_usd):
         problems.append(
@@ -669,7 +688,7 @@ def validate_config(
         )
     elif worst is not None and worst > policy.max_worst_case_usd:
         problems.append(
-            f"worst case ${worst:,.2f} (cost_limit x samples x models x epochs) exceeds "
+            f"reserved allowance ${worst:,.2f} (cost_limit x samples x models x epochs, with role/retry buffers) exceeds "
             f"the ${policy.max_worst_case_usd:,.2f} a single job may hold; run it in parts"
         )
     return problems
@@ -758,7 +777,7 @@ async def wait_for(
         if time.monotonic() >= deadline:
             return rows
         display_counter("hawk", f"waiting on {eval_set_id}")
-        await anyio.sleep(poll_seconds)
+        await anyio.sleep(min(poll_seconds, max(0, deadline - time.monotonic())))
 
 
 def copy_into_inputs(files: list[Path], inputs: Path, label: str) -> Path:
@@ -766,7 +785,17 @@ def copy_into_inputs(files: list[Path], inputs: Path, label: str) -> Path:
     dest = inputs / "jobs" / label
     dest.mkdir(parents=True, exist_ok=True)
     for f in files:
-        shutil.copyfile(f, dest / f.name)
+        target = dest / f.name
+        if target.exists():
+            target.unlink()
+        try:
+            target.hardlink_to(f)
+        except OSError as ex:
+            import errno
+
+            if ex.errno != errno.EXDEV:
+                raise
+            shutil.copyfile(f, target)
     return dest
 
 

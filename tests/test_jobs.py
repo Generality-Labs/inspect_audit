@@ -64,6 +64,9 @@ class FakeHawk:
         # each eval set has its own samples; a uuid from another set is not in this list
         return [{"uuid": f"{eval_set_id}-s1", "id": "item-1", "epoch": 1, "status": "success", "scores": []}]
 
+    async def has_sample(self, eval_set_id: str, sample_uuid: str) -> bool:
+        return sample_uuid == f"{eval_set_id}-s1"
+
     async def logs(self, eval_set_id: str, lines: int = 120) -> str:
         return "uv pip install ... ok\nRunning Inspect eval-set"
 
@@ -145,7 +148,7 @@ def test_the_example_configs_pass_the_policy_once_filled_in() -> None:
     "change, expect",
     [
         ({"packages": ["git+https://evil/x"]}, "package not allowed"),
-        ({"runner": {"image": "evil:latest", "environment": {"HAWK_API_URL": HAWK, "HAWK_RUNNER_REFRESH_URL": ""}, "secrets": [{"name": "OPENROUTER_API_KEY"}]}}, "runner keys not allowed"),
+        ({"runner": {"image": "evil:v1", "environment": {"HAWK_API_URL": HAWK, "HAWK_RUNNER_REFRESH_URL": ""}, "secrets": [{"name": "OPENROUTER_API_KEY"}]}}, "runner keys not allowed"),
         ({"runner": {"environment": {"HAWK_API_URL": HAWK, "HAWK_RUNNER_REFRESH_URL": "", "AWS_SECRET": "x"}, "secrets": [{"name": "OPENROUTER_API_KEY"}]}}, "environment keys not allowed"),
         ({"runner": {"environment": {"HAWK_API_URL": HAWK, "HAWK_RUNNER_REFRESH_URL": ""}, "secrets": [{"name": "HF_TOKEN"}]}}, "secret not allowed"),
         ({"models": [{"package": "openai", "name": "openrouter", "items": [{"name": "openai/gpt-6-astra", "args": {"base_url": "https://openrouter.ai/api/v1"}}]}]}, "model not allowed"),
@@ -264,25 +267,13 @@ def test_audit_over_supplied_logs_uses_the_staged_source_only(tmp_path: Path, mo
         run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "f.eval-set.yaml", foreign), estimated_usd=1.0, note=None))
 
 
-def test_supplied_logs_are_staged_by_us_at_sample_setup_not_by_the_agent(
+def test_local_logs_remain_local_when_remote_work_is_enabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The agent has no S3 capability, and the upload happens once, when the sample runs.
-
-    Constructing the task only names the source: an upload is slow, credentialed work
-    that must not happen while a task is merely being built, and must not repeat on a
-    retry or a resume.
-    """
+    """Local evidence is readable without inventing a remotely accessible prefix."""
     from inspect_audit import _investigate
 
     monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
-    calls: list[tuple[str, str]] = []
-
-    async def fake_stage(local_dir, bucket, eval_set_id, profile):  # noqa: ANN001, ANN202
-        calls.append((bucket, eval_set_id))
-        return f"hawk:{eval_set_id}/inputs/logs"
-
-    monkeypatch.setattr(_investigate, "stage_logs_to_s3", fake_stage)
     repo = tmp_path / "repo"
     repo.mkdir()
     import subprocess
@@ -301,31 +292,15 @@ def test_supplied_logs_are_staged_by_us_at_sample_setup_not_by_the_agent(
     )
     root = Path(target.metadata["investigation_dir"])
     seed = json.loads((root / "inputs/seed.json").read_text())
-    (only,) = seed["remote"]["supplied_logs"]
-    inputs_id = only.removeprefix("hawk:").split("/")[0]
-    assert inputs_id.startswith("inv-inputs-")
-    assert inputs_id in json.loads((root / "log_sources.json").read_text())
-    assert calls == [], "constructing the task must not upload anything"
-    assert "hawk_jobs" in target.metadata["capabilities"]
-
-    # the setup solver does the upload, once
-    async def noop_generate(state, **kwargs):  # noqa: ANN001, ANN003, ANN202
-        return state
-
-    setup = target.setup
-    steps = setup if isinstance(setup, list) else [setup]
-    for step in steps:
-        run(step(None, noop_generate))  # type: ignore[arg-type]
-    assert calls == [("arcadia-impact-generality-inspect", inputs_id)]
-    for step in steps:
-        run(step(None, noop_generate))  # type: ignore[arg-type]
-    assert len(calls) == 1, "a resumed or retried run must not stage the logs again"
-    assert (root / "staged.json").is_file()
+    assert seed["remote"]["supplied_logs"] == []
+    assert (root / "inputs/logs/0/a.eval").read_bytes() == b"x"
+    assert not (root / "staged.json").exists()
+    assert "operator-imported Hawk source" in seed["remote"]["note"]
+    assert target.setup is None
 
 
 
 def test_jobs_status_wait_collect_release_reservation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from inspect_ai.tool import ToolError
 
     from inspect_audit import _investigate
 
@@ -336,8 +311,7 @@ def test_jobs_status_wait_collect_release_reservation(tmp_path: Path, monkeypatc
     run(hawk_submit(r, tmp_path)(config=_write(tmp_path, "j.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-jj")), estimated_usd=3, note=None))
     tool = jobs(r, tmp_path)
     assert "running" in run(tool(action="evals", label="jj", sample=None, wait_minutes=None, limit=None))
-    with pytest.raises(ToolError, match="not finished"):
-        run(tool(action="collect", label="jj", sample=None, wait_minutes=None, limit=None))
+    assert "not finished" in run(tool(action="collect", label="jj", sample=None, wait_minutes=None, limit=None))
     r.hawk.eval_status = "success"  # type: ignore[attr-defined]
     monkeypatch.setattr(_jobs.time, "sleep", lambda s: None)
     assert "success" in run(tool(action="wait", label="jj", sample=None, wait_minutes=1, limit=None))
@@ -389,15 +363,16 @@ async def _returns(value):  # noqa: ANN001, ANN202
 
 def test_hawk_cli_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     h = _jobs.Hawk("https://h", None)
-    table = "Eval Set: x\n\nTask   Model   Status   Samples\n----  ----  ----  ----\naudit/bench/Chess Puzzles  gpt-5.6-terra  success   10/10\n"
-
     def returning(text: str):  # noqa: ANN202
         async def _run(*args: str, **kwargs: object) -> str:
             return text
 
         return _run
 
-    monkeypatch.setattr(h, "_run", returning(table))
+    monkeypatch.setattr(h, "_metadata_page", lambda *a: _returns([
+        {"task_name": "audit/bench/Chess Puzzles", "model": "gpt-5.6-terra",
+         "status": "success", "completed_samples": 10, "total_samples": 10}
+    ]))
     assert run(h.evals("x")) == [{"task": "audit/bench/Chess Puzzles", "model": "gpt-5.6-terra", "status": "success", "samples": "10/10"}]
     monkeypatch.setattr(h, "_run", returning("Eval set ID: inv-abc-123\nSee your eval set log: https://..."))
     assert run(h.submit(Path("/tmp/c.yaml"))) == "inv-abc-123"
@@ -803,36 +778,6 @@ def test_eval_set_exists_parses_the_cli_and_does_not_match_a_different_id() -> N
     assert run(h.eval_set_exists("inv-other-9999zzzz")) is False
 
 
-def test_stage_logs_to_s3_builds_the_right_command_and_keeps_credentials_out(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Staging runs `aws s3 cp` as the named profile; nothing is shell-interpolated."""
-    from inspect_audit import _jobs
-
-    seen: dict[str, object] = {}
-
-    class Result:
-        success = True
-        stdout = ""
-        stderr = ""
-
-    async def fake_subprocess(args, text=True, env=None, timeout=None, **kwargs):  # noqa: ANN001, ANN003, ANN202
-        seen["args"], seen["env"] = args, env
-        return Result()
-
-    monkeypatch.setattr(_jobs, "subprocess", fake_subprocess)
-    (tmp_path / "logs").mkdir()
-    source = run(_jobs.stage_logs_to_s3(tmp_path / "logs", "bucket", "inv-inputs-abc", "james-base"))
-    assert source == "hawk:inv-inputs-abc/inputs/logs"
-    cmd = seen["args"]
-    assert isinstance(cmd, list) and cmd[:4] == ["aws", "s3", "cp", "--recursive"]
-    assert cmd[-1] == "s3://bucket/evals/inv-inputs-abc/inputs/logs/"
-    env = seen["env"]
-    assert isinstance(env, dict) and env["AWS_PROFILE"] == "james-base"
-    # an ambient key alongside a named profile is how you upload as the wrong identity
-    assert env["AWS_ACCESS_KEY_ID"] == "" and env["AWS_SESSION_TOKEN"] == ""
-
-
 def test_the_fake_hawk_matches_the_real_one() -> None:
     """Tests are only worth their fake: every method must exist with the same signature."""
     import inspect as inspect_module
@@ -941,13 +886,6 @@ def test_logs_already_parked_where_hawk_can_read_them_are_not_copied(
     from inspect_audit import _investigate
 
     monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
-    staged: list[str] = []
-
-    async def fake_stage(local_dir, bucket, eval_set_id, profile):  # noqa: ANN001, ANN202
-        staged.append(eval_set_id)
-        return f"hawk:{eval_set_id}/inputs/logs"
-
-    monkeypatch.setattr(_investigate, "stage_logs_to_s3", fake_stage)
     import subprocess
 
     repo = tmp_path / "repo"
@@ -977,7 +915,7 @@ def test_logs_already_parked_where_hawk_can_read_them_are_not_copied(
         }
     ]
     assert not (root / "inputs" / "logs").exists(), "nothing was copied"
-    assert staged == [], "nothing was uploaded"
+    assert not (root / "staged.json").exists()
     assert seed["remote"]["supplied_logs"] == ["hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs"]
 
     # and a job may read exactly that address, not its neighbours
@@ -1183,3 +1121,128 @@ def test_a_mode_name_is_not_a_model(tmp_path: Path) -> None:
     config = filled_example("benchmark.eval-set.yaml")
     config["tasks"][0]["items"][0]["args"] = {"grader_model": "openrouter/anthropic/claude-opus-5"}
     assert any("not an allowed model" in p for p in validate_config(config, policy(), set()))
+
+
+def test_sample_pagination_keeps_page_size_fixed(monkeypatch: pytest.MonkeyPatch) -> None:
+    h = _jobs.Hawk(HAWK, None)
+    calls = []
+
+    async def page(eval_set_id, number, size):
+        calls.append((number, size))
+        return [{"id": i} for i in range((number - 1) * size, number * size)]
+
+    monkeypatch.setattr(h, "_samples_page", page)
+    rows = run(h.samples("set", 300))
+    assert [r["id"] for r in rows] == list(range(300))
+    assert calls == [(1, 250), (2, 250)]
+
+
+def test_api_token_refreshes_once_on_401(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+    import urllib.error
+    import urllib.request
+
+    h = _jobs.Hawk(HAWK, None)
+    h._token = "expired"
+    tokens = []
+
+    async def fresh(*args, **kwargs):
+        return "fresh"
+
+    def response(request, timeout):
+        tokens.append(request.get_header("Authorization"))
+        if len(tokens) == 1:
+            raise urllib.error.HTTPError(request.full_url, 401, "Expired", {}, None)
+        return io.BytesIO(b'{"items": [{"uuid": "s"}]}')
+
+    monkeypatch.setattr(h, "_run", fresh)
+    monkeypatch.setattr(urllib.request, "urlopen", response)
+    assert run(h._samples_page("set", 1, 250)) == [{"uuid": "s"}]
+    assert tokens == ["Bearer expired", "Bearer fresh"]
+
+
+def test_generated_configs_pass_actual_policy_and_hawk_schema(tmp_path: Path) -> None:
+    from inspect_audit._investigate import write_experiment_templates
+
+    r = remote(tmp_path)
+    write_experiment_templates(r, tmp_path, "inspect_evals/simpleqa_verified")
+    for f in (tmp_path / "work/jobs/templates").glob("*.yaml"):
+        config = yaml.safe_load(f.read_text())
+        assert validate_config(config, r.policy, r.known_sources) == []
+        assert config["working_limit"] < config["time_limit"]
+    assert len(list((tmp_path / "work/jobs/templates").glob("*.yaml"))) == 2
+
+
+def test_remote_evidence_is_checked_before_investigation(tmp_path: Path) -> None:
+    from inspect_audit._investigate import check_evidence_access
+
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir()
+    seed = tmp_path / "inputs/seed.json"
+    seed.write_text('{}')
+    run(check_evidence_access(r, tmp_path, ["hawk:valid", "s3://unsupported"])(None, None))
+    checks = json.loads(seed.read_text())["evidence_access"]
+    assert [c["status"] for c in checks] == ["readable", "unavailable"]
+    assert list((tmp_path / "inputs/index").rglob("*.md"))
+
+
+@pytest.mark.parametrize('change', [
+    {'runner': 'wrong'}, {'runner': {'secrets': ['OPENROUTER_API_KEY']}},
+    {'models': ['openai/gpt-5.6-luna']}, {'model_roles': [{}]},
+    {'runner': {'environment': ['A=B']}},
+])
+def test_malformed_config_is_refused_not_crashed(change: dict) -> None:
+    config = filled_example('benchmark.eval-set.yaml')
+    config.update(change)
+    assert validate_config(config, policy(), set())
+
+
+@pytest.mark.parametrize('args', [
+    {'grader_config': {'model': 'anthropic/unknown', 'api_key': 'fake'}},
+    {'judge': [{'name': 'x', 'base_url': 'https://outside.example'}]},
+    {'n_samples': 1e9}, {'epochs': 99.0}, {'dataset_path': '/inputs/../../etc/passwd'},
+])
+def test_nested_policy_regressions(args: dict) -> None:
+    config = filled_example('benchmark.eval-set.yaml')
+    config['tasks'][0]['items'][0]['args'].update(args)
+    assert validate_config(config, policy(), set())
+
+
+def test_role_reservation_is_per_evaluated_model() -> None:
+    import copy
+    config = filled_example('benchmark.eval-set.yaml')
+    parsed, errors = _jobs.parse_config(config)
+    assert not errors
+    baseline = _jobs.worst_case_usd(parsed, policy())
+    config['model_roles'] = {'grader': copy.deepcopy(config['models'][0])}
+    config['models'].append(copy.deepcopy(config['models'][0]))
+    parsed, errors = _jobs.parse_config(config)
+    assert not errors
+    assert _jobs.worst_case_usd(parsed, policy()) == baseline * 4
+
+
+def test_eval_pagination_sees_unfinished_tail(monkeypatch) -> None:
+    h = _jobs.Hawk('https://hawk.example', None)
+    row = {'task_name': 't', 'model': 'm', 'status': 'success', 'completed_samples': 1, 'total_samples': 1}
+    pages = [[dict(row, id=str(i)) for i in range(h.PAGE)], [dict(row, status='running')]]
+    monkeypatch.setattr(h, '_metadata_page', lambda *args: _returns(pages.pop(0)))
+    result = run(h.evals('set'))
+    assert len(result) == h.PAGE + 1
+    assert result[-1]['status'] == 'running'
+
+
+def test_repeated_sample_page_is_not_an_infinite_population(monkeypatch) -> None:
+    h = _jobs.Hawk('https://hawk.example', None)
+    monkeypatch.setattr(h, '_samples_page', lambda *args: _returns([{'uuid': str(i)} for i in range(h.PAGE)]))
+    with pytest.raises(RuntimeError, match='repeated'):
+        run(h.samples('set'))
+
+
+def test_failed_ledger_transaction_restores_memory(tmp_path: Path) -> None:
+    ledger = JobLedger(tmp_path)
+    with pytest.raises(ValueError):
+        with ledger.transaction():
+            ledger.add(Job('a', 'audit', 'id', 'x', 'now', 1))
+            raise ValueError('abort')
+    assert ledger.jobs == []
+    assert JobLedger(tmp_path).jobs == []

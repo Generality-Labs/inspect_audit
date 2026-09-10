@@ -11,29 +11,18 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT License" }
 dependencies = [
-    # Investigator ACP, compaction and cost limits are validated on 0.3.259.
     "inspect-ai>=0.3.259",
     "pandas>=2.0.0",
     "pillow>=10.0",
-    # inspect_ai.analysis (samples_df, used to read attempts) imports pyarrow but
-    # inspect-ai only lists it under its own dev extra
     "pyarrow>=10.0.1",
-    # the auditor always needs a model provider; openai's SDK serves OpenAI,
-    # OpenRouter and every OpenAI-compatible endpoint. others (anthropic,
-    # google-genai) are the user's to install and inspect names them on error.
     "openai>=1.0",
 ]
 
-# Makes `inspect_audit/<name>` resolvable from the Inspect registry, so audit
-# items are addressable by name from the CLI, a job file, or plain Python.
 [project.entry-points.inspect_ai]
 inspect_audit = "inspect_audit._registry"
 
 [project.optional-dependencies]
-# Hawk's own config schema, so a config is validated as the thing Hawk will run
-# rather than as a dict that looks right. Hawk itself needs 3.13, which this package
-# does not, so the marker keeps `inspect_audit` installable on 3.11 and 3.12 without
-# remote work; `parse_config` says what to install if it is missing.
+# Hawk requires Python 3.13; the core package supports 3.11+.
 remote = ["hawk>=2.5,<3; python_version >= '3.13'"]
 dev = [
     "ruff",
@@ -44,18 +33,14 @@ dev = [
     "types-PyYAML",
     "hawk>=2.5,<3; python_version >= '3.13'",
 ]
-# frontend/server.py: fastapi + uvicorn arrive via inspect-ai; uvicorn needs a
-# websocket protocol library that plain (non-[standard]) uvicorn doesn't ship
 frontend = ["websockets"]
 reporting = ["matplotlib", "girth==0.8.0"]
 
 [tool.ruff]
 src = ["src"]
-# Vendored third-party skills are copied verbatim; see src/inspect_audit/skills/VENDORED.md
+# Keep vendored skills unchanged.
 extend-exclude = ["src/inspect_audit/skills"]
 
-# Matches the Inspect ecosystem's own configuration, so code written here reads the
-# way code in `inspect_ai` and its satellite packages reads.
 [tool.ruff.lint]
 select = ["E", "W", "F", "D", "I", "B", "SIM101", "PLE"]
 ignore = ["D10", "E501"]
@@ -69,9 +54,6 @@ mypy_path = "src"
 files = ["src"]
 exclude = ["src/inspect_audit/skills/"]
 
-# These are optional runtime integrations: plotting is installed in the research
-# image, and SWE-bench users install Inspect Evals separately. Type-check their
-# callers without requiring either integration in the package's dev environment.
 [[tool.mypy.overrides]]
 module = ["matplotlib", "matplotlib.*", "inspect_evals", "inspect_evals.*", "girth", "scipy.*"]
 ignore_missing_imports = true

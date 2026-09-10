@@ -14,6 +14,7 @@ dependencies = [
     # Investigator ACP, compaction and cost limits are validated on 0.3.259.
     "inspect-ai>=0.3.259",
     "pandas>=2.0.0",
+    "pillow>=10.0",
     # inspect_ai.analysis (samples_df, used to read attempts) imports pyarrow but
     # inspect-ai only lists it under its own dev extra
     "pyarrow>=10.0.1",

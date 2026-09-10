@@ -338,6 +338,16 @@ def render_probe(root: str) -> Solver:
             ]
         )
         assert result.success, result.stderr
+        # Exercise the same SVG preview that crashed real investigations.
+        from inspect_audit._agent import view_image
+        await sandbox().write_file(
+            "/workspace/report/architecture.svg",
+            '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50">'
+            '<rect width="100" height="50" fill="red"/></svg>',
+        )
+        preview = await view_image()("/workspace/report/architecture.svg")
+        assert isinstance(preview, list)
+        assert preview[0].image.startswith("data:image/png;base64,")
         await sandbox().write_file(
             "/workspace/report/report.qmd",
             "---\ntitle: Smoke audit\nformat:\n  html:\n    embed-resources: true\n---\n\n## Findings\n\nNo model conclusions: infrastructure test only.\n\n![Coverage](coverage.png)\n",

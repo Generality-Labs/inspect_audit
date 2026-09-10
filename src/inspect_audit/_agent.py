@@ -1,7 +1,7 @@
 import base64
 import json
-import mimetypes
 from contextlib import nullcontext
+from io import BytesIO
 from pathlib import Path
 from typing import Any, cast
 
@@ -37,6 +37,7 @@ from inspect_ai.util import (
     sandbox_default,
     store_as,
 )
+from PIL import Image
 from pydantic import BaseModel, Field, JsonValue
 
 from . import prompts
@@ -352,11 +353,41 @@ def view_image() -> Tool:
             ) from None
         if not isinstance(data, bytes):
             raise ToolError(f"{path!r} did not read back as bytes.")
-        mime, _ = mimetypes.guess_type(path, strict=False)
+        if Path(path).suffix.lower() == ".svg" or b"<svg" in data[:4096]:
+            # Render inside the sandbox: SVGs can reference other files. Keep the
+            # vector original for publication; only the model preview is rasterized.
+            try:
+                result = await sandbox().exec(
+                    [
+                        "python", "-c",
+                        "import base64, subprocess, sys; "
+                        "p = subprocess.run(['rsvg-convert', '--', sys.argv[1]], "
+                        "capture_output=True, check=True, timeout=45); "
+                        "print(base64.b64encode(p.stdout).decode())",
+                        path,
+                    ],
+                    timeout=60,
+                )
+                if not result.success:
+                    raise ValueError(result.stderr[-2000:])
+                data = base64.b64decode(result.stdout.strip(), validate=True)
+            except Exception as ex:
+                raise ToolError(
+                    f"Could not preview SVG {path!r}: {ex}. "
+                    "Install librsvg2-bin in the sandbox or export a PNG and view that."
+                ) from None
+        try:
+            with Image.open(BytesIO(data)) as preview:
+                image_format = preview.format
+                preview.verify()
+            mime = {"PNG": "image/png", "JPEG": "image/jpeg",
+                    "GIF": "image/gif", "WEBP": "image/webp"}.get(image_format or "")
+            if mime is None:
+                raise ValueError(f"unsupported image format {image_format}; export a PNG")
+        except Exception as ex:
+            raise ToolError(f"Cannot preview {path!r}: {ex}") from None
         encoded = base64.b64encode(data).decode()
-        # the same shape inspect's own media content uses, so a tool result here
-        # looks like any other to a provider
-        return [ContentImage(image=f"data:{mime or 'image/png'};base64,{encoded}")]
+        return [ContentImage(image=f"data:{mime};base64,{encoded}")]
 
     return execute
 

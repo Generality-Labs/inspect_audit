@@ -1133,6 +1133,7 @@ dependencies = [
     { name = "inspect-ai" },
     { name = "openai" },
     { name = "pandas" },
+    { name = "pillow" },
     { name = "pyarrow" },
 ]
 
@@ -1168,6 +1169,7 @@ requires-dist = [
     { name = "openai", specifier = ">=1.0" },
     { name = "pandas", specifier = ">=2.0.0" },
     { name = "pandas-stubs", marker = "extra == 'dev'" },
+    { name = "pillow", specifier = ">=10.0" },
     { name = "pyarrow", specifier = ">=10.0.1" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-xdist", marker = "extra == 'dev'" },

@@ -1246,3 +1246,13 @@ def test_failed_ledger_transaction_restores_memory(tmp_path: Path) -> None:
             raise ValueError('abort')
     assert ledger.jobs == []
     assert JobLedger(tmp_path).jobs == []
+
+
+def test_explicit_judge_arguments_accept_qualified_openrouter_names() -> None:
+    config = filled_example('benchmark.eval-set.yaml')
+    args = config['tasks'][0]['items'][0]['args']
+    args.update(refusal_judge='openrouter/' + policy().models[-1],
+                semantic_judge='openrouter/' + policy().models[-1])
+    assert validate_config(config, policy(), set()) == []
+    args['semantic_judge'] = 'openrouter/anthropic/not-allowed'
+    assert any('not an allowed model' in p for p in validate_config(config, policy(), set()))

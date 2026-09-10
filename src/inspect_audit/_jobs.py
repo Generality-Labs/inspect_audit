@@ -430,7 +430,11 @@ def _task_arg_problems(
                 # a model reference names its provider; a bare word is a mode, not a
                 # model, and cannot reach a paid provider from a runner that holds one
                 # key. `scorer: original` is a real control and was being refused.
-                if "/" in model and model not in policy.models:
+                allowed = set(policy.models) | {
+                    name if name.startswith("openrouter/") else f"openrouter/{name}"
+                    for name in policy.models
+                }
+                if "/" in model and model not in allowed:
                     problems.append(f"{where}: {path}={model!r} is not an allowed model")
                 elif "/" not in model and model in policy.models:
                     continue

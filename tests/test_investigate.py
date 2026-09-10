@@ -508,7 +508,7 @@ def test_mounted_skills_are_wellformed_and_adapted() -> None:
     """
     from inspect_audit._investigate import ASSETS, INVESTIGATION_SKILLS
 
-    ours = {"investigating", "writing"}
+    ours = {"investigating", "writing", "running-jobs"}
     for name in INVESTIGATION_SKILLS:
         text = (ASSETS / "skills" / name / "SKILL.md").read_text()
         import yaml
@@ -609,7 +609,7 @@ def test_a_remote_reservation_stops_the_investigator_spending_the_same_money_loc
 
     (tmp_path / "work").mkdir()
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (3.0, []))
-    r = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], "bucket", None, 10.0)
+    r = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], 10.0)
     assert r.over_allowance() is None
 
     with r.ledger.transaction() as ledger:
@@ -638,13 +638,13 @@ def test_a_resumed_investigation_remembers_what_it_already_spent(
 
     (tmp_path / "work").mkdir()
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (2.0, []))
-    first = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], "bucket", None, 10.0)
+    first = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], 10.0)
     first.record_local_spend()
     assert first.local_usd() == 2.0
 
     # a second run of the same investigation: Inspect's usage starts from zero again
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (1.5, []))
-    resumed = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], "bucket", None, 10.0)
+    resumed = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], 10.0)
     assert resumed.prior_local_usd == 2.0
     assert resumed.local_usd() == 3.5, "the earlier run's spend must still count against the allowance"
 

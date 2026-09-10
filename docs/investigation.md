@@ -199,3 +199,14 @@ INSPECT_AUDIT_LIVE_TESTS=1 .venv/bin/pytest tests/test_provider_smoke.py
 Remote worker fixes must be committed/published and `audit_package` pinned to that
 revision before a Hawk run can use them. A local editable install alone does not
 update a runner's package.
+
+## Instruction ownership
+
+The system prompt contains the remit, stages and workspace/trust boundaries. The
+`investigating` skill owns scientific method and evidence; `running-jobs` owns remote
+operations; `writing` owns presentation. Focused reference skills load on demand.
+Four older overlapping workflow copies remain in the repository for reference but
+are not mounted by default. Optional skills can be supplied through `skills`.
+
+`inspect_audit/report` is an older, separate conversational task for ACP clients.
+It is not a stage called by `investigate`; new autonomous work uses `investigate`.

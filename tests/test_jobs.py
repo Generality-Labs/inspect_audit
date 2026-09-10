@@ -98,7 +98,7 @@ class FakeHawk:
 def remote(tmp_path: Path, allowance: float = 10.0) -> Remote:
     (tmp_path / "work").mkdir(exist_ok=True)
     r = Remote(tmp_path, HAWK, None, TASK_PKG, AUDIT_PKG, IMAGE,
-               ["openai/gpt-5.6-luna", "openai/gpt-5-mini"], "bucket", None, allowance)
+               ["openai/gpt-5.6-luna", "openai/gpt-5-mini"], allowance)
     r.hawk = FakeHawk()  # type: ignore[assignment]
     return r
 
@@ -397,7 +397,7 @@ def slow_spend():
     return (0.0, [])
 
 _investigate._local_spend = slow_spend
-r = Remote(root, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], "bucket", None, allowance)
+r = Remote(root, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], allowance)
 job = Job(label=label, kind="eval-set", eval_set_id="inv-" + label, config_path="x",
           submitted_at="now", estimated_usd=amount, reserved_usd=amount, status="pending")
 try:
@@ -551,7 +551,7 @@ def test_submission_is_refused_when_a_named_model_has_no_registered_price(
 
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
     unpriced = "openai/gpt-5.6-nowhere"
-    r = Remote(tmp_path, HAWK, None, TASK_PKG, AUDIT_PKG, IMAGE, [unpriced], "bucket", None, 10.0)
+    r = Remote(tmp_path, HAWK, None, TASK_PKG, AUDIT_PKG, IMAGE, [unpriced], 10.0)
     r.hawk = FakeHawk()  # type: ignore[assignment]
     (tmp_path / "work").mkdir(exist_ok=True)
     (tmp_path / "inputs").mkdir(exist_ok=True)

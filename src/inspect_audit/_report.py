@@ -1,60 +1,22 @@
-"""Layer-2 synthesis: the top-level agent that sits above completed audits.
-
-This is step 4 of the README pipeline ("Synthesize"). The current rung: the
-agent works inside a sandbox with the audited run's logs staged at
-/report/logs (and inspect-ai + pandas installed, so the log API works in
-place), while the operator connects to its head over ACP. The frames layer
-and the synthesis skill land on top of this.
-
-Run it interactively:
-
-    inspect eval inspect_audit/report -T logs=<log-dir> \
-        --model <model> --acp-server --display none
-
-then attach from another shell with `inspect acp`, or through the web chat
-(`python frontend/server.py`; see frontend/README.md).
-
-With no `logs` argument the task degrades to the sandbox-less chat skeleton
-(useful for exercising the ACP plumbing without docker).
-"""
-
-import atexit
+"""Finding validation, report publication and shared ACP turn-taking."""
 import json
 import os
 import re
 import shutil
-import tempfile
-from importlib.metadata import version
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
 from acp.schema import ElicitationSchema, ElicitationStringPropertySchema
-from inspect_ai import Task
-from inspect_ai.agent import AgentState, react
-from inspect_ai.dataset import Sample
-from inspect_ai.log import list_eval_logs
-from inspect_ai.tool import Tool, ToolError, bash, python, skill, tool
+from inspect_ai.agent import AgentState
+from inspect_ai.tool import Tool, ToolError, tool
 from inspect_ai.util import (
-    SandboxEnvironmentType,
     StoreModel,
     request_input,
     sandbox,
     store_as,
 )
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
-
-from . import prompts
-from ._agent import SKILLS, SUPPORT_SKILLS
-from .containers import COMPOSE, DOCKERFILE
-
-REPORT_ROOT = "/report"
-
-# the synthesis skill lives apart from skills/ because dirs there are
-# enumerated as audit items for auditors (see _agent.audit_skills)
-REPORT_SKILLS = Path(__file__).parent / "report_skills"
-
-
 
 
 async def _operator_turn(state: AgentState) -> bool | str:
@@ -81,84 +43,6 @@ async def _operator_turn(state: AgentState) -> bool | str:
     if result.outcome == "accepted" and result.content:
         return str(result.content["message"])
     return False
-
-
-def _staged_logs(logs: str) -> dict[str, str]:
-    """Container path -> host path for every log under `logs`.
-
-    Uses `list_eval_logs` (which knows what a log file is) and keeps each
-    file's path relative to the log root, so same-named logs in different
-    subdirectories cannot silently collide.
-    """
-    root = Path(logs).resolve()
-    if root.is_file():
-        return {f"{REPORT_ROOT}/logs/{root.name}": str(root)}
-    files = [
-        Path(info.name.removeprefix("file://")).resolve()
-        for info in list_eval_logs(str(root))
-    ]
-    if not files:
-        raise ValueError(f"No logs found at {logs!r}.")
-    return {f"{REPORT_ROOT}/logs/{f.relative_to(root)}": str(f) for f in files}
-
-
-def _report_sandbox() -> SandboxEnvironmentType:
-    """The audit module's generic sandbox, with the log-reading stack installed."""
-    stage = Path(tempfile.mkdtemp(prefix="inspect_report_sandbox_"))
-    atexit.register(shutil.rmtree, stage, ignore_errors=True)
-    requirements = f"inspect-ai=={version('inspect-ai')} pandas pyarrow"
-    (stage / "Dockerfile").write_text(DOCKERFILE.format(requirements=requirements))
-    compose = stage / "compose.yaml"
-    compose.write_text(COMPOSE)
-    return ("docker", str(compose))
-
-
-def report_task(logs: str | None = None) -> Task:
-    """Build the synthesis session as an Inspect `Task`.
-
-    Args:
-        logs: Log file or directory of logs to stage into the sandbox at
-            /report/logs. None runs the sandbox-less chat skeleton.
-    """
-    if logs is None:
-        return Task(
-            dataset=[
-                Sample(
-                    input="Greet the operator in one short sentence and wait "
-                    "for direction."
-                )
-            ],
-            solver=react(
-                name="report",
-                description="Synthesis agent (plumbing-test mode).",
-                prompt=prompts.REPORT_CHAT_ONLY,
-                on_continue=_operator_turn,
-            ),
-        )
-
-    files = _staged_logs(logs)
-    intro = (
-        f"{len(files)} log file(s) are staged at {REPORT_ROOT}/logs. Greet the "
-        "operator in one short sentence and wait for direction."
-    )
-    return Task(
-        dataset=[Sample(input=intro, files=files)],
-        solver=react(
-            name="report",
-            description="Synthesis agent over completed audit logs.",
-            prompt=prompts.REPORT.format(root=REPORT_ROOT),
-            tools=[
-                bash(timeout=300),
-                python(timeout=300),
-                skill(
-                    [str(d) for d in sorted(REPORT_SKILLS.iterdir()) if d.is_dir()]
-                    + [str(SKILLS / name) for name in SUPPORT_SKILLS]
-                ),
-            ],
-            on_continue=_operator_turn,
-        ),
-        sandbox=_report_sandbox(),
-    )
 
 
 class InvestigationState(StoreModel):
@@ -330,13 +214,6 @@ _NOT_PROSE = re.compile(
     re.S | re.I,
 )
 _TOC = re.compile(r'<(div|aside)[^>]*\bid="(TOC|toc)"[^>]*>.*?</\1>', re.S | re.I)
-
-
-def _rendered_text(html: str) -> str:
-    """Everything the reader sees, tags removed. Used for previews, not for linting."""
-    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.S | re.I)
-    text = re.sub(r"<[^>]+>", " ", text)
-    return re.sub(r"\s+", " ", text)
 
 
 def _prose_text(html: str) -> str:

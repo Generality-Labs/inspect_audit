@@ -49,3 +49,12 @@ per-transcript categories) and `eval-report-workflow` (the reproducibility block
 delta against the published number, and its minimum-size rule).
 
 Vendored 2026-09-09.
+
+## Default loadout after the September 10 cleanup
+
+The source copies above are retained for provenance and optional use. Four overlapping
+workflows are no longer mounted by default: check-trajectories-workflow,
+eval-report-workflow, read-eval-logs and babysit-eval. The maintained investigating,
+writing and running-jobs skills cover the workflow; reading-logs/analyzing-logs provide
+the Inspect APIs. Focused validity, dataset, security and Hawk diagnostic references
+remain available. INVESTIGATION_SKILLS in _investigate.py is the authoritative loadout.

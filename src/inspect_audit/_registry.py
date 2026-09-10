@@ -15,7 +15,7 @@ from ._audit import audit_task
 from ._concordance import probe_concordance
 from ._investigate import investigate as investigate
 from ._item import AUDIT_ROOT
-from ._report import report_task
+from ._legacy_report import report_task
 from ._resolve import resolve_task, resolve_task_from_log
 from ._sandbox import (
     BENCHMARK_SERVICE,
@@ -99,7 +99,9 @@ def audit(
 
 @task
 def report(logs: str | None = None) -> Task:
-    """Synthesis session over a directory of completed audit logs.
+    """Legacy conversational synthesis over completed audit logs.
+
+    Use inspect_audit/investigate for autonomous investigation and publication.
 
     v0 is the conversational skeleton: launch with `--acp-server` and attach
     via `inspect acp` (or the web chat in frontend/) to work with it. See

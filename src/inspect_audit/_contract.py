@@ -25,8 +25,6 @@ from inspect_ai import Task
 # `is_registry_object` have no public equivalent, which is the one thing this module
 # needs from the private surface
 from inspect_ai._util.registry import is_registry_object, registry_params
-from inspect_ai.event import ModelEvent
-from inspect_ai.log import read_eval_log_samples
 from inspect_ai.tool import Tool, ToolDef
 from inspect_ai.util import registry_create, registry_info
 
@@ -159,23 +157,6 @@ def _as_prompt(value: Any) -> str | None:
         return value[0]
     logger.debug(f"prompt param of unrecognised shape not recovered: {type(value)}")
     return None
-
-
-def logged_tool_names(log_file: str) -> set[str]:
-    """Every tool name the log's samples show reaching the model.
-
-    The union over the log's model events: what the evaluated agent actually
-    held, per the log's own record.
-
-    Args:
-        log_file: Path to the log to read.
-    """
-    names: set[str] = set()
-    for sample in read_eval_log_samples(log_file, all_samples_required=False, resolve_attachments=True):
-        for event in sample.events:
-            if isinstance(event, ModelEvent):
-                names.update(tool.name for tool in event.tools)
-    return names
 
 
 def discrepancies_doc(

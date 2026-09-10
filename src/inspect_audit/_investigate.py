@@ -78,20 +78,16 @@ DEFAULT_AUDITOR_IMAGE = (
     "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
     "072e50b2ea1c51e67644e97e08cff052a52a1d661294635e1c3e360d1371b9ee"
 )
-DEFAULT_LOG_BUCKET = "arcadia-impact-generality-inspect"
 
 INVESTIGATION_SKILLS = (
     "investigating",
     "writing",
+    "running-jobs",
     "eval-validity-review",
     "investigate-dataset",
     "security-audit-eval",
-    "check-trajectories-workflow",
-    "eval-report-workflow",
-    "read-eval-logs",
     "view-results",
     "debug-stuck-eval",
-    "babysit-eval",
 )
 OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"
 DEFAULT_WORKERS = [
@@ -719,8 +715,6 @@ class Remote:
         audit_package: str,
         auditor_image: str,
         worker_models: list[str],
-        log_bucket: str,
-        aws_profile: str | None,
         allowance_usd: float,
     ) -> None:
         self.root = root
@@ -730,8 +724,6 @@ class Remote:
         self.audit_package = audit_package
         self.auditor_image = auditor_image
         self.worker_models = worker_models
-        self.log_bucket = log_bucket
-        self.aws_profile = aws_profile
         self.allowance_usd = allowance_usd
         self.ledger = JobLedger(root)
         self.policy = Policy(
@@ -1693,8 +1685,6 @@ def investigate(
     auditor_image = settings.get("auditor_image", auditor_image)
     worker_models = settings.get("worker_models", worker_models)
     secrets_file = settings.get("secrets_file", secrets_file)
-    log_bucket = settings.get("log_bucket", log_bucket)
-    aws_profile = settings.get("aws_profile", aws_profile)
 
     overview = overview if overview is not None else ""
     output_dir = output_dir if output_dir is not None else "investigations"
@@ -1702,7 +1692,6 @@ def investigate(
     enforce_cost_limit = enforce_cost_limit if enforce_cost_limit is not None else True
     interactive = bool(interactive)
     auditor_image = auditor_image or DEFAULT_AUDITOR_IMAGE
-    log_bucket = log_bucket or DEFAULT_LOG_BUCKET
 
     if not math.isfinite(budget_usd) or budget_usd <= 0:
         raise ValueError("budget_usd must be finite and positive")
@@ -1739,7 +1728,6 @@ def investigate(
         paths = paths or paths_from_metadata(local_repo, target_task)
         paper = paper or paper_from_metadata(local_repo, target_task)
     hawk_api_url = hawk_api_url or os.environ.get("HAWK_API_URL")
-    aws_profile = aws_profile or os.environ.get("AWS_PROFILE")
     task_package: str | None = None
     if hawk_api_url:
         # a runner installs the benchmark from git: a local checkout supplies its own
@@ -1789,7 +1777,7 @@ def investigate(
     if hawk_api_url:
         remote = Remote(
             root, hawk_api_url, secrets_file, task_package or "", audit_package or "", auditor_image,
-            worker_models or DEFAULT_WORKERS, log_bucket, aws_profile, budget_usd,
+            worker_models or DEFAULT_WORKERS, budget_usd,
         )
         seed_path = root / "inputs" / "seed.json"
         seed = json.loads(seed_path.read_text())

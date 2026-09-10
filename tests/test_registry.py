@@ -51,3 +51,11 @@ def test_replay_normalises_the_solver_it_installs() -> None:
     assert replay.solver is not None
     assert [str(s.id) for s in replay.dataset] == ["s0"]
     assert replay.dataset[0].target == "a"
+
+
+def test_legacy_report_registry_still_constructs_without_a_sandbox() -> None:
+    from inspect_audit._registry import report
+
+    task = report()
+    assert task.sandbox is None
+    assert len(list(task.dataset)) == 1

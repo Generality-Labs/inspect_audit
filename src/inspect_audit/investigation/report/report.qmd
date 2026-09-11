@@ -5,7 +5,6 @@ format:
     embed-resources: true
     toc: true
     theme: cosmo
-    css: styles.css
 execute:
   echo: false
 ---
@@ -18,13 +17,6 @@ substantive finding, including positive findings. Lead with the conclusion and g
 its magnitude/evidence and scope. Group instances of the same defect together.
 Link each bullet to an explicit anchor in the full audit. End with one short coverage
 statement. Do not put a full methods narrative here. -->
-
-## Benchmark architecture {.unnumbered}
-
-<!-- Use components.architecture with evidence/architecture.json to draw the actual
-information flow, including the agent-visible boundary and hidden scoring inputs.
-Cite source evidence for connections. Mark uncertain connections as unverified.
-Embed the resulting SVG here. Do not invent tools or feedback loops. -->
 
 ---
 

@@ -1,7 +1,6 @@
 """Exercise input isolation, publication and the real Docker/Quarto path."""
 
 import asyncio
-import importlib.util
 import json
 import subprocess
 from pathlib import Path
@@ -278,21 +277,6 @@ def test_invalid_seed_and_budget_fail_early(tmp_path: Path) -> None:
         )
 
 
-def test_transcript_escapes_untrusted_html() -> None:
-    from inspect_audit._investigate import ASSETS
-
-    spec = importlib.util.spec_from_file_location(
-        "components", ASSETS / "report/components.py"
-    )
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    rendered = module.transcript("<assistant>", "<script>alert(1)</script>", "x&y")
-    assert "<script>" not in rendered
-    assert "&lt;script&gt;" in rendered
-    assert "x&amp;y" in rendered
-
-
 def test_publication_switches_from_work_to_discussion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -334,7 +318,7 @@ def render_probe(root: str) -> Solver:
             [
                 "python",
                 "-c",
-                "import sys; sys.path.insert(0, '/workspace/report'); from components import bar_chart; bar_chart(['Reviewed', 'Unreviewed'], [3, 1], '/workspace/report/coverage.png', ylabel='Attempts')",
+                "import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt; plt.bar(['Reviewed', 'Unreviewed'], [3, 1]); plt.ylabel('Attempts'); plt.savefig('/workspace/report/coverage.png')",
             ]
         )
         assert result.success, result.stderr

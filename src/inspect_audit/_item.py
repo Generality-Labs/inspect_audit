@@ -94,6 +94,8 @@ def item_sample(
     # hands it this. never staged to the filesystem, so redaction does not apply.
     metadata: dict[str, Any] = {
         "audit_item": item.model_dump(),
+        # the sliced logs, for the concordance gate to re-score host-side
+        "sliced_logs": [host for key, host in files.items() if key.startswith(f"{AUDIT_ROOT}/logs/")],
         "benchmark_metadata": dict(sample.metadata or {}),
         # the original session's raw material, so the benchmark's own TaskState can
         # be rebuilt at grading time: a grader must never see the audit's input,

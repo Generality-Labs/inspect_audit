@@ -44,6 +44,7 @@ from ._jobs import (
     JobLedger,
     Policy,
     copy_into_inputs,
+    expected_evals,
     parse_config,
     slug,
     task_package_name,
@@ -90,6 +91,7 @@ INVESTIGATION_SKILLS = (
     "debug-stuck-eval",
 )
 OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"
+OPENROUTER_IDS: set[str] = set()  # every id the price registry has seen this process
 DEFAULT_WORKERS = [
     "openai/gpt-5.6-luna",
     "google/gemini-3.6-flash",
@@ -255,6 +257,7 @@ def register_openrouter_costs(timeout: float = 15) -> int:
         except Exception as ex:  # one odd listing must not lose the rest
             logger.debug(f"skipping price for {model.get('id')}: {ex}")
             continue
+        OPENROUTER_IDS.add(str(model["id"]))
         registered += 1
     return registered
 
@@ -727,6 +730,7 @@ class Remote:
         self.allowance_usd = allowance_usd
         self.ledger = JobLedger(root)
         self.policy = Policy(
+            known_models=frozenset(OPENROUTER_IDS),
             packages=[task_package, audit_package],
             task_names=[task_package_name(task_package), "inspect_audit"],
             models=worker_models,
@@ -1070,6 +1074,7 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
             reserved_usd=worst,
             status="pending",
             note=note or "",
+            expected_evals=expected_evals(parsed),
         )
         replacing_failed = (remote.ledger.get(label) or Job("", "", "", "", "", 0)).status == "failed"
         if submitted_path.exists() and not replacing_failed:
@@ -1223,18 +1228,30 @@ def jobs(remote: Remote, root: Path) -> Tool:
             if action == "evals":
                 rows = await remote.hawk.evals(job.eval_set_id)
             elif action == "wait":
-                rows = await wait_for(remote.hawk, job.eval_set_id, wait_minutes or 20)
+                rows = await wait_for(
+                    remote.hawk, job.eval_set_id, wait_minutes or 20, expected=job.expected_evals
+                )
             elif action == "stop":
                 await remote.hawk.stop(job.eval_set_id)
+                if not await remote.hawk.evals(job.eval_set_id):
+                    # nothing ran, so nothing was spent: a stopped job with no evals can
+                    # never be collected, and its reservation must not outlive it
+                    remote.settle(label, status="stopped", actual_usd=0.0, cost_note="stopped before any eval ran")
+                    return f"stopped {label} ({job.eval_set_id}) before any eval ran; ${job.reserved_usd:.2f} released"
                 remote.settle(label, status="stopped")
-                return f"stop requested for {label} ({job.eval_set_id})"
+                return f"stop requested for {label} ({job.eval_set_id}); collect it once its evals settle"
             elif action == "collect":
                 rows = await remote.hawk.evals(job.eval_set_id)
-                if not rows or not all(r["status"] in ("success", "error", "cancelled") for r in rows):
+                stopped = job.status == "stopped"
+                if stopped and not rows:
+                    remote.settle(label, actual_usd=0.0, cost_note="stopped before any eval ran")
+                    return f"{label} was stopped before any eval ran; nothing to collect, ${job.reserved_usd:.2f} released"
+                terminal = bool(rows) and all(r["status"] in ("success", "error", "cancelled") for r in rows)
+                if not terminal or (not stopped and len(rows) < job.expected_evals):
                     state = ", ".join(f"{r['task']} {r['status']} {r['samples']}" for r in rows) or "no evals yet"
                     return (
-                        f"{label} is not finished ({state}). No files downloaded. "
-                        f"Use jobs(action='wait', label='{label}') before collecting. "
+                        f"{label} is not finished ({len(rows)} of {job.expected_evals} evals listed; {state}). "
+                        f"No files downloaded. Use jobs(action='wait', label='{label}') before collecting. "
                         "If there are no evals, inspect watch/logs once for a startup failure."
                     )
                 files = await remote.hawk.download(job.eval_set_id, root / "jobs" / "downloads" / label)
@@ -1242,12 +1259,13 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     raise ToolError("no .eval files were downloaded")
                 dest = copy_into_inputs(files, root / "inputs", label)
                 cost, usage, recomputed = usage_cost(files)
-                # an unpriced model leaves the real cost unknown: recording the
-                # estimate here would turn a guess into a measurement, so the
-                # reservation stands instead
+                # an unpriced model leaves the real cost unknown. The hold is settled at the
+                # reservation, the most the job could have spent, and says so: a held
+                # reservation that can never be collected otherwise ends the investigation
                 remote.settle(
                     label,
-                    actual_usd=cost,
+                    actual_usd=cost if cost is not None else job.reserved_usd,
+                    cost_note="" if cost is not None else "unpriced model: charged at the reservation",
                     collected_to=str(dest),
                     evals=[dict(r) for r in rows],
                     status="success" if all(r["status"] == "success" for r in rows) else "error",
@@ -1267,8 +1285,8 @@ def jobs(remote: Remote, root: Path) -> Tool:
                         + f", reservation of ${job.reserved_usd:.2f} released"
                     )
                     if cost is not None
-                    else f"cost unknown: a model in this job has no registered price, so the "
-                    f"${job.reserved_usd:.2f} reservation stays held"
+                    else f"cost unknown: a model in this job has no registered price, so the job is "
+                    f"charged its full ${job.reserved_usd:.2f} reservation"
                 )
                 lines += [f"  {m}: in {u['input']:,} cache_read {u['cache_read']:,} out {u['output']:,}" for m, u in usage.items()]
                 return "\n".join(lines)

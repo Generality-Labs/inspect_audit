@@ -48,6 +48,8 @@ class Job:
     collected_to: str | None = None
     note: str = ""
     evals: list[dict[str, Any]] = field(default_factory=list)
+    expected_evals: int = 0  # task items x model items; collect waits for all of them
+    cost_note: str = ""  # how actual_usd was arrived at when it is not a measurement
 
 
 class JobLedger:
@@ -322,6 +324,11 @@ class Policy:
     # dollars per sample, enforced by the runner through Inspect's cost limit. The
     # reservation a job holds is this multiplied by the samples the config asks for.
     max_cost_limit_usd: float = 5.0
+    # below this a reservation is nominal while every sample still gets a full generation
+    min_cost_limit_usd: float = 0.05
+    # every model id the price registry knows; a config naming one that is not on the
+    # menu is refused wherever the name appears, not only under model-shaped keys
+    known_models: frozenset[str] = frozenset()
     max_worst_case_usd: float = 200.0
     # knobs that multiply the work or the request rate. Retries repeat a failed task,
     # so they multiply the reservation as well as being capped here.
@@ -514,6 +521,25 @@ def _samples_in(item: Any, config_limit: int | None) -> int | None:
     return config_limit
 
 
+def _strings(value: Any) -> Iterator[str]:
+    """Every string leaf in a config, at any depth."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for v in value.values():
+            yield from _strings(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _strings(v)
+
+
+def expected_evals(parsed: Any) -> int:
+    """How many eval rows Hawk will create: one per task item per model item."""
+    items = sum(len(task.items) for task in parsed.tasks)
+    models = sum(len(group.items) for group in parsed.models or []) or 1
+    return items * models
+
+
 def worst_case_usd(parsed: Any, policy: Policy) -> float | None:
     """What a submitted config is expected to cost at its own stated ceiling.
 
@@ -649,10 +675,11 @@ def validate_config(
     ):
         if value is None:
             problems.append(f"{key} is required by the investigation policy")
-        elif not isinstance(value, int) or value > cap:
+        elif not isinstance(value, int) or isinstance(value, bool) or value > cap:
             problems.append(f"{key} {value!r} must be an integer up to {cap}")
     if parsed.limit is not None and (
-        not isinstance(parsed.limit, int) or not (0 < parsed.limit <= policy.max_limit)
+        not isinstance(parsed.limit, int) or isinstance(config.get("limit"), bool)
+        or not (0 < parsed.limit <= policy.max_limit)
     ):
         problems.append(
             f"limit {parsed.limit!r} must be a whole number from 1 to {policy.max_limit}; "
@@ -680,10 +707,18 @@ def validate_config(
             f"cost_limit is required: dollars per sample, up to {policy.max_cost_limit_usd}. "
             "It limits solver spending and determines the reservation; scoring and in-flight calls can exceed it"
         )
-    elif not (0 < parsed.cost_limit <= policy.max_cost_limit_usd):
+    elif isinstance(config.get("cost_limit"), bool) or not (
+        policy.min_cost_limit_usd <= parsed.cost_limit <= policy.max_cost_limit_usd
+    ):
         problems.append(
-            f"cost_limit {parsed.cost_limit} must be above 0 and at most {policy.max_cost_limit_usd}"
+            f"cost_limit {parsed.cost_limit!r} must be a number from {policy.min_cost_limit_usd} "
+            f"to {policy.max_cost_limit_usd}: below that the reservation is nominal while every "
+            "sample still gets a full generation"
         )
+    for name in _strings(config):
+        bare = name.removeprefix("openrouter/")
+        if bare in policy.known_models and bare not in policy.models:
+            problems.append(f"model {name!r} is not on the worker menu (found outside a model field)")
 
     worst = worst_case_usd(parsed, policy)
     if worst is None and not problems:
@@ -721,18 +756,18 @@ def slug(text: str) -> str:
 
 
 def usage_cost(logs: list[Path]) -> tuple[float | None, dict[str, dict[str, int]], bool]:
-    """What a finished job cost, from the logs it wrote.
+    """What a finished job cost, from the usage its samples recorded.
 
-    The runner prices its own usage: every submitted config carries the prices, so
-    Inspect records `total_cost` per model in the log's stats. That number is the
-    measurement, and it is what the job was actually charged at the time it ran.
-
-    A log written before prices were supplied has no `total_cost`; then this recomputes
-    from the prices registered here, at today's rates, and says so through the third
-    return value, because a recomputation is an estimate and the ledger has to know the
-    difference. If a model has no price at all the total is None.
+    Summed per sample rather than read from the header: the header's totals are
+    what the runner's main task context saw, and calls made from other contexts
+    (a setup solver's scorer, a grader the task built for itself) are missing
+    from it. The runner priced each call with the prices the config carried, so
+    `total_cost` is the measurement. A log written without prices has none; then
+    the cost is recomputed from today's registry and flagged as an estimate. A
+    model with no price makes the total None, and a total is never negative:
+    a price the benchmark's own code rewrote cannot add allowance.
     """
-    from inspect_ai.log import read_eval_log
+    from inspect_ai.log import read_eval_log, read_eval_log_sample_summaries
     from inspect_ai.model import get_model_info
 
     total = 0.0
@@ -740,32 +775,41 @@ def usage_cost(logs: list[Path]) -> tuple[float | None, dict[str, dict[str, int]
     recomputed = False
     usage: dict[str, dict[str, int]] = {}
     for path in logs:
-        header = read_eval_log(str(path), header_only=True)
-        for model, u in (header.stats.model_usage or {}).items():
-            usage.setdefault(model, {"input": 0, "cache_read": 0, "output": 0})
-            usage[model]["input"] += u.input_tokens or 0
-            usage[model]["cache_read"] += u.input_tokens_cache_read or 0
-            usage[model]["output"] += u.output_tokens or 0
-            if u.total_cost is not None:
-                total += u.total_cost
-                continue
-            recomputed = True
-            info = get_model_info(model)
-            cost = info.cost if info else None
-            if cost is None:
-                priced = False
-                continue
-            total += (
-                (u.input_tokens or 0) * (cost.input or 0)
-                + (u.input_tokens_cache_read or 0) * (cost.input_cache_read or 0)
-                + (u.input_tokens_cache_write or 0) * (cost.input_cache_write or 0)
-                + (u.output_tokens or 0) * (cost.output or 0)
-            ) / 1_000_000
+        per_model: dict[str, list[Any]] = {}
+        summaries = read_eval_log_sample_summaries(str(path))
+        if summaries:
+            for summary in summaries:
+                for model, u in (summary.model_usage or {}).items():
+                    per_model.setdefault(model, []).append(u)
+        else:  # a log with no samples: the header is all there is
+            for model, u in (read_eval_log(str(path), header_only=True).stats.model_usage or {}).items():
+                per_model.setdefault(model, []).append(u)
+        for model, usages in per_model.items():
+            tally = usage.setdefault(model, {"input": 0, "cache_read": 0, "output": 0})
+            for u in usages:
+                tally["input"] += u.input_tokens or 0
+                tally["cache_read"] += u.input_tokens_cache_read or 0
+                tally["output"] += u.output_tokens or 0
+                if u.total_cost is not None:
+                    total += max(0.0, u.total_cost)
+                    continue
+                recomputed = True
+                info = get_model_info(model)
+                cost = info.cost if info else None
+                if cost is None:
+                    priced = False
+                    continue
+                total += max(0.0, (
+                    (u.input_tokens or 0) * (cost.input or 0)
+                    + (u.input_tokens_cache_read or 0) * (cost.input_cache_read or 0)
+                    + (u.input_tokens_cache_write or 0) * (cost.input_cache_write or 0)
+                    + (u.output_tokens or 0) * (cost.output or 0)
+                ) / 1_000_000)
     return (total if priced else None), usage, recomputed
 
 
 async def wait_for(
-    hawk: Hawk, eval_set_id: str, minutes: float, poll_seconds: float = 60
+    hawk: Hawk, eval_set_id: str, minutes: float, poll_seconds: float = 60, expected: int = 0
 ) -> list[dict[str, str]]:
     """Poll until every eval in the set is terminal or the wait expires. No model calls.
 
@@ -776,7 +820,9 @@ async def wait_for(
     rows: list[dict[str, str]] = []
     while True:
         rows = await hawk.evals(eval_set_id)
-        if rows and all(r["status"] in TERMINAL for r in rows):
+        # Hawk adds eval rows as their logs land, so "every existing row is terminal"
+        # is true midway through a job; the config says how many rows there will be
+        if rows and len(rows) >= expected and all(r["status"] in TERMINAL for r in rows):
             return rows
         if time.monotonic() >= deadline:
             return rows

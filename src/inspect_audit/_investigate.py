@@ -10,7 +10,6 @@ import shutil
 import subprocess
 import tarfile
 import urllib.request
-from html.parser import HTMLParser
 from importlib.metadata import version
 from logging import getLogger
 from pathlib import Path
@@ -33,7 +32,7 @@ from inspect_ai.model import (
 from inspect_ai.model._model import sample_model_usage
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import Tool, ToolError, bash, skill, tool
-from inspect_ai.util import LimitExceededError, sample_limits, sandbox, store_as
+from inspect_ai.util import LimitExceededError, sample_limits, store_as
 
 from . import prompts
 from ._agent import SKILLS, SUPPORT_SKILLS, view_image
@@ -614,81 +613,6 @@ def prepare_workspace(
     }
     (root / "compose.yaml").write_text(yaml.safe_dump(compose))
     return root
-
-
-class _Text(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.parts: list[str] = []
-        self.images: list[str] = []
-        self._skip = 0
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in ("script", "style"):
-            self._skip += 1
-        if tag == "img":
-            src = dict(attrs).get("src") or ""
-            self.images.append(src[:60] + ("…" if len(src) > 60 else ""))
-        if tag in ("p", "h1", "h2", "h3", "h4", "li", "tr", "pre", "div"):
-            self.parts.append("\n")
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in ("script", "style"):
-            self._skip = max(0, self._skip - 1)
-
-    def handle_data(self, data: str) -> None:
-        if not self._skip:
-            self.parts.append(data)
-
-
-@tool
-def render_report() -> Tool:
-    """Render the draft and read it back, without publishing."""
-
-    async def execute() -> str:
-        """Render report/report.qmd to HTML and return its text and any warnings.
-
-        Use this to check the draft renders and reads the way you intend before
-        calling publish_report. Figures are listed by source; look at a figure
-        with view_image. Nothing is saved outside the workspace.
-        """
-        result = await sandbox().exec(
-            ["quarto", "render", "/workspace/report/report.qmd", "--to", "html"],
-            timeout=300,
-        )
-        if not result.success:
-            raise ToolError(f"Rendering failed:\n{result.stderr}\n{result.stdout}")
-        html = await sandbox().read_file("/workspace/report/report.html")
-        parser = _Text()
-        parser.feed(html)
-        text = re.sub(r"\n{3,}", "\n\n", "".join(parser.parts)).strip()
-        warnings = "\n".join(
-            line for line in (result.stderr or "").splitlines() if "WARN" in line
-        )
-        # the template embeds resources, so every figure in the HTML is a data: URI
-        # and its src says nothing. The files behind them are what view_image reads.
-        listing = await sandbox().exec(
-            [
-                "find", "/workspace/report/evidence", "-maxdepth", "2", "-type", "f",
-                "-name", "*.png", "-o", "-name", "*.jpg", "-o", "-name", "*.jpeg",
-                "-o", "-name", "*.svg", "-o", "-name", "*.webp",
-            ],
-            timeout=60,
-        )
-        files = sorted(line for line in (listing.stdout or "").splitlines() if line.strip())[:40]
-        return (
-            f"Rendered ({len(text)} characters of text, {len(parser.images)} figures).\n"
-            + (f"Quarto warnings:\n{warnings}\n" if warnings else "")
-            + (
-                "Figure files to look at with view_image:\n  " + "\n  ".join(files) + "\n"
-                if files
-                else "No figure files under /workspace/report/evidence/.\n"
-            )
-            + f"\n{text[:6000]}"
-            + ("\n…" if len(text) > 6000 else "")
-        )
-
-    return execute
 
 
 class Remote:
@@ -1336,47 +1260,6 @@ def check_evidence_access(remote: Remote | None, root: Path, sources: list[str])
     return solve
 
 
-def write_experiment_templates(remote: Remote, root: Path, target: str) -> None:
-    """Generate starting configs from the active policy and validate with Hawk."""
-    import copy
-
-    if not remote.worker_models or "/" not in target:
-        return
-    package_name, task_name = target.split("/", 1)
-    def model(name: str) -> dict[str, Any]:
-        return {"package": "openai", "name": "openrouter", "items": [{"name": name}]}
-    config: dict[str, Any] = {
-        "name": "inv-benchmark-smoke", "packages": [remote.task_package],
-        "tasks": [{"package": remote.task_package, "name": package_name,
-                   "items": [{"name": task_name, "args": {}}]}],
-        "models": [model(remote.worker_models[0])],
-        "model_roles": {"grader": model(remote.worker_models[-1])},
-        "runner": {"environment": {"HAWK_API_URL": remote.hawk_api_url}},
-        "limit": 2, "epochs": 1, "cost_limit": 0.5,
-        "token_limit": 200000, "working_limit": 600, "time_limit": 14400,
-        "max_connections": 5, "max_retries": 3, "retry_attempts": 0,
-    }
-    config["model_roles"]["grader"]["items"][0]["args"] = {"config": {"max_tokens": 2048}}
-    audit = copy.deepcopy(config)
-    audit.update(name="inv-audit-smoke", limit=1, cost_limit=2.0,
-                 token_limit=2000000, working_limit=3600)
-    audit["packages"].append(remote.audit_package)
-    audit["tasks"] = [{"package": remote.audit_package, "name": "inspect_audit",
-                       "items": [{"name": "audit", "args": {
-                           "task": target, "items": ["gold-answer", "answer-format"],
-                           "auditor_image": remote.auditor_image}}]}]
-    destination = root / "work" / "jobs" / "templates"
-    destination.mkdir(parents=True, exist_ok=True)
-    for name, value in [("benchmark", config), ("audit", audit)]:
-        problems = validate_config(value, remote.policy, remote.known_sources)
-        if problems:
-            logger.warning("Skipping invalid %s convenience template: %s", name, problems)
-            continue
-        path = destination / f"{name}.yaml"
-        if not path.exists():
-            path.write_text(yaml.safe_dump(value, sort_keys=False))
-
-
 @solver
 def reconcile_jobs(remote: Remote) -> Solver:
     """Settle jobs an interrupted run left pending, before the agent does anything.
@@ -1808,7 +1691,6 @@ def investigate(
         bash(timeout=300),
         skill(skill_paths),
         investigation_budget(budget_usd, enforce_cost_limit, remote),
-        render_report(),
         view_image(),
         publish_report(str(root)),
     ]
@@ -1818,8 +1700,6 @@ def investigate(
         setup_steps.append(check_evidence_access(remote, root, remote_sources))
         tools.append(supplied_logs(remote, root, remote_sources))
     if remote is not None:
-        if target_task:
-            write_experiment_templates(remote, root, target_task)
         tools += [hawk_submit(remote, root), jobs(remote, root)]
 
     async def on_continue(state: AgentState) -> bool | str:

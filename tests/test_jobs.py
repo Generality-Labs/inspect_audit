@@ -1228,18 +1228,6 @@ def test_api_token_refreshes_once_on_401(monkeypatch: pytest.MonkeyPatch) -> Non
     assert tokens == ["Bearer expired", "Bearer fresh"]
 
 
-def test_generated_configs_pass_actual_policy_and_hawk_schema(tmp_path: Path) -> None:
-    from inspect_audit._investigate import write_experiment_templates
-
-    r = remote(tmp_path)
-    write_experiment_templates(r, tmp_path, "inspect_evals/simpleqa_verified")
-    for f in (tmp_path / "work/jobs/templates").glob("*.yaml"):
-        config = yaml.safe_load(f.read_text())
-        assert validate_config(config, r.policy, r.known_sources) == []
-        assert config["working_limit"] < config["time_limit"]
-    assert len(list((tmp_path / "work/jobs/templates").glob("*.yaml"))) == 2
-
-
 def test_remote_evidence_is_checked_before_investigation(tmp_path: Path) -> None:
     from inspect_audit._investigate import check_evidence_access
 

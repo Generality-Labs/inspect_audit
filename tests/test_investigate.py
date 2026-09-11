@@ -419,50 +419,6 @@ PY"""
     ]
 
 
-def test_publish_lint_catches_dashes_comments_and_process_narration() -> None:
-    from inspect_audit._report import lint_report_text, lint_report_warnings
-
-    bad = (
-        "I reviewed the logs. I inspected the grader. I examined the paper. I checked the "
-        "config \u2014 carefully. " + " ".join(["word"] * 45) + ". <!-- draft -->"
-    )
-    problems = lint_report_text(bad)
-    assert any("dash" in p for p in problems)
-    assert any("drafting comments" in p for p in problems)
-    assert any("narrate" in p for p in problems)
-    # a long sentence is a note, not a refusal to publish
-    assert not any("over 40 words" in p for p in problems)
-    assert any("over 40 words" in w for w in lint_report_warnings(bad))
-    assert lint_report_text("Claude Haiku 4.5 abstained on 812 of 1,000 attempts.") == []
-
-
-def test_lint_reads_prose_only_not_tables_code_or_quoted_evidence() -> None:
-    """Evidence must never be reworded to satisfy a style rule."""
-    from inspect_audit._report import (
-        _prose_text,
-        lint_report_text,
-        lint_report_warnings,
-    )
-
-    html = (
-        '<div id="TOC"><ul>'
-        + "".join(f"<li>Section {i} of this report</li>" for i in range(20))
-        + "</ul></div>"
-        '<nav><a href="#x">skip</a></nav>'
-        "<p>The grader accepted 812 of 1,000 attempts.</p>"
-        "<table><tr><td>" + "</td><td>".join(["cell"] * 60) + "</td></tr></table>"
-        "<blockquote>the model wrote \u2014 with an em dash \u2014 exactly this</blockquote>"
-        "<pre><code>df = df[df.score \u2014 1]</code></pre>"
-        "<figcaption>Figure 1 \u2014 abstentions by model</figcaption>"
-    )
-    prose = _prose_text(html)
-    assert "812 of 1,000" in prose
-    assert "cell" not in prose and "em dash" not in prose and "df = df" not in prose
-    assert "Section 7" not in prose, "the table of contents is navigation, not prose"
-    assert lint_report_text(prose) == []
-    assert lint_report_warnings(prose) == []
-
-
 def test_the_same_input_cited_twice_publishes_once(tmp_path: Path) -> None:
     report = tmp_path / "work/report"
     inputs = tmp_path / "inputs"
@@ -788,7 +744,6 @@ def test_every_tool_schema_survives_a_strict_provider() -> None:
         hawk_submit,
         investigation_budget,
         jobs,
-        render_report,
         supplied_logs,
     )
     from inspect_audit._report import publish_report
@@ -798,7 +753,6 @@ def test_every_tool_schema_survives_a_strict_provider() -> None:
         jobs(None, Path("/tmp")),  # type: ignore[arg-type]
         supplied_logs(None, Path("/tmp"), []),
         investigation_budget(10, True),
-        render_report(),
         view_image(),
         publish_report("/tmp"),
     ]

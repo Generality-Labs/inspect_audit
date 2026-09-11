@@ -12,8 +12,8 @@ with selected checks and optional recorded attempts. Choose the actual candidate
 judge explicitly, including task-specific judge arguments. model_roles alone does not
 configure a judge that the task constructs independently.
 
-Start from /workspace/jobs/templates/benchmark.yaml or audit.yaml when present. Copy,
-set task arguments and sample selection, then submit the path with hawk_submit. Do not
+Write the config from the examples in the investigating skill, set task arguments
+and sample selection, save it under /workspace/jobs/, then submit the path with hawk_submit. Do not
 invent an eval_set_id: submission assigns one. The host validates the config with
 Hawk's schema and this investigation's allowlists. Fix a rejected config rather than
 switching models to work around a deterministic error.

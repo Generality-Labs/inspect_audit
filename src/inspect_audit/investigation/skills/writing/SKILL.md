@@ -64,6 +64,6 @@ subgroup you are comparing, is examples rather than a rate, and the sentence say
 
 ## Before publishing
 
-Read the rendered report with render_report. Remove every drafting comment. Check each
+Render the report with quarto and read it back. Remove every drafting comment. Check each
 number against the table it came from. Look at each figure with view_image. Then
 publish.

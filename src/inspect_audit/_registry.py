@@ -14,7 +14,6 @@ from ._agent import grade_benchmark, reset_benchmark
 from ._audit import audit_task
 from ._concordance import Concordance
 from ._investigate import investigate as investigate
-from ._legacy_report import report_task
 from ._resolve import resolve_task, resolve_task_from_log
 from ._sandbox import (
     BENCHMARK_SERVICE,
@@ -92,22 +91,6 @@ def audit(
         auditor_image=auditor_image,
         benchmark_image=benchmark_image,
     )
-
-
-@task
-def report(logs: str | None = None) -> Task:
-    """Legacy conversational synthesis over completed audit logs.
-
-    Use inspect_audit/investigate for autonomous investigation and publication.
-
-    v0 is the conversational skeleton: launch with `--acp-server` and attach
-    via `inspect acp` (or the web chat in frontend/) to work with it. See
-    `_report.py` for the roadmap.
-
-    Args:
-        logs: Log file or directory of audit logs to synthesize over.
-    """
-    return report_task(logs)
 
 
 @solver

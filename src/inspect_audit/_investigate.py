@@ -18,7 +18,6 @@ from typing import Any
 from uuid import uuid4
 
 import yaml
-from dotenv import find_dotenv
 from inspect_ai import Task, task
 from inspect_ai.agent import AgentState, react
 from inspect_ai.dataset import Sample
@@ -260,20 +259,6 @@ def register_openrouter_costs(timeout: float = 15) -> int:
         OPENROUTER_IDS.add(str(model["id"]))
         registered += 1
     return registered
-
-
-def _find_secrets(config: str | None, repo: Path) -> str | None:
-    """The .env a Hawk runner should be given, looked for where one is kept.
-
-    Beside the investigation file, beside the benchmark, then Inspect's own search from
-    the working directory. The working directory alone is not enough: a run launched
-    from a checkout of this package finds nothing, and the failure lands in every
-    runner as a 401 rather than here.
-    """
-    for directory in [Path(config).expanduser().parent if config else None, repo, repo.parent]:
-        if directory and (directory / ".env").is_file():
-            return str(directory / ".env")
-    return find_dotenv(usecwd=True) or None
 
 
 def _investigation_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
@@ -713,7 +698,6 @@ class Remote:
         self,
         root: Path,
         hawk_api_url: str,
-        secrets_file: str | None,
         task_package: str,
         audit_package: str,
         auditor_image: str,
@@ -721,7 +705,7 @@ class Remote:
         allowance_usd: float,
     ) -> None:
         self.root = root
-        self.hawk = Hawk(hawk_api_url, secrets_file)
+        self.hawk = Hawk(hawk_api_url)
         self.hawk_api_url = hawk_api_url
         self.task_package = task_package
         self.audit_package = audit_package
@@ -1360,23 +1344,19 @@ def write_experiment_templates(remote: Remote, root: Path, target: str) -> None:
         return
     package_name, task_name = target.split("/", 1)
     def model(name: str) -> dict[str, Any]:
-        return {"package": "openai", "name": "openrouter", "items": [
-            {"name": name, "args": {"base_url": "https://openrouter.ai/api/v1"}}
-        ]}
+        return {"package": "openai", "name": "openrouter", "items": [{"name": name}]}
     config: dict[str, Any] = {
         "name": "inv-benchmark-smoke", "packages": [remote.task_package],
         "tasks": [{"package": remote.task_package, "name": package_name,
                    "items": [{"name": task_name, "args": {}}]}],
         "models": [model(remote.worker_models[0])],
         "model_roles": {"grader": model(remote.worker_models[-1])},
-        "runner": {"environment": {"HAWK_API_URL": remote.hawk_api_url,
-                                    "HAWK_RUNNER_REFRESH_URL": ""},
-                   "secrets": [{"name": "OPENROUTER_API_KEY"}]},
+        "runner": {"environment": {"HAWK_API_URL": remote.hawk_api_url}},
         "limit": 2, "epochs": 1, "cost_limit": 0.5,
         "token_limit": 200000, "working_limit": 600, "time_limit": 14400,
         "max_connections": 5, "max_retries": 3, "retry_attempts": 0,
     }
-    config["model_roles"]["grader"]["items"][0]["args"]["config"] = {"max_tokens": 2048}
+    config["model_roles"]["grader"]["items"][0]["args"] = {"config": {"max_tokens": 2048}}
     audit = copy.deepcopy(config)
     audit.update(name="inv-audit-smoke", limit=1, cost_limit=2.0,
                  token_limit=2000000, working_limit=3600)
@@ -1672,9 +1652,9 @@ def investigate(
         auditor_image: Published auditor image for sample-audit jobs on k8s.
         worker_models: OpenRouter model ids the agent may run (benchmark workers, auditors,
             graders). Prices for these are registered so costs are accounted.
-        secrets_file: .env passed to Hawk jobs (OPENROUTER_API_KEY); never read by the
-            agent. Defaults to the .env Inspect itself loaded, found from the working
-            directory upwards.
+        secrets_file: Ignored. Jobs no longer carry a provider key: models route
+            through Hawk's proxy, which holds the org's keys. Accepted so that saved
+            investigation files still load.
         log_bucket: Retained for compatibility; local logs are no longer uploaded.
         aws_profile: Retained for compatibility; job-readable inputs use native Hawk import.
     """
@@ -1738,10 +1718,8 @@ def investigate(
     local_repo = Path(repo).expanduser()
     if local_repo.is_dir():
         target_task = target_task or _only_task(local_repo)
-    # the provider key reaches a Hawk runner from a file. Look beside the investigation
-    # first, then beside the benchmark, then where Inspect itself looks: a run launched
-    # from a worktree found nothing there and every job it started failed with 401.
-    secrets_file = secrets_file or _find_secrets(config, local_repo)
+    if secrets_file:
+        logger.warning("secrets_file is ignored: jobs route models through Hawk's proxy")
     if local_repo.is_dir():
         paths = paths or paths_from_metadata(local_repo, target_task)
         paper = paper or paper_from_metadata(local_repo, target_task)
@@ -1758,13 +1736,6 @@ def investigate(
             else None
         )
         audit_package = audit_package or own_package_spec()
-        if not secrets_file:
-            raise ValueError(
-                "remote work needs a secrets file holding OPENROUTER_API_KEY: a Hawk "
-                "runner has no environment of yours, and every job would fail to "
-                "authenticate. Looked beside the config, beside the repository, and "
-                "upwards from here. Pass secrets_file."
-            )
         if not task_package:
             raise ValueError(
                 "remote work installs the benchmark in a Hawk runner from git, and this "
@@ -1794,7 +1765,7 @@ def investigate(
     remote: Remote | None = None
     if hawk_api_url:
         remote = Remote(
-            root, hawk_api_url, secrets_file, task_package or "", audit_package or "", auditor_image,
+            root, hawk_api_url, task_package or "", audit_package or "", auditor_image,
             worker_models or DEFAULT_WORKERS, budget_usd,
         )
         seed_path = root / "inputs" / "seed.json"

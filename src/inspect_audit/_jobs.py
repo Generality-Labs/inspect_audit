@@ -28,7 +28,6 @@ from inspect_ai.util import display_counter, subprocess
 
 logger = getLogger(__name__)
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 TERMINAL = {"success", "error", "cancelled"}
 
 
@@ -124,9 +123,8 @@ class JobLedger:
 class Hawk:
     """Thin wrapper over the `hawk` CLI, which holds the operator's login."""
 
-    def __init__(self, api_url: str, secrets_file: str | None, binary: str = "hawk") -> None:
+    def __init__(self, api_url: str, binary: str = "hawk") -> None:
         self.env = {"HAWK_API_URL": api_url}
-        self.secrets_file = secrets_file
         self.binary = binary
         self._token = ""
 
@@ -148,10 +146,11 @@ class Hawk:
         return str(result.stdout)
 
     async def submit(self, config_path: Path) -> str:
-        args = ["eval-set", "run", str(config_path), "--skip-confirm", "--log-dir-allow-dirty"]
-        if self.secrets_file:
-            args += ["--secrets-file", self.secrets_file]
-        out = await self._run(*args)
+        # no provider key travels with the job: models route through Hawk's proxy,
+        # which holds the org's keys and meters spend per user
+        out = await self._run(
+            "eval-set", "run", str(config_path), "--skip-confirm", "--log-dir-allow-dirty"
+        )
         match = re.search(r"Eval set ID:\s*(\S+)", out)
         if not match:
             raise RuntimeError(f"could not find the eval set id in hawk's output:\n{out[-800:]}")
@@ -315,8 +314,8 @@ class Policy:
     models: list[str]  # OpenRouter model ids allowed anywhere a model is named
     auditor_images: list[str]  # every image any task argument may name
     hawk_api_url: str
-    secrets: tuple[str, ...] = ("OPENROUTER_API_KEY",)
-    env_keys: tuple[str, ...] = ("HAWK_API_URL", "HAWK_RUNNER_REFRESH_URL")
+    # the only runner environment a job may set: where the audit task finds Hawk
+    env_keys: tuple[str, ...] = ("HAWK_API_URL",)
     max_limit: int = 1000
     max_epochs: int = 5
     max_token_limit: int = 10_000_000
@@ -345,8 +344,8 @@ ALLOWED_TOP_LEVEL = {
     "cost_limit", "max_connections", "max_retries", "retry_attempts", "timeout", "metadata",
     "tags", "log_images", "log_model_api", "score",
 }
-ALLOWED_RUNNER = {"environment", "secrets", "memory"}
-ALLOWED_MODEL_ARGS = {"base_url", "config"}
+ALLOWED_RUNNER = {"environment", "memory"}
+ALLOWED_MODEL_ARGS = {"config"}
 ALLOWED_MODEL_CONFIG = {"reasoning_effort", "max_tokens", "temperature", "reasoning_tokens"}
 # task argument names that decide what runs, what it costs, or what it can reach.
 # Anything matching is checked against the policy; everything else is the task's own
@@ -623,15 +622,10 @@ def validate_config(
     env = runner.get("environment") or {}
     if set(env) - set(policy.env_keys):
         problems.append(f"runner.environment keys not allowed: {sorted(set(env) - set(policy.env_keys))}")
-    if env.get("HAWK_RUNNER_REFRESH_URL", None) != "" or env.get("HAWK_API_URL") != policy.hawk_api_url:
-        problems.append(
-            f"runner.environment must set HAWK_API_URL to {policy.hawk_api_url} and HAWK_RUNNER_REFRESH_URL to ''"
-        )
-    for secret in runner.get("secrets") or []:
-        if secret.get("name") not in policy.secrets or set(secret) - {"name", "description", "type"} or secret.get("type", "env") != "env":
-            problems.append(f"runner secret not allowed: {secret}")
+    if env.get("HAWK_API_URL") != policy.hawk_api_url:
+        problems.append(f"runner.environment must set HAWK_API_URL to {policy.hawk_api_url}")
     if config.get("secrets"):
-        problems.append("top-level secrets are not allowed; runner.secrets holds the provider key")
+        problems.append("top-level secrets are not allowed; models route through Hawk's proxy")
     for where, group in _model_items(config):
         if group.get("package") != "openai" or group.get("name") != "openrouter":
             problems.append(f"{where}: models must use package openai, provider openrouter")
@@ -639,8 +633,6 @@ def validate_config(
             if item.get("name") not in policy.models:
                 problems.append(f"{where}: model not allowed: {item.get('name')!r}")
             args = item.get("args") or {}
-            if args.get("base_url") != OPENROUTER_BASE_URL:
-                problems.append(f"{where}: args.base_url must be {OPENROUTER_BASE_URL}")
             extra = set(args) - ALLOWED_MODEL_ARGS
             if extra:
                 problems.append(f"{where}: model args not allowed: {sorted(extra)}")

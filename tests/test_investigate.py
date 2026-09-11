@@ -609,7 +609,7 @@ def test_a_remote_reservation_stops_the_investigator_spending_the_same_money_loc
 
     (tmp_path / "work").mkdir()
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (3.0, []))
-    r = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], 10.0)
+    r = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
     assert r.over_allowance() is None
 
     with r.ledger.transaction() as ledger:
@@ -638,13 +638,13 @@ def test_a_resumed_investigation_remembers_what_it_already_spent(
 
     (tmp_path / "work").mkdir()
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (2.0, []))
-    first = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], 10.0)
+    first = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
     first.record_local_spend()
     assert first.local_usd() == 2.0
 
     # a second run of the same investigation: Inspect's usage starts from zero again
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (1.5, []))
-    resumed = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], 10.0)
+    resumed = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
     assert resumed.prior_local_usd == 2.0
     assert resumed.local_usd() == 3.5, "the earlier run's spend must still count against the allowance"
 
@@ -902,7 +902,7 @@ def test_resume_runs_the_commit_it_reads(tmp_path: Path, monkeypatch: pytest.Mon
     (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-test\n")
     common = dict(
         output_dir=str(tmp_path / "runs"), hawk_api_url="https://hawk.example",
-        secrets_file=str(tmp_path / ".env"), enforce_cost_limit=False,
+        enforce_cost_limit=False,
     )
     first = investigate(str(repo), **common)  # type: ignore[arg-type]
     root = Path(first.metadata["investigation_dir"])

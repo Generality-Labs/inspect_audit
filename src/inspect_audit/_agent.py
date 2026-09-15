@@ -439,9 +439,19 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
                     # a grader that cannot run (its judge model is gone, its
                     # sandbox call failed) is a fact for the auditor to record,
                     # not a reason to error the sample and cancel the run
+                    # Provider exceptions may follow a long request dump. Prefer
+                    # the underlying exception so the diagnostic reaches the agent.
+                    cause = ex
+                    visited = {id(cause)}
+                    while (
+                        cause.__cause__ is not None
+                        and id(cause.__cause__) not in visited
+                    ):
+                        cause = cause.__cause__
+                        visited.add(id(cause))
                     raise ToolError(
-                        f"the benchmark's grader failed to run: {type(ex).__name__}: "
-                        f"{str(ex)[:500]}"
+                        f"the benchmark's grader failed to run: {type(cause).__name__}: "
+                        f"{str(cause)}"
                     ) from ex
                 if score is not None:
                     results.append(

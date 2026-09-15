@@ -9,6 +9,7 @@ the audit's. Every test here fails against that construction.
 
 import json
 
+import pytest
 from inspect_ai import Task, eval
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.model import ModelName
@@ -86,7 +87,10 @@ def test_the_grader_sees_benchmark_metadata_only() -> None:
 
 def test_the_answer_is_the_completion_and_bare_grade_is_empty() -> None:
     current = audit_state({})
-    assert benchmark_task_state(current, make_session(), "1066").output.completion == "1066"
+    assert (
+        benchmark_task_state(current, make_session(), "1066").output.completion
+        == "1066"
+    )
     assert benchmark_task_state(current, make_session(), "").output.completion == ""
 
 
@@ -163,8 +167,10 @@ def test_grade_tool_end_to_end_hands_the_scorer_the_benchmark_world() -> None:
     assert graded["provenance"] == {"real": 1, "authored": 1}
 
 
-
-def test_a_grader_that_cannot_run_is_a_tool_error_not_a_sample_error() -> None:
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_a_grader_that_cannot_run_is_a_tool_error_not_a_sample_error(
+    wrapped: bool,
+) -> None:
     """The judge model being gone reaches the auditor as a tool error; the sample survives."""
     from inspect_ai.scorer import accuracy
     from inspect_ai.tool import ToolError
@@ -172,7 +178,12 @@ def test_a_grader_that_cannot_run_is_a_tool_error_not_a_sample_error() -> None:
     @scorer(metrics=[accuracy()])
     def exploding() -> Scorer:
         async def score(state: TaskState, target: Target) -> Score:
-            raise RuntimeError("No endpoints found for google/gemini-2.0-flash-001")
+            try:
+                raise RuntimeError("No endpoints found for google/gemini-2.0-flash-001")
+            except RuntimeError as cause:
+                if wrapped:
+                    raise ValueError("Request: " + "prompt " * 1000) from cause
+                raise
 
         return score
 

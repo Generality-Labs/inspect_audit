@@ -441,7 +441,7 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
                     # not a reason to error the sample and cancel the run
                     # Provider exceptions may follow a long request dump. Prefer
                     # the underlying exception so the diagnostic reaches the agent.
-                    cause = ex
+                    cause: BaseException = ex
                     visited = {id(cause)}
                     while (
                         cause.__cause__ is not None

@@ -11,6 +11,25 @@ from inspect_ai.scorer import CORRECT, INCORRECT, NOANSWER, Score, accuracy, sco
 from inspect_audit._feedback import binary_feedback_solver, feedback_curve
 
 
+def test_pilot_ids_exist_before_hawk_filters(monkeypatch) -> None:
+    from inspect_ai._eval.task.util import slice_dataset
+    from inspect_ai.scorer import match
+
+    from inspect_audit import _feedback
+
+    source = Task(
+        dataset=[Sample(input=f"Question {i}", target="answer") for i in range(1000)],
+        scorer=match(),
+    )
+    monkeypatch.setattr(_feedback, "resolve_task", lambda _: source)
+    built = _feedback.binary_feedback("fixture")
+    ids = [107, 592, 657, 719, 751]
+    selected = slice_dataset(built.dataset, limit=None, sample_id=ids)
+    assert [s.id for s in selected] == ids
+    assert len(built.dataset) == 1000
+    assert all(s.id is None for s in source.dataset)
+
+
 @pytest.mark.parametrize(
     "grades",
     [

@@ -139,8 +139,13 @@ def binary_feedback(task: str, max_attempts: int = 10) -> Task:
         raise ValueError("binary_feedback requires exactly one benchmark scorer")
     if any(not isinstance(sample.input, str) for sample in benchmark.dataset):
         raise ValueError("binary_feedback currently supports text questions only")
+    # Hawk filters sample IDs before Inspect's evaluation-time ID assignment.
+    dataset = deepcopy(benchmark.dataset)
+    for position, sample in enumerate(dataset, 1):
+        if sample.id is None:
+            sample.id = position
     return Task(
-        dataset=benchmark.dataset,
+        dataset=dataset,
         solver=binary_feedback_solver(scorers[0], max_attempts),
         scorer=feedback_curve(max_attempts),
         version=1,

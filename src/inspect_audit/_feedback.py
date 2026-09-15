@@ -6,7 +6,13 @@ from copy import deepcopy
 from typing import Any
 
 from inspect_ai import Task, task
-from inspect_ai.model import ChatMessageSystem, ChatMessageUser, get_model
+from inspect_ai.model import (
+    ChatMessageSystem,
+    ChatMessageUser,
+    ModelInfo,
+    get_model,
+    set_model_info,
+)
 from inspect_ai.scorer import (
     CORRECT,
     INCORRECT,
@@ -124,15 +130,22 @@ def feedback_curve(max_attempts: int) -> Scorer:
 
 
 @task
-def binary_feedback(task: str, max_attempts: int = 10) -> Task:
+def binary_feedback(
+    task: str,
+    max_attempts: int = 10,
+    model_info: dict[str, dict[str, Any]] | None = None,
+) -> Task:
     """Run a text benchmark with up to ten binary-feedback answer attempts.
 
     Args:
         task: Inspect benchmark task with one categorical C/I/N scorer.
         max_attempts: Maximum answers per question; stop at the first correct answer.
+        model_info: Explicit Inspect metadata for models absent from its local database.
     """
     if not 1 <= max_attempts <= 10:
         raise ValueError("max_attempts must be between 1 and 10")
+    for name, info in (model_info or {}).items():
+        set_model_info(name, ModelInfo.model_validate(info))
     benchmark = resolve_task(task)
     scorers = benchmark.scorer or []
     if len(scorers) != 1:

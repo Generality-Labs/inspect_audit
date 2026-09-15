@@ -13,6 +13,7 @@ from inspect_ai.util import sandbox
 from ._agent import grade_benchmark, reset_benchmark
 from ._audit import audit_task
 from ._concordance import probe_concordance
+from ._feedback import binary_feedback as binary_feedback
 from ._investigate import investigate as investigate
 from ._item import AUDIT_ROOT
 from ._legacy_report import report_task

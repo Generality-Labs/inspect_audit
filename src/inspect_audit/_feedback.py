@@ -134,19 +134,21 @@ def binary_feedback(
     task: str,
     max_attempts: int = 10,
     model_info: dict[str, dict[str, Any]] | None = None,
+    task_args: dict[str, Any] | None = None,
 ) -> Task:
-    """Run a text benchmark with up to ten binary-feedback answer attempts.
+    """Run a text benchmark with up to 100 binary-feedback answer attempts.
 
     Args:
         task: Inspect benchmark task with one categorical C/I/N scorer.
         max_attempts: Maximum answers per question; stop at the first correct answer.
+        task_args: Arguments passed to the underlying benchmark.
         model_info: Explicit Inspect metadata for models absent from its local database.
     """
-    if not 1 <= max_attempts <= 10:
-        raise ValueError("max_attempts must be between 1 and 10")
+    if not 1 <= max_attempts <= 100:
+        raise ValueError("max_attempts must be between 1 and 100")
     for name, info in (model_info or {}).items():
         set_model_info(name, ModelInfo.model_validate(info))
-    benchmark = resolve_task(task)
+    benchmark = resolve_task(task, task_args) if task_args else resolve_task(task)
     scorers = benchmark.scorer or []
     if len(scorers) != 1:
         raise ValueError("binary_feedback requires exactly one benchmark scorer")

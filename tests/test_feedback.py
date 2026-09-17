@@ -37,6 +37,7 @@ def test_pilot_ids_exist_before_hawk_filters(monkeypatch) -> None:
         [NOANSWER, INCORRECT, CORRECT],
         [CORRECT],
         [INCORRECT] * 10,
+        [INCORRECT] * 100,
     ],
 )
 def test_feedback_and_stopping(tmp_path: Path, grades: list[str]) -> None:
@@ -61,13 +62,13 @@ def test_feedback_and_stopping(tmp_path: Path, grades: list[str]) -> None:
         "mockllm/model",
         custom_outputs=[
             ModelOutput.from_content("mockllm/model", f"answer-{i}")
-            for i in range(1, 11)
+            for i in range(1, max(10, len(grades)) + 1)
         ],
     )
     task = Task(
         dataset=[Sample(input="Original question?", target="HIDDEN-GOLD")],
-        solver=binary_feedback_solver(judge(), 10),
-        scorer=feedback_curve(10),
+        solver=binary_feedback_solver(judge(), max(10, len(grades))),
+        scorer=feedback_curve(max(10, len(grades))),
     )
     log = eval(task, model=model, display="none", log_dir=str(tmp_path))[0]
     assert log.status == "success", log.error
@@ -81,7 +82,7 @@ def test_feedback_and_stopping(tmp_path: Path, grades: list[str]) -> None:
     first = len(grades) if grades[-1] == CORRECT else None
     assert score.metadata["first_correct_attempt"] == first
     assert score.value == {
-        f"success_at_{k}": int(first is not None and first <= k) for k in range(1, 11)
+        f"success_at_{k}": int(first is not None and first <= k) for k in range(1, max(10, len(grades)) + 1)
     }
 
 

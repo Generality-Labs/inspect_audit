@@ -78,14 +78,18 @@ def binary_feedback_solver(judge: Scorer, max_attempts: int) -> Solver:
                 metadata=deepcopy(benchmark_metadata),
             )
             result = await judge(graded_state, state.target)
+            grade = result.value if result is not None else None
+            if isinstance(grade, dict) and set(grade) == {"correct", "incorrect", "not_attempted"}:
+                if all(v in (0, 1) for v in grade.values()) and sum(grade.values()) == 1:
+                    grade = next(code for key, code in (("correct", CORRECT), ("incorrect", INCORRECT), ("not_attempted", NOANSWER)) if grade[key] == 1)
             if (
                 result is None
-                or not isinstance(result.value, str)
-                or result.value not in (CORRECT, INCORRECT, NOANSWER)
+                or not isinstance(grade, str)
+                or grade not in (CORRECT, INCORRECT, NOANSWER)
             ):
                 detail = result.model_dump_json() if result is not None else "None"
                 raise RuntimeError(f"Grader did not return a valid grade: {detail}")
-            feedback = "correct" if result.value == CORRECT else "incorrect"
+            feedback = "correct" if grade == CORRECT else "incorrect"
             records.append(
                 {
                     "attempt": number,

@@ -24,6 +24,7 @@ from ._sandbox import (
     has_benchmark_box,
     sample_sandbox,
 )
+from ._scicode_feedback import scicode_feedback as scicode_feedback
 
 
 @task

@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import Any
 
 from inspect_ai import Task, task
+from inspect_ai.log import read_eval_log
 from inspect_ai.model import (
     ChatMessageSystem,
     ChatMessageUser,
@@ -35,7 +36,7 @@ ANTI_ABSTENTION = (
 
 
 @solver
-def binary_feedback_solver(judge: Scorer, max_attempts: int) -> Solver:
+def binary_feedback_solver(judge: Scorer, max_attempts: int, resumes=None) -> Solver:
     """Retain answer history and return only binary feedback to the answering model."""
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
@@ -54,12 +55,30 @@ def binary_feedback_solver(judge: Scorer, max_attempts: int) -> Solver:
             ChatMessageUser(content=f"{question}\n\n{ANTI_ABSTENTION}"),
         ]
         records: list[dict[str, Any]] = []
+        pending = None
+        previous = (resumes or {}).get(str(state.sample_id))
+        if previous is not None:
+            records = deepcopy(previous.metadata["feedback_attempts"])
+            state.messages = deepcopy(previous.messages)
+            # A complete but ungraded answer is retried with the judge, not
+            # regenerated. Incomplete/filtered answers are not submissions.
+            if len(state.messages) == 2 + 2 * len(records) + 1:
+                if previous.output.choices and previous.output.stop_reason == "stop" and previous.output.completion.strip():
+                    pending = previous.output.model_copy(deep=True)
+                else:
+                    state.messages.pop()
+            elif len(state.messages) != 2 + 2 * len(records):
+                raise ValueError("Unexpected resume conversation shape")
+            state.metadata["resumed_attempts"] = len(records)
         state.metadata["feedback_attempts"] = records
         state.metadata["feedback_max_attempts"] = max_attempts
-        for number in range(1, max_attempts + 1):
-            output = await get_model().generate(state.messages)
+        for number in range(len(records) + 1, max_attempts + 1):
+            if pending is not None:
+                output, pending = pending, None
+            else:
+                output = await get_model().generate(state.messages)
+                state.messages.append(output.message)
             state.output = output
-            state.messages.append(output.message)
             if output.stop_reason != "stop" or not output.completion.strip():
                 raise RuntimeError(
                     f"Attempt {number} did not produce a complete answer "
@@ -139,6 +158,7 @@ def binary_feedback(
     max_attempts: int = 10,
     model_info: dict[str, dict[str, Any]] | None = None,
     task_args: dict[str, Any] | None = None,
+    resume_log: str | None = None,
 ) -> Task:
     """Run a text benchmark with up to 100 binary-feedback answer attempts.
 
@@ -163,9 +183,25 @@ def binary_feedback(
     for position, sample in enumerate(dataset, 1):
         if sample.id is None:
             sample.id = position
+    resumes = {}
+    if resume_log:
+        previous = read_eval_log(resume_log, resolve_attachments=True)
+        for sample in previous.samples or []:
+            records = sample.metadata.get("feedback_attempts", [])
+            if sample.error and not any(r["feedback"] == "correct" for r in records) and len(records) < max_attempts:
+                if sample.metadata.get("feedback_max_attempts") != max_attempts:
+                    raise ValueError("Resume requires the same attempt budget")
+                resumes[str(sample.id)] = sample
+        dataset = dataset.filter(lambda s: str(s.id) in resumes)
+        if len(dataset) != len(resumes) or not resumes:
+            raise ValueError("Resume samples must match the benchmark dataset")
+        for sample in dataset:
+            old = resumes[str(sample.id)]
+            if old.input != sample.input or old.target != sample.target:
+                raise ValueError(f"Resume benchmark mismatch for sample {sample.id}")
     return Task(
         dataset=dataset,
-        solver=binary_feedback_solver(scorers[0], max_attempts),
+        solver=binary_feedback_solver(scorers[0], max_attempts, resumes),
         scorer=feedback_curve(max_attempts),
         version=1,
         metadata={
@@ -190,5 +226,6 @@ def binary_feedback(
             "anti_abstention_suffix": ANTI_ABSTENTION,
             "feedback": "binary",
             "stop_on_correct": True,
+            "resume_log": resume_log,
         },
     )

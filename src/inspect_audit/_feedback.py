@@ -2,6 +2,9 @@
 
 import hashlib
 import json
+import os
+import tempfile
+import urllib.request
 from copy import deepcopy
 from typing import Any
 
@@ -159,6 +162,7 @@ def binary_feedback(
     model_info: dict[str, dict[str, Any]] | None = None,
     task_args: dict[str, Any] | None = None,
     resume_log: str | None = None,
+    resume_sha256: str | None = None,
 ) -> Task:
     """Run a text benchmark with up to 100 binary-feedback answer attempts.
 
@@ -185,7 +189,22 @@ def binary_feedback(
             sample.id = position
     resumes = {}
     if resume_log:
-        previous = read_eval_log(resume_log, resolve_attachments=True)
+        if resume_log.startswith("env:"):
+            # The submitting user's presigned URL is passed as a runner secret;
+            # it must never appear in config, metadata or model conversations.
+            url = os.environ[resume_log.removeprefix("env:")]
+            with tempfile.NamedTemporaryFile(suffix=".eval") as local:
+                digest = hashlib.sha256()
+                with urllib.request.urlopen(url, timeout=120) as response:
+                    while chunk := response.read(1024 * 1024):
+                        digest.update(chunk)
+                        local.write(chunk)
+                local.flush()
+                if not resume_sha256 or digest.hexdigest() != resume_sha256:
+                    raise ValueError("Resume log checksum mismatch")
+                previous = read_eval_log(local.name, resolve_attachments=True)
+        else:
+            previous = read_eval_log(resume_log, resolve_attachments=True)
         for sample in previous.samples or []:
             records = sample.metadata.get("feedback_attempts", [])
             if sample.error and not any(r["feedback"] == "correct" for r in records) and len(records) < max_attempts:
@@ -227,5 +246,6 @@ def binary_feedback(
             "feedback": "binary",
             "stop_on_correct": True,
             "resume_log": resume_log,
+            "resume_sha256": resume_sha256,
         },
     )

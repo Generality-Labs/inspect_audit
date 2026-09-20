@@ -36,6 +36,36 @@ it matched the gold is not independent evidence. Fall back to external sources o
 when independent reproduction is genuinely out of reach, and if even those cannot
 settle it, grade `UNVERIFIABLE` rather than accept the benchmark's account of itself.
 
+## Defensible alternatives are not merely plausible guesses
+
+For each rejected candidate, separate two questions: does reliable evidence support
+its factual content, and does it answer the question under a reasonable reading of
+its actual wording? Model confidence, repetition across models, and resemblance to
+the gold are not evidence. Do not invent an interpretation solely to rescue a guess.
+An explicit date, population, location or definition in the question rules out
+answers that fit only a different scope.
+
+Distinguish these findings:
+- A supported alternative excluded by the key: ALTERNATIVES, with evidence for the
+  gold and the alternative and the wording that permits both.
+- A supported candidate contradicting an unsupported/wrong gold: INCORRECT when
+  evidence establishes the error; uncertainty alone is UNVERIFIABLE.
+- Two spellings or names for the same answer: an equivalence/grading issue, not
+  two substantive answers. The gold can remain CORRECT while a rejection is wrong.
+- A correct gold and a factually wrong but plausible candidate: CORRECT, not
+  ALTERNATIVES. Explain the decisive constraint or contrary evidence.
+
+Record the candidate's exact text, original grade and log/sample/turn reference,
+source quote, and whether the rejection is justified, unjustified, or unresolved
+in the verdict details. Include a reason for each reviewed candidate. Do not infer
+that every unreviewed candidate is incorrect. Preserve contradictions and additional
+claims in the actual submission; neither silently trim them away nor assume the
+judge's accusation of a contradiction is true. Source-check the disputed claim.
+
+Read intermediate attempts too. In binary-feedback logs these are stored in
+sample.metadata.feedback_attempts: each entry has attempt, answer, feedback and
+grade. The final sample output/score does not describe every earlier rejection.
+
 ## Start with the logs, not the web
 
 Enumerate every distinct answer the field gave and how each was graded. The

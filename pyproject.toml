@@ -22,8 +22,9 @@ dependencies = [
 inspect_audit = "inspect_audit._registry"
 
 [project.optional-dependencies]
+scicode = ["inspect-evals[scicode]"]
 # Hawk requires Python 3.13; the core package supports 3.11+.
-remote = ["hawk>=2.5,<3; python_version >= '3.13'"]
+remote = ["hawk[cli]>=3.4,<4; python_version >= '3.13'"]
 dev = [
     "ruff",
     "mypy",
@@ -31,7 +32,7 @@ dev = [
     "pytest-xdist",
     "pandas-stubs",
     "types-PyYAML",
-    "hawk>=2.5,<3; python_version >= '3.13'",
+    "hawk[cli]>=3.4,<4; python_version >= '3.13'",
 ]
 
 [tool.ruff]

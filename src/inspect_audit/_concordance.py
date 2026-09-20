@@ -182,6 +182,9 @@ def concordance_gate(scorers: Scorer | list[Scorer] | None, limit: int = 15) -> 
                 if not log.samples:
                     continue
                 con.attempted += len(log.samples)
+                # Replay-only context; original files and their headers are unchanged.
+                for sample in log.samples:
+                    sample.metadata = {**(sample.metadata or {}), "_audit_source_task_args": log.eval.task_args or {}}
                 if not con.drift:
                     con.drift = drift(log.eval, task_args)
                 try:

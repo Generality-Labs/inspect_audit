@@ -1,21 +1,24 @@
 """Sequential SciCode submissions with binary test feedback."""
 
 from copy import deepcopy
+from typing import Any
 
 from inspect_ai import Task, task, task_with
 from inspect_ai.model import ChatMessageAssistant, ChatMessageUser, get_model
-from inspect_ai.scorer import Score, scorer
-from inspect_ai.solver import solver, system_message
+from inspect_ai.scorer import Score, Scorer, Target, scorer
+from inspect_ai.solver import Generate, Solver, TaskState, solver, system_message
 
 
 @solver
-def scicode_feedback_solver(max_attempts: int, timeout: int):
+def scicode_feedback_solver(max_attempts: int, timeout: int) -> Solver:
     from inspect_evals.scicode.prompt_templates import SUBPROBLEM_PROMPT
     from inspect_evals.scicode.scorer import verify_subproblem
     from inspect_evals.scicode.util import extract_code
 
-    async def solve(state, generate):
-        solutions, final_scores, records = {}, {}, []
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        solutions: dict[str, str] = {}
+        final_scores: dict[str, float] = {}
+        records: list[dict[str, Any]] = []
         state.metadata["feedback_attempts"] = records
         state.metadata["feedback_scope"] = "subproblem"
         for step in state.metadata["sub_steps"]:
@@ -41,7 +44,11 @@ def scicode_feedback_solver(max_attempts: int, timeout: int):
                 state.messages.append(output.message)
                 solutions[step_id] = extract_code(output.completion)
                 judge = verify_subproblem(step, timeout, submitted_code=solutions)
+                if judge is None:
+                    raise RuntimeError(f"No SciCode grader for {step_id}")
                 result = await judge(state, state.target)
+                if result is None:
+                    raise RuntimeError(f"No SciCode grade for {step_id}")
                 value = (
                     result.value.get(step_id)
                     if result and isinstance(result.value, dict)
@@ -70,7 +77,7 @@ def scicode_feedback_solver(max_attempts: int, timeout: int):
     return solve
 
 
-def feedback_scorer():
+def feedback_scorer() -> Scorer:
     from inspect_evals.scicode.metrics import (
         percentage_main_problems_solved,
         percentage_subproblems_solved,
@@ -86,8 +93,8 @@ def feedback_scorer():
             total_subproblems_solved(),
         ]
     )
-    def recorded_scicode():
-        async def score(state, target):
+    def recorded_scicode() -> Scorer:
+        async def score(state: TaskState, target: Target) -> Score:
             values = state.metadata["feedback_final_scores"]
             if not values:
                 raise RuntimeError("No SciCode grades recorded")

@@ -116,7 +116,8 @@ def attempts(
         frame = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
     if task is not None and not frame.empty:
         tails = frame["task_name"].astype(str).str.split("/").str[-1]
-        matched = frame[tails == task.split("/")[-1]]
+        names = {name.strip().split("/")[-1] for name in task.split(",")}
+        matched = frame[tails.isin(names)]
         if matched.empty:
             found = ", ".join(sorted(frame["task_name"].astype(str).unique()))
             raise ValueError(
@@ -147,6 +148,7 @@ def audit_task(
     attempts_task: str | None = None,
     auditor_image: str | None = None,
     benchmark_image: str | None = None,
+    concordance_limit: int = 15,
 ) -> Task:
     """Build the audit as an Inspect `Task`.
 
@@ -177,9 +179,12 @@ def audit_task(
             the answer.
         auditor_image: Emit the sandbox as Helm values for k8s providers, with this
             published image as the auditor (see `audit_values`).
+        concordance_limit: Maximum recorded attempts regraded before the audit.
         benchmark_image: Published image standing in for benchmark services that
             `build:` their own (k8s only).
     """
+    if concordance_limit < 1:
+        raise ValueError("concordance_limit must be positive")
     target = resolve_task(task, task_args)
     staging = _staging()
     redacted = (*ANSWER_METADATA, *(redact or ()))
@@ -282,7 +287,7 @@ def audit_task(
     return Task(
         name=f"audit/{target.name}",
         dataset=MemoryDataset(audit_samples),
-        setup=[benchmark_setup(), concordance_gate(target.scorer)],
+        setup=[benchmark_setup(), concordance_gate(target.scorer, limit=concordance_limit)],
         solver=solver
         or as_solver(
             audit_agent(

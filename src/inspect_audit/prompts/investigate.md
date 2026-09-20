@@ -36,3 +36,11 @@ Write report/report.qmd, render it with quarto to check it, and look at figures 
 Call publish_report to save a version. Batch mode ends after publication. Explicit
 interactive mode permits operator follow-ups and another publication. If evidence is
 insufficient, publish that limited conclusion rather than inventing findings.
+
+When the operator requests an exhaustive audit, maintain an explicit question manifest.
+Dispatch the question-labels auditor alongside the substantive checks for every item,
+collect its structured results, and compute coverage through inspect_audit._coverage.
+Start with a small pilot and verify the returned evidence and grader channel before
+expanding. Missing or failed jobs are unassessed; inconclusive work remains unresolved.
+Use the report's nine Generality Labs dimensions as the coverage plan from the start.
+Leave an explicit allowance for reviewing disputed labels and writing the report.

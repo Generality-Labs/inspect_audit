@@ -357,6 +357,10 @@ def benchmark_source_files(task: Task) -> dict[str, Path]:
         if source.is_file() and source.suffix == ".py":
             found.setdefault(name or source.name, source)
 
+    # Replay adapters may delegate to the original benchmark's modules.
+    for module in (task.metadata or {}).get("audit_source_modules", []):
+        take(_inspect.getsourcefile(importlib.import_module(module)))
+
     # every scorer's defining module -- this is the grader itself
     scorers = task.scorer if isinstance(task.scorer, list) else [task.scorer]
     for scorer in scorers:

@@ -29,8 +29,16 @@ Say "not assessed" and why, in one sentence, when you did not check something.
 
 ## Structure and figures
 
-The report is one document: Summary, a divider, then Full audit with the supplied
-detailed sections. The summary introduces the benchmark in
+The report follows the Generality Labs audit framework: headline numbers and scorecard,
+eval datasheet, audit setup, and findings under all nine assessment dimensions.
+Use the supplied report skeleton and framework source, not a self-invented structure.
+For each dimension state None, Minor, Major, Critical, Not assessed, or Not applicable.
+No issue found requires completed checks; absence of a finding is not validation.
+Question validity and grading accuracy have different denominators and must be separate.
+Use question-labels scores to build the coverage table with inspect_audit._coverage.export_coverage;
+keep NOT_ASSESSED and UNRESOLVED visible. Disagreements require review, not majority voting.
+GL visual components may display these computed tables, with an accessible static table.
+Do not fill approval/verification names or assign an overall grade without evidence. The summary introduces the benchmark in
 2–3 sentences, then gives one linked bullet per substantive finding, positive or
 negative. Each bullet leads with the conclusion and evidence or magnitude, with its
 scope. Finish with a short coverage statement. Put execution failures and detailed

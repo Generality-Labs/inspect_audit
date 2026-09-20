@@ -1,5 +1,4 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 from inspect_ai import Task, eval

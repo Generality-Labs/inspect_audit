@@ -254,6 +254,26 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
             asks = ", ".join(f"{key} ({skill.details[key]})" for key in missing)
             raise ToolError(f"This item also requires details: {asks}.")
 
+        if item == "question-labels":
+            from ._coverage import validate_labels
+
+            current = sample_state()
+            if current is None:
+                raise ToolError("Question labels require a live audit sample")
+            metadata = current.metadata or {}
+            steps = (metadata.get("benchmark_metadata") or {}).get("sub_steps")
+            expected = ([str(s["step_number"]) for s in steps if s.get("provided_code") is None]
+                        if steps else [str((metadata.get("audit_item") or {}).get("sample_id", current.sample_id))])
+            try:
+                labels = validate_labels(recorded_details["question_assessments"], expected)
+                overall = ("DEFECT" if any(r.status == "DEFECT" for r in labels) else
+                           "UNRESOLVED" if any(r.status in ("UNRESOLVED", "NOT_ASSESSED") for r in labels)
+                           else "NO_ISSUE_FOUND")
+                if grade != overall:
+                    raise ValueError(f"Overall grade must be {overall} for these question labels")
+            except ValueError as ex:
+                raise ToolError(str(ex)) from ex
+
         # replace rather than mutate so the store sees the change
         recorded = store_as(Verdicts)
         recorded.verdicts = {

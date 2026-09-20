@@ -63,6 +63,8 @@ class EvidenceRef(BaseModel):
 
 
 Section = Literal[
+    "construct", "contentvalidity", "dataset", "scaffold", "harness",
+    "environment", "grading", "resources", "informativeness",
     "task",
     "grader",
     "harness_environment",

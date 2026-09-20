@@ -1498,8 +1498,8 @@ def investigate(
 ) -> Task:
     """Investigate source and existing logs locally, publish HTML, then discuss.
 
-    Requires Docker and, when interactive, --acp-server. Benchmark execution and
-    Hawk job dispatch are deliberately not enabled in this first slice.
+    Requires Docker and, when interactive, --acp-server. Hawk dispatch is enabled
+    by hawk_api_url; workers execute remotely while the investigator runs locally.
 
     Args:
         repo: Local Git repository or HTTPS Git URL of the benchmark.
@@ -1521,7 +1521,7 @@ def investigate(
             one. Its inputs, workspace, journal and job ledger are reused, supplied logs
             are not staged again, and jobs left pending by an interrupted run are
             reconciled with Hawk before the agent starts.
-        budget_usd: Dollar allowance for this investigator's own model calls.
+        budget_usd: Shared allowance for investigator calls and reserved/collected Hawk work.
         enforce_cost_limit: Enforce `budget_usd` through Inspect's cost limit. Needs a
             price for the model; OpenRouter prices are registered automatically.
         token_limit: Optional Inspect token limit (e.g. "output:500k"); none by default.

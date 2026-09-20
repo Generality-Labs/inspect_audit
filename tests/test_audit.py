@@ -142,6 +142,11 @@ def test_attempts_join_only_the_audited_tasks_logs(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="record task 'absent_task'"):
         attempts(logs, task="absent_task")
 
+    run_fixture_eval(logs, name="audited_feedback")
+    variants = attempts(logs, task="audited_task,pkg/audited_feedback")
+    assert set(variants["task_name"]) == {"audited_task", "audited_feedback"}
+    assert len(variants[variants["id"].astype(str) == "1"]) == 2
+
 
 def test_audit_task_does_not_attach_a_foreign_tasks_attempts(tmp_path: Path) -> None:
     """End to end: audit one task from a dir that also holds another task's logs."""

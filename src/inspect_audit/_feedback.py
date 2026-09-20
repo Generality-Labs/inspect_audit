@@ -9,7 +9,7 @@ from copy import deepcopy
 from typing import Any
 
 from inspect_ai import Task, task
-from inspect_ai.log import read_eval_log
+from inspect_ai.log import EvalSample, read_eval_log
 from inspect_ai.model import (
     ChatMessageSystem,
     ChatMessageUser,
@@ -39,7 +39,7 @@ ANTI_ABSTENTION = (
 
 
 @solver
-def binary_feedback_solver(judge: Scorer, max_attempts: int, resumes=None) -> Solver:
+def binary_feedback_solver(judge: Scorer, max_attempts: int, resumes: dict[str, EvalSample] | None = None) -> Solver:
     """Retain answer history and return only binary feedback to the answering model."""
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
@@ -61,7 +61,7 @@ def binary_feedback_solver(judge: Scorer, max_attempts: int, resumes=None) -> So
         pending = None
         previous = (resumes or {}).get(str(state.sample_id))
         if previous is not None:
-            records = deepcopy(previous.metadata["feedback_attempts"])
+            records = deepcopy((previous.metadata or {})["feedback_attempts"])
             state.messages = deepcopy(previous.messages)
             # A complete but ungraded answer is retried with the judge, not
             # regenerated. Incomplete/filtered answers are not submissions.
@@ -171,6 +171,8 @@ def binary_feedback(
         max_attempts: Maximum answers per question; stop at the first correct answer.
         task_args: Arguments passed to the underlying benchmark.
         model_info: Explicit Inspect metadata for models absent from its local database.
+        resume_log: Local log or env: variable containing a secret presigned URL.
+        resume_sha256: Required SHA-256 for a remotely downloaded continuation log.
     """
     if not 1 <= max_attempts <= 100:
         raise ValueError("max_attempts must be between 1 and 100")
@@ -187,7 +189,7 @@ def binary_feedback(
     for position, sample in enumerate(dataset, 1):
         if sample.id is None:
             sample.id = position
-    resumes = {}
+    resumes: dict[str, EvalSample] = {}
     if resume_log:
         if resume_log.startswith("env:"):
             # The submitting user's presigned URL is passed as a runner secret;
@@ -205,12 +207,12 @@ def binary_feedback(
                 previous = read_eval_log(local.name, resolve_attachments=True)
         else:
             previous = read_eval_log(resume_log, resolve_attachments=True)
-        for sample in previous.samples or []:
-            records = sample.metadata.get("feedback_attempts", [])
-            if sample.error and not any(r["feedback"] == "correct" for r in records) and len(records) < max_attempts:
-                if sample.metadata.get("feedback_max_attempts") != max_attempts:
+        for prior_sample in previous.samples or []:
+            records = (prior_sample.metadata or {}).get("feedback_attempts", [])
+            if prior_sample.error and not any(r["feedback"] == "correct" for r in records) and len(records) < max_attempts:
+                if (prior_sample.metadata or {}).get("feedback_max_attempts") != max_attempts:
                     raise ValueError("Resume requires the same attempt budget")
-                resumes[str(sample.id)] = sample
+                resumes[str(prior_sample.id)] = prior_sample
         dataset = dataset.filter(lambda s: str(s.id) in resumes)
         if len(dataset) != len(resumes) or not resumes:
             raise ValueError("Resume samples must match the benchmark dataset")

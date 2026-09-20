@@ -28,6 +28,7 @@ def test_every_skill_loads_and_names_are_unique() -> None:
         "ground-truth-access",
         "insufficiently-specified",
         "other-findings",
+        "question-labels",
         "red-teaming",
         "reading-logs",
         "analyzing-logs",

@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from ._sandbox import (
     BENCHMARK_SERVICE,
     has_benchmark_box,
 )
+from ._scicode_audit import scicode_replay as scicode_replay
 from ._scicode_feedback import scicode_feedback as scicode_feedback
 
 
@@ -26,7 +28,7 @@ from ._scicode_feedback import scicode_feedback as scicode_feedback
 def audit(
     task: str | None = None,
     task_args: dict[str, object] | None = None,
-    logs: str | None = None,
+    logs: str | list[str] | None = None,
     samples: list[str] | None = None,
     limit: int | None = None,
     items: list[str] | None = None,
@@ -38,6 +40,7 @@ def audit(
     attempts_task: str | None = None,
     auditor_image: str | None = None,
     benchmark_image: str | None = None,
+    concordance_limit: int = 15,
 ) -> Task:
     """Audit a benchmark task from its logs.
 
@@ -59,16 +62,16 @@ def audit(
         auditor_image: Published auditor image; switches to Helm-values emission
             for k8s providers.
         benchmark_image: Published image for benchmark services that `build:`.
+        concordance_limit: Maximum recorded attempts to regrade at setup.
     """
-    if logs:
-        logs = fetch_logs(logs)
+    resolved_logs = fetch_logs(logs) if logs else None
     if task is None:
-        if not logs:
+        if not resolved_logs:
             raise ValueError("Provide a task to audit, or logs recording one.")
         files = (
-            [logs]
-            if logs.endswith((".eval", ".json"))
-            else [info.name for info in list_eval_logs(logs)]
+            [resolved_logs]
+            if resolved_logs.endswith((".eval", ".json"))
+            else [info.name for info in list_eval_logs(resolved_logs)]
         )
         if not files:
             raise ValueError(f"No logs found at {logs!r}.")
@@ -78,7 +81,7 @@ def audit(
 
     return audit_task(
         target,
-        logs,
+        resolved_logs,
         samples=samples,
         limit=limit,
         task_args=task_args,
@@ -91,6 +94,7 @@ def audit(
         attempts_task=attempts_task,
         auditor_image=auditor_image,
         benchmark_image=benchmark_image,
+        concordance_limit=concordance_limit,
     )
 
 
@@ -198,12 +202,20 @@ async def _probe_grade(state: TaskState, checks: dict[str, str]) -> None:
         checks["grade"] = f"EXCEPTION {type(ex).__name__}: {ex}"[:200]
 
 
-def fetch_logs(logs: str) -> str:
+def fetch_logs(logs: str | list[str]) -> str:
     """Resolve a `logs` argument to something inspect can read locally.
 
     `hawk:<eval-set-id>[,<id>...]` downloads an eval set from the Hawk warehouse;
     anything else (a path, an `s3://` dir inspect reads natively) passes through.
     """
+    if isinstance(logs, list):
+        combined = Path(tempfile.mkdtemp(prefix="audit_corpus_"))
+        for index, source in enumerate(logs):
+            resolved = fetch_logs(source)
+            files = [resolved] if resolved.endswith(".eval") else [i.name for i in list_eval_logs(resolved)]
+            for filename in files:
+                shutil.copyfile(filename, combined / f"{index}_{Path(filename).name}")
+        return str(combined)
     if logs.startswith("hawk:"):
         return _hawk_fetch(logs.removeprefix("hawk:"))
     return logs
@@ -240,9 +252,14 @@ def _hawk_fetch(eval_sets: str) -> str:
 
     fetched = Path(tempfile.mkdtemp(prefix="hawk_logs_"))
     sets = eval_sets.split(",")
-    for eval_set in sets:
+    for address in sets:
+        eval_set, _, selected_file = address.partition("/")
         files = get_json(f"/view/logs/logs?log_dir={urllib.parse.quote(eval_set)}")["files"]
         names = [f["name"] for f in files if str(f.get("name", "")).endswith(".eval")]
+        if selected_file:
+            names = [name for name in names if Path(name).name == selected_file]
+            if len(names) != 1:
+                raise ValueError(f"Expected exactly one Hawk log at {address!r}, found {len(names)}")
         if not names:
             raise ValueError(f"No .eval files found in Hawk eval set {eval_set!r}.")
         # several sets share one flat directory: prefix so same-named files

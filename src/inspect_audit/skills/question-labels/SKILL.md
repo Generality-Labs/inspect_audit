@@ -26,11 +26,15 @@ adequate assessment was undertaken. Never turn missing work into NO_ISSUE_FOUND.
 
 Keep historical grading accuracy separate: an observed format exception does not
 prove a numerically correct candidate was rejected. Cite the exact log, sample,
-epoch and submission or command/output. Review intermediate feedback attempts and
-scaling snapshots, not just final outputs. Resource and scaffolding differences
+epoch and submission or command/output. Include intermediate feedback attempts and
+scaling snapshots in the review inventory, not just final outputs. Bound detailed
+inspection by the operator's scope and available budget; describe selection and
+unreviewed evidence instead of claiming exhaustive transcript review. Resource and scaffolding differences
 belong in the explanation, not silently in a pooled model ranking.
 
-The parent needs a label for every question. Record unresolved/unassessed rows if
-resources run out. Overall grade is DEFECT if any row has an established defect;
+The parent needs a label for every question. After the first bounded review, save
+the complete table, including unresolved/unassessed rows. Update it as more checks
+finish; record_verdict replaces the previous table. Do not leave saving until a
+hard resource limit interrupts the agent. Overall grade is DEFECT if any row has an established defect;
 otherwise UNRESOLVED if any row is unresolved/unassessed; otherwise NO_ISSUE_FOUND.
 Return the table through record_verdict details, so it survives sandbox cleanup.

@@ -26,8 +26,11 @@ holds. Do not settle such a fact by eye, and do not trust the recorded answer be
 checking it is work. When you have genuinely tried and still cannot establish it, say so
 and grade UNVERIFIABLE rather than defer to the recorded answer.
 
-For log-based checks, write and run a script enumerating every attempt and epoch,
-including unscored and errored attempts. Review the actual submission the scorer
+For log-based checks, first inventory the available attempts and epochs,
+including unscored and errored attempts. Inventory is not substantive review.
+Use the operator's scope and budget to select detailed checks; if exhaustive
+review is infeasible, preserve unreviewed counts and describe the selection.
+Review the actual submission the scorer
 received, not only its extracted answer. Save a CSV or JSON review table under
 /audit with one row per attempt: exact log/id/epoch, submission or transcript
 reference, extracted answer, recorded score, independent interpretation, review
@@ -78,7 +81,13 @@ You are investigating:
 Invoke each skill and follow it. Other skills are available for working with the logs.
 If `{root}/discrepancies.md` is present, it is worth a look. Record each
 verdict as you settle it, not all at the end, with the evidence that earned it, and
-say what you actually think. Then submit with a brief investigation debrief: environment issues, blocked or
+say what you actually think. `record_verdict` can replace an earlier verdict:
+save completed checks before starting another expensive probe, and update the
+record as evidence changes. If question-labels is selected, record an initial
+complete table after the first bounded review, with NOT_ASSESSED for untouched
+questions and UNRESOLVED for inconclusive checks. Do not wait for every question
+to be settled before saving any labels. Never mark an unchecked question clean
+to satisfy coverage. Then submit with a brief investigation debrief: environment issues, blocked or
 unreviewed work, and possible improvements. Separate repairs to the audit setup
 from changes to the evaluated agent's environment; for the latter say whether the
 change preserves the capability being measured.

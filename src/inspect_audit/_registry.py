@@ -4,24 +4,19 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from inspect_ai import Task, task, task_with
-from inspect_ai.dataset import MemoryDataset
+from inspect_ai import Task, task
 from inspect_ai.log import list_eval_logs
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox
 
 from ._agent import grade_benchmark, reset_benchmark
 from ._audit import audit_task
-from ._concordance import probe_concordance
+from ._concordance import Concordance
 from ._investigate import investigate as investigate
-from ._item import AUDIT_ROOT
-from ._legacy_report import report_task
 from ._resolve import resolve_task, resolve_task_from_log
 from ._sandbox import (
     BENCHMARK_SERVICE,
-    has_benchmark,
     has_benchmark_box,
-    sample_sandbox,
 )
 
 
@@ -97,22 +92,6 @@ def audit(
     )
 
 
-@task
-def report(logs: str | None = None) -> Task:
-    """Legacy conversational synthesis over completed audit logs.
-
-    Use inspect_audit/investigate for autonomous investigation and publication.
-
-    v0 is the conversational skeleton: launch with `--acp-server` and attach
-    via `inspect acp` (or the web chat in frontend/) to work with it. See
-    `_report.py` for the roadmap.
-
-    Args:
-        logs: Log file or directory of audit logs to synthesize over.
-    """
-    return report_task(logs)
-
-
 @solver
 def audit_probe() -> Solver:
     """Assert the audit sandbox was assembled correctly, without spending on a model.
@@ -170,25 +149,10 @@ def audit_probe() -> Solver:
 
 
 async def _probe_concordance(state: TaskState, checks: dict[str, str]) -> None:
-    try:
-        item = (state.metadata or {}).get("audit_item") or {}
-        audited = item.get("task")
-        if audited is None:
-            checks["concordance"] = "SKIP no audited task recorded"
-            return
-        resolved = resolve_task(audited, item.get("task_args") or {})
-        scorers = resolved.scorer if isinstance(resolved.scorer, list) else [resolved.scorer]
-        scorers = [s for s in scorers if s is not None]
-        if not scorers:
-            checks["concordance"] = "SKIP no benchmark scorer"
-            return
-        has_box = has_benchmark(sample_sandbox(resolved, resolved.dataset[0]))
-        report = await probe_concordance(state, scorers, has_box=has_box)
-        checks["concordance"] = report.verdict
-        checks["concordance_reasons"] = "; ".join(report.reasons)[:200]
-        await sandbox().write_file(f"{AUDIT_ROOT}/concordance.json", report.to_json())
-    except Exception as ex:
-        checks["concordance"] = f"EXCEPTION {type(ex).__name__}: {ex}"[:200]
+    # the gate ran at setup; report what it stored
+    con = state.store_as(Concordance)
+    checks["concordance"] = con.verdict
+    checks["concordance_reasons"] = ", ".join(con.reasons)[:200]
 
 
 async def _probe_grade(state: TaskState, checks: dict[str, str]) -> None:
@@ -235,53 +199,12 @@ async def _probe_grade(state: TaskState, checks: dict[str, str]) -> None:
 def fetch_logs(logs: str) -> str:
     """Resolve a `logs` argument to something inspect can read locally.
 
-    - `hawk:<eval-set-id>[,<id>...]` downloads an eval set from the Hawk warehouse.
-    - `http(s)://...eval` downloads one log; `http(s)://...` anything else is read
-      as a manifest of log URLs (one per line, or a CSV with a `logs`/`url`
-      column), e.g. the public S3 listing a benchmark publisher hands out.
-    - anything else (a path, an `s3://` dir inspect reads natively) passes through.
-
-    Downloads happen in the process running the eval -- on Hawk that is the
-    trusted runner, which has egress; the auditor's sandbox need not.
+    `hawk:<eval-set-id>[,<id>...]` downloads an eval set from the Hawk warehouse;
+    anything else (a path, an `s3://` dir inspect reads natively) passes through.
     """
     if logs.startswith("hawk:"):
         return _hawk_fetch(logs.removeprefix("hawk:"))
-    if logs.startswith(("http://", "https://")):
-        return _url_fetch(logs)
     return logs
-
-
-def _url_fetch(url: str) -> str:
-    import csv
-    import io
-    import urllib.request
-
-    def read(u: str) -> bytes:
-        with urllib.request.urlopen(u, timeout=600) as r:
-            return bytes(r.read())
-
-    if url.endswith((".eval", ".json")):
-        urls = [url]
-    else:
-        text = read(url).decode("utf-8")
-        if "," in text.splitlines()[0]:
-            rows = list(csv.DictReader(io.StringIO(text)))
-            column = next((c for c in ("logs", "log", "url") if rows and c in rows[0]), None)
-            if column is None:
-                raise ValueError(f"Log manifest {url!r} needs a `logs`/`log`/`url` column.")
-            urls = [str(row[column]).strip() for row in rows if row.get(column)]
-        else:
-            urls = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")]
-    if not urls:
-        raise ValueError(f"No log URLs found in manifest {url!r}.")
-
-    fetched = Path(tempfile.mkdtemp(prefix="url_logs_"))
-    for u in urls:
-        name = Path(u.split("?", 1)[0]).name
-        if not name.endswith((".eval", ".json")):
-            raise ValueError(f"Manifest entry {u!r} does not name an .eval/.json log.")
-        (fetched / name).write_bytes(read(u))
-    return str(fetched)
 
 
 def _hawk_fetch(eval_sets: str) -> str:
@@ -362,68 +285,3 @@ def _hawk_token() -> str:
             "refresh environment."
         )
     return token
-
-
-@solver
-def replay_exploit(exploits: dict[str, str]) -> Solver:
-    """Run a recorded exploit's commands in the sample's box, as its whole solution.
-
-    The exploit is keyed by sample id. Whatever it leaves in the box is graded by
-    the task's own scorer exactly as a real submission would be -- so an exploit
-    that passes here passes the genuine benchmark, not our harness.
-    """
-
-    async def solve(state: TaskState, generate: Generate) -> TaskState:
-        commands = exploits.get(str(state.sample_id))
-        if commands:
-            await sandbox().exec(["bash", "-c", commands], timeout=900)
-        return state
-
-    return solve
-
-
-@task
-def swebench_replay(
-    exploits: dict[str, str],
-    dataset: str = "princeton-nlp/SWE-bench_Verified",
-    split: str = "test",
-    allow_internet: bool = False,
-    sandbox_type: str = "docker",
-) -> Task:
-    """Replay recorded exploits against the real SWE-bench task and grade them.
-
-    Stage two of the exploit experiment: each sample runs its recorded exploit
-    (from a red-teaming audit) as its solution, and the benchmark's own scorer
-    grades the result. The pass rate is the real benchmark score of the exploits.
-
-    Args:
-        exploits: Map of sample id to the exact shell commands that carry out the
-            exploit in that sample's box.
-        dataset: SWE-bench dataset to draw the samples from.
-        split: Dataset split.
-        allow_internet: Whether the benchmark boxes may reach the internet.
-        sandbox_type: Sandbox provider ("docker" locally, "k8s" on Hawk).
-    """
-    from inspect_evals.swe_bench import swe_bench
-
-    base = swe_bench(
-        dataset=dataset,
-        split=split,
-        allow_internet=allow_internet,
-        sandbox_type=sandbox_type,
-    )
-    return replay_task(base, exploits)
-
-
-def replay_task(base: Task, exploits: dict[str, str]) -> Task:
-    """`base`, narrowed to the samples we hold an exploit for, solved by replay.
-
-    Uses `task_with` rather than assigning attributes on the built task, which
-    would skip Task's own normalisation of the dataset and solver. `task_with`
-    edits `base` in place and returns it, so pass a task no other caller holds
-    (`swebench_replay` builds a fresh one). The benchmark's scorer is untouched:
-    it is the judge.
-    """
-    wanted = set(exploits)
-    kept = [s for s in base.dataset if str(s.id) in wanted]
-    return task_with(base, dataset=MemoryDataset(kept), solver=[replay_exploit(exploits)])

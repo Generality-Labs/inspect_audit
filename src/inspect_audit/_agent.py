@@ -41,6 +41,7 @@ from PIL import Image
 from pydantic import BaseModel, Field, JsonValue
 
 from . import prompts
+from ._concordance import Concordance
 from ._contract import SolverContract
 from ._item import AUDIT_ROOT
 from ._sandbox import (
@@ -415,6 +416,13 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
         state = sample_state()
         if state is None:
             raise ToolError("Grading is only available while auditing a sample.")
+        gate = store_as(Concordance)
+        if gate.verdict == "blocked":
+            raise ToolError(
+                f"grade channel blocked (concordance: {', '.join(gate.reasons)}); "
+                f"a grade here would judge our reconstruction, not the benchmark. "
+                f"See {AUDIT_ROOT}/concordance.json."
+            )
 
         # the grader judges the benchmark's own TaskState, never the audit's:
         # its question, its choices, its metadata, the reconstructed session
@@ -756,8 +764,10 @@ def item_scorer(item: AuditItemSkill) -> Scorer:
     def factory() -> Scorer:
         async def score(state: TaskState, target: Target) -> Score:
             verdict = state.store_as(Verdicts).verdicts.get(item.name)
+            gate = state.store_as(Concordance)
+            concordance = {"verdict": gate.verdict, "reasons": gate.reasons}
             if verdict is None:
-                return Score(value="NO_VERDICT")
+                return Score(value="NO_VERDICT", metadata={"concordance": concordance})
             return Score(
                 value=verdict.grade,
                 answer=verdict.grade,
@@ -766,6 +776,7 @@ def item_scorer(item: AuditItemSkill) -> Scorer:
                 )
                 or None,
                 metadata={
+                    "concordance": concordance,
                     "evidence": [e.model_dump() for e in verdict.evidence],
                     "approaches": verdict.approaches,
                     **verdict.details,

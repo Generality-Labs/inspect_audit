@@ -1,7 +1,6 @@
 """Exercise input isolation, publication and the real Docker/Quarto path."""
 
 import asyncio
-import importlib.util
 import json
 import subprocess
 from pathlib import Path
@@ -278,21 +277,6 @@ def test_invalid_seed_and_budget_fail_early(tmp_path: Path) -> None:
         )
 
 
-def test_transcript_escapes_untrusted_html() -> None:
-    from inspect_audit._investigate import ASSETS
-
-    spec = importlib.util.spec_from_file_location(
-        "components", ASSETS / "report/components.py"
-    )
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    rendered = module.transcript("<assistant>", "<script>alert(1)</script>", "x&y")
-    assert "<script>" not in rendered
-    assert "&lt;script&gt;" in rendered
-    assert "x&amp;y" in rendered
-
-
 def test_publication_switches_from_work_to_discussion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -334,7 +318,7 @@ def render_probe(root: str) -> Solver:
             [
                 "python",
                 "-c",
-                "import sys; sys.path.insert(0, '/workspace/report'); from components import bar_chart; bar_chart(['Reviewed', 'Unreviewed'], [3, 1], '/workspace/report/coverage.png', ylabel='Attempts')",
+                "import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt; plt.bar(['Reviewed', 'Unreviewed'], [3, 1]); plt.ylabel('Attempts'); plt.savefig('/workspace/report/coverage.png')",
             ]
         )
         assert result.success, result.stderr
@@ -433,50 +417,6 @@ PY"""
         for m in log.samples[0].messages
         if isinstance(m, ChatMessageTool) and m.error
     ]
-
-
-def test_publish_lint_catches_dashes_comments_and_process_narration() -> None:
-    from inspect_audit._report import lint_report_text, lint_report_warnings
-
-    bad = (
-        "I reviewed the logs. I inspected the grader. I examined the paper. I checked the "
-        "config \u2014 carefully. " + " ".join(["word"] * 45) + ". <!-- draft -->"
-    )
-    problems = lint_report_text(bad)
-    assert any("dash" in p for p in problems)
-    assert any("drafting comments" in p for p in problems)
-    assert any("narrate" in p for p in problems)
-    # a long sentence is a note, not a refusal to publish
-    assert not any("over 40 words" in p for p in problems)
-    assert any("over 40 words" in w for w in lint_report_warnings(bad))
-    assert lint_report_text("Claude Haiku 4.5 abstained on 812 of 1,000 attempts.") == []
-
-
-def test_lint_reads_prose_only_not_tables_code_or_quoted_evidence() -> None:
-    """Evidence must never be reworded to satisfy a style rule."""
-    from inspect_audit._report import (
-        _prose_text,
-        lint_report_text,
-        lint_report_warnings,
-    )
-
-    html = (
-        '<div id="TOC"><ul>'
-        + "".join(f"<li>Section {i} of this report</li>" for i in range(20))
-        + "</ul></div>"
-        '<nav><a href="#x">skip</a></nav>'
-        "<p>The grader accepted 812 of 1,000 attempts.</p>"
-        "<table><tr><td>" + "</td><td>".join(["cell"] * 60) + "</td></tr></table>"
-        "<blockquote>the model wrote \u2014 with an em dash \u2014 exactly this</blockquote>"
-        "<pre><code>df = df[df.score \u2014 1]</code></pre>"
-        "<figcaption>Figure 1 \u2014 abstentions by model</figcaption>"
-    )
-    prose = _prose_text(html)
-    assert "812 of 1,000" in prose
-    assert "cell" not in prose and "em dash" not in prose and "df = df" not in prose
-    assert "Section 7" not in prose, "the table of contents is navigation, not prose"
-    assert lint_report_text(prose) == []
-    assert lint_report_warnings(prose) == []
 
 
 def test_the_same_input_cited_twice_publishes_once(tmp_path: Path) -> None:
@@ -609,7 +549,7 @@ def test_a_remote_reservation_stops_the_investigator_spending_the_same_money_loc
 
     (tmp_path / "work").mkdir()
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (3.0, []))
-    r = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], 10.0)
+    r = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
     assert r.over_allowance() is None
 
     with r.ledger.transaction() as ledger:
@@ -638,13 +578,13 @@ def test_a_resumed_investigation_remembers_what_it_already_spent(
 
     (tmp_path / "work").mkdir()
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (2.0, []))
-    first = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], 10.0)
+    first = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
     first.record_local_spend()
     assert first.local_usd() == 2.0
 
     # a second run of the same investigation: Inspect's usage starts from zero again
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (1.5, []))
-    resumed = Remote(tmp_path, "https://hawk.example", None, "pkg", "pkg", "img", ["m"], 10.0)
+    resumed = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
     assert resumed.prior_local_usd == 2.0
     assert resumed.local_usd() == 3.5, "the earlier run's spend must still count against the allowance"
 
@@ -804,7 +744,6 @@ def test_every_tool_schema_survives_a_strict_provider() -> None:
         hawk_submit,
         investigation_budget,
         jobs,
-        render_report,
         supplied_logs,
     )
     from inspect_audit._report import publish_report
@@ -814,7 +753,6 @@ def test_every_tool_schema_survives_a_strict_provider() -> None:
         jobs(None, Path("/tmp")),  # type: ignore[arg-type]
         supplied_logs(None, Path("/tmp"), []),
         investigation_budget(10, True),
-        render_report(),
         view_image(),
         publish_report("/tmp"),
     ]
@@ -902,7 +840,7 @@ def test_resume_runs_the_commit_it_reads(tmp_path: Path, monkeypatch: pytest.Mon
     (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-test\n")
     common = dict(
         output_dir=str(tmp_path / "runs"), hawk_api_url="https://hawk.example",
-        secrets_file=str(tmp_path / ".env"), enforce_cost_limit=False,
+        enforce_cost_limit=False,
     )
     first = investigate(str(repo), **common)  # type: ignore[arg-type]
     root = Path(first.metadata["investigation_dir"])

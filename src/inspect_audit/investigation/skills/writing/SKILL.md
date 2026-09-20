@@ -29,8 +29,8 @@ Say "not assessed" and why, in one sentence, when you did not check something.
 
 ## Structure and figures
 
-The report is one document: Summary, Benchmark architecture, a divider, then Full
-audit with the supplied detailed sections. The summary introduces the benchmark in
+The report is one document: Summary, a divider, then Full audit with the supplied
+detailed sections. The summary introduces the benchmark in
 2–3 sentences, then gives one linked bullet per substantive finding, positive or
 negative. Each bullet leads with the conclusion and evidence or magnitude, with its
 scope. Finish with a short coverage statement. Put execution failures and detailed
@@ -40,23 +40,12 @@ Every detailed finding explains the mechanism, evidence locator, affected popula
 score consequence (or unmeasured consequence), and limitations. Add explicit anchors
 so the brief links directly to the relevant finding. Group repeated instances.
 
-Use components.py and styles.css for consistent graphics. Read the component APIs
-before plotting. Architecture uses Graphviz automatic layout: visible agent context
-in a shaded boundary, hidden scoring inputs outside, labelled information flows.
-Keep evidence/architecture.json with source locators and mark unverified edges.
-
-Use outcome_bars for outcome populations, paired_plot for controlled comparisons,
-response_matrix for model-by-item responses, and the existing chart/table/transcript
-helpers where appropriate. Components retain data/settings beside graphics. Captions
-state denominators and uncertainty methods; narrative interpretation belongs in prose.
-Use labels as well as colour. Never invent error bars or add a graphic to fill space.
-
-irt_analysis.py provides optional GIRTH Rasch/2PL fitting from a binary response CSV.
-Read its API and diagnostics. Only use it with diverse, comparable model configurations
-and enough coverage. Repeated epochs are not independent models. Error/missing records
-must not become incorrect responses. Document the score encoding, model families,
-settings and assumptions; a fit does not establish unidimensionality or independence.
-Report unstable or unsuitable fits as such. No IRT analysis is required.
+A figure gets a one-line title that states the takeaway, labelled axes with units, and
+nothing else on the canvas: no annotations, no stats boxes, no subtitle explaining the
+method. Series are named plainly and directly labelled where there are few enough. The
+caption carries the denominator. If a number matters, it goes in the prose, not on the
+plot. Prefer raw values to smoothed ones. Never draw an interval you did not compute.
+Save every figure as PNG.
 
 ## What every report has to state
 
@@ -75,6 +64,6 @@ subgroup you are comparing, is examples rather than a rate, and the sentence say
 
 ## Before publishing
 
-Read the rendered report with render_report. Remove every drafting comment. Check each
+Render the report with quarto and read it back. Remove every drafting comment. Check each
 number against the table it came from. Look at each figure with view_image. Then
 publish.

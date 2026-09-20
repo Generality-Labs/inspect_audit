@@ -311,8 +311,6 @@ def test_every_prompt_is_a_file_and_every_placeholder_gets_filled() -> None:
         "AUDIT_CONFIDENTIAL": {"root": "/audit"},
         "AUDIT_NOTES": {"notes": "look at the grader"},
         "INVESTIGATE": {},
-        "REPORT": {"root": "/report"},
-        "REPORT_CHAT_ONLY": {},
     }
     assert set(filled) == set(prompts.__all__)
     for name, values in filled.items():

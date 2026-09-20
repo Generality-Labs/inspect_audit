@@ -32,7 +32,7 @@ External discussions are leads: verify them independently and record exposure to
 audits. Do not seek hidden reference reports. A graded rediscovery run requires an
 operator-defined exposure policy. Use curl for web access; no browser is available.
 
-Write report/report.qmd and use render_report to review it and view_image for figures.
+Write report/report.qmd, render it with quarto to check it, and look at figures with view_image.
 Call publish_report to save a version. Batch mode ends after publication. Explicit
 interactive mode permits operator follow-ups and another publication. If evidence is
 insufficient, publish that limited conclusion rather than inventing findings.

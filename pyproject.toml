@@ -33,8 +33,6 @@ dev = [
     "types-PyYAML",
     "hawk>=2.5,<3; python_version >= '3.13'",
 ]
-frontend = ["websockets"]
-reporting = ["matplotlib", "girth==0.8.0"]
 
 [tool.ruff]
 src = ["src"]
@@ -55,7 +53,7 @@ files = ["src"]
 exclude = ["src/inspect_audit/skills/"]
 
 [[tool.mypy.overrides]]
-module = ["matplotlib", "matplotlib.*", "inspect_evals", "inspect_evals.*", "girth", "scipy.*"]
+module = ["matplotlib", "matplotlib.*", "inspect_evals", "inspect_evals.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

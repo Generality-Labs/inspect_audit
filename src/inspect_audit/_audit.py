@@ -16,6 +16,7 @@ from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import SandboxEnvironmentType
 
 from ._agent import audit_agent, audit_items, item_scorer
+from ._concordance import concordance_gate
 from ._contract import task_contract
 from ._item import ANSWER_METADATA, AUDIT_ROOT, AttemptRef, AuditItem, item_sample
 from ._resolve import resolve_task
@@ -281,7 +282,7 @@ def audit_task(
     return Task(
         name=f"audit/{target.name}",
         dataset=MemoryDataset(audit_samples),
-        setup=benchmark_setup(),
+        setup=[benchmark_setup(), concordance_gate(target.scorer)],
         solver=solver
         or as_solver(
             audit_agent(

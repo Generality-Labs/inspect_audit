@@ -214,7 +214,8 @@ def fetch_logs(logs: str | list[str]) -> str:
             resolved = fetch_logs(source)
             files = [resolved] if resolved.endswith(".eval") else [i.name for i in list_eval_logs(resolved)]
             for filename in files:
-                shutil.copyfile(filename, combined / f"{index}_{Path(filename).name}")
+                source_path = Path(filename.removeprefix("file://"))
+                shutil.copyfile(source_path, combined / f"{index}_{source_path.name}")
         return str(combined)
     if logs.startswith("hawk:"):
         return _hawk_fetch(logs.removeprefix("hawk:"))

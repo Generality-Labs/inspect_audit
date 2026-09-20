@@ -538,6 +538,7 @@ def prepare_workspace(
     work = root / "work"
     inputs.mkdir(parents=True)
     work.mkdir()
+    shutil.copyfile(Path(__file__).with_name("_coverage.py"), inputs / "coverage.py")
     seed: dict[str, object] = dict(_snapshot_repo(repo, revision, inputs, paths))
     log_index = []
     for index, source in enumerate(logs):

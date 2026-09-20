@@ -1,0 +1,9 @@
+{
+  "source": "https://generality.org/assets/gl-components/gl.js",
+  "retrieved": "2026-09-20",
+  "upstream_sha256": "39d55cd510d15c71138da4757a76ed955a928541e19611274f320cec622b524c",
+  "local_changes": [
+    "Render a full-circle donut correctly and omit zero-valued segment labels."
+  ],
+  "local_sha256": "162c136c1ad5cf0dc51c9229677f2cc01cdae40f790fcd8cc650df4fe9bb5580"
+}

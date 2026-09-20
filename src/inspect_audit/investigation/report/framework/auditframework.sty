@@ -1,0 +1,633 @@
+% ==================================================================
+% auditframework.sty --- Generality Labs audit-report framework
+%
+% Defines the shared audit criteria and how assessments are presented:
+%   - audit dimensions, contribution codes, and their descriptions;
+%   - overall grades, dimension assessment labels, and colours;
+%   - scorecards, finding boxes, figures, and report-wide pagination.
+%
+% Each report supplies its assessments through \setdimension and writes
+% its findings in reports/<Eval>/Content.tex. The scorecard and dimension
+% headings use those same assessments to keep their labels consistent.
+%
+% Related files:
+%   template/GLaudit.cls       Page layout, branding, and section pagination
+%   template/sections/        Shared scoring criteria page
+%   reports/Example/          Starter report for new audits
+%   template/legacy/          Older field-based sections using \setfield/\field
+%
+% Changes here apply to all reports when rebuilt. Keep report-specific
+% findings in their Content.tex files. Framework versions follow publication
+% milestones; draft edits are grouped under the current working version.
+% ==================================================================
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{auditframework}[2026/08/18 Generality Labs eval-audit framework]
+
+\RequirePackage{siunitx}
+\RequirePackage{amssymb}
+\RequirePackage{amsmath}
+\RequirePackage[version=4]{mhchem}
+\RequirePackage{csquotes}
+\RequirePackage{amsfonts}
+\RequirePackage{xcolor}
+\RequirePackage{makecell}
+\RequirePackage{subcaption}
+\RequirePackage{multirow}%
+\RequirePackage{ragged2e}
+\RequirePackage{longtable}
+\RequirePackage{colortbl}
+\RequirePackage{arydshln}
+\RequirePackage{booktabs}
+\RequirePackage{longtable}
+\RequirePackage{array}
+\RequirePackage{ragged2e}
+\RequirePackage{enumitem}
+\RequirePackage{threeparttable}
+\RequirePackage{hyperref}
+\RequirePackage[all]{hypcap}
+\RequirePackage{float}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=blue,
+    pdftitle={Evaluation Audit Report},
+    pdfpagemode=FullScreen,
+    pageanchor=false,
+    }
+\RequirePackage[most]{tcolorbox}
+\RequirePackage{longtable}
+\RequirePackage{etoolbox}
+\RequirePackage{zref-abspage}
+\RequirePackage{zref-lastpage}
+
+% Whole-report pagination, independent of the page resets for each section.
+% zref extracts the total as plain text, without a PDF hyperlink.
+\newcommand{\auditreportfooter}{%
+  Audit Report - Page \number\numexpr\value{abspage}+1\relax\ of
+  \zref@extractdefault{LastPage}{abspage}{?}}
+\AtBeginDocument{%
+  \fancyfoot[RO]{\auditreportfooter\hspace{5mm}}}
+
+% Version of this audit framework (shown in the page header)
+\auditframework{v1.2}
+\RequirePackage{multicol}
+\usetikzlibrary{arrows.meta}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% AUDIT TEMPLATE MACHINERY %%%
+% Rating colours (used in the scorecard and findings)
+\definecolor{ratingGreen}{HTML}{2E7D32}   % Effective / Compliant
+\definecolor{ratingAmber}{HTML}{ED6C02}   % Partially effective / Minor issues
+\definecolor{ratingRed}{HTML}{C62828}     % Ineffective / Non-compliant
+\definecolor{ratingGrey}{HTML}{616161}    % Not assessed / Out of scope
+\definecolor{ratingGreenBg}{HTML}{E8F5E9}
+\definecolor{ratingAmberBg}{HTML}{FFF3E0}
+\definecolor{ratingRedBg}{HTML}{FFEBEE}
+\definecolor{ratingGreyBg}{HTML}{F5F5F5}
+
+% Scorecard rating cells: \ratingGood, \ratingPartial, \ratingPoor, \ratingNA
+\newcommand{\ratingcell}[3]{\cellcolor{#1}\textcolor{#2}{\textbf{#3}}}
+\newcommand{\ratingGood}[1][Effective]{\ratingcell{ratingGreenBg}{ratingGreen}{#1}}
+\newcommand{\ratingPartial}[1][Partially effective]{\ratingcell{ratingAmberBg}{ratingAmber}{#1}}
+\newcommand{\ratingPoor}[1][Ineffective]{\ratingcell{ratingRedBg}{ratingRed}{#1}}
+\newcommand{\ratingNA}[1][Not assessed]{\ratingcell{ratingGreyBg}{ratingGrey}{#1}}
+
+% Severity labels for findings: \sevCritical, \sevMajor, \sevMinor, \sevObs
+\newcommand{\sevbox}[2]{\colorbox{#1}{\textcolor{white}{\small\textbf{~#2~}}}}
+\newcommand{\sevCritical}{\sevbox{ratingRed}{CRITICAL}}
+\newcommand{\sevMajor}{\sevbox{ratingAmber}{MAJOR}}
+\newcommand{\sevMinor}{\sevbox{ratingGreen}{MINOR}}
+\newcommand{\sevObs}{\sevbox{ratingGrey}{OBSERVATION}}
+
+% Counter and environment for audit findings.
+% Usage:
+%   \begin{finding}{Short title of the finding}{\sevMajor}
+%     \findingfield{Criterion}{...}
+%     \findingfield{Condition (what we found)}{...}
+%     \findingfield{Evidence}{...}
+%     \findingfield{Risk / Impact}{...}
+%     \findingfield{Recommendation}{...}
+%     \findingfield{Management response}{...}
+%   \end{finding}
+\newcounter{finding}
+\renewcommand{\thefinding}{F-\arabic{finding}}   % so \ref on a finding label prints "F-1"
+% Optional first argument names the finding after the contribution it
+% evidences (e.g. [C.1]); \ref on its label then prints that code.
+% Without it, findings fall back to sequential F-n numbering.
+\newtcolorbox{finding}[3][]{%
+  enhanced, breakable,
+  colback=white, colframe=black!70,
+  boxrule=0.6pt, arc=2mm,
+  left=3mm, right=3mm, top=2mm, bottom=2mm,
+  code={\refstepcounter{finding}\ifblank{#1}{}{\def\@currentlabel{#1}}},
+  title={\textbf{Finding \ifblank{#1}{\thefinding}{#1}: #2} \hfill #3},
+  title after break={\textbf{Finding \ifblank{#1}{\thefinding}{#1}\ (cont.)} \hfill #3},
+  colbacktitle=black!8, coltitle=black,
+  fonttitle=\normalsize
+}
+\newcommand{\findingfield}[2]{\par\smallskip\noindent\textbf{#1:}~#2\par}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% DATASHEET-STYLE SCORECARD MACHINERY %%%
+\definecolor{brandTeal}{RGB}{67,131,122}   % sampled from the Generality Labs logo
+
+% When a breakable box splits across pages, close each continued part with
+% a teal rule and a small italic "continued" marker at the bottom left.
+\tcbset{gl continued/.style={
+  overlay first={%
+    \draw[tcbcolframe, line width=0.8pt] (frame.south west) -- (frame.south east);
+    \node[anchor=north west, font=\scriptsize\itshape, text=tcbcolframe,
+          inner sep=1.5pt] at ([xshift=1mm]frame.south west)
+      {$\hookrightarrow$\,continued};},
+  overlay middle={%
+    \draw[tcbcolframe, line width=0.8pt] (frame.south west) -- (frame.south east);
+    \node[anchor=north west, font=\scriptsize\itshape, text=tcbcolframe,
+          inner sep=1.5pt] at ([xshift=1mm]frame.south west)
+      {$\hookrightarrow$\,continued};}}}
+
+% Section box with a teal title bar (datasheet look).
+% Usage: \begin{dsbox}{Section title} ... \end{dsbox}
+\newtcolorbox{dsbox}[2][]{%
+  enhanced, sharp corners, gl continued,
+  colback=white, colframe=brandTeal, boxrule=0.8pt,
+  colbacktitle=brandTeal, coltitle=white,
+  fonttitle=\bfseries,
+  title={\MakeUppercase{#2}},
+  left=2mm, right=2mm, top=2mm, bottom=2mm,
+  toptitle=1mm, bottomtitle=1mm,
+  #1
+}
+
+% A "Label: value" line inside a dsbox
+\newcommand{\dsfield}[2]{\noindent\textbf{#1:}~#2\par\vspace{2pt}}
+% Aligned variant: the value column starts at a fixed offset (optional
+% argument, default 30mm) so consecutive values line up. Wrapped lines
+% align under the value, not the label.
+\newcommand{\dsfieldA}[3][30mm]{%
+  \noindent\hangindent=#1\hangafter=1%
+  \makebox[#1][l]{\textbf{#2:}}#3\par\vspace{2pt}}
+
+% Letter grades, coloured on the concern scale:
+% A = green, B = orange, C = red, D = deep red (S as A, E as D)
+\newcommand{\gradeS}{\textcolor{ratingGreen}{\textbf{S}}}
+\newcommand{\gradeA}{\textcolor{ratingGreen}{\textbf{A}}}
+\newcommand{\gradeB}{\textcolor{ratingAmber}{\textbf{B}}}
+\newcommand{\gradeC}{\textcolor{ratingRed}{\textbf{C}}}
+\newcommand{\gradeD}{\textcolor{ratingDarkRed}{\textbf{D}}}
+\newcommand{\gradeE}{\textcolor{ratingDarkRed}{\textbf{E}}}
+
+% Rendering of the overall score set with \evalscore{...} in the
+\commitref{[commit]}	% Eval version/commit audited (top-right header)
+% DOCUMENT REFERENCE NUMBERS block; picks the colour for the letter.
+\newcommand{\evalgrade}{%
+  \ifdefstring{\eevalscore}{S}{\gradeS}{%
+  \ifdefstring{\eevalscore}{A}{\gradeA}{%
+  \ifdefstring{\eevalscore}{B}{\gradeB}{%
+  \ifdefstring{\eevalscore}{C}{\gradeC}{%
+  \ifdefstring{\eevalscore}{D}{\gradeD}{%
+  \ifdefstring{\eevalscore}{E}{\gradeE}{\textbf{\eevalscore}}}}}}}%
+}
+
+% Colour of the overall grade as a named colour (for the badge frame
+% and letter). Resolved at \begin{document}, after \evalscore is set.
+\colorlet{gradeColor}{brandTeal}
+\AtBeginDocument{%
+  \ifdefstring{\eevalscore}{S}{\colorlet{gradeColor}{ratingGreen}}{%
+  \ifdefstring{\eevalscore}{A}{\colorlet{gradeColor}{ratingGreen}}{%
+  \ifdefstring{\eevalscore}{B}{\colorlet{gradeColor}{ratingAmber}}{%
+  \ifdefstring{\eevalscore}{C}{\colorlet{gradeColor}{ratingRed}}{%
+  \ifdefstring{\eevalscore}{D}{\colorlet{gradeColor}{ratingDarkRed}}{%
+  \ifdefstring{\eevalscore}{E}{\colorlet{gradeColor}{ratingDarkRed}}{}}}}}}%
+}
+
+% Description text for each overall grade. \evalgradetext expands to the
+% description matching \evalscore{...}, so the quality box always agrees
+% with the grade set in the DOCUMENT REFERENCE NUMBERS block.
+\newcommand{\gradetextA}{No obvious issues.}
+\newcommand{\gradetextB}{Minor issues, but unlikely to produce misleading results.}
+\newcommand{\gradetextC}{Notable issues, but evaluation still contains
+  some useful signal.}
+\newcommand{\gradetextD}{Serious issues, and the evaluation is very unlikely to contain useful
+  signal.}
+\newcommand{\evalgradetext}{%
+  \ifdefstring{\eevalscore}{A}{\gradetextA}{%
+  \ifdefstring{\eevalscore}{B}{\gradetextB}{%
+  \ifdefstring{\eevalscore}{C}{\gradetextC}{%
+  \ifdefstring{\eevalscore}{D}{\gradetextD}{[description for grade
+  \eevalscore]}}}}%
+}
+
+% Per-dimension assessments, five-step scale
+% (letter grades are reserved for the overall score only)
+\definecolor{ratingDarkRed}{HTML}{7B1010}
+\newcommand{\assessCritical}{\textcolor{ratingDarkRed}{\textbf{Critical concern}}}
+\newcommand{\assessMajor}{\textcolor{ratingRed}{\textbf{Major concern}}}
+\newcommand{\assessMinor}{\textcolor{ratingAmber}{\textbf{Minor concern}}}
+\newcommand{\assessNone}{\textcolor{ratingGreen}{\textbf{No concern}}}
+\definecolor{ratingSlate}{HTML}{546E7A}
+\newcommand{\assessNA}{\textcolor{ratingGrey}{\textbf{Not applicable}}}         % dimension not applicable to this eval
+\newcommand{\assessNotAssessed}{\textcolor{ratingSlate}{\textbf{Not assessed}}} % applicable, but outside this audit's scope
+\newcommand{\assessOK}{\assessNone}   % legacy alias
+
+% Importance labels for the breakdown table
+\newcommand{\impHigh}{\textbf{High}}
+\newcommand{\impMed}{Medium}
+\newcommand{\impLow}{Low}
+
+% Untitled breakable teal box for content that sits under a numbered
+% subsection heading (audit report dimensions, description sections).
+% Takes no options so content may safely start with a [placeholder].
+\newtcolorbox{dimbox}{%
+  enhanced, breakable, sharp corners,
+  colback=white, colframe=brandTeal, boxrule=0.8pt,
+  left=2mm, right=2mm, top=2mm, bottom=2mm
+}
+
+% Card for a contribution not raised as a concern, so every registry
+% contribution is accounted for. Status is one of: not observed
+% (assessed, nothing material found), not assessed (outside this
+% audit's scope), not relevant (does not apply to this eval).
+%   \begin{contribution}{G.4}{surface-form sensitivity}{not assessed}
+%     note text
+%   \end{contribution}
+\newtcolorbox{contribution}[3]{%
+  enhanced, breakable, gl continued,
+  sharp corners, colback=black!3, colframe=black!25, boxrule=0.5pt,
+  left=2mm, right=2mm, top=1.5mm, bottom=1.5mm,
+  before skip=5pt, after skip=5pt, fontupper=\small,
+  before upper={\noindent{\bfseries\textcolor{ratingGrey}{#1}}~\textbf{\glupfirst{#2}}%
+    \hfill{\itshape\textcolor{ratingGrey}{#3}}\par\smallskip}}
+
+% Light per-concern note card used under "Observed concerns": a tinted
+% panel headed by the contribution code + name, holding terse note
+% bullets (flat list, no nesting).
+%   \begin{concern}{G.1}{false positives and false negatives}{\assessMajor}
+%     \item ... \item ...
+%   \end{concern}
+\newtcolorbox{concern}[3]{%
+  enhanced, breakable, sharp corners, gl continued,
+  colback=brandTeal!4, colframe=brandTeal!40, boxrule=0.5pt,
+  left=2mm, right=2mm, top=1.5mm, bottom=1.5mm,
+  before skip=5pt, after skip=5pt, fontupper=\small,
+  before upper={\noindent{\bfseries\textcolor{brandTeal}{#1}}~\textbf{\glupfirst{#2}}%
+    \hfill{\small#3}\par\smallskip}}
+% Tight bullet list for concern-card notes; figures may follow it inside
+% the same card via \boxfigure.
+\newenvironment{cnotes}%
+  {\begin{itemize}[nosep, leftmargin=4mm, itemsep=1.5pt]}%
+  {\end{itemize}}
+
+% Light box listing example subcriteria under an audited dimension.
+% These are prompts for the assessor, not a checklist.
+\newtcolorbox{subcriteriabox}{%
+  sharp corners,
+  colback=brandTeal!6, colframe=brandTeal!50, boxrule=0.5pt,
+  left=2mm, right=2mm, top=1mm, bottom=1mm,
+  fontupper=\small
+}
+
+% Large rounded grade badge (top-right of the scorecard page).
+% Frame and letter take the colour of the grade set with \evalscore.
+\newcommand{\gradebadge}[1]{%
+  \begin{tikzpicture}
+    \node[rectangle, rounded corners=2mm, draw=gradeColor, line width=1.4pt,
+          minimum width=12mm, minimum height=12mm]
+      {\fontsize{22}{24}\selectfont\textbf{\textcolor{gradeColor}{#1}}};
+  \end{tikzpicture}%
+}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\RequirePackage{ifxetex}
+\ifxetex
+  \RequirePackage{fontspec}
+  \setmainfont{Calibri}
+\else
+  \RequirePackage[sfdefault]{carlito}
+\fi
+
+
+
+% Command to link to EDMS documents
+\newcommand{\edms}[1]{EDMS~\href{https://edms.cern.ch/document/#1/}{\##1}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% STANDARDISED REPORT STRUCTURE %%%
+
+% ---- Content fields -------------------------------------------------
+% Reports set values with \setfield{key}{value}; shared structure pages
+% render them with \field{key}. Unset fields show a visible [key?] marker.
+\newcommand{\setfield}[2]{\expandafter\def\csname fld@#1\endcsname{#2}}
+\newcommand{\field}[1]{%
+  \ifcsname fld@#1\endcsname\csname fld@#1\endcsname\else\textbf{[#1?]}\fi}
+% Render #2 only when field #1 has been set (for optional structure blocks)
+\newcommand{\iffield}[2]{\ifcsname fld@#1\endcsname#2\fi}
+
+% Example contributions are stored as comma-separated \gsub{name}{short
+% description} items. \dimsubdescribed{key} renders them as a numbered
+% two-column list: A.1 name --- description. The codes (A.1, B.3, ...)
+% are the issue vocabulary referenced from the Audit Findings.
+\newbool{gl@colA}
+\newcounter{gl@subidx}
+\newcommand{\gsub}[2]{}% placeholder; renderers redefine locally
+% Optional per-dimension start offset: contributions normally number from
+% .1; \dimensionsubbase{key}{-1} makes them start at .0.
+\newcommand{\dimensionsubbase}[2]{\expandafter\def\csname dim@subbase@#1\endcsname{#2}}
+\newcommand{\dimsubdescribed}[1]{%
+  \setcounter{gl@subidx}{\ifcsname dim@subbase@#1\endcsname\csname dim@subbase@#1\endcsname\else0\fi}%
+  \def\gsub##1##2{\stepcounter{gl@subidx}%
+    {\bfseries\color{brandTeal}\dimletter{#1}.\arabic{gl@subidx}}~{\bfseries \glupfirst{##1}} --- ##2\par}%
+  \renewcommand*{\do}[1]{##1}%
+  \letcs\gl@items{dim@sub@#1}%
+  \noindent\expandafter\docsvlist\expandafter{\gl@items}\par}
+% Issue-code reference (e.g. \iss{B.1}) styled like the criteria codes.
+\newcommand{\iss}[1]{{\bfseries\color{brandTeal}#1}}
+% One cited contribution in a scorecard cell: code + name in bold, then
+% an eval-specific short description.
+% \par separates consecutive issues; no trailing blank line in the cell.
+\def\gl@issuesep{}
+\newcommand{\issue}[3]{\gl@issuesep{\bfseries\textcolor{brandTeal}{#1} \glupfirst{#2}:} #3\gdef\gl@issuesep{\par}}
+% Uppercase the first letter of a contribution/issue name so registry
+% names (stored lowercase) render capitalised everywhere they appear.
+\newcommand{\glupfirst}[1]{\gl@upfirst#1\gl@upend}
+\def\gl@upfirst#1#2\gl@upend{\uppercase{#1}#2}
+% ---- Dimension registry ---------------------------------------------
+% \definedimension{key}{scorecard row label}{report heading}{description}{contributions}
+% Headings, row labels and contributions are defined ONCE here.
+\newcommand{\definedimension}[5]{%
+  \expandafter\def\csname dim@row@#1\endcsname{#2}%
+  \expandafter\def\csname dim@title@#1\endcsname{#3}%
+  \expandafter\def\csname dim@desc@#1\endcsname{#4}%
+  \expandafter\def\csname dim@sub@#1\endcsname{#5}%
+  \expandafter\def\csname dim@assess@#1\endcsname{\textbf{?}}%
+  \expandafter\def\csname dim@issue@#1\endcsname{---}}
+% Per-report: \setdimension{key}{\assess...}{key issue for the scorecard}
+% The scorecard table AND the audit-report boxes both read this, so the
+% two artifacts can never disagree.
+\newcommand{\setdimension}[3]{%
+  \expandafter\def\csname dim@assess@#1\endcsname{#2}%
+  \expandafter\def\csname dim@issue@#1\endcsname{#3}}
+% Letter identifying each dimension (A--J); contributions are numbered
+% A.1, A.2, ... so findings and the framework diagram can cite them.
+\newcommand{\dimensionletter}[2]{\expandafter\def\csname dim@letter@#1\endcsname{#2}}
+\newcommand{\dimletter}[1]{\csname dim@letter@#1\endcsname}
+% Validity aspect each dimension operationalises (Auditing Framework sheet)
+\newcommand{\dimensionaspect}[2]{\expandafter\def\csname dim@aspect@#1\endcsname{#2}}
+\newcommand{\dimaspect}[1]{\csname dim@aspect@#1\endcsname}
+\newcommand{\dimrow}[1]{\csname dim@row@#1\endcsname}
+\newcommand{\dimtitle}[1]{\csname dim@title@#1\endcsname}
+\newcommand{\dimdesc}[1]{\csname dim@desc@#1\endcsname}
+\newcommand{\dimsub}[1]{\csname dim@sub@#1\endcsname}
+\newcommand{\dimassess}[1]{\csname dim@assess@#1\endcsname}
+\newcommand{\dimissue}[1]{\csname dim@issue@#1\endcsname}
+
+\dimensionletter{construct}{A}
+\dimensionletter{dataset}{C}
+\dimensionletter{contentvalidity}{B}
+\dimensionletter{scaffold}{D}
+\dimensionletter{harness}{E}
+\dimensionletter{environment}{F}
+\dimensionletter{grading}{G}
+\dimensionletter{resources}{H}
+\dimensionletter{informativeness}{I}
+\dimensionsubbase{construct}{-1}
+\dimensionaspect{construct}{Construct validity}
+\dimensionaspect{dataset}{Implementation validity}
+\dimensionaspect{contentvalidity}{Content validity}
+\dimensionaspect{scaffold}{Implementation validity}
+\dimensionaspect{harness}{Implementation validity}
+\dimensionaspect{environment}{Implementation validity}
+\dimensionaspect{grading}{Implementation validity}
+\dimensionaspect{resources}{Implementation validity}
+\dimensionaspect{informativeness}{Construct validity}
+
+\definedimension{construct}{Construct validity}{Construct validity}{%
+  Does performance on the eval validly measure the capability or behaviour the eval aims to assess?}{%
+  \gsub{measurement distortion}{flaws in implementation validity dimensions distort measurement of the target construct},
+  \gsub{contamination}{benchmark items or their solutions were present in training data or otherwise accessible during training},
+  \gsub{memorisation}{performance depends on recalling a memorised solution rather than exercising the intended capability},
+  \gsub{eval awareness}{models recognise the evaluation context and alter their behaviour as a result},
+  \gsub{sandbagging}{models deliberately or strategically underperform relative to their capability},
+  \gsub{confounds}{scores are systematically affected by factors unrelated to the target construct},
+  \gsub{proxy measurement}{the measured outcome is only an imperfect proxy for the target capability or behaviour},
+  \gsub{capability vs propensity}{the evaluation conflates what a model can do with what it tends to do}}
+
+
+  \definedimension{contentvalidity}{Content validity}{Content validity}{%
+  Do the tasks adequately represent the target domain and situations the evaluation aims to cover?}{%
+  \gsub{coverage gaps}{important parts of the target domain or capability are absent or underrepresented},
+  \gsub{unrepresentative task distribution}{the distribution of tasks differs materially from the target domain}}
+
+\definedimension{dataset}{Task Specification}{Task Specification}{%
+  Are individual tasks correctly specified, solvable, and free from defects that affect performance?}{%
+  \gsub{incorrect reference answer}{the reference answer is incorrect or inconsistent with the task},
+  \gsub{impossible tasks}{no correct answer is attainable as posed},
+  \gsub{missing information}{required parameters or context are not supplied},
+  \gsub{guessability}{tasks can be solved using superficial cues rather than the intended competence},
+  \gsub{prompt defects}{the prompts are ambiguous, incomplete, misleading, or otherwise fail to specify correctly what the model should do},
+  \gsub{hidden requirements}{success depends on unstated conventions or assumptions},
+  \gsub{unintended shortcuts}{answers are reachable without performing the intended work}}
+
+
+\definedimension{scaffold}{Scaffolding}{Scaffolding}{%
+  Does the scaffolding provide the model with an appropriate setup for performing the task?}{%
+  \gsub{system prompt issues}{system-level instructions are ambiguous, misleading, or otherwise distort performance},
+  \gsub{planning or agent loop}{the agent structure constrains or alters performance},
+  \gsub{memory \& context strategy}{the strategy for retaining and presenting context loses or obscures information needed to solve the task},
+  \gsub{retry/error feedback}{failures are surfaced poorly or recovery opportunities are handled inconsistently},
+  \gsub{coaching}{the scaffolding provides hints or information that artificially improves performance}}
+
+\definedimension{harness}{Harness}{Harness}{%
+  Does the evaluation infrastructure correctly execute the specified task and scaffolding?}{%
+  \gsub{tool-call handling}{tool calls are parsed, routed, or executed incorrectly},
+  \gsub{submission/termination logic}{episodes terminate earlier or later than intended},
+  \gsub{context delivery}{task materials or interaction history reach the model incompletely},
+  \gsub{message handling}{messages are truncated, reordered, duplicated, or otherwise mishandled},
+  \gsub{state management}{evaluation state is lost, corrupted, or inconsistently maintained},
+  \gsub{harness bugs}{other defects in the evaluation infrastructure affect performance},
+  \gsub{harness sensitivity}{results change materially across equivalent harnesses}}
+
+\definedimension{environment}{Environment}{Environment}{%
+  Does the task environment and its resources function as specified?}{%
+  \gsub{tool failures}{tools error, malfunction, or hang during episodes},
+  \gsub{missing resources}{files, packages, or services assumed by the task are absent},
+  \gsub{broken files \& dependencies}{inputs or dependencies are corrupt, incompatible, or unreadable},
+  \gsub{non-determinism}{the environment varies between otherwise equivalent runs},
+  \gsub{information leakage}{the environment exposes answers or unintended hints},
+  \gsub{implementation differs from specification}{the environment behaves differently from its documented design}}
+
+\definedimension{grading}{Grading}{Grading}{%
+  Does the grading procedure correctly determine whether task performance satisfies the evaluation criteria?}{%
+  \gsub{false positives and false negatives}{the grading procedure incorrectly classifies responses as satisfying or failing the evaluation criteria},
+  \gsub{underspecified criteria}{the grading criteria do not clearly determine what counts as satisfying them},
+  \gsub{judge errors}{LLM judges make systematic, inconsistent, or otherwise erroneous grading decisions},
+  \gsub{surface-form sensitivity}{otherwise equivalent responses receive different scores because of differences in wording, formatting, or presentation},
+  \gsub{incorrect partial credit}{partial scores do not appropriately reflect the quality or correctness of the response},
+  \gsub{grader exploitation}{submissions can manipulate or exploit the grading procedure}}
+
+\definedimension{resources}{Resource limits}{Resource limits}{%
+  Do resource constraints provide an appropriate opportunity for models to perform on the task?}{%
+  \gsub{turn/token/time limits}{limits terminate productive attempts before the model can complete the task},
+  \gsub{resource sensitivity}{performance changes materially with the available resource budget},
+  \gsub{unequal constraint effects}{the same nominal constraint binds models differently}}
+
+\definedimension{informativeness}{Informativeness}{Informativeness}{%
+  Does the evaluation provide enough variation and signal to distinguish relevant differences between models?}{%
+  \gsub{saturation}{frontier models cluster at the attainable ceiling, limiting the benchmark's ability to distinguish between them},
+  \gsub{floor/ceiling effects}{the attainable score range compresses meaningful differences between models},
+  \gsub{clustering}{model scores cluster tightly relative to measurement uncertainty, providing little discriminative power between models}}
+
+
+% ---- Scorecard breakdown table (generated) ---------------------------
+% Which dimensions appear on the scorecard, and in what order. Set per
+% report (typically most to least critical); delete a key to omit its
+% row. NOTE: no spaces around the commas -- the keys are used verbatim.
+\newcommand{\scorecardorder}[1]{\def\gl@scorder{#1}}
+\scorecardorder{construct,dataset,contentvalidity,scaffold,harness,environment,grading,resources,informativeness}
+\newcommand{\scorecardbreakdown}{%
+\noindent
+\begin{dsbox}[top=1mm, bottom=1mm, before skip=4pt, after skip=4pt]{Audit assessment breakdown}
+\renewcommand{\arraystretch}{1.0}%
+\gdef\gl@scrows{}%
+\renewcommand*{\do}[1]{\gappto\gl@scrows{\dimtitle{##1} & \dimassess{##1} & \gdef\gl@issuesep{}\dimissue{##1} \\ \hline }}%
+\expandafter\docsvlist\expandafter{\gl@scorder}%
+\noindent\begin{tabularx}{\linewidth}{|L{0.58}|C{0.52}|L{1.9}|}
+\hline
+\textbf{Dimension} & \textbf{Assessment} & \textbf{Key contributions} \\ \hline
+\gl@scrows
+\end{tabularx}
+\end{dsbox}}
+
+% ---- Report part scaffolding -----------------------------------------
+% Title row for a report part: "Part Name -- <eval>"
+% Eval name as shown in every part title
+\newcommand{\evaltitle}{\textcolor{brandTeal}{\eevalname}}
+\newcommand{\reporttitle}[1]{%
+  \noindent{\LARGE\itshape \textbf{#1} -- \evaltitle}\par\medskip}
+% Lettered subsections a), b), c) with unique hyperref anchors per part
+\newcommand{\letteredsubsections}[1]{%
+  \setcounter{subsection}{0}%
+  \renewcommand{\thesubsection}{\alph{subsection})}%
+  \renewcommand{\theHsubsection}{#1.\alph{subsection}}}
+% Wrapper for a whole report part: symmetric margins, ToC entry, title.
+% \begin{reportpart}{Title}{anchorkey}{label} ... \end{reportpart}
+\newenvironment{reportpart}[3]{%
+  \phantomsection
+  \addcontentsline{toc}{section}{#1}%
+  \label{#3}%
+  \adjustwidth{-10mm}{0mm}%
+  \letteredsubsections{#2}%
+  \reporttitle{#1}}
+ {\endadjustwidth}
+
+% ---- One audited dimension in the audit report -----------------------
+% \begin{dimensionreport}{key} narrative (+ findings) \end{dimensionreport}
+% Heading, assessment and subcriteria come from the registry/\setdimension.
+% Figure inside a box. LaTeX float environments (\begin{figure}) cannot
+% be used inside tcolorboxes, so this renders the image inline with a
+% real, numbered, referenceable caption via \captionof.
+% Usage: \boxfigure[width fraction]{file}{caption}{fig:label}
+\newcommand{\boxfigure}[4][0.95]{%
+  \par\begin{center}
+  \includegraphics[width=#1\linewidth, height=0.62\textheight, keepaspectratio]{#2}\\[2pt]
+  {\captionsetup{font=small, labelfont={bf,small}, textfont=small, width=0.9\linewidth}%
+   \captionof{figure}{#3}\label{#4}}%
+  \end{center}\par}
+
+% Labelled paragraphs used inside a dimension box
+\newcommand{\dimsummary}[1]{\par\smallskip\noindent\textbf{Summary:}~#1\par}
+% Generic two-column bulleted list from a comma-separated item list
+\newcommand{\gltwocol}[1]{%
+  \gdef\gl@colA{}\gdef\gl@colB{}\booltrue{gl@colA}%
+  \renewcommand*{\do}[1]{%
+    \ifbool{gl@colA}%
+      {\gappto\gl@colA{\textbullet~##1\par}\boolfalse{gl@colA}}%
+      {\gappto\gl@colB{\textbullet~##1\par}\booltrue{gl@colA}}}%
+  \docsvlist{#1}%
+  \begin{minipage}[t]{0.48\linewidth}\linespread{0.95}\selectfont\raggedright\gl@colA\end{minipage}\hfill
+  \begin{minipage}[t]{0.48\linewidth}\linespread{0.95}\selectfont\raggedright\gl@colB\end{minipage}}
+% Observed concerns: comma-separated items rendered as a bulleted
+% two-column list (same style as the scoring criteria); use registry
+% terminology for the items, with specifics in parentheses.
+\newcommand{\dimconcerns}[1]{%
+  \par\smallskip\noindent\textbf{Observed concerns:}\par\nopagebreak\smallskip
+  {\renewcommand*{\do}[1]{\noindent\textbullet~##1\par}%
+   \docsvlist{#1}}\par\smallskip}
+% Same rendering for concerns that are possible but were not observed
+\newcommand{\dimpotential}[1]{%
+  \par\smallskip\noindent\textbf{Potential concerns:}\par\nopagebreak\smallskip
+  {\renewcommand*{\do}[1]{\noindent\textbullet~##1\par}%
+   \docsvlist{#1}}\par\smallskip}
+% One audited dimension: a dsbox-style titled box (the dimension name is
+% the title bar, matching every other datasheet box), breakable.
+\newtcolorbox{dimensionreport}[1]{%
+  enhanced, breakable, sharp corners, gl continued,
+  colback=white, colframe=brandTeal, boxrule=0.8pt,
+  colbacktitle=brandTeal, coltitle=white,
+  fonttitle=\bfseries,
+  title={\dimletter{#1}.\ \MakeUppercase{\dimtitle{#1}}},
+  title after break={\dimletter{#1}.\ \MakeUppercase{\dimtitle{#1}} CONT.},
+  left=2mm, right=2mm, top=2mm, bottom=2mm,
+  toptitle=1mm, bottomtitle=1mm,
+  before upper={\textbf{Assessment:} \dimassess{#1}\par}
+}
+
+% Optional assessment-table layout. Existing reports retain dimensionreport.
+% Navigation uses absolute report pages, since section page counters restart.
+\newcommand{\auditdestination}[1]{%
+  \phantomsection\label{audit:#1}\zref@label{auditpage:#1}}
+\newcommand{\auditcontentsrow}[3][0]{%
+  \par\noindent\hspace*{#1mm}%
+  \hyperref[audit:#2]{#3}\nobreak\leaders\hbox{\kern2pt.\kern2pt}\hfill
+  \hyperref[audit:#2]{\zref@extractdefault{auditpage:#2}{abspage}{?}}\par}
+\newtcolorbox{dimensionreview}[1]{%
+  enhanced, breakable, sharp corners, gl continued,
+  colback=white, colframe=brandTeal, boxrule=0.8pt,
+  colbacktitle=brandTeal, coltitle=white, fonttitle=\bfseries,
+  title={\dimletter{#1}.\ \MakeUppercase{\dimtitle{#1}}},
+  title after break={\dimletter{#1}.\ \MakeUppercase{\dimtitle{#1}} CONT.},
+  left=2mm, right=2mm, top=2mm, bottom=2mm,
+  toptitle=1mm, bottomtitle=1mm}
+% Keep the assessment and its coverage table together when a box spans pages.
+\newcommand{\dimensionoverview}[3]{%
+  \noindent\begin{minipage}{\linewidth}
+  \auditdestination{dimension:#1}%
+  \textbf{Overall Assessment:} \dimassess{#1}\par\smallskip
+  #2\par
+  \contributionassessment{#3}%
+  \end{minipage}\par}
+\newcommand{\contributionassessment}[1]{%
+  \par\medskip\noindent\begin{minipage}{\linewidth}
+  \textbf{Contribution Assessment}\par\smallskip
+  \small\renewcommand{\arraystretch}{1.15}%
+  \begin{tabularx}{\linewidth}{|L{0.9}|L{0.7}|L{1.4}|}
+  \hline
+  \rowcolor{brandTeal!10}
+  \textbf{Contribution} & \textbf{Assessment} & \textbf{Summary / evidence} \\ \hline
+  #1
+  \end{tabularx}
+  \end{minipage}\par\smallskip}
+\newcommand{\contributionrow}[4]{%
+  \textbf{\textcolor{brandTeal}{#1}}~\glupfirst{#2} & #3 & #4 \\ \hline}
+\newcommand{\evidencelink}[1]{\hyperref[audit:evidence:#1]{Evidence #1}}
+\newcommand{\observedevidence}{%
+  \par\medskip\noindent\textbf{Evidence for Observed Concerns}\par\nopagebreak\smallskip}
+\newenvironment{concernevidence}[3]{%
+  \begin{concern}{#1}{#2}{#3}\auditdestination{evidence:#1}}
+  {\end{concern}}
+
+% ---- Eval overview sections ------------------------------------------
+\newcommand{\defineoverview}[2]{\expandafter\def\csname ovw@title@#1\endcsname{#2}}
+\defineoverview{provenance}{Overview and Provenance}
+\defineoverview{taskflow}{Task Flow}
+\defineoverview{datasetcomp}{Dataset Composition}
+\defineoverview{harnessenv}{Harness, Tools and Environment}
+\defineoverview{gradingagg}{Grading and Aggregation Pipeline}
+\defineoverview{operational}{Operational Characteristics}
+\defineoverview{versioning}{Versioning and Maintenance}
+% \begin{overviewsection}{key} content \end{overviewsection}
+\newtcolorbox{overviewsection}[1]{%
+  enhanced, breakable, sharp corners,
+  colback=white, colframe=brandTeal, boxrule=0.8pt,
+  left=2mm, right=2mm, top=2mm, bottom=2mm,
+  before={\par\subsection{\csname ovw@title@#1\endcsname}\noindent}
+}

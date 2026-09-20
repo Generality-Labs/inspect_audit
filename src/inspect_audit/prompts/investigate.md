@@ -39,7 +39,11 @@ insufficient, publish that limited conclusion rather than inventing findings.
 
 When the operator requests an exhaustive audit, maintain an explicit question manifest.
 Dispatch the question-labels auditor alongside the substantive checks for every item,
-collect its structured results, and compute coverage through inspect_audit._coverage.
+collect its structured results, and compute coverage with export_coverage in the
+staged /inputs/coverage.py module. The report/framework directory contains the pinned
+Generality Labs template, contribution registry and scoring criteria. Fill that
+structure. The matching web components are available at report/assets/gl.js;
+retain their source provenance and provide accessible tables for each figure.
 Start with a small pilot and verify the returned evidence and grader channel before
 expanding. Missing or failed jobs are unassessed; inconclusive work remains unresolved.
 Use the report's nine Generality Labs dimensions as the coverage plan from the start.

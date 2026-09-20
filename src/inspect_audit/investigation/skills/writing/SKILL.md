@@ -32,10 +32,13 @@ Say "not assessed" and why, in one sentence, when you did not check something.
 The report follows the Generality Labs audit framework: headline numbers and scorecard,
 eval datasheet, audit setup, and findings under all nine assessment dimensions.
 Use the supplied report skeleton and framework source, not a self-invented structure.
+The exact template is report/framework/Content.tex; the contribution registry and
+assessment definitions are in report/framework/auditframework.sty and ScoringCriteria.tex.
+The vendored GL components are in report/assets/gl.js, with provenance beside them.
 For each dimension state None, Minor, Major, Critical, Not assessed, or Not applicable.
 No issue found requires completed checks; absence of a finding is not validation.
 Question validity and grading accuracy have different denominators and must be separate.
-Use question-labels scores to build the coverage table with inspect_audit._coverage.export_coverage;
+Use question-labels scores to build the coverage table with export_coverage from /inputs/coverage.py;
 keep NOT_ASSESSED and UNRESOLVED visible. Disagreements require review, not majority voting.
 GL visual components may display these computed tables, with an accessible static table.
 Do not fill approval/verification names or assign an overall grade without evidence. The summary introduces the benchmark in

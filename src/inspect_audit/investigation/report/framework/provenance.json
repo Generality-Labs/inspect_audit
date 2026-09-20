@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/Generality-Labs/audit_reports",
+  "revision": "ad7de89658b6794112c2f65847991c7ed41d9e30",
+  "files": {
+    "auditframework.sty": {
+      "source": "template/auditframework.sty",
+      "sha256": "24e4c39156d9c578f8aa6dd5635d62f879b59736174621a4b82d913d8b1b4748",
+      "local_sha256": "b7fae2c91d0b48b36a13f1340085e53b3d76a9f8d2583e0fea5ad58ac707974c"
+    },
+    "ScoringCriteria.tex": {
+      "source": "template/sections/ScoringCriteria.tex",
+      "sha256": "d40ce921bdaf50af495471d5d2278b1737cc7779a00add9990f7dbeb244a45fd"
+    },
+    "Content.tex": {
+      "source": "reports/Example/Content.tex",
+      "sha256": "e8d1dc7a10ba20593f2364121d1a7082dd55244b608f3f0ad16e874ce0720d8d"
+    }
+  },
+  "local_changes": [
+    "Trailing whitespace removed in auditframework.sty; framework content unchanged."
+  ]
+}

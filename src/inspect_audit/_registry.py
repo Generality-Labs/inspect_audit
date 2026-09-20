@@ -12,6 +12,7 @@ from inspect_ai.util import sandbox
 from ._agent import grade_benchmark, reset_benchmark
 from ._audit import audit_task
 from ._concordance import Concordance
+from ._feedback import binary_feedback as binary_feedback
 from ._investigate import investigate as investigate
 from ._resolve import resolve_task, resolve_task_from_log
 from ._sandbox import (

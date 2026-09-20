@@ -2,6 +2,9 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [project]
 name = "inspect_audit"
 version = "0.0.1"
@@ -16,16 +19,21 @@ dependencies = [
     "pillow>=10.0",
     "pyarrow>=10.0.1",
     "openai>=1.0",
+    # k8s_sandbox passes newline-terminated Helm output to Version.parse;
+    # semver 3.1 rejects that output before any audit sample can start.
+    "semver>=3.0,<3.1",
 ]
 
 [project.entry-points.inspect_ai]
 inspect_audit = "inspect_audit._registry"
 
 [project.optional-dependencies]
-scicode = ["inspect-evals[scicode]"]
+# The replay/feedback APIs are supplied by this SciCode inference-scaling fork.
+scicode = ["inspect-evals[scicode] @ git+https://github.com/xantheocracy/inspect_evals@7529ec836447cedc12eccd944aa5ff7e328518d1"]
 # Hawk requires Python 3.13; the core package supports 3.11+.
 remote = ["hawk[cli]>=3.4,<4; python_version >= '3.13'"]
 dev = [
+    "inspect-evals[scicode] @ git+https://github.com/xantheocracy/inspect_evals@7529ec836447cedc12eccd944aa5ff7e328518d1",
     "ruff",
     "mypy",
     "pytest",

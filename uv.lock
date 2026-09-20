@@ -1406,11 +1406,13 @@ dependencies = [
     { name = "pandas" },
     { name = "pillow" },
     { name = "pyarrow" },
+    { name = "semver" },
 ]
 
 [package.optional-dependencies]
 dev = [
     { name = "hawk", extra = ["cli"], marker = "python_full_version >= '3.13'" },
+    { name = "inspect-evals", extra = ["scicode"] },
     { name = "mypy" },
     { name = "pandas-stubs" },
     { name = "pytest" },
@@ -1430,7 +1432,8 @@ requires-dist = [
     { name = "hawk", extras = ["cli"], marker = "python_full_version >= '3.13' and extra == 'dev'", specifier = ">=3.4,<4" },
     { name = "hawk", extras = ["cli"], marker = "python_full_version >= '3.13' and extra == 'remote'", specifier = ">=3.4,<4" },
     { name = "inspect-ai", specifier = ">=0.3.259" },
-    { name = "inspect-evals", extras = ["scicode"], marker = "extra == 'scicode'" },
+    { name = "inspect-evals", extras = ["scicode"], marker = "extra == 'dev'", git = "https://github.com/xantheocracy/inspect_evals?rev=7529ec836447cedc12eccd944aa5ff7e328518d1" },
+    { name = "inspect-evals", extras = ["scicode"], marker = "extra == 'scicode'", git = "https://github.com/xantheocracy/inspect_evals?rev=7529ec836447cedc12eccd944aa5ff7e328518d1" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "openai", specifier = ">=1.0" },
     { name = "pandas", specifier = ">=2.0.0" },
@@ -1440,14 +1443,15 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-xdist", marker = "extra == 'dev'" },
     { name = "ruff", marker = "extra == 'dev'" },
+    { name = "semver", specifier = ">=3.0,<3.1" },
     { name = "types-pyyaml", marker = "extra == 'dev'" },
 ]
 provides-extras = ["scicode", "remote", "dev"]
 
 [[package]]
 name = "inspect-evals"
-version = "0.21.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.0.1.dev2729+unknown.g7529ec836"
+source = { git = "https://github.com/xantheocracy/inspect_evals?rev=7529ec836447cedc12eccd944aa5ff7e328518d1#7529ec836447cedc12eccd944aa5ff7e328518d1" }
 dependencies = [
     { name = "backoff" },
     { name = "datasets" },
@@ -1458,16 +1462,13 @@ dependencies = [
     { name = "jinja2" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "openai" },
     { name = "pillow" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "tiktoken" },
     { name = "toml" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/8a/f0/8565569c46b42836541cec69e7cdd48bc39463132cd509b74d4f45174fa4/inspect_evals-0.21.0.tar.gz", hash = "sha256:f48a3b6c3be6e7f597b5e23d5a4540086f84f5e3d81cd4eea8e3291d42d459b1", size = 37744840, upload-time = "2026-09-17T20:58:52.014Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/52/28/4028834d124fd72c56fa1fd51a57a6ffb1530c6e37ea296c30f99af89bf6/inspect_evals-0.21.0-py3-none-any.whl", hash = "sha256:fec31d96818a72c8914d94ecfe77433078421ddab5d559ca475f15c93f9f2018", size = 21098516, upload-time = "2026-09-17T20:58:47.874Z" },
 ]
 
 [package.optional-dependencies]

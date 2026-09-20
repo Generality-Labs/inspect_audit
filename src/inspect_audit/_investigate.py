@@ -867,7 +867,7 @@ def investigation_budget(
                 f"Spent: at least ${total:.2f}; {', '.join(unpriced)} unpriced, so the "
                 "true total and the remaining allowance are unknown"
             )
-        else:
+        elif remote is None:
             remaining = spend.remaining
             lines.append(
                 f"Spent: ${total:.2f}   Remaining: "
@@ -894,6 +894,9 @@ def investigation_budget(
                 )
             committed = remote.prior_local_usd + total + remote.ledger.actual_usd() + remote.ledger.reserved_usd()
             lines.append(f"Committed {'at least' if unpriced else 'in total'}: ${committed:.2f} of ${budget_usd:.2f}")
+            lines.append(f"Prior lead segments: ${remote.prior_local_usd:.2f}; current lead segment: ${total:.2f}")
+            if not unpriced and not remote.ledger.unpriced():
+                lines.append(f"Shared remaining allowance: ${max(0.0, budget_usd - committed):.2f}")
         lines.append(
             "Scope: this investigator's own model calls plus remote jobs it launched. The allowance is shared. Remote reservations include a buffer for model roles; Inspect's solver cost_limit does not cap scoring or in-flight overshoot."
         )

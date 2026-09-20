@@ -156,6 +156,21 @@ def test_budget_does_not_turn_missing_prices_into_zero(
         assert "Spent: $3.00   Remaining: $7.00" in text
 
 
+def test_resumed_budget_displays_shared_remaining_allowance(monkeypatch):
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "sample_model_usage", lambda: {})
+    monkeypatch.setattr(_investigate, "sample_limits", lambda: SimpleNamespace(
+        cost=SimpleNamespace(usage=3.0, remaining=97.0)))
+    ledger = SimpleNamespace(reload=lambda: None, jobs=[], actual_usd=lambda: 10.0,
+                             reserved_usd=lambda: 20.0, unpriced=lambda: [])
+    remote = SimpleNamespace(ledger=ledger, prior_local_usd=7.0)
+    text = asyncio.run(_investigate.investigation_budget(100, True, remote)())
+    assert "Committed in total: $40.00 of $100.00" in text
+    assert "Shared remaining allowance: $60.00" in text
+    assert "$97.00" not in text
+
+
 def test_findings_validate_and_bundle_input_evidence(tmp_path: Path) -> None:
     from inspect_audit._report import validate_findings
 

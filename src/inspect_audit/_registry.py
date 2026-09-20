@@ -19,6 +19,7 @@ from ._sandbox import (
     BENCHMARK_SERVICE,
     has_benchmark_box,
 )
+from ._scicode_feedback import scicode_feedback as scicode_feedback
 
 
 @task

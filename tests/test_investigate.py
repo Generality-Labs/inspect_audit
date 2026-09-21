@@ -183,7 +183,7 @@ def test_findings_validate_and_bundle_input_evidence(tmp_path: Path) -> None:
     (report / "report.html").write_text("<p>Report</p>")
     finding = dict(
         id="F1",
-        section="grader",
+        section="grading",
         claim="A claim",
         status="supported",
         origin="historical",
@@ -271,6 +271,7 @@ def test_snapshot_excludes_untracked_secrets_and_retains_publications(
     assert len(seed["revision"]) == 40
     report = root / "work/report"
     (report / "report.html").write_text("first version")
+    _declare_fixture_assessments(root)
     first = save_publication(root)
     (report / "report.html").write_text("second version")
     second = save_publication(root)
@@ -349,8 +350,9 @@ def render_probe(root: str) -> Solver:
         assert preview[0].image.startswith("data:image/png;base64,")
         await sandbox().write_file(
             "/workspace/report/report.qmd",
-            "---\ntitle: Smoke audit\nformat:\n  html:\n    embed-resources: true\n---\n\n## Findings\n\nNo model conclusions: infrastructure test only.\n\n![Coverage](coverage.png)\n",
+            "---\ntitle: Smoke audit\nformat:\n  html:\n    embed-resources: true\n---\n\n## Findings\n\nNo model conclusions: infrastructure test only.\n\n![Coverage](coverage.png)\n\n{{< include audit-tables.html >}}\n",
         )
+        _declare_fixture_assessments(Path(root))
         receipt = await publish_report(root)()
         state.store.set("publication_receipt", receipt)
         return state
@@ -398,6 +400,7 @@ def test_agent_reads_logs_and_publishes_before_batch_exit(tmp_path: Path) -> Non
         output_dir=str(tmp_path / "runs"),
         interactive=False,
     )
+    _declare_fixture_assessments(Path(target.metadata["investigation_dir"]))
     script = """python - <<'PY'
 import json
 from pathlib import Path
@@ -443,7 +446,7 @@ def test_the_same_input_cited_twice_publishes_once(tmp_path: Path) -> None:
     (report / "report.qmd").write_text("Report")
     (report / "report.html").write_text("<p>Report</p>")
     finding = dict(
-        id="F1", section="task", claim="A", status="supported", origin="source",
+        id="F1", section="dataset", claim="A", status="supported", origin="source",
         evidence=[dict(path="/inputs/paper.pdf", location="p. 1"), dict(path="/inputs/paper.pdf", location="p. 2")],
         reproduce="read", limitations="",
     )
@@ -463,7 +466,7 @@ def test_mounted_skills_are_wellformed_and_adapted() -> None:
     """
     from inspect_audit._investigate import ASSETS, INVESTIGATION_SKILLS
 
-    ours = {"investigating", "writing", "running-jobs"}
+    ours = {"investigating", "writing", "running-jobs", "security-audit-eval"}
     for name in INVESTIGATION_SKILLS:
         text = (ASSETS / "skills" / name / "SKILL.md").read_text()
         import yaml
@@ -761,7 +764,7 @@ def test_every_tool_schema_survives_a_strict_provider() -> None:
         jobs,
         supplied_logs,
     )
-    from inspect_audit._report import publish_report
+    from inspect_audit._report import check_report, publish_report
 
     ours = [
         hawk_submit(None, Path("/tmp")),  # type: ignore[arg-type]
@@ -769,6 +772,7 @@ def test_every_tool_schema_survives_a_strict_provider() -> None:
         supplied_logs(None, Path("/tmp"), []),
         investigation_budget(10, True),
         view_image(),
+        check_report("/tmp"),
         publish_report("/tmp"),
     ]
     for tool in ours:
@@ -910,3 +914,12 @@ def test_the_snapshot_follows_what_the_task_imports(tmp_path: Path) -> None:
     assert any(c in chosen for c in ("src/suite/shared", "src/suite/shared/helpers.py"))
     # never named by the task's code
     assert not any("unrelated" in c for c in chosen)
+
+
+def _declare_fixture_assessments(root: Path) -> None:
+    from inspect_audit._assessment import framework_checks
+
+    report = root / "work/report"
+    rows = [dict(id=key, assessment="Not assessed", result="Infrastructure smoke test; no benchmark judgments", evidence=[])
+            for key in framework_checks(report)]
+    (report / "assessments.json").write_text(json.dumps(rows))

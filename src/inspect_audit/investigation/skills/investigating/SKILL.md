@@ -74,3 +74,25 @@ Load eval-validity-review for a measurement checklist, investigate-dataset for d
 inspection, and security-audit-eval when the benchmark executes untrusted code. Use
 them for relevant questions; do not adopt their alternative report formats. The
 writing skill and supplied report schema define publication.
+
+## Comprehensive assessment
+
+Use the framework's dimensions and checks as an investigation plan, not headings to
+fill after item audits. Maintain report/assessments.json as work progresses. For each
+outstanding check choose an informative next step or record a concrete scope/access
+blocker. Specialist review can strengthen analysis; its absence is not a reason to skip
+an assessment that source, papers, datasets and logs can support.
+
+For content validity compare the claimed domain with actual task types, domain counts,
+concentration, repetition and omissions. State the basis for any representativeness
+judgment; counts alone do not establish a representative distribution.
+For elicitation examine whether prompts, tools, agent loops, context, feedback, recovery
+and limits give the model an appropriate opportunity to solve the task. Successful
+execution and correct aggregation do not establish this. Choose targeted comparisons
+where they can distinguish explanations; no fixed experiment is mandatory for every audit.
+
+Review all unresolved assessment units, including those inside already-defective samples.
+A complete label table is saved progress, not substantive completion. Reallocate available
+worker funding toward useful follow-up rather than treating a worker cap as a final answer.
+Before publication compare remaining investigations with their likely value and cost,
+while preserving publication allowance. Do not spend merely to exhaust the budget.

@@ -52,6 +52,9 @@ def test_recorded_question_verdicts_round_trip_into_coverage(tmp_path, units):
                         tried="checked", remarks="", evidence=[Evidence(observed="check", source="source.py:12")])
             with pytest.raises(ToolError, match="every expected question"):
                 await record(**args, details=json.dumps({"question_assessments": []}))
+            with pytest.raises(ToolError, match="defect type"):
+                await record(**{**args, "grade": "DEFECT"}, details=json.dumps({
+                    "question_assessments": [label(qid, "DEFECT") for qid in expected]}))
             await record(**args, details=json.dumps({"question_assessments": [label(qid, "NO_ISSUE_FOUND") for qid in expected]}))
             return state
         return solve
@@ -66,3 +69,20 @@ def test_recorded_question_verdicts_round_trip_into_coverage(tmp_path, units):
     result = export_coverage([log.location], [*expected, "missing"], tmp_path/'coverage.json')
     assert result['counts'] == dict(NO_ISSUE_FOUND=len(expected), DEFECT=0, UNRESOLVED=0, NOT_ASSESSED=1)
     assert 'sample=1' in result['questions'][0]['assessments'][0]['evidence'][-1]
+
+
+def test_defect_counts_deduplicate_and_outstanding_units_survive():
+    rows = [
+        {**label('parent.a', 'DEFECT'), 'defect_types': ['missing_information', 'incorrect_reference_or_test']},
+        {**label('parent.a', 'DEFECT'), 'defect_types': ['missing_information']},
+        label('parent.b', 'UNRESOLVED'), label('other', 'DEFECT'),
+    ]
+    result = coverage_summary(['parent.a', 'parent.b', 'other'], rows)
+    assert result['defect_counts'] == {'incorrect_reference_or_test': 1, 'missing_information': 1}
+    assert result['unclassified_defects'] == 1
+    assert result['outstanding_ids'] == ['parent.b']
+    with pytest.raises(ValueError, match='defect type'):
+        validate_labels([label('old', 'DEFECT')], ['old'], require_classification=True)
+    assert validate_labels([label('old', 'DEFECT')], ['old'])
+    custom = {**label('new', 'DEFECT'), 'defect_types': ['novel_mechanism']}
+    assert validate_labels([custom], ['new'], require_classification=True)

@@ -56,6 +56,7 @@ from ._jobs import (
 from ._report import (
     InvestigationState,
     _operator_turn,
+    check_report,
 )
 from ._report import (
     publish_report as publish_report,
@@ -584,6 +585,9 @@ def prepare_workspace(
         work / "report",
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
+    from ._assessment import prepare_assessments
+
+    prepare_assessments(work / "report")
     (work / "journal.md").write_text(
         "# Activity journal\n\nAppend actions and corrections with evidence references.\n"
     )
@@ -1513,7 +1517,9 @@ def investigate(
         paper: Local file or URL; a URL is downloaded now (arXiv abs -> pdf). Defaults to
             the paper the eval names in its own metadata.
         docs: Documentation directories to mount read-only (inspect docs, Hawk docs).
-        overview: Optional operator steer.
+        overview: Benchmark-specific context, supplied-evidence context and operator questions.
+            Execution settings belong in the corresponding arguments; reporting rules
+            are supplied by the package, not repeated in this overview.
         target_task: The task under audit, e.g. `benchmark/task`.
             Defaults to the only task the repository declares, when there is one.
         revision: Commit to snapshot (default HEAD).
@@ -1696,6 +1702,7 @@ def investigate(
         skill(skill_paths),
         investigation_budget(budget_usd, enforce_cost_limit, remote),
         view_image(),
+        check_report(str(root)),
         publish_report(str(root)),
     ]
     seed_logs = json.loads((root / "inputs" / "seed.json").read_text()).get("logs") or []

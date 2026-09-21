@@ -17,9 +17,13 @@ class QuestionAssessment(BaseModel):
     checks: list[str]
     evidence: list[str]
     explanation: str = Field(min_length=1)
+    # Empty on historical logs; new defect verdicts require a classification.
+    defect_types: list[str] = Field(default_factory=list)
+    scoring_effect: str | None = None
+    next_check: str | None = None
 
 
-def validate_labels(value: Any, expected: list[str]) -> list[QuestionAssessment]:
+def validate_labels(value: Any, expected: list[str], *, require_classification: bool = False) -> list[QuestionAssessment]:
     """Require each expected question once; a clean verdict needs completed checks."""
     rows = TypeAdapter(list[QuestionAssessment]).validate_python(value)
     ids = [r.question_id for r in rows]
@@ -28,7 +32,13 @@ def validate_labels(value: Any, expected: list[str]) -> list[QuestionAssessment]
     for row in rows:
         if row.status in ("NO_ISSUE_FOUND", "DEFECT") and (not row.checks or not row.evidence):
             raise ValueError(f"{row.question_id}: assessed labels need checks and evidence")
-        if any(not s.strip() for s in row.checks + row.evidence):
+        if require_classification and row.status == "DEFECT" and not row.defect_types:
+            raise ValueError(f"{row.question_id}: defects need at least one defect type")
+        if row.defect_types and row.status != "DEFECT":
+            raise ValueError(f"{row.question_id}: only established defects have defect types")
+        if len(row.defect_types) != len(set(row.defect_types)):
+            raise ValueError(f"{row.question_id}: duplicate defect types")
+        if any(not s.strip() for s in row.checks + row.evidence + row.defect_types):
             raise ValueError(f"{row.question_id}: empty check or evidence reference")
     return rows
 
@@ -52,7 +62,12 @@ def coverage_summary(expected: list[str], assessments: list[dict[str, Any]]) -> 
         rows.append({"question_id": qid, "status": status, "assessments": [r.model_dump() for r in labels]})
     counts = Counter(r["status"] for r in rows)
     categories = ["NO_ISSUE_FOUND", "DEFECT", "UNRESOLVED", "NOT_ASSESSED"]
-    return {"denominator": len(expected), "counts": {k: counts[k] for k in categories},
+    defects = Counter(kind for row in rows if row["status"] == "DEFECT"
+                      for kind in {kind for a in row["assessments"] for kind in a["defect_types"]})
+    return {"defect_counts": dict(sorted(defects.items())),
+            "unclassified_defects": sum(row["status"] == "DEFECT" and not any(a["defect_types"] for a in row["assessments"]) for row in rows),
+            "outstanding_ids": [row["question_id"] for row in rows if row["status"] in ("UNRESOLVED", "NOT_ASSESSED")],
+            "denominator": len(expected), "counts": {k: counts[k] for k in categories},
             "percentages": {k: 100 * counts[k] / len(expected) for k in categories}, "questions": rows}
 
 

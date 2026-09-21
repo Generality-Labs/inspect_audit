@@ -1,80 +1,85 @@
 ---
 name: writing
-description: How to write the audit report so a reader who knows the domain but did not watch you work gets the findings, their size and their evidence with no wasted words. Read before drafting report.qmd.
+description: Select consequential findings and present a concise, quantified audit using the Generality Labs framework. Read before drafting and publication.
 ---
 
-## Who reads it and why
+## Executive summary
 
-The reader is deciding whether to trust a number. They know what a benchmark is. They
-did not watch you work and do not care how you worked, except in the short method note.
-They want to know what you found, how big it is, how you know, and what would change
-your mind. Give them that, in that order, in every section.
+Include only findings that materially change how a reader should interpret or use the
+benchmark: consequential specification or scoring defects, impaired elicitation, a
+mismatch with its measurement claim, or a consequential positive result. A systemic
+bug can qualify without many independent examples. Each point needs evidence and an
+explanation of its consequence; dramatic wording is not evidence of significance.
+State the finding, affected count where measured, and why it matters. Link its detailed
+explanation. Group repeated mechanisms. Do not force a minimum number of bullets.
+Audit completion, spending, package repairs, development work and configuration
+differences are not findings by themselves. Put coverage in the results table, not
+an extra summary bullet. Do not summarise everything the investigator spent time doing.
 
-## Sentences
+## Reading path
 
-Lead with the finding and its size. The first sentence of a section or paragraph is
-the conclusion; support follows. One idea per sentence, plain words, an active verb.
-Around twenty words; split anything that needs a semicolon. No em dashes; use a
-comma or a full stop. British English.
+Use report/report.qmd: executive summary, computed results and scorecard, concise
+benchmark description, substantive findings, then limitations of this analysis.
+Laurence's framework in report/framework defines all nine dimensions and their checks;
+retain its severity scale and examples. The HTML reading path need not reproduce the
+LaTeX cover sheet or a separate audit-setup section. Keep setup and shared limitations
+to roughly two sentences at the bottom; link detailed provenance, methods and costs.
+No names, approvals or overall grades without evidence. Internal development and
+merge instructions do not belong in the benchmark report.
 
-Numbers carry their denominators and their scope in the same sentence or the next one:
-"812 of 1,000 attempts" not "81%" alone; "among scored attempts" when that is the
-population. Three or more numbers go in a table, not a sentence.
+Give each finding one full explanation: mechanism, evidence, affected extent and
+consequence. Group repeated instances and cross-reference findings from other dimensions.
+Keep complete check assessments in the generated assessment table; a clean dimension
+does not require an essay. Do not confuse successful execution with adequate elicitation.
 
-Do not narrate your process in the body. "I reviewed", "I inspected", "the audit
-examined" belong in the method note or nowhere. State what is the case and cite where
-it is shown. Do not pad claims with qualifications that name no alternative: a
-qualification is worth writing only when it says what would change the conclusion.
-Say "not assessed" and why, in one sentence, when you did not check something.
+## Quantified results
 
-## Structure and figures
+Maintain report/assessments.json using report/assessments.schema.json and the check IDs
+in report/framework/checks.json. Include one row for every dimension and every check.
+Use None, Minor, Major, Critical, Not assessed or Not applicable. Explain ratings through
+extent and consequence using the framework definitions, not numerical severity thresholds.
+Findings use Minor/Major/Critical (or null while unassessed); dimension assessment
+is a separate synthesis using the same framework definitions, not the maximum badge.
+For sample-level checks supply checked_ids and affected_ids: e.g. X of Y questions omit
+required information, split by mechanism. Link examples. For benchmark-wide checks where
+question counts do not make sense, leave both lists null and give the measured result or
+specific reason it could not be established. Never use an empty list to mean unknown.
 
-The report follows the Generality Labs audit framework: headline numbers and scorecard,
-eval datasheet, audit setup, and findings under all nine assessment dimensions.
-Use the supplied report skeleton and framework source, not a self-invented structure.
-The exact template is report/framework/Content.tex; the contribution registry and
-assessment definitions are in report/framework/auditframework.sty and ScoringCriteria.tex.
-The vendored GL components are in report/assets/gl.js, with provenance beside them.
-For each dimension state None, Minor, Major, Critical, Not assessed, or Not applicable.
-No issue found requires completed checks; absence of a finding is not validation.
-Question validity and grading accuracy have different denominators and must be separate.
-Use question-labels scores to build the coverage table with export_coverage from /inputs/coverage.py;
-keep NOT_ASSESSED and UNRESOLVED visible. Disagreements require review, not majority voting.
-GL visual components may display these computed tables, with an accessible static table.
-Do not fill approval/verification names or assign an overall grade without evidence. The summary introduces the benchmark in
-2–3 sentences, then gives one linked bullet per substantive finding, positive or
-negative. Each bullet leads with the conclusion and evidence or magnitude, with its
-scope. Finish with a short coverage statement. Put execution failures and detailed
-methods in the full audit; mention them briefly above only when they limit findings.
+For question audits write report/coverage.json using export_coverage from /inputs/coverage.py.
+It retains disputed labels and missing work and computes overlapping defect-type counts.
+Classify and verify recurring mechanisms across the assessed questions, rather than
+reporting only selected examples. Questions with defects and submissions demonstrably
+misgraded have different denominators. Selected examples do not establish prevalence.
+Legacy unclassified defects remain visible; do not invent classifications to fill a table.
+Publication checks structured records and generates report/audit-tables.html from them;
+include it with the supplied Quarto include. These checks do not establish judgment accuracy.
+Headline numbers must agree with these tables, not independently transcribed totals.
 
-Every detailed finding explains the mechanism, evidence locator, affected population,
-score consequence (or unmeasured consequence), and limitations. Add explicit anchors
-so the brief links directly to the relevant finding. Group repeated instances.
+## Language and appearance
 
-A figure gets a one-line title that states the takeaway, labelled axes with units, and
-nothing else on the canvas: no annotations, no stats boxes, no subtitle explaining the
-method. Series are named plainly and directly labelled where there are few enough. The
-caption carries the denominator. If a number matters, it goes in the prose, not on the
-plot. Prefer raw values to smoothed ones. Never draw an interval you did not compute.
-Save every figure as PNG.
+Use plain, concrete language and British English. Name what is counted: questions,
+subproblems, submissions or runs analysed. Say what is wrong instead of using phrases
+such as "evidenced validity defect" or "historical population". Call framework entries
+checks, not registry contributions. State conclusions first, with support following.
+Use the supplied labelled assessment badges consistently: None green, Minor amber,
+Major orange, Critical red; Not assessed and Not applicable grey with distinct labels.
+Colour supplements text. Keep affected counts and findings prominent alongside ratings.
 
-## What every report has to state
+A qualification belongs beside a claim only when it changes the interpretation. State
+shared limitations once. "Scoring effect not measured" is preferable to a paragraph of
+generic caution. Honest uncertainty stays visible; do not turn incomplete checks into
+clean judgments. Compare scores only under conditions supporting that comparison.
 
-Somewhere the reader can find it, and once only: what you ran and what you read. How
-many samples out of how many, on what dates, with what model versions and package
-revisions, the total tokens and the cost. If you ran jobs yourself, they are in the
-ledger and the collected logs; take the numbers from there, not from memory.
+Figures need a clear takeaway, labelled axes and units, explicit denominators and an
+accessible source table. Do not draw intervals you did not compute. Preserve source
+provenance for the supplied GL components. Avoid decorative charts that repeat a table
+without making it easier to understand.
 
-Compare scores numerically only when the conditions support an interpretable
-comparison. Otherwise state which candidate, judge, dataset or budget differs without
-subtracting unrelated headline scores.
+## Before publication
 
-Say the size of what you tested. A hypothesis checked on eight samples is reported as
-eight samples. Anything under roughly twenty cases, or fewer than three cases per
-subgroup you are comparing, is examples rather than a rate, and the sentence says so.
-
-## Before publishing
-
-Render the report with quarto and read it back. Remove every drafting comment. Check each
-number against the table it came from. Look at each figure with view_image. Then
-publish.
+Review outstanding assessment units and framework checks before switching to writing.
+Call check_report to validate records and generate the tables before rendering.
+Then check every summary point against the significance criteria above, verify its
+numbers and evidence, remove drafting notes and repeated caveats, render with Quarto,
+and inspect figures. Publication validates structure and provenance, not truth or
+editorial quality; read the rendered report before accepting it as finished.

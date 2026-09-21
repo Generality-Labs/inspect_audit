@@ -1,6 +1,5 @@
 ---
 title: "Evaluation audit"
-subtitle: "Generality Labs · Development draft"
 format:
   html:
     embed-resources: true
@@ -10,60 +9,37 @@ execute:
   echo: false
 ---
 
-## Eval scorecard
+<style>
+.assessment { display:inline-block; padding:.12em .45em; border-radius:.3em; font-weight:650; white-space:nowrap; }
+.assessment.none { color:#14532d; background:#dcfce7; }
+.assessment.minor { color:#713f12; background:#fef3c7; }
+.assessment.major { color:#7c2d12; background:#ffedd5; }
+.assessment.critical { color:#7f1d1d; background:#fee2e2; }
+.assessment.not-assessed,.assessment.not-applicable { color:#374151; background:#f3f4f6; }
+td { vertical-align:top; }
+</style>
 
-<!-- State the measurement aim, headline assessment and coverage. Provide computed
-counts AND percentages: NO_ISSUE_FOUND / DEFECT / UNRESOLVED / NOT_ASSESSED. Separate
-question validity from grading accuracy and model performance. Distinguish main
-problems, subproblems and submissions. Link evidence for every headline number.
-Use GL components where available, backed by an accessible table. No invented grade. -->
+## Executive summary
 
-## Eval datasheet
+<!-- Only consequential, supported findings: what, affected extent, and why it matters.
+No compulsory coverage bullet, process narration or development recommendations. -->
 
-<!-- Authors, intended domain and measurement, source/dataset revisions, architecture:
-prompt -> model/scaffold -> environment -> submission -> grader -> aggregation.
-Explain what is fixed versus variable between runs. -->
+## Results and scorecard
 
-## Audit setup
+{{< include audit-tables.html >}}
 
-<!-- Corpus, deduplication, model configurations, pilot and full audit jobs, sample
-coverage, exclusions, expenditure and verification. Mark prepared by as automated;
-human verification and approval are pending. Never copy names from the template. -->
+## Benchmark
 
-## Audit findings
+<!-- Briefly explain the measurement claim and task -> scaffold -> grader design.
+Link detailed run provenance separately. -->
 
-### A. Construct validity
-<!-- Does performance measure the intended capability? Confounds, proxy, contamination. -->
+## Findings
 
-### B. Content validity
-<!-- Domain coverage and representativeness; do not infer from item correctness. -->
+<!-- Organise substantive findings under applicable framework dimensions. Each finding
+has one explanation, affected counts, evidence and demonstrated consequence. Cross-link
+rather than repeat. The full check table accounts for all nine dimensions. -->
 
-### C. Task specification
-<!-- Wrong gold, impossible/ambiguous tasks, missing information, hidden requirements. -->
+## Limitations of this analysis
 
-### D. Scaffolding
-<!-- Prompt, agent loop, memory, feedback/retries and coaching. -->
-
-### E. Harness
-<!-- Tool calls, termination, context/message handling, state and implementation bugs. -->
-
-### F. Environment
-<!-- Tools, resources, dependencies, non-determinism, leakage and implementation drift. -->
-
-### G. Grading
-<!-- False accepts/rejects, criteria, judge errors, representation sensitivity,
-partial credit and exploitation. Confirm candidate correctness before relabelling. -->
-
-### H. Resource limits
-<!-- Token/time limits, sensitivity and unequal constraints; distinguish timeout
-from proof the code would pass with more time. -->
-
-### I. Informativeness
-<!-- Saturation, floors/ceilings, clustering and uncertainty; comparable runs only. -->
-
-## Scoring criteria and limitations
-
-<!-- For each dimension: None / Minor / Major / Critical / Not assessed / Not applicable.
-A clean item label means no issue found under specified completed checks.
-Separate established score corrections from hypotheses. List unresolved checks
-and reproducible next experiments; link question-level evidence and source logs. -->
+<!-- Roughly two sentences on scope and material limitations, linking detailed methods,
+versions, runs and expenditure. Specific limitations belong beside affected claims. -->

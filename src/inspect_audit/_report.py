@@ -65,12 +65,6 @@ class EvidenceRef(BaseModel):
 Section = Literal[
     "construct", "contentvalidity", "dataset", "scaffold", "harness",
     "environment", "grading", "resources", "informativeness",
-    "task",
-    "grader",
-    "harness_environment",
-    "aggregation_limits",
-    "agent_behaviour",
-    "construction",
 ]
 
 
@@ -83,10 +77,9 @@ class Finding(BaseModel):
     claim: str = Field(min_length=1)
     status: Literal["hypothesis", "supported", "qualified", "retracted"]
     origin: Literal["historical", "experiment", "source", "audit_limitation"]
-    # how much of the reported result this finding puts in question: high means the
-    # affected results cannot be trusted, medium that they are noisy or imprecise, low
-    # that it is an edge case worth recording. Absent while a finding is a hypothesis.
-    severity: Literal["high", "medium", "low"] | None = None
+    # Apply the framework scale to this finding's consequence; the dimension
+    # assessment remains a separate synthesis, not the maximum finding severity.
+    severity: Literal["Minor", "Major", "Critical"] | None = None
     evidence: list[EvidenceRef]
     reproduce: str = Field(min_length=1)
     limitations: str
@@ -133,6 +126,10 @@ def save_publication(root: Path) -> Path:
         if not (report / name).is_file():
             raise ValueError(f"Missing report artifact: {name}")
     findings = validate_findings(root)
+    if (report / "framework/auditframework.sty").exists():
+        from ._assessment import assessment_tables
+
+        assessment_tables(report)
     if (report / "_inputs").exists():
         raise ValueError("_inputs is reserved for publication's input evidence")
     destination = root / "published" / uuid4().hex
@@ -168,12 +165,38 @@ def save_publication(root: Path) -> Path:
     return destination
 
 
+def _prepare_report(root: str) -> None:
+    from ._assessment import assessment_tables
+
+    report = Path(root) / "work/report"
+    validate_findings(Path(root))
+    if (report / "framework/auditframework.sty").exists():
+        (report / "audit-tables.html").write_text(assessment_tables(report))
+
+
+@tool
+def check_report(root: str) -> Tool:
+    """Validate structured results and generate tables for review before publication."""
+    async def execute() -> str:
+        """Check findings, assessments and totals; update report/audit-tables.html."""
+        try:
+            _prepare_report(root)
+        except (ValueError, OSError, KeyError, TypeError) as ex:
+            raise ToolError(f"Report validation failed: {ex}") from ex
+        return "Records validated and tables generated. Render report/report.qmd and review the report before publishing."
+    return execute
+
+
 @tool
 def publish_report(root: str) -> Tool:
     """Render and persist a report before entering discussion mode."""
 
     async def execute() -> str:
         """Render report/report.qmd, save an immutable version, and open discussion."""
+        try:
+            _prepare_report(root)
+        except (ValueError, OSError, KeyError, TypeError) as ex:
+            raise ToolError(f"Report assessment validation failed: {ex}") from ex
         result = await sandbox().exec(
             ["quarto", "render", "/workspace/report/report.qmd", "--to", "html"],
             timeout=300,

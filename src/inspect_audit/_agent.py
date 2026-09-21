@@ -265,7 +265,7 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
             if expected is None:
                 expected = [str((metadata.get("audit_item") or {}).get("sample_id", current.sample_id))]
             try:
-                labels = validate_labels(recorded_details["question_assessments"], expected)
+                labels = validate_labels(recorded_details["question_assessments"], expected, require_classification=True)
                 overall = ("DEFECT" if any(r.status == "DEFECT" for r in labels) else
                            "UNRESOLVED" if any(r.status in ("UNRESOLVED", "NOT_ASSESSED") for r in labels)
                            else "NO_ISSUE_FOUND")

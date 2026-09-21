@@ -6,7 +6,7 @@ metadata:
   unevidenced: [UNRESOLVED]
   tools: [attempt, grade]
   details:
-    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include each ID from /audit/assessment_ids.json exactly once. Preserve ids exactly.'
+    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include each ID from /audit/assessment_ids.json exactly once. Preserve ids exactly. defect_types is a list of mechanism names, required and nonempty for DEFECT, empty otherwise. scoring_effect and next_check are optional strings.'
 ---
 
 # Classify the question, not the model's answer
@@ -38,3 +38,16 @@ finish; record_verdict replaces the previous table. Do not leave saving until a
 hard resource limit interrupts the agent. Overall grade is DEFECT if any row has an established defect;
 otherwise UNRESOLVED if any row is unresolved/unassessed; otherwise NO_ISSUE_FOUND.
 Return the table through record_verdict details, so it survives sandbox cleanup.
+
+## Defect mechanisms and follow-up
+
+Classify established defects by cause. Reuse these names when applicable:
+`missing_information`, `specification_test_contradiction`, `incorrect_reference_or_test`,
+`insufficient_test_coverage`, `environment_failure`, `harness_failure`.
+Use another concise mechanism name when these do not fit; multiple types may apply.
+Explain the actual missing requirement or contradiction, not just its category.
+In scoring_effect distinguish a demonstrated effect on a recorded submission from
+an unmeasured consequence. A bad test does not prove every failed answer was correct.
+For unresolved work, name the next useful check or the specific blocker in next_check.
+Early labels preserve progress; continue investigating unresolved units even if another
+unit already makes the sample's overall verdict DEFECT. Update labels as evidence improves.

@@ -53,13 +53,7 @@
         "environment",
         "grading",
         "resources",
-        "informativeness",
-        "task",
-        "grader",
-        "harness_environment",
-        "aggregation_limits",
-        "agent_behaviour",
-        "construction"
+        "informativeness"
       ],
       "title": "Section",
       "type": "string"
@@ -93,9 +87,9 @@
       "anyOf": [
         {
           "enum": [
-            "high",
-            "medium",
-            "low"
+            "Minor",
+            "Major",
+            "Critical"
           ],
           "type": "string"
         },

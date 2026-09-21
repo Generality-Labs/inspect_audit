@@ -12,7 +12,7 @@ tasks:
     items:
       - name: audit
         args:
-          task: <registry name of the audited task, e.g. inspect_evals/simpleqa_verified>
+          task: <registry name of the audited task, e.g. benchmark/task>
           logs: <remote.supplied_logs, or hawk:<eval set id of your job>>
           items: [gold-answer, answer-format, red-teaming, insufficiently-specified, other-findings]
           auditor_image: <remote.auditor_image>

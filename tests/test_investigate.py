@@ -671,19 +671,19 @@ def test_the_task_directory_is_found_without_inspect_evals_conventions(tmp_path:
     from inspect_audit._investigate import paths_from_metadata
 
     repo = tmp_path / "bench"
-    (repo / "bench/task/chess").mkdir(parents=True)
+    (repo / "bench/task/example").mkdir(parents=True)
     (repo / "bench/task/__init__.py").write_text("")
-    (repo / "bench/task/chess/__init__.py").write_text(
-        '@task(name="Chess Puzzles")\ndef chess_puzzles(epochs: int = 1) -> Task:\n    ...\n'
+    (repo / "bench/task/example/__init__.py").write_text(
+        '@task(name="Example Questions")\ndef example_puzzles(epochs: int = 1) -> Task:\n    ...\n'
     )
     (repo / "bench/task/other").mkdir()
     (repo / "bench/task/other/__init__.py").write_text('@task\ndef something_else() -> Task:\n    ...\n')
     (repo / "tests").mkdir()
-    (repo / "tests/test_chess.py").write_text('@task(name="Chess Puzzles")\ndef chess_puzzles():\n    ...\n')
+    (repo / "tests/test_example.py").write_text('@task(name="Example Questions")\ndef example_puzzles():\n    ...\n')
 
     # the registry name, which is not the function name and carries a space
-    chosen = paths_from_metadata(repo, "bench/Chess Puzzles")
-    assert chosen is not None and "bench/task/chess" in chosen
+    chosen = paths_from_metadata(repo, "bench/Example Questions")
+    assert chosen is not None and "bench/task/example" in chosen
     assert not any("other" in c for c in chosen)
     assert not any("tests" in c for c in chosen), "a test that declares the task is not the task"
 
@@ -732,8 +732,8 @@ def test_the_only_task_a_repository_declares_needs_no_naming(tmp_path: Path) -> 
 
     one = tmp_path / "one"
     (one / "bench").mkdir(parents=True)
-    (one / "bench/task.py").write_text('@task(name="Chess Puzzles")\ndef chess_puzzles():\n    ...\n')
-    assert _only_task(one) == "Chess Puzzles"
+    (one / "bench/task.py").write_text('@task(name="Example Questions")\ndef example_puzzles():\n    ...\n')
+    assert _only_task(one) == "Example Questions"
 
     several = tmp_path / "several"
     (several / "bench").mkdir(parents=True)

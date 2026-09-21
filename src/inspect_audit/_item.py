@@ -33,16 +33,6 @@ logger = getLogger(__name__)
 
 AUDIT_ROOT = "/audit"
 
-# metadata fields that carry a benchmark's own answer -- redacted from the item the
-# auditor reads (SWE-bench stores the gold patch and hidden tests here). the grader
-# still sees them via `benchmark_metadata`; this only blinds the auditor.
-#
-# these are the shapes we have met; a benchmark that keeps its answer, or the finding
-# under audit, under some other key extends them with `audit_task(redact=...)`. an
-# unredacted key that pre-empts the auditor's judgement does not produce a wrong
-# verdict, it produces an unfalsifiable one.
-ANSWER_METADATA = ("patch", "test_patch", "FAIL_TO_PASS", "PASS_TO_PASS")
-
 GRADING_TEMPLATE = Path(__file__).parent / "templates" / "grading.md"
 
 
@@ -75,8 +65,9 @@ def item_sample(
     sandbox: SandboxEnvironmentType | None = None,
     original_env: SandboxEnvironmentType | None = None,
     benchmark: bool = False,
-    redact: Collection[str] = ANSWER_METADATA,
+    redact: Collection[str] = (),
     contract: SolverContract | None = None,
+    assessment_ids: list[str] | None = None,
 ) -> Sample:
     """One audited item, as an Inspect `Sample`."""
     files = item_files(
@@ -88,12 +79,17 @@ def item_sample(
         redact=redact,
         contract=contract,
     )
+    units = assessment_ids if assessment_ids is not None else [str(item.sample_id)]
+    manifest = stage / "assessment_ids.json"
+    manifest.write_text(json.dumps(units))
+    files[f"{AUDIT_ROOT}/assessment_ids.json"] = str(manifest)
     # the benchmark's own sample metadata, for its grader (base_commit, the recorded
     # answer, whatever the scorer reads). carried on every item, not just the ones with
     # a benchmark container: a task with no sandbox still has a grader, and `grade`
     # hands it this. never staged to the filesystem, so redaction does not apply.
     metadata: dict[str, Any] = {
         "audit_item": item.model_dump(),
+        "assessment_ids": units,
         # the sliced logs, for the concordance gate to re-score host-side
         "sliced_logs": [host for key, host in files.items() if key.startswith(f"{AUDIT_ROOT}/logs/")],
         "benchmark_metadata": dict(sample.metadata or {}),
@@ -164,7 +160,7 @@ def item_files(
     *,
     stage: Path,
     original_env: SandboxEnvironmentType | None = None,
-    redact: Collection[str] = ANSWER_METADATA,
+    redact: Collection[str] = (),
     contract: SolverContract | None = None,
 ) -> dict[str, str]:
     """Stage one item's files on the host and return its `Sample.files` mapping.
@@ -191,8 +187,8 @@ def item_files(
         files[f"{AUDIT_ROOT}/{name}"] = str(host)
 
     # the sample in inspect's own shape, one-record dataset -- with answer-bearing
-    # metadata redacted (SWE-bench keeps its gold patch and hidden tests here), so the
-    # auditor cannot read the benchmark's own solution and launder it as a finding.
+    # operator-selected metadata redacted from this view. This is not a general
+    # blinding guarantee: source and historical logs may contain the same information.
     # the grader still has the full answer (carried separately as `benchmark_metadata`).
     record = sample.model_dump(exclude_none=True, exclude={"files", "sandbox", "setup"})
     if isinstance(record.get("metadata"), dict):
@@ -357,10 +353,6 @@ def benchmark_source_files(task: Task) -> dict[str, Path]:
         if source.is_file() and source.suffix == ".py":
             found.setdefault(name or source.name, source)
 
-    # Replay adapters may delegate to the original benchmark's modules.
-    for module in (task.metadata or {}).get("audit_source_modules", []):
-        take(_inspect.getsourcefile(importlib.import_module(module)))
-
     # every scorer's defining module -- this is the grader itself
     scorers = task.scorer if isinstance(task.scorer, list) else [task.scorer]
     for scorer in scorers:
@@ -483,7 +475,7 @@ def env_files(spec: SandboxEnvironmentType | None, *, stage: Path) -> dict[str, 
 
 
 def grading_doc(
-    task: Task, sample: Sample, *, redact: Collection[str] = ANSWER_METADATA
+    task: Task, sample: Sample, *, redact: Collection[str] = ()
 ) -> str:
     """Render `gold/grading.md` for one item.
 

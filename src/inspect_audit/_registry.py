@@ -10,18 +10,14 @@ from inspect_ai.log import list_eval_logs
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox
 
-from ._agent import grade_benchmark, reset_benchmark
 from ._audit import audit_task
 from ._concordance import Concordance
-from ._feedback import binary_feedback as binary_feedback
 from ._investigate import investigate as investigate
-from ._resolve import resolve_task, resolve_task_from_log
+from ._resolve import resolve_task_from_log
 from ._sandbox import (
     BENCHMARK_SERVICE,
     has_benchmark_box,
 )
-from ._scicode_audit import scicode_replay as scicode_replay
-from ._scicode_feedback import scicode_feedback as scicode_feedback
 
 
 @task
@@ -40,6 +36,7 @@ def audit(
     attempts_task: str | None = None,
     auditor_image: str | None = None,
     benchmark_image: str | None = None,
+    assessment_ids: dict[str, list[str]] | None = None,
     concordance_limit: int = 15,
 ) -> Task:
     """Audit a benchmark task from its logs.
@@ -56,12 +53,15 @@ def audit(
         notes: A free-form operator steer inserted into the auditor's system prompt.
         confidential: The benchmark is unpublished -- instruct the auditor not to
             transmit item content off the box.
-        redact: Further metadata keys to strip from the item the auditor reads.
+        redact: Explicit metadata keys to strip from the item the auditor reads.
         attempts_task: Task whose attempts to join, when the logs record a sibling
             variant of the audited task (e.g. no-tools attempts at a tools task).
         auditor_image: Published auditor image; switches to Helm-values emission
             for k8s providers.
         benchmark_image: Published image for benchmark services that `build:`.
+        assessment_ids: Optional mapping from sample IDs to assessment-unit IDs.
+            Defaults to one unit per sample. Supply every selected sample; IDs
+            must be nonempty and globally unique.
         concordance_limit: Maximum recorded attempts to regrade at setup.
     """
     resolved_logs = fetch_logs(logs) if logs else None
@@ -94,6 +94,7 @@ def audit(
         attempts_task=attempts_task,
         auditor_image=auditor_image,
         benchmark_image=benchmark_image,
+        assessment_ids=assessment_ids,
         concordance_limit=concordance_limit,
     )
 
@@ -136,12 +137,6 @@ def audit_probe() -> Solver:
         await run("benchmark_egress", BENCHMARK_SERVICE,
                   "timeout 10 python -c \"import urllib.request; print(urllib.request.urlopen('https://example.com', timeout=8).status)\" 2>&1 | tail -1 || echo BLOCKED")
 
-        # grade/reset: grade the box pristine (expect fail), apply the sample's own
-        # gold patch and grade again (expect pass), then reset and grade once more
-        # (expect fail). proves the benchmark's grader runs against the box, that a
-        # real solution is credited, and that reset returns the box to pristine.
-        await _probe_grade(state, checks)
-
         # concordance: prove the resolution and the grade channel against the
         # logs -- replay recorded attempts and require our regrade to reproduce
         # their scores. writes a machine-readable artifact the orchestrator reads.
@@ -159,47 +154,6 @@ async def _probe_concordance(state: TaskState, checks: dict[str, str]) -> None:
     con = state.store_as(Concordance)
     checks["concordance"] = con.verdict
     checks["concordance_reasons"] = ", ".join(con.reasons)[:200]
-
-
-async def _probe_grade(state: TaskState, checks: dict[str, str]) -> None:
-    async def grade_value(grade: Any) -> str:
-        scores = json.loads(await grade(answer=""))["scores"]
-        one = scores[0] if isinstance(scores, list) else scores
-        return str(one.get("value"))
-
-    try:
-        item = (state.metadata or {}).get("audit_item") or {}
-        audited = item.get("task")
-        if audited is None:
-            checks["grade"] = "SKIP no audited task recorded"
-            return
-        resolved = resolve_task(audited, item.get("task_args") or {})
-        scorers = resolved.scorer if isinstance(resolved.scorer, list) else [resolved.scorer]
-        scorers = [s for s in scorers if s is not None]
-        if not scorers:
-            checks["grade"] = "SKIP no benchmark scorer"
-            return
-        grade = grade_benchmark(scorers)
-
-        checks["grade_pristine"] = await grade_value(grade)
-
-        # inject the sample's gold solution and grade again -- git-patch benchmarks
-        # only; other shapes just exercise the pristine grade above
-        benchmark_md = (state.metadata or {}).get("benchmark_metadata") or {}
-        patch = benchmark_md.get("patch")
-        if not patch:
-            checks["grade"] = "SKIP gold injection is git-patch only"
-            return
-        applied = await sandbox(BENCHMARK_SERVICE).exec(
-            ["bash", "-c", "cd /testbed && git apply -"], input=patch
-        )
-        checks["gold_applied"] = "ok" if applied.success else f"FAILED {applied.stderr[:120]}"
-        checks["grade_gold"] = await grade_value(grade)
-
-        await reset_benchmark()(hard=False)
-        checks["grade_reset"] = await grade_value(grade)
-    except Exception as ex:
-        checks["grade"] = f"EXCEPTION {type(ex).__name__}: {ex}"[:200]
 
 
 def fetch_logs(logs: str | list[str]) -> str:

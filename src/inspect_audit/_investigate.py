@@ -1514,7 +1514,7 @@ def investigate(
             the paper the eval names in its own metadata.
         docs: Documentation directories to mount read-only (inspect docs, Hawk docs).
         overview: Optional operator steer.
-        target_task: The task under audit, e.g. `inspect_evals/simpleqa_verified`.
+        target_task: The task under audit, e.g. `benchmark/task`.
             Defaults to the only task the repository declares, when there is one.
         revision: Commit to snapshot (default HEAD).
         paths: Repository paths to include in the snapshot. Defaults to the audited

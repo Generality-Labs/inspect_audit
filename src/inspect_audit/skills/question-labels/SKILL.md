@@ -6,14 +6,15 @@ metadata:
   unevidenced: [UNRESOLVED]
   tools: [attempt, grade]
   details:
-    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include every graded subproblem in sample.metadata.sub_steps, excluding provided_code; otherwise the sample id. Preserve ids exactly.'
+    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include each ID from /audit/assessment_ids.json exactly once. Preserve ids exactly.'
 ---
 
 # Classify the question, not the model's answer
 
 Examine the question, acceptance rule, source, and available attempts. Audit the
-whole main problem together so earlier code dependencies remain visible. For
-SciCode, return one row per graded subproblem, never the author-provided steps.
+sample together so dependencies remain visible. The assessment units are listed
+in /audit/assessment_ids.json; their meaning comes from the operator notes and
+benchmark evidence, not a built-in dataset convention.
 Consult the other selected skills to investigate task specification, grading and
 failure attribution. Reproduce consequential claims where the tools permit it.
 
@@ -26,8 +27,7 @@ adequate assessment was undertaken. Never turn missing work into NO_ISSUE_FOUND.
 
 Keep historical grading accuracy separate: an observed format exception does not
 prove a numerically correct candidate was rejected. Cite the exact log, sample,
-epoch and submission or command/output. Include intermediate feedback attempts and
-scaling snapshots in the review inventory, not just final outputs. Bound detailed
+epoch and submission or command/output. Include relevant intermediate work in the review inventory, not just final outputs. Bound detailed
 inspection by the operator's scope and available budget; describe selection and
 unreviewed evidence instead of claiming exhaustive transcript review. Resource and scaffolding differences
 belong in the explanation, not silently in a pooled model ranking.

@@ -80,7 +80,7 @@ See `references/frontier-models.md` for the current list of frontier models and 
 
     1. If the user provides specific instructions about any step, assume the user's instructions override these instructions.
     2. If there is no evaluation name, ask the user for one.
-    3. The evaluation name should be the eval folder name plus its version (from the @task function's version argument). For instance, GPQA version 1.1.2 becomes "gpqa_1_1_2". If this exact folder name already exists, add a number to it via "gpqa_1_1_2_analysis2". This name will be referred to as `<eval_name>`.
+    3. The evaluation name should be the eval folder name plus its version (from the @task function's version argument). For instance, a task named example at version 1.1.2 becomes "example_1_1_2". If this exact folder name already exists, add a number to it via "example_1_1_2_analysis2". This name will be referred to as `<eval_name>`.
     4. Create a folder called `agent_artefacts/<eval_name>/evalreport` if it isn't present.
     5. Whenever you create a .md file as part of this workflow, assume it is made in `agent_artefacts/<eval_name>/evalreport`.
     6. Copy EVALUATION_CHECKLIST.md to the folder.

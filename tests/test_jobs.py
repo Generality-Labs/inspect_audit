@@ -115,12 +115,13 @@ def filled_example(filename: str, **overrides) -> dict:  # noqa: ANN003
         .replace("<remote.auditor_image>", IMAGE)
         .replace("<remote.hawk>", HAWK)
         .replace("<registry package, e.g. inspect_evals>", "inspect_evals")
-        .replace("<task, e.g. simpleqa_verified>", "simpleqa_verified")
-        .replace("<registry name of the audited task, e.g. inspect_evals/simpleqa_verified>", "inspect_evals/simpleqa_verified")
+        .replace("<task, e.g. task_name>", "task_name")
+        .replace("<registry name of the audited task, e.g. benchmark/task>", "inspect_evals/task_name")
         .replace("<remote.supplied_logs, or hawk:<eval set id of your job>>", "hawk:inv-staged-abc/inputs/logs")
     )
     config = yaml.safe_load(text)
     config.update(overrides)
+    assert "<" not in json.dumps(config), "Unfilled example placeholder"
     return config
 
 
@@ -157,14 +158,14 @@ def test_the_example_configs_pass_the_policy_once_filled_in() -> None:
         ({"agents": [{"package": "git+https://evil/a", "name": "a", "items": [{"name": "x"}]}]}, "keys not allowed"),
         ({"limit": 5000}, "must be a whole number from 1 to 1000"),
         ({"eval_set_id": "someone-elses"}, "remove eval_set_id"),
-        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "simpleqa_verified", "args": {"sandbox": "docker"}}]}]}, "task arg not allowed"),
+        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "task_name", "args": {"sandbox": "docker"}}]}]}, "task arg not allowed"),
         # the configuration that actually executes: a task argument, not the outer field
-        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "simpleqa_verified", "args": {"model": "openai/gpt-6-astra"}}]}]}, "is not an allowed model"),
-        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "simpleqa_verified", "args": {"grader_model": "openai/gpt-6-astra"}}]}]}, "is not an allowed model"),
-        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "simpleqa_verified", "args": {"benchmark_image": "ghcr.io/evil:latest"}}]}]}, "is not an allowed image"),
-        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "simpleqa_verified", "args": {"limit": 100000}}]}]}, "must be a whole number from 1 to"),
-        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "simpleqa_verified", "secrets": [{"name": "AWS_SECRET_ACCESS_KEY"}]}]}]}, "task-level secrets"),
-        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "simpleqa_verified", "args": {"dataset": "s3://someone/else"}}]}]}, "points outside this investigation"),
+        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "task_name", "args": {"model": "openai/gpt-6-astra"}}]}]}, "is not an allowed model"),
+        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "task_name", "args": {"grader_model": "openai/gpt-6-astra"}}]}]}, "is not an allowed model"),
+        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "task_name", "args": {"benchmark_image": "ghcr.io/evil:latest"}}]}]}, "is not an allowed image"),
+        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "task_name", "args": {"limit": 100000}}]}]}, "must be a whole number from 1 to"),
+        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "task_name", "secrets": [{"name": "AWS_SECRET_ACCESS_KEY"}]}]}]}, "task-level secrets"),
+        ({"tasks": [{"package": TASK_PKG, "name": "inspect_evals", "items": [{"name": "task_name", "args": {"dataset": "s3://someone/else"}}]}]}, "points outside this investigation"),
         ({"secrets": [{"name": "AWS_SECRET_ACCESS_KEY"}]}, "top-level secrets are not allowed"),
         ({"limit": None}, "does not state its size"),
         ({"cost_limit": None}, "cost_limit is required"),
@@ -371,10 +372,10 @@ def test_hawk_cli_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
         return _run
 
     monkeypatch.setattr(h, "_metadata_page", lambda *a: _returns([
-        {"task_name": "audit/bench/Chess Puzzles", "model": "gpt-5.6-terra",
+        {"task_name": "audit/bench/Example Questions", "model": "gpt-5.6-terra",
          "status": "success", "completed_samples": 10, "total_samples": 10}
     ]))
-    assert run(h.evals("x")) == [{"task": "audit/bench/Chess Puzzles", "model": "gpt-5.6-terra", "status": "success", "samples": "10/10"}]
+    assert run(h.evals("x")) == [{"task": "audit/bench/Example Questions", "model": "gpt-5.6-terra", "status": "success", "samples": "10/10"}]
     monkeypatch.setattr(h, "_run", returning("Eval set ID: inv-abc-123\nSee your eval set log: https://..."))
     assert run(h.submit(Path("/tmp/c.yaml"))) == "inv-abc-123"
     # samples pages through the API rather than the CLI: the CLI cannot ask for page 2
@@ -984,7 +985,7 @@ def test_logs_already_parked_where_hawk_can_read_them_are_not_copied(
     (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-test\n")
     target = _investigate.investigate(
         str(repo),
-        logs=["hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs"],
+        logs=["hawk:audit-epoch-example-p2/inputs/epoch-example-logs"],
         output_dir=str(tmp_path / "runs"),
         enforce_cost_limit=False,
         hawk_api_url=HAWK,
@@ -993,22 +994,22 @@ def test_logs_already_parked_where_hawk_can_read_them_are_not_copied(
     seed = json.loads((root / "inputs/seed.json").read_text())
     assert seed["logs"] == [
         {
-            "source": "hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs",
+            "source": "hawk:audit-epoch-example-p2/inputs/epoch-example-logs",
             "staged": None,
-            "remote": "hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs",
+            "remote": "hawk:audit-epoch-example-p2/inputs/epoch-example-logs",
         }
     ]
     assert not (root / "inputs" / "logs").exists(), "nothing was copied"
     assert not (root / "staged.json").exists()
-    assert seed["remote"]["supplied_logs"] == ["hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs"]
+    assert seed["remote"]["supplied_logs"] == ["hawk:audit-epoch-example-p2/inputs/epoch-example-logs"]
 
     # and a job may read exactly that address, not its neighbours
     sources = set(json.loads((root / "log_sources.json").read_text()))
-    assert "hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs" in sources
+    assert "hawk:audit-epoch-example-p2/inputs/epoch-example-logs" in sources
     config = filled_example("audit.eval-set.yaml", name="inv-parked")
-    config["tasks"][0]["items"][0]["args"]["logs"] = "hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs"
+    config["tasks"][0]["items"][0]["args"]["logs"] = "hawk:audit-epoch-example-p2/inputs/epoch-example-logs"
     assert validate_config(config, policy(), sources) == []
-    config["tasks"][0]["items"][0]["args"]["logs"] = "hawk:audit-epoch-chess-p2/inputs/something-else"
+    config["tasks"][0]["items"][0]["args"]["logs"] = "hawk:audit-epoch-example-p2/inputs/something-else"
     assert any("staged or ran" in p for p in validate_config(config, policy(), sources))
 
 
@@ -1023,7 +1024,7 @@ def test_reading_a_parked_log_source_stays_inside_the_investigation(
     (tmp_path / "work").mkdir()
     (tmp_path / "inputs").mkdir()
     r = remote(tmp_path)
-    address = "hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs"
+    address = "hawk:audit-epoch-example-p2/inputs/epoch-example-logs"
     tool = supplied_logs(r, tmp_path, [address])
 
     from inspect_audit._investigate import _alias
@@ -1034,7 +1035,7 @@ def test_reading_a_parked_log_source_stays_inside_the_investigation(
 
     # a source it was not given, however plausible
     with pytest.raises(ToolError, match="unknown log source"):
-        run(tool(action="samples", source="audit-chess-terra-review", sample=None, limit=None))
+        run(tool(action="samples", source="audit-example-terra-review", sample=None, limit=None))
     with pytest.raises(ToolError, match="unknown log source"):
         run(tool(action="samples", source="../../etc", sample=None, limit=None))
 
@@ -1142,8 +1143,8 @@ def test_two_log_sources_cannot_share_a_name(tmp_path: Path) -> None:
     """Truncated aliases collided and the second source vanished from the mapping."""
     from inspect_audit._investigate import _alias, supplied_logs
 
-    a = "hawk:simpleqa-verified-sweep-2026-05-luna-abcdefgh/inputs/logs"
-    b = "hawk:simpleqa-verified-sweep-2026-05-terra-ijklmnop/inputs/logs"
+    a = "hawk:example-benchmark-sweep-2026-05-luna-abcdefgh/inputs/logs"
+    b = "hawk:example-benchmark-sweep-2026-05-terra-ijklmnop/inputs/logs"
     assert _alias(a) != _alias(b)
     assert len(_alias(a)) <= 31
 
@@ -1163,13 +1164,13 @@ def test_reading_a_subdirectory_says_it_covers_the_whole_eval_set(
     (tmp_path / "work").mkdir()
     (tmp_path / "inputs").mkdir()
     r = remote(tmp_path)
-    address = "hawk:audit-epoch-chess-p2/inputs/epoch-chess-logs"
+    address = "hawk:audit-epoch-example-p2/inputs/epoch-example-logs"
     out = run(
         supplied_logs(r, tmp_path, [address])(
             action="samples", source=_alias(address), sample=None, limit=None
         )
     )
-    assert "covers the whole set" in out and "epoch-chess-logs" in out
+    assert "covers the whole set" in out and "epoch-example-logs" in out
 
 
 def test_a_mode_name_is_not_a_model(tmp_path: Path) -> None:

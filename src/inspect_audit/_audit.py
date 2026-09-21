@@ -18,7 +18,7 @@ from inspect_ai.util import SandboxEnvironmentType
 from ._agent import audit_agent, audit_items, item_scorer
 from ._concordance import concordance_gate
 from ._contract import task_contract
-from ._item import ANSWER_METADATA, AUDIT_ROOT, AttemptRef, AuditItem, item_sample
+from ._item import AUDIT_ROOT, AttemptRef, AuditItem, item_sample
 from ._resolve import resolve_task
 from ._sandbox import (
     audit_compose,
@@ -148,6 +148,7 @@ def audit_task(
     attempts_task: str | None = None,
     auditor_image: str | None = None,
     benchmark_image: str | None = None,
+    assessment_ids: dict[str, list[str]] | None = None,
     concordance_limit: int = 15,
 ) -> Task:
     """Build the audit as an Inspect `Task`.
@@ -173,12 +174,13 @@ def audit_task(
             whichever variant produced them, and each sliced log keeps its own header
             so the auditor can see which variant it is reading. Defaults to the
             audited task's own name, which is the safe choice.
-        redact: Further metadata keys to strip from the item the auditor reads, on
-            top of the answer-bearing keys always stripped. Use it for a key that
-            would pre-empt the judgement under audit as well as for one that carries
-            the answer.
+        redact: Explicit metadata keys to omit from staged sample.json. No keys
+            are guessed from benchmark conventions; source and logs are not redacted.
         auditor_image: Emit the sandbox as Helm values for k8s providers, with this
             published image as the auditor (see `audit_values`).
+        assessment_ids: Optional mapping from sample IDs to assessment-unit IDs.
+            Defaults to one unit per sample. Supply every selected sample; IDs
+            must be nonempty and globally unique.
         concordance_limit: Maximum recorded attempts regraded before the audit.
         benchmark_image: Published image standing in for benchmark services that
             `build:` their own (k8s only).
@@ -187,7 +189,7 @@ def audit_task(
         raise ValueError("concordance_limit must be positive")
     target = resolve_task(task, task_args)
     staging = _staging()
-    redacted = (*ANSWER_METADATA, *(redact or ()))
+    redacted = tuple(redact or ())
     contract = task_contract(target)
 
     # one merged compose per distinct environment: ctf-style benchmarks give every
@@ -226,6 +228,17 @@ def audit_task(
     if limit is not None:
         selected = selected[:limit]
     in_scope = set(selected)
+    units = assessment_ids if assessment_ids is not None else {sid: [sid] for sid in selected}
+    if in_scope - units.keys() or units.keys() - set(ids):
+        raise ValueError("assessment_ids must cover every selected sample and name only known samples")
+    flat: list[str] = []
+    for sid in selected:
+        values = units[sid]
+        if not isinstance(values, list) or not values or any(not isinstance(v, str) or not v.strip() for v in values):
+            raise ValueError("assessment_ids must contain nonempty lists of nonempty strings")
+        flat.extend(values)
+    if len(flat) != len(set(flat)):
+        raise ValueError("assessment_ids must be globally unique across selected samples")
 
     # group the attempts by sample
     by_sample: dict[str, list[AttemptRef]] = {}
@@ -275,6 +288,7 @@ def audit_task(
                 original_env=original_env,
                 benchmark=benchmark,
                 redact=redacted,
+                assessment_ids=units[sample_id],
                 contract=contract,
             )
         )

@@ -261,9 +261,9 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
             if current is None:
                 raise ToolError("Question labels require a live audit sample")
             metadata = current.metadata or {}
-            steps = (metadata.get("benchmark_metadata") or {}).get("sub_steps")
-            expected = ([str(s["step_number"]) for s in steps if s.get("provided_code") is None]
-                        if steps else [str((metadata.get("audit_item") or {}).get("sample_id", current.sample_id))])
+            expected = metadata.get("assessment_ids")
+            if expected is None:
+                expected = [str((metadata.get("audit_item") or {}).get("sample_id", current.sample_id))]
             try:
                 labels = validate_labels(recorded_details["question_assessments"], expected)
                 overall = ("DEFECT" if any(r.status == "DEFECT" for r in labels) else

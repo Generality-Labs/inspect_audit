@@ -224,3 +224,44 @@ def test_resolve_task_accepts_either_registry_name_form(monkeypatch) -> None:  #
     assert _resolve.resolve_task("pkg/thing") is registered["thing"]
     with pytest.raises(ValueError, match="Tried"):
         _resolve.resolve_task("pkg/missing")
+
+
+def test_explicit_assessment_units_are_staged_without_interpreting_benchmark_metadata():
+    import json
+
+    task = make_task(2)
+    task.dataset[0].metadata = {"parts": ["unrelated"]}
+    units = {"100": ["alpha", "beta"], "101": ["gamma"]}
+    audit = audit_task(task, assessment_ids=units)
+    for sample in audit.dataset:
+        assert sample.metadata["assessment_ids"] == units[sample.id]
+        manifest = Path(sample.files[f"{AUDIT_ROOT}/assessment_ids.json"])
+        assert json.loads(manifest.read_text()) == units[sample.id]
+    default = audit_task(task).dataset[0]
+    assert default.metadata["assessment_ids"] == ["100"]
+
+
+@pytest.mark.parametrize("units", [
+    {"100": ["a"]},
+    {"100": ["a"], "101": ["a"]},
+    {"100": [], "101": ["b"]},
+    {"100": [" "], "101": ["b"]},
+    {"100": ["a"], "101": ["b"], "unknown": ["c"]},
+])
+def test_invalid_assessment_manifest_fails_before_execution(units):
+    with pytest.raises(ValueError, match="assessment_ids"):
+        audit_task(make_task(2), assessment_ids=units)
+
+
+def test_metadata_redaction_is_explicit_and_does_not_change_grader_input():
+    import json
+
+    task = make_task(1)
+    task.dataset[0].metadata = {"answer_material": "hidden", "context": "visible"}
+    ordinary = audit_task(task).dataset[0]
+    record = json.loads(Path(ordinary.files[f"{AUDIT_ROOT}/sample.json"]).read_text())[0]
+    assert record["metadata"]["answer_material"] == "hidden"
+    redacted = audit_task(task, redact=["answer_material"]).dataset[0]
+    record = json.loads(Path(redacted.files[f"{AUDIT_ROOT}/sample.json"]).read_text())[0]
+    assert record["metadata"] == {"context": "visible"}
+    assert redacted.metadata["benchmark_metadata"]["answer_material"] == "hidden"

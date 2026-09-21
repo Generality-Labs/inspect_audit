@@ -38,6 +38,12 @@ interactive mode permits operator follow-ups and another publication. If evidenc
 insufficient, publish that limited conclusion rather than inventing findings.
 
 When the operator requests an exhaustive audit, maintain an explicit question manifest.
+Infer the assessment units from the benchmark and operator overview. By default
+an audit labels one unit per sample. For finer granularity, pass assessment_ids
+as a mapping from sample ID to a nonempty list of globally unique unit IDs. Keep
+that manifest fixed across batches and retries; explain exclusions in the report.
+Set redact explicitly if sample metadata must be withheld; do not assume this
+also hides information in source or historical logs.
 Dispatch the question-labels auditor alongside the substantive checks for every item,
 collect its structured results, and compute coverage with export_coverage in the
 staged /inputs/coverage.py module. The report/framework directory contains the pinned

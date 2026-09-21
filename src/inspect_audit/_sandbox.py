@@ -86,7 +86,7 @@ async def run_benchmark_setup(script: str | None) -> None:
     """Run the audited sample's setup in the benchmark service.
 
     The setup is what populates a benchmark's per-sample state; benchmarks whose
-    state is baked into a per-sample image (e.g. SWE-bench) carry no setup.
+    state is baked into a per-sample image (for example, tasks with prebuilt per-sample images) carry no setup.
     Replayed exactly as inspect's own sample-init does (sandbox.py:136-143 +
     context.py): resolve the source (file path, data URI, http, or literal
     text), inject a `#!/usr/bin/env bash` shebang when the script has none, then

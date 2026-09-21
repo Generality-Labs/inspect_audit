@@ -7,7 +7,7 @@ tasks:
   - package: <remote.task_package>
     name: <registry package, e.g. inspect_evals>
     items:
-      - name: <task, e.g. simpleqa_verified>
+      - name: <task, e.g. task_name>
         args: {}                 # task arguments the task exposes; sample_id: [..] selects items
 models:
   - package: openai

@@ -1498,6 +1498,7 @@ def investigate(
     extra_skills: list[str] | None = None,
     hawk_api_url: str | None = None,
     audit_package: str | None = None,
+    task_package: str | None = None,
     auditor_image: str | None = None,
     worker_models: list[str] | None = None,
     secrets_file: str | None = None,
@@ -1542,6 +1543,8 @@ def investigate(
             its tools run here, never in the box.
         audit_package: git spec of inspect_audit for sample-audit jobs. Defaults to the
             commit this process is running.
+        task_package: Explicit benchmark pip spec for remote workers, including optional
+            dependencies when needed. Defaults to the source repository and revision.
         auditor_image: Published auditor image for sample-audit jobs on k8s.
         worker_models: OpenRouter model ids the agent may run (benchmark workers, auditors,
             graders). Prices for these are registered so costs are accounted.
@@ -1573,6 +1576,7 @@ def investigate(
     extra_skills = settings.get("extra_skills", extra_skills)
     hawk_api_url = settings.get("hawk_api_url", hawk_api_url)
     audit_package = settings.get("audit_package", audit_package)
+    task_package = settings.get("task_package", task_package)
     auditor_image = settings.get("auditor_image", auditor_image)
     worker_models = settings.get("worker_models", worker_models)
     secrets_file = settings.get("secrets_file", secrets_file)
@@ -1617,11 +1621,10 @@ def investigate(
         paths = paths or paths_from_metadata(local_repo, target_task)
         paper = paper or paper_from_metadata(local_repo, target_task)
     hawk_api_url = hawk_api_url or os.environ.get("HAWK_API_URL")
-    task_package: str | None = None
     if hawk_api_url:
         # a runner installs the benchmark from git: a local checkout supplies its own
         # origin and commit, and a repository given as a URL is already that answer
-        task_package = (
+        task_package = task_package or (
             git_package_spec(local_repo, revision)
             if local_repo.is_dir()
             else f"git+{repo.removesuffix('.git')}@{revision}"

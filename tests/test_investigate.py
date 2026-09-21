@@ -923,3 +923,16 @@ def _declare_fixture_assessments(root: Path) -> None:
     rows = [dict(id=key, assessment="Not assessed", result="Infrastructure smoke test; no benchmark judgments", evidence=[])
             for key in framework_checks(report)]
     (report / "assessments.json").write_text(json.dumps(rows))
+
+
+def test_remote_benchmark_package_can_include_extras(tmp_path, monkeypatch):
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, 'register_openrouter_costs', lambda: 0)
+    package = 'git+https://example.org/benchmark.git@revision#egg=benchmark[optional]'
+    task = investigate(str(git_repo(tmp_path / 'repo')), output_dir=str(tmp_path / 'runs'),
+                       task_package=package, audit_package='inspect_audit',
+                       hawk_api_url='https://example.org', enforce_cost_limit=False)
+    root = Path(task.metadata['investigation_dir'])
+    seed = json.loads((root / 'inputs/seed.json').read_text())
+    assert seed['remote']['task_package'] == package

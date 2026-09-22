@@ -375,3 +375,34 @@ def test_two_media_files_with_the_same_name_do_not_collide(tmp_path: Path) -> No
     assert refs[0] != refs[1]
     assert Path(files[refs[0]]).read_bytes() == b"picture-A"
     assert Path(files[refs[1]]).read_bytes() == b"picture-B"
+
+
+def test_registry_scorer_stages_sibling_helpers_outside_run_dir(tmp_path, monkeypatch) -> None:
+    import importlib
+
+    import inspect_audit._item as item_module
+
+    package = tmp_path / "audit_source_fixture"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "scorer.py").write_text(
+        "from inspect_ai.scorer import scorer, Score, accuracy\n"
+        "@scorer(metrics=[accuracy()])\n"
+        "def check():\n"
+        "    async def score(state, target):\n"
+        "        return Score(value=1)\n"
+        "    return score\n"
+    )
+    (package / "parser.py").write_text("def parse(text): return text.strip()\n")
+    (package / "solver.py").write_text("PROMPT = 'solve the task'\n")
+    (package / "answers.json").write_text('["not source"]')
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    monkeypatch.syspath_prepend(str(tmp_path))
+    module = importlib.import_module("audit_source_fixture.scorer")
+    task = Task(dataset=[Sample(input="test")], scorer=module.check())
+    monkeypatch.setattr(item_module, "task_run_dir", lambda task: str(caller))
+    files = item_module.benchmark_files(task, stage=tmp_path / "stage")
+    assert Path(files["/audit/benchmark/parser.py"]).read_text().startswith("def parse")
+    assert "/audit/benchmark/solver.py" in files
+    assert "/audit/benchmark/answers.json" not in files

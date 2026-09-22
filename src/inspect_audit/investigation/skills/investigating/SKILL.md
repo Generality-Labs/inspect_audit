@@ -5,6 +5,15 @@ description: Establish a benchmark's measurement claim, prioritise hypotheses an
 
 ## Orient
 
+Before planning, read report/framework/Framework.tex, ScoringCriteria.tex and checks.json.
+These define the scope, meanings and rating rubric. Plan evidence collection against the
+actual question for each dimension/check; record what was examined, the result and remaining
+gaps. For example, clustering concerns model-score discrimination, not dataset clustering;
+unequal constraint effects concerns how a constraint binds different models. Related
+observations can be findings without answering those checks. Do not assign a clean rating
+merely because no worker reported a problem.
+
+
 Establish what the benchmark claims to measure from the paper and README. Trace the
 implementation: dataset, model-visible information, tools/environment, submission,
 scorer and aggregation. Keep a short source-linked brief. Compare the pinned version
@@ -39,7 +48,7 @@ parser, reconstructed tools, sandbox and configuration before blaming the benchm
 
 Delegate item-level checks through inspect_audit/audit when useful. Select its items
 (checks) and sample IDs for the question at hand; each auditor can inspect recorded
-attempts and probe the benchmark scorer. Treat verdicts as leads: verify the evidence
+attempts and probe the benchmark scorer within operator scope. Pass relevant framework IDs, definitions, and the evidence question in worker notes; scope those notes to the worker's supplied assessment manifest rather than repeating the whole campaign population; item-level labels alone do not answer benchmark-wide checks. Treat verdicts as leads: verify the evidence
 behind consequential claims and examine some unflagged cases before estimating
 coverage. Retain your own benchmark-wide analysis; item checks cannot establish
 population representativeness or cross-model comparability by themselves.

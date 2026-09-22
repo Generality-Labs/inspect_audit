@@ -363,7 +363,15 @@ def benchmark_source_files(task: Task) -> dict[str, Path]:
         if not module:
             continue
         try:
-            take(_inspect.getsourcefile(importlib.import_module(module)))
+            path = _inspect.getsourcefile(importlib.import_module(module))
+            take(path)
+            # Registry tasks can have a caller's run directory. Their scorer's
+            # package still locates adjacent parsers, solvers and prompt code.
+            # Only collect immediate Python siblings, not data or the whole
+            # installed distribution; core scorers do not identify a benchmark.
+            if path and not module.startswith("inspect_ai."):
+                for source in sorted(Path(path).parent.glob("*.py")):
+                    take(str(source))
         except Exception:  # a module we cannot import is not worth failing the cell
             logger.debug("could not locate source for scorer module %s", module)
 

@@ -1749,7 +1749,7 @@ def investigate(
         metadata={
             "investigation_dir": str(root),
             "interactive": interactive,
-            "capabilities": ["repository", "existing_logs", "docs", "quarto_report", "acp"]
+            "capabilities": ["repository", "existing_logs", "docs", "latex_report", "acp"]
             + (["hawk_jobs"] if remote else []),
         },
     )

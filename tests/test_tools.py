@@ -242,15 +242,36 @@ def test_audit_probe_reaches_any_named_box_and_refuses_unknown_ones(monkeypatch)
     monkeypatch.setattr(agent_module, "sandbox", lambda name=None: Box(name))
 
     probe = audit_probe()
-    assert anyio.run(lambda: probe(cmd="ls /", service="victim")) == "out:victim"
+    assert anyio.run(lambda: probe(cmd="ls /", service="victim", timeout=None)) == "out:victim"
     assert ran == [("victim", "ls /")]
 
     with pytest.raises(ToolError, match="benchmark, victim"):
-        anyio.run(lambda: probe(cmd="ls /", service="victmi"))
+        anyio.run(lambda: probe(cmd="ls /", service="victmi", timeout=None))
 
     monkeypatch.setattr(agent_module, "benchmark_boxes", lambda: [])
     with pytest.raises(ToolError, match="no benchmark environment"):
-        anyio.run(lambda: probe(cmd="ls /", service="benchmark"))
+        anyio.run(lambda: probe(cmd="ls /", service="benchmark", timeout=None))
+
+
+def test_probe_deadline_can_outlast_grader_and_reports_its_own_timeout(monkeypatch) -> None:
+    from inspect_audit._agent import audit_probe
+
+    deadlines = []
+
+    class Box:
+        async def exec(self, cmd, timeout=None):
+            deadlines.append(timeout)
+            raise TimeoutError()
+
+    monkeypatch.setattr(agent_module, "benchmark_boxes", lambda: ["benchmark"])
+    monkeypatch.setattr(agent_module, "sandbox", lambda name: Box())
+    probe = audit_probe()
+    with pytest.raises(ToolError, match="not evidence that the benchmark grader timed out"):
+        anyio.run(lambda: probe(cmd="python check.py", service="benchmark", timeout=420))
+    assert deadlines == [420]
+    with pytest.raises(ToolError, match="between 1 and 3600"):
+        anyio.run(lambda: probe(cmd="true", service="benchmark", timeout=0))
+    assert deadlines == [420]
 
 
 def test_audit_probe_renders_as_bash_and_runs_in_parallel() -> None:

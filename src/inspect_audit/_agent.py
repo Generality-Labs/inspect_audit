@@ -57,7 +57,7 @@ SKILLS = Path(__file__).parent / "skills"
 
 # support skills help with the work rather than defining it; an auditor is never
 # asked to investigate one of these
-SUPPORT_SKILLS = ("reading-logs", "analyzing-logs", "map-inspect-packages")
+SUPPORT_SKILLS = ("reading-logs", "analyzing-logs", "map-inspect-packages", "audit-framework")
 
 
 
@@ -314,7 +314,7 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
 # only reason it isn't just `ToolDef(bash(...))`)
 @tool(viewer=code_viewer("bash", "cmd"), parallel=True)
 def audit_probe() -> Tool:
-    async def execute(cmd: str, service: str) -> str:
+    async def execute(cmd: str, service: str, timeout: int | None) -> str:
         """Look inside one of the benchmark's own containers, off the record.
 
         Runs a bash command in the named benchmark box, exactly as the
@@ -329,7 +329,13 @@ def audit_probe() -> Tool:
                 evaluated agent held); a multi-service benchmark also has its
                 sibling services, addressable by name. An unknown name is
                 rejected with the list of this item's boxes.
+            timeout: Probe deadline in seconds (1–3600); null uses 180. For a
+                benchmark timeout reproduction, allow time beyond its own
+                deadline. This does not change the benchmark's grading limit.
         """
+        timeout = 180 if timeout is None else timeout
+        if not 1 <= timeout <= 3600:
+            raise ToolError("Probe timeout must be between 1 and 3600 seconds.")
         boxes = benchmark_boxes()
         if not boxes:
             raise ToolError("This item has no benchmark environment to probe.")
@@ -342,9 +348,16 @@ def audit_probe() -> Tool:
         # whose environment lives in /etc/profile.d (conda, rustup, nvm) must
         # give the probe the same PATH the evaluated agent had, or the auditor
         # concludes a present tool is missing
-        result = await sandbox(service).exec(
-            ["bash", "--login", "-c", cmd], timeout=180
-        )
+        try:
+            result = await sandbox(service).exec(
+                ["bash", "--login", "-c", cmd], timeout=timeout
+            )
+        except TimeoutError as ex:
+            raise ToolError(
+                f"The audit probe exceeded its {timeout}-second deadline. "
+                "This is not evidence that the benchmark grader timed out. "
+                "Use a longer probe timeout when reproducing its own deadline."
+            ) from ex
         # inspect's own bash-tool convention: stderr first, then stdout
         output = f"{result.stderr}\n" if result.stderr else ""
         return f"{output}{result.stdout}"

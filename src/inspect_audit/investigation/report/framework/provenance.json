@@ -4,19 +4,36 @@
   "files": {
     "auditframework.sty": {
       "source": "template/auditframework.sty",
-      "sha256": "24e4c39156d9c578f8aa6dd5635d62f879b59736174621a4b82d913d8b1b4748",
-      "local_sha256": "b7fae2c91d0b48b36a13f1340085e53b3d76a9f8d2583e0fea5ad58ac707974c"
+      "sha256": "24e4c39156d9c578f8aa6dd5635d62f879b59736174621a4b82d913d8b1b4748"
+    },
+    "GLaudit.cls": {
+      "source": "template/GLaudit.cls",
+      "sha256": "73346855e7869326a7d0b218bf2373f67978b345bb48f86da4f9a0173ca7d4cc"
     },
     "ScoringCriteria.tex": {
       "source": "template/sections/ScoringCriteria.tex",
       "sha256": "d40ce921bdaf50af495471d5d2278b1737cc7779a00add9990f7dbeb244a45fd"
     },
+    "Framework.tex": {
+      "source": "template/legacy/Framework.tex",
+      "sha256": "4853a1d248c4a342ac2ab3cc796e91d5ecdd03d0fcb77a940faa2aca73244be1"
+    },
     "Content.tex": {
       "source": "reports/Example/Content.tex",
       "sha256": "e8d1dc7a10ba20593f2364121d1a7082dd55244b608f3f0ad16e874ce0720d8d"
+    },
+    "assets/Generality_Labs.png": {
+      "source": "template/assets/Generality_Labs.png",
+      "sha256": "5304d3127dcc12b680061fc74617f0bd2169fc9cfadb028896ea628441162f6a"
+    },
+    "examples/BixBench/Content.tex": {
+      "source": "reports/BixBench/Content.tex",
+      "sha256": "e45ba0748431d7d412c3becd1e5af614dfee05a1233aef39a1d0ab28df06fb26"
+    },
+    "examples/FORTRESS/Content.tex": {
+      "source": "reports/FORTRESS/Content.tex",
+      "sha256": "6dd2e4a6f4121b713068d52df705e51e09f660f52c6f55d1425ef134a783275b"
     }
   },
-  "local_changes": [
-    "Trailing whitespace removed in auditframework.sty; framework content unchanged."
-  ]
+  "local_changes": []
 }

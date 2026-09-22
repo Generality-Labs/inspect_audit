@@ -179,8 +179,10 @@ def test_findings_validate_and_bundle_input_evidence(tmp_path: Path) -> None:
     report.mkdir(parents=True)
     inputs.mkdir()
     (inputs / "trace.txt").write_text("primary evidence")
-    (report / "report.qmd").write_text("Report")
-    (report / "report.html").write_text("<p>Report</p>")
+    (report / "report.tex").write_text("Report")
+    for name in ("Findings.tex", "metadata.tex", "assessments.tex"):
+        (report / name).write_text("Fixture")
+    (report / "report.pdf").write_text("<p>Report</p>")
     finding = dict(
         id="F1",
         section="grading",
@@ -270,13 +272,13 @@ def test_snapshot_excludes_untracked_secrets_and_retains_publications(
     seed = json.loads((root / "inputs/seed.json").read_text())
     assert len(seed["revision"]) == 40
     report = root / "work/report"
-    (report / "report.html").write_text("first version")
+    (report / "report.pdf").write_text("first version")
     _declare_fixture_assessments(root)
     first = save_publication(root)
-    (report / "report.html").write_text("second version")
+    (report / "report.pdf").write_text("second version")
     second = save_publication(root)
     assert first != second
-    assert (first / "report.html").read_text() == "first version"
+    assert (first / "report.pdf").read_text() == "first version"
     (report / "leak").symlink_to(tmp_path / "repo/.env")
     with pytest.raises(ValueError, match="symlinks"):
         save_publication(root)
@@ -348,10 +350,6 @@ def render_probe(root: str) -> Solver:
         preview = await view_image()("/workspace/report/architecture.svg")
         assert isinstance(preview, list)
         assert preview[0].image.startswith("data:image/png;base64,")
-        await sandbox().write_file(
-            "/workspace/report/report.qmd",
-            "---\ntitle: Smoke audit\nformat:\n  html:\n    embed-resources: true\n---\n\n## Findings\n\nNo model conclusions: infrastructure test only.\n\n![Coverage](coverage.png)\n\n{{< include audit-tables.html >}}\n",
-        )
         _declare_fixture_assessments(Path(root))
         receipt = await publish_report(root)()
         state.store.set("publication_receipt", receipt)
@@ -379,10 +377,9 @@ def test_real_container_renders_and_exports_report(tmp_path: Path) -> None:
         target, model="mockllm/model", display="none", log_dir=str(tmp_path / "logs")
     )[0]
     assert log.status == "success", log.error
-    published = list((root / "published").glob("*/report.html"))
+    published = list((root / "published").glob("*/report.pdf"))
     assert len(published) == 1
-    assert "Smoke audit" in published[0].read_text()
-    assert "data:image/png;base64," in published[0].read_text()
+    assert published[0].read_bytes().startswith(b"%PDF")
 
 
 @pytest.mark.docker
@@ -408,7 +405,7 @@ from inspect_ai.log import read_eval_log
 seed = json.loads(Path('/inputs/seed.json').read_text())
 log = read_eval_log(seed['logs'][0]['staged'])
 assert len(log.samples) == 3
-Path('/workspace/report/report.qmd').write_text('---\\ntitle: Agent smoke audit\\nformat: html\\n---\\n\\nRead three recorded samples.\\n')
+assert len(log.samples) == 3
 PY"""
     model = get_model(
         "mockllm/model",
@@ -424,9 +421,9 @@ PY"""
     log = eval(target, model=model, display="none", log_dir=str(tmp_path / "logs"))[0]
     assert log.status == "success", log.error
     root = Path(target.metadata["investigation_dir"])
-    published = list((root / "published").glob("*/report.html"))
+    published = list((root / "published").glob("*/report.pdf"))
     assert len(published) == 1
-    assert "Read three recorded samples" in published[0].read_text()
+    assert published[0].read_bytes().startswith(b"%PDF")
     assert log.samples and log.samples[0].store
     from inspect_ai.model import ChatMessageTool
 
@@ -443,8 +440,10 @@ def test_the_same_input_cited_twice_publishes_once(tmp_path: Path) -> None:
     report.mkdir(parents=True)
     inputs.mkdir()
     (inputs / "paper.pdf").write_bytes(b"%PDF")
-    (report / "report.qmd").write_text("Report")
-    (report / "report.html").write_text("<p>Report</p>")
+    (report / "report.tex").write_text("Report")
+    for name in ("Findings.tex", "metadata.tex", "assessments.tex"):
+        (report / name).write_text("Fixture")
+    (report / "report.pdf").write_text("<p>Report</p>")
     finding = dict(
         id="F1", section="dataset", claim="A", status="supported", origin="source",
         evidence=[dict(path="/inputs/paper.pdf", location="p. 1"), dict(path="/inputs/paper.pdf", location="p. 2")],
@@ -923,6 +922,8 @@ def _declare_fixture_assessments(root: Path) -> None:
     rows = [dict(id=key, assessment="Not assessed", result="Infrastructure smoke test; no benchmark judgments", evidence=[])
             for key in framework_checks(report)]
     (report / "assessments.json").write_text(json.dumps(rows))
+    from inspect_audit._assessment import assessment_latex
+    (report / "assessments.tex").write_text(assessment_latex(report))
 
 
 def test_remote_benchmark_package_can_include_extras(tmp_path, monkeypatch):

@@ -1,85 +1,78 @@
 ---
 name: writing
-description: Select consequential findings and present a concise, quantified audit using the Generality Labs framework. Read before drafting and publication.
+description: Fill the pinned Generality Labs Audit Findings template with explained, quantified evidence; compile and inspect the PDF before publication.
 ---
 
-## Executive summary
+## Contract
 
-Include only findings that materially change how a reader should interpret or use the
-benchmark: consequential specification or scoring defects, impaired elicitation, a
-mismatch with its measurement claim, or a consequential positive result. A systemic
-bug can qualify without many independent examples. Each point needs evidence and an
-explanation of its consequence; dramatic wording is not evidence of significance.
-State the finding, affected count where measured, and why it matters. Link its detailed
-explanation. Group repeated mechanisms. Do not force a minimum number of bullets.
-Audit completion, spending, package repairs, development work and configuration
-differences are not findings by themselves. Put coverage in the results table, not
-an extra summary bullet. Do not summarise everything the investigator spent time doing.
+The deliverable is Laurence's Audit Findings section, using the supplied GL LaTeX
+class and components unchanged. Fill report/metadata.tex and report/Findings.tex.
+Keep all nine dimensionreview sections in A-I order and their dimensionoverview
+commands. Do not substitute a thematic essay or HTML report. Do not add a cover,
+authorship/approval fields, standalone scorecard, audit-setup section or rubric pages.
+The framework and rubric are instructions for the auditor, not printed front matter.
 
-## Reading path
+Read framework/Framework.tex, framework/ScoringCriteria.tex and framework/checks.json.
+The JSON includes each check's meaning, not just its name. Framework/examples contains
+worked reports showing evidence blocks, figures and explanation depth. Their judgments,
+benchmark facts and scope are not defaults for this investigation.
 
-Use report/report.qmd: executive summary, computed results and scorecard, concise
-benchmark description, substantive findings, then limitations of this analysis.
-Laurence's framework in report/framework defines all nine dimensions and their checks;
-retain its severity scale and examples. The HTML reading path need not reproduce the
-LaTeX cover sheet or a separate audit-setup section. Keep setup and shared limitations
-to roughly two sentences at the bottom; link detailed provenance, methods and costs.
-No names, approvals or overall grades without evidence. Internal development and
-merge instructions do not belong in the benchmark report.
+## Explain each dimension
 
-Give each finding one full explanation: mechanism, evidence, affected extent and
-consequence. Group repeated instances and cross-reference findings from other dimensions.
-Keep complete check assessments in the generated assessment table; a clean dimension
-does not require an essay. Do not confuse successful execution with adequate elicitation.
+Maintain assessments.json with every dimension and check exactly once. Assess the
+question in its definition: a related observation is not a substitute. Explain ratings
+through the framework's extent and consequence criteria. Overall grade, dimension
+severity, defect prevalence and demonstrated score changes are distinct judgments.
+The generated summary/check macros use these records; edit the records, not assessments.tex.
 
-## Quantified results
+After the overview and check table, use the template's observedevidence and
+concernevidence environments for substantive concerns. Explain what happened, how it
+was established, what it changes about interpretation, and what remedy the evidence
+supports. Cite primary evidence and concrete examples. Give each supported or qualified
+finding a narrative home in its registered dimension with \label{finding:ID}; cross-reference
+it elsewhere rather than repeating the entire explanation. Clean dimensions still explain
+what was checked and the basis for that assessment. Scope exclusions are Not assessed,
+not evidence that the benchmark passed.
 
-Maintain report/assessments.json using report/assessments.schema.json and the check IDs
-in report/framework/checks.json. Include one row for every dimension and every check.
-Use None, Minor, Major, Critical, Not assessed or Not applicable. Explain ratings through
-extent and consequence using the framework definitions, not numerical severity thresholds.
-Findings use Minor/Major/Critical (or null while unassessed); dimension assessment
-is a separate synthesis using the same framework definitions, not the maximum badge.
-For sample-level checks supply checked_ids and affected_ids: e.g. X of Y questions omit
-required information, split by mechanism. Link examples. For benchmark-wide checks where
-question counts do not make sense, leave both lists null and give the measured result or
-specific reason it could not be established. Never use an empty list to mean unknown.
+Keep every material finding, including resource limits, in the relevant dimension.
+Concision means removing repetition, generic caveats and administrative narration;
+it does not mean dropping dimensions, evidence, or interpretation. Explain terms before
+relying on them. Use plain British English and put conclusions before their support.
 
-For question audits write report/coverage.json using export_coverage from /inputs/coverage.py.
-It retains disputed labels and missing work and computes overlapping defect-type counts.
-Classify and verify recurring mechanisms across the assessed questions, rather than
-reporting only selected examples. Questions with defects and submissions demonstrably
-misgraded have different denominators. Selected examples do not establish prevalence.
-Legacy unclassified defects remain visible; do not invent classifications to fill a table.
-Publication checks structured records and generates report/audit-tables.html from them;
-include it with the supplied Quarto include. These checks do not establish judgment accuracy.
-Headline numbers must agree with these tables, not independently transcribed totals.
+## Counts and figures
 
-## Language and appearance
+Use export_coverage from /inputs/coverage.py for coverage.json. Keep complete per-question
+labels and explanations as linked supporting data. State the counted unit, denominator,
+selection method, overlapping categories and demonstrated versus inferred effects where
+numbers appear. A defective question is not automatically a misgraded submission.
 
-Use plain, concrete language and British English. Name what is counted: questions,
-subproblems, submissions or runs analysed. Say what is wrong instead of using phrases
-such as "evidenced validity defect" or "historical population". Call framework entries
-checks, not registry contributions. State conclusions first, with support following.
-Use the supplied labelled assessment badges consistently: None green, Minor amber,
-Major orange, Critical red; Not assessed and Not applicable grey with distinct labels.
-Colour supplements text. Keep affected counts and findings prominent alongside ratings.
+Decide which findings benefit from visual explanation. Put diagrams and graphs inside
+the relevant dimensions using boxfigure, with a takeaway caption, labelled axes, units,
+denominators and a linked data table. Explain the evaluation pipeline where necessary;
+show score changes and resource sensitivity when the evidence supports them. Do not
+invent comparisons, intervals or a fixed quota of charts. Reference the figure in the
+surrounding explanation; a graph is not a substitute for interpretation.
 
-A qualification belongs beside a claim only when it changes the interpretation. State
-shared limitations once. "Scoring effect not measured" is preferable to a paragraph of
-generic caution. Honest uncertainty stays visible; do not turn incomplete checks into
-clean judgments. Compare scores only under conditions supporting that comparison.
+## Evidence and scope
 
-Figures need a clear takeaway, labelled axes and units, explicit denominators and an
-accessible source table. Do not draw intervals you did not compute. Preserve source
-provenance for the supplied GL components. Avoid decorative charts that repeat a table
-without making it easier to understand.
+Excluded investigation techniques do not create publication restrictions. Retain ordinary
+scientific explanations and evidence unless an actual confidentiality constraint requires
+redaction. If redaction is required, preserve an informative explanation and evidence
+locator; do not replace every question's explanation with a generic placeholder.
+Keep methodological details and costs in supporting artifacts, with brief relevant
+limitations next to the claims they qualify. Never invent names, approvals or an overall grade.
 
-## Before publication
+## Publication
 
-Review outstanding assessment units and framework checks before switching to writing.
-Call check_report to validate records and generate the tables before rendering.
-Then check every summary point against the significance criteria above, verify its
-numbers and evidence, remove drafting notes and repeated caveats, render with Quarto,
-and inspect figures. Publication validates structure and provenance, not truth or
-editorial quality; read the rendered report before accepting it as finished.
+Call check_report to validate records and generate assessments.tex. Compile from
+/workspace/report with latexmk -pdf -interaction=nonstopmode -halt-on-error report.tex.
+Render every PDF page with pdftoppm -r 110 -png report.pdf preview/page (create preview first).
+Inspect the resulting images with view_image. Check tables, page breaks, whitespace,
+figure readability, typography and links; fix and recompile. A successful build or
+text scan does not constitute visual review. If a renderer is missing, install it or
+report the blocker rather than claim inspection happened.
+
+Reconcile the supported findings register against the narrative and re-read each
+assessment against its definition. Structural validation cannot establish semantic
+correctness. Then call publish_report, which compiles and preserves the PDF, editable
+LaTeX, figures and evidence as a versioned bundle.

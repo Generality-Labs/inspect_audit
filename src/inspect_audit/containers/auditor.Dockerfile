@@ -3,12 +3,14 @@
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        librsvg2-bin ca-certificates curl git jq ripgrep \
+        librsvg2-bin ca-certificates curl git jq ripgrep poppler-utils procps time \
     && rm -rf /var/lib/apt/lists/*
 
 # pandas + pyarrow so `samples_df` works over the sliced logs (the log-reading
 # skills teach it); pillow so an auditor can measure an image as well as look at one
-RUN pip install --no-cache-dir pandas pyarrow pillow {requirements}
+# scipy + sympy support independent numerical and symbolic checks in the analysis
+# container without installing anything in the evaluated benchmark's environment.
+RUN pip install --no-cache-dir pandas pyarrow pillow scipy sympy {requirements}
 
 WORKDIR /audit
 CMD ["sleep", "infinity"]

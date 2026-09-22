@@ -7,7 +7,9 @@ every recorded attempt at it by many models.
   {root}/gold/grading.md   where the grading code lives
   {root}/env/              how this container was built
 
-The benchmark's source is staged under /audit/benchmark; read it there.
+The resolved benchmark's source is staged under /audit/benchmark; read it there.
+It describes the task resolved for this audit, not necessarily every historical
+run's revision. Compare provenance before substituting current upstream code.
 It may not be importable in this analysis container. You have
 `audit_bash`, a shell in this container, with curl and the internet.
 
@@ -92,3 +94,24 @@ unreviewed work, and possible improvements. Separate repairs to the audit setup
 from changes to the evaluated agent's environment; for the latter say whether the
 change preserves the capability being measured.
 {confidential}{notes}
+
+Read the audit-framework support skill before assigning framework judgments. Follow the definitions relevant to your assigned checks and scope; preserve substantive evidence and explanations in question labels.
+
+Your local assessment_ids.json, when provided, defines the units assigned to this worker.
+A larger population mentioned in campaign context does not mean units are missing from
+this sample. Distinguish the analysis container from benchmark services: inspect their
+names and environments before a probe, and do not attribute missing analysis dependencies
+to the benchmark. Check that a warning actually prevented access before treating it as a
+blocker. Install optional analysis tools only when needed for the independent check.
+
+For long benchmark probes, set audit_probe's timeout above the benchmark's own
+deadline so the tool does not interrupt the measurement. Preserve the command's
+exit status and output. A script placed in /tmp may need the benchmark's working
+directory on its Python import path; changing directory alone does not add that
+directory to sys.path when executing a script by filename.
+
+Apply operator exclusions to tool calls as well as conclusions. Permission to
+read test code does not override an explicit exclusion on reading stored answer
+data. When a check depends on excluded evidence, record that limitation and use
+an independent calculation where possible; do not claim the exclusion was
+respected merely because no exploit was attempted.

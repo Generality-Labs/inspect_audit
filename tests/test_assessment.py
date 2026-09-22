@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from inspect_audit._assessment import assessment_tables, framework_checks, prepare_assessments
+from inspect_audit._assessment import (
+    assessment_tables,
+    framework_checks,
+    prepare_assessments,
+)
 from inspect_audit._coverage import coverage_summary
 
 
@@ -54,3 +58,54 @@ def test_counts_population_and_escaping(tmp_path):
     (tmp_path / 'coverage.json').write_text(json.dumps(coverage))
     with pytest.raises(ValueError, match='export_coverage'):
         assessment_tables(tmp_path)
+
+
+def test_definitions_preserve_framework_meaning(tmp_path):
+    from inspect_audit._assessment import framework_definitions
+
+    assessment_report(tmp_path)
+    definitions = framework_definitions(tmp_path)
+    assert 'models differently' in definitions['H.3']['definition']
+    assert 'model scores cluster' in definitions['I.3']['definition']
+    staged = json.loads((tmp_path / 'framework/checks.json').read_text())
+    assert staged == definitions
+
+
+def test_latex_escaping_and_required_finding_home(tmp_path):
+    from inspect_audit._assessment import assessment_latex, validate_latex_structure
+
+    rows = assessment_report(tmp_path)
+    rows[0]['result'] = r'5% & input_name #1 {literal} \input{untrusted}'
+    (tmp_path / 'assessments.json').write_text(json.dumps(rows))
+    tex = assessment_latex(tmp_path)
+    assert r'5\% \& input\_name \#1' in tex
+    assert r'\textbackslash{}input\{untrusted\}' in tex
+    assert tex.count(r'\contributionrow') == 47
+    validate_latex_structure(tmp_path, [])
+    with pytest.raises(ValueError, match='explain this finding'):
+        validate_latex_structure(tmp_path, [('F1', 'resources')])
+    p = tmp_path / 'Findings.tex'
+    source = p.read_text()
+    source = source.replace(r'\begin{dimensionreview}{resources}',
+                            r'\begin{dimensionreview}{resources}\label{finding:F1}')
+    p.write_text(source)
+    validate_latex_structure(tmp_path, [('F1', 'resources')])
+    p.write_text(source.replace(r'\begin{dimensionreview}{resources}', r'\begin{dimensionreview}{grading}'))
+    with pytest.raises(ValueError, match='all nine'):
+        validate_latex_structure(tmp_path, [])
+
+
+def test_template_cannot_be_replaced_or_rubric_redefined(tmp_path):
+    from inspect_audit._assessment import validate_latex_structure
+
+    assessment_report(tmp_path)
+    wrapper = tmp_path / 'report.tex'
+    original = wrapper.read_text()
+    wrapper.write_text(original.replace(r'\input{Findings}', r'\input{framework/ScoringCriteria}'))
+    with pytest.raises(ValueError, match='wrapper unchanged'):
+        validate_latex_structure(tmp_path, [])
+    wrapper.write_text(original)
+    rubric = tmp_path / 'framework/ScoringCriteria.tex'
+    rubric.write_text(rubric.read_text() + '\nChanged rating definitions\n')
+    with pytest.raises(ValueError, match='Pinned framework file changed'):
+        validate_latex_structure(tmp_path, [])

@@ -1,0 +1,14 @@
+\PassOptionsToPackage{table,xcdraw,dvipsnames}{xcolor}
+\documentclass[11pt]{GLaudit}
+\usepackage{auditframework}
+\input{metadata}
+\input{assessments}
+\begin{document}
+\auditpart{Audit Findings}{audit}
+\begin{maincontentstyled}
+\begin{reportpart}{Audit Findings}{audit}{sec:auditreport}
+\input{Findings}
+\end{reportpart}
+\auditpartsend
+\end{maincontentstyled}
+\end{document}

@@ -34,7 +34,7 @@ External discussions are leads: verify them independently and record exposure to
 audits. Do not seek hidden reference reports. A graded rediscovery run requires an
 operator-defined exposure policy. Use curl for web access; no browser is available.
 
-Write report/report.qmd, render it with quarto to check it, and look at figures with view_image.
+Fill report/Findings.tex in the supplied GL LaTeX template. Compile report/report.tex with latexmk, render the PDF pages with pdftoppm, and inspect every page with view_image.
 Call publish_report to save a version. Batch mode ends after publication. Explicit
 interactive mode permits operator follow-ups and another publication. If evidence is
 insufficient, publish that limited conclusion rather than inventing findings.
@@ -51,9 +51,7 @@ collect its structured results, and compute coverage with export_coverage in the
 staged /inputs/coverage.py module, writing report/coverage.json. The report/framework
 directory contains the pinned Generality Labs template, check definitions and scoring
 criteria. Assess its dimensions and checks in report/assessments.json using the supplied
-schema. Use the writing skill and HTML skeleton for the reading order. The matching
-web components are available at report/assets/gl.js;
-retain their source provenance and provide accessible tables for each figure.
+schema. Read framework/Framework.tex, framework/ScoringCriteria.tex and framework/checks.json before planning: check definitions govern what each assessment means. Use the writing skill and the exact nine-dimension Findings.tex skeleton; do not print the rubric, cover or authorship pages. Keep figure data alongside the report.
 Start with a small pilot and verify the returned evidence and grader channel before
 expanding. Missing or failed jobs are unassessed; inconclusive work remains unresolved.
 Use the report's nine Generality Labs dimensions as the coverage plan from the start.

@@ -122,14 +122,15 @@ def save_publication(root: Path) -> Path:
     report = root / "work" / "report"
     if report.is_symlink() or any(p.is_symlink() for p in report.rglob("*")):
         raise ValueError("Report bundles must contain real files, not symlinks")
-    for name in ("report.qmd", "report.html", "findings.json"):
+    for name in ("report.tex", "Findings.tex", "metadata.tex", "assessments.tex", "report.pdf", "findings.json"):
         if not (report / name).is_file():
             raise ValueError(f"Missing report artifact: {name}")
     findings = validate_findings(root)
     if (report / "framework/auditframework.sty").exists():
-        from ._assessment import assessment_tables
+        from ._assessment import assessment_latex, validate_latex_structure
 
-        assessment_tables(report)
+        assessment_latex(report)
+        validate_latex_structure(report, [(f.id, f.section) for f in findings if f.status in ("supported", "qualified")])
     if (report / "_inputs").exists():
         raise ValueError("_inputs is reserved for publication's input evidence")
     destination = root / "published" / uuid4().hex
@@ -137,7 +138,7 @@ def save_publication(root: Path) -> Path:
     shutil.copytree(
         report,
         destination,
-        ignore=shutil.ignore_patterns("__pycache__", ".quarto", "*.pyc"),
+        ignore=shutil.ignore_patterns("__pycache__", ".quarto", "*.pyc", "*.aux", "*.log", "*.fls", "*.fdb_latexmk", "*.out", "preview"),
     )
     # Keep the agent's single register; rewrite only the published snapshot's
     # input addresses so its evidence survives independently of this workspace.
@@ -166,24 +167,25 @@ def save_publication(root: Path) -> Path:
 
 
 def _prepare_report(root: str) -> None:
-    from ._assessment import assessment_tables
+    from ._assessment import assessment_latex, validate_latex_structure
 
     report = Path(root) / "work/report"
-    validate_findings(Path(root))
+    findings = validate_findings(Path(root))
     if (report / "framework/auditframework.sty").exists():
-        (report / "audit-tables.html").write_text(assessment_tables(report))
+        (report / "assessments.tex").write_text(assessment_latex(report))
+        validate_latex_structure(report, [(f.id, f.section) for f in findings if f.status in ("supported", "qualified")])
 
 
 @tool
 def check_report(root: str) -> Tool:
     """Validate structured results and generate tables for review before publication."""
     async def execute() -> str:
-        """Check findings, assessments and totals; update report/audit-tables.html."""
+        """Check findings, assessments and totals; update report/assessments.tex."""
         try:
             _prepare_report(root)
         except (ValueError, OSError, KeyError, TypeError) as ex:
             raise ToolError(f"Report validation failed: {ex}") from ex
-        return "Records validated and tables generated. Render report/report.qmd and review the report before publishing."
+        return "Records validated and tables generated. Compile with latexmk -pdf -interaction=nonstopmode -halt-on-error report.tex from /workspace/report. Render all pages with pdftoppm, inspect them with view_image, and fix layout before publishing."
     return execute
 
 
@@ -192,13 +194,13 @@ def publish_report(root: str) -> Tool:
     """Render and persist a report before entering discussion mode."""
 
     async def execute() -> str:
-        """Render report/report.qmd, save an immutable version, and open discussion."""
+        """Compile the GL LaTeX report, save an immutable PDF/source bundle, and open discussion."""
         try:
             _prepare_report(root)
         except (ValueError, OSError, KeyError, TypeError) as ex:
             raise ToolError(f"Report assessment validation failed: {ex}") from ex
         result = await sandbox().exec(
-            ["quarto", "render", "/workspace/report/report.qmd", "--to", "html"],
+            ["latexmk", "-r", "/workspace/report/.latexmkrc", "-cd", "-pdf", "-interaction=nonstopmode", "-halt-on-error", "/workspace/report/report.tex"],
             timeout=300,
         )
         if not result.success:
@@ -210,6 +212,6 @@ def publish_report(root: str) -> Tool:
         except (ValueError, OSError) as ex:
             raise ToolError(str(ex)) from ex
         store_as(InvestigationState).published = str(destination)
-        return f"Published {destination / 'report.html'}. Give the operator a concise summary and the report path."
+        return f"Published {destination / 'report.pdf'}. Give the operator a concise summary and the report path."
 
     return execute

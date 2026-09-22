@@ -49,7 +49,7 @@
 \hypersetup{
     colorlinks=true,
     linkcolor=blue,
-    filecolor=magenta,
+    filecolor=magenta,      
     urlcolor=blue,
     pdftitle={Evaluation Audit Report},
     pdfpagemode=FullScreen,
@@ -410,13 +410,13 @@
   \gsub{confounds}{scores are systematically affected by factors unrelated to the target construct},
   \gsub{proxy measurement}{the measured outcome is only an imperfect proxy for the target capability or behaviour},
   \gsub{capability vs propensity}{the evaluation conflates what a model can do with what it tends to do}}
-
+  
 
   \definedimension{contentvalidity}{Content validity}{Content validity}{%
   Do the tasks adequately represent the target domain and situations the evaluation aims to cover?}{%
   \gsub{coverage gaps}{important parts of the target domain or capability are absent or underrepresented},
   \gsub{unrepresentative task distribution}{the distribution of tasks differs materially from the target domain}}
-
+  
 \definedimension{dataset}{Task Specification}{Task Specification}{%
   Are individual tasks correctly specified, solvable, and free from defects that affect performance?}{%
   \gsub{incorrect reference answer}{the reference answer is incorrect or inconsistent with the task},
@@ -454,7 +454,7 @@
   \gsub{non-determinism}{the environment varies between otherwise equivalent runs},
   \gsub{information leakage}{the environment exposes answers or unintended hints},
   \gsub{implementation differs from specification}{the environment behaves differently from its documented design}}
-
+  
 \definedimension{grading}{Grading}{Grading}{%
   Does the grading procedure correctly determine whether task performance satisfies the evaluation criteria?}{%
   \gsub{false positives and false negatives}{the grading procedure incorrectly classifies responses as satisfying or failing the evaluation criteria},

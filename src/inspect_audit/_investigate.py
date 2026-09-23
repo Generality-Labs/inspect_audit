@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 import urllib.request
 from importlib.metadata import version
 from logging import getLogger
@@ -1615,7 +1616,10 @@ def investigate(
             raise ValueError("Hawk artifact_dir must be an S3 job artifacts directory")
 
     overview = overview if overview is not None else ""
-    output_dir = output_dir if output_dir is not None else "investigations"
+    output_dir = output_dir if output_dir is not None else (
+        str(Path(tempfile.gettempdir()) / "inspect-audit")
+        if execution == "hawk" else "investigations"
+    )
     budget_usd = budget_usd if budget_usd is not None else 10.0
     enforce_cost_limit = enforce_cost_limit if enforce_cost_limit is not None else True
     interactive = bool(interactive)

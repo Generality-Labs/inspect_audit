@@ -25,14 +25,16 @@ def test_hawk_task_uses_kubernetes_without_bind_mounts(monkeypatch, tmp_path):
 
     monkeypatch.setenv("HAWK_JOB_ID", "test-investigation")
     monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: None)
+    monkeypatch.setattr(_investigate.tempfile, "gettempdir", lambda: str(tmp_path))
     task = investigate(
         repo="https://example.org/benchmark.git", revision="abc123",
         audit_package="git+https://example.org/auditor.git@abc123",
-        hawk_api_url="https://hawk.example", output_dir=str(tmp_path),
+        hawk_api_url="https://hawk.example",
         artifact_dir="s3://bucket/test-investigation/artifacts",
         enforce_cost_limit=False,
     )
     assert task.metadata["execution"] == "hawk"
+    assert Path(task.metadata["investigation_dir"]).parent == tmp_path / "inspect-audit"
     assert task.sandbox.type == "k8s"
     values = yaml.safe_load(Path(task.sandbox.config).read_text())
     assert "volumes" not in values["services"]["default"]

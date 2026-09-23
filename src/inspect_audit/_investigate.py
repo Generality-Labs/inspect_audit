@@ -251,12 +251,13 @@ def register_openrouter_costs(timeout: float = 15) -> int:
             continue
         try:
             # set_model_info creates the entry; set_model_cost needs one to exist
-            set_model_info(
-                f"openrouter/{model['id']}",
-                (get_model_info(f"openrouter/{model['id']}") or ModelInfo()).model_copy(
-                    update={"cost": ModelCost(**per_million)}
-                )
+            info = (get_model_info(f"openrouter/{model['id']}") or ModelInfo()).model_copy(
+                update={"cost": ModelCost(**per_million)}
             )
+            set_model_info(f"openrouter/{model['id']}", info)
+            # Hawk's public route can itself include the provider prefix. The
+            # Inspect factory still prepends its own name to that item id.
+            set_model_info(f"openrouter/openrouter/{model['id']}", info)
         except Exception as ex:  # one odd listing must not lose the rest
             logger.debug(f"skipping price for {model.get('id')}: {ex}")
             continue
@@ -712,6 +713,8 @@ class Remote:
                 "input_cache_read": cost.input_cache_read or 0.0,
                 "input_cache_write": cost.input_cache_write or 0.0,
             }
+            if model.startswith("openrouter/"):
+                costs[model] = dict(costs[qualified])
         return costs, missing
 
     def record_local_spend(self) -> None:
@@ -814,7 +817,7 @@ class Remote:
 
 def qualified_model_name(model: str) -> str:
     """The name a worker runs under: the OpenRouter group, then the model's own id."""
-    return model if model.startswith("openrouter/") else f"openrouter/{model}"
+    return f"openrouter/{model}"
 
 
 def _models_named(config: dict[str, object]) -> set[str]:
@@ -1708,6 +1711,7 @@ def investigate(
             "hawk": hawk_api_url,
             "task_package": task_package,
             "worker_models": worker_models or DEFAULT_WORKERS,
+            "model_names": "Use worker_models verbatim as model item names under the openrouter factory. Task model arguments use the full Inspect name: openrouter/ followed by that item name, even when the item already starts with openrouter/.",
             "audit_package": audit_package,
             "auditor_image": auditor_image,
             # every remote log source explicitly supplied by the operator

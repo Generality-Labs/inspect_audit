@@ -145,6 +145,20 @@ def test_the_example_configs_pass_the_policy_once_filled_in() -> None:
     assert validate_config(filled_example("audit.eval-set.yaml"), policy(), {"inv-staged-abc"}) == []
 
 
+def test_hawk_public_route_keeps_its_prefix_in_configs_and_cost_keys() -> None:
+    from inspect_audit._investigate import qualified_model_name
+
+    p = policy()
+    p.models = ["openrouter/" + name for name in p.models]
+    p.known_models = frozenset(["openai/gpt-5.6-luna", "openai/gpt-5-mini"])
+    config = filled_example("audit.eval-set.yaml")
+    for group in [*config["models"], *config.get("model_roles", {}).values()]:
+        for item in group["items"]:
+            item["name"] = "openrouter/" + item["name"]
+    assert validate_config(config, p, {"inv-staged-abc"}) == []
+    assert qualified_model_name("openrouter/openai/gpt-5.6-luna") == "openrouter/openrouter/openai/gpt-5.6-luna"
+
+
 @pytest.mark.parametrize(
     "change, expect",
     [

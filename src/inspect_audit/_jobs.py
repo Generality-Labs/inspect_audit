@@ -466,7 +466,7 @@ def _task_arg_problems(
                 # model, and cannot reach a paid provider from a runner that holds one
                 # key. `scorer: original` is a real control and was being refused.
                 allowed = set(policy.models) | {
-                    name if name.startswith("openrouter/") else f"openrouter/{name}"
+                    f"openrouter/{name}"
                     for name in policy.models
                 }
                 if "/" in model and model not in allowed:
@@ -738,7 +738,7 @@ def validate_config(
         )
     for name in _strings(config):
         bare = name.removeprefix("openrouter/")
-        if bare in policy.known_models and bare not in policy.models:
+        if name not in policy.models and bare in policy.known_models and bare not in policy.models:
             problems.append(f"model {name!r} is not on the worker menu (found outside a model field)")
 
     worst = worst_case_usd(parsed, policy)

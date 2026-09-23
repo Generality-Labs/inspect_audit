@@ -254,6 +254,8 @@ def register_openrouter_costs(timeout: float = 15) -> int:
             info = (get_model_info(f"openrouter/{model['id']}") or ModelInfo()).model_copy(
                 update={"cost": ModelCost(**per_million)}
             )
+            if isinstance(model.get("context_length"), int) and model["context_length"] > 0:
+                info.context_length = model["context_length"]
             set_model_info(f"openrouter/{model['id']}", info)
             # Hawk's public route can itself include the provider prefix. The
             # Inspect factory still prepends its own name to that item id.

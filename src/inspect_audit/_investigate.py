@@ -80,7 +80,7 @@ DEFAULT_AUDITOR_IMAGE = (
     "63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa"
 )
 DEFAULT_INVESTIGATOR_IMAGE = (
-    "ghcr.io/generality-labs/inspect-audit-investigator@sha256:"
+    "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
     "d21b285bc4ce2f2d34084c2ae382ab5a6996704dbb8d58d1199a1d1925fa71fa"
 )
 

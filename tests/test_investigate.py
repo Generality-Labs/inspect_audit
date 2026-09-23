@@ -43,12 +43,13 @@ def test_headless_defaults_enforce_the_allowance_without_a_token_cap(
 
     monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
     repo = str(git_repo(tmp_path / "repo"))
-    target = investigate(repo, output_dir=str(tmp_path / "runs"))
+    target = investigate(repo, output_dir=str(tmp_path / "runs"), execution="local")
     assert target.metadata["interactive"] is False
     assert target.cost_limit == 10
     assert target.token_limit is None
     planning = investigate(
-        repo, output_dir=str(tmp_path / "runs"), enforce_cost_limit=False, token_limit="output:500k"
+        repo, output_dir=str(tmp_path / "runs"), enforce_cost_limit=False, token_limit="output:500k",
+        execution="local",
     )
     assert planning.cost_limit is None
     assert planning.token_limit == 500_000
@@ -98,6 +99,7 @@ def test_snapshot_paths_paper_download_and_docs_mount(
         paper="https://arxiv.org/abs/2509.07968v2",
         docs=[str(docs)],
         output_dir=str(tmp_path / "runs"),
+        execution="local",
     )
     root = Path(target.metadata["investigation_dir"])
     assert _snapshot_names(root) == ["task.py"]
@@ -230,6 +232,7 @@ def test_log_inputs_share_storage_without_a_second_copy(tmp_path: Path) -> None:
         str(git_repo(tmp_path / "repo")),
         logs=[str(source)],
         output_dir=str(tmp_path / "runs"),
+        execution="local",
     )
     root = Path(target.metadata["investigation_dir"])
     assert (root / "inputs/logs/0/source.eval").stat().st_ino == source.stat().st_ino
@@ -265,7 +268,8 @@ def test_snapshot_excludes_untracked_secrets_and_retains_publications(
     tmp_path: Path,
 ) -> None:
     target = investigate(
-        str(git_repo(tmp_path / "repo")), output_dir=str(tmp_path / "runs")
+        str(git_repo(tmp_path / "repo")), output_dir=str(tmp_path / "runs"),
+        execution="local",
     )
     root = Path(target.metadata["investigation_dir"])
     assert _snapshot_names(root) == ["task.py"]
@@ -286,12 +290,13 @@ def test_snapshot_excludes_untracked_secrets_and_retains_publications(
 
 def test_invalid_seed_and_budget_fail_early(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="finite and positive"):
-        investigate("https://example.org/repo", budget_usd=float("nan"))
+        investigate("https://example.org/repo", budget_usd=float("nan"), execution="local")
     with pytest.raises(ValueError, match="Local log source"):
         investigate(
             "https://example.org/repo",
             logs=[str(tmp_path / "missing")],
             output_dir=str(tmp_path),
+            execution="local",
         )
 
 
@@ -370,6 +375,7 @@ def test_real_container_renders_and_exports_report(tmp_path: Path) -> None:
         str(git_repo(tmp_path / "repo")),
         output_dir=str(tmp_path / "runs"),
         interactive=False,
+        execution="local",
     )
     root = Path(target.metadata["investigation_dir"])
     target = task_with(target, solver=render_probe(str(root)))
@@ -396,6 +402,7 @@ def test_agent_reads_logs_and_publishes_before_batch_exit(tmp_path: Path) -> Non
         logs=[source_log],
         output_dir=str(tmp_path / "runs"),
         interactive=False,
+        execution="local",
     )
     _declare_fixture_assessments(Path(target.metadata["investigation_dir"]))
     script = """python - <<'PY'
@@ -506,7 +513,7 @@ def test_resume_reuses_the_directory_ledger_and_staged_logs(
         hawk_api_url="https://hawk.example",
         output_dir=str(tmp_path / "runs"),
     )
-    first = investigate(repo, **common)  # type: ignore[arg-type]
+    first = investigate(repo, **common, execution="local")  # type: ignore[arg-type]
     root = Path(first.metadata["investigation_dir"])
     run_setup(first)
     (root / "jobs.json").write_text(
@@ -543,7 +550,7 @@ def test_resume_reuses_the_directory_ledger_and_staged_logs(
             return True
 
     monkeypatch.setattr(_investigate, "Hawk", RecordingHawk)
-    second = investigate(repo, resume=str(root), **common)  # type: ignore[arg-type]
+    second = investigate(repo, resume=str(root), **common, execution="local")  # type: ignore[arg-type]
     run_setup(second)
     assert asked == ["inv-smoke-1234abcd"], "resume did not ask Hawk about the pending job"
     assert JobLedger(root).get("smoke").status == "submitted"  # type: ignore[union-attr]
@@ -553,7 +560,7 @@ def test_resume_reuses_the_directory_ledger_and_staged_logs(
     assert [j.label for j in ledger.jobs] == ["smoke"] and ledger.reserved_usd() == 2.0
 
     with pytest.raises(ValueError, match="not an investigation directory"):
-        investigate(repo, resume=str(tmp_path / "nowhere"), **common)  # type: ignore[arg-type]
+        investigate(repo, resume=str(tmp_path / "nowhere"), **common, execution="local")  # type: ignore[arg-type]
 
 
 def test_a_remote_reservation_stops_the_investigator_spending_the_same_money_locally(
@@ -665,6 +672,7 @@ def test_remote_work_refuses_to_guess_a_package_it_cannot_derive(
             str(repo),
             output_dir=str(tmp_path / "runs"),
             hawk_api_url="https://hawk.example",
+            execution="local",
         )
 
 
@@ -711,22 +719,22 @@ def test_an_investigation_can_be_a_file_and_the_command_line_still_wins(
         "overview: read the grader first\n"
         "enforce_cost_limit: false\n"
     )
-    from_file = investigate(config=str(config))
+    from_file = investigate(config=str(config), execution="local")
     seed = json.loads((Path(from_file.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
     assert seed["budget_usd"] == 100 and seed["overview"] == "read the grader first"
 
-    overridden = investigate(config=str(config), budget_usd=7)
+    overridden = investigate(config=str(config), budget_usd=7, execution="local")
     seed = json.loads((Path(overridden.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
     assert seed["budget_usd"] == 7, "an argument given on the command line beats the file"
 
     typo = tmp_path / "typo.yaml"
     typo.write_text(f"repo: {repo}\nbudget: 100\n")
     with pytest.raises(ValueError, match="sets things this task does not take"):
-        investigate(config=str(typo))
+        investigate(config=str(typo), execution="local")
     with pytest.raises(ValueError, match="no such investigation file"):
-        investigate(config=str(tmp_path / "nowhere.yaml"))
+        investigate(config=str(tmp_path / "nowhere.yaml"), execution="local")
     with pytest.raises(ValueError, match="needs a repo"):
-        investigate()
+        investigate( execution="local")
 
 
 def test_the_only_task_a_repository_declares_needs_no_naming(tmp_path: Path) -> None:
@@ -804,7 +812,7 @@ def test_the_config_file_decides_before_anything_is_built(
         f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\nenforce_cost_limit: false\n"
         f"extra_skills: ['{skill}']\n"
     )
-    assert investigate(config=str(config)).metadata["investigation_dir"]
+    assert investigate(config=str(config), execution="local").metadata["investigation_dir"]
 
     # a skill directory named by the file is checked like one named on the command line;
     # before the reordering the file's extra_skills were read after the list was built
@@ -816,12 +824,12 @@ def test_the_config_file_decides_before_anything_is_built(
         f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\nextra_skills: ['{not_a_skill}']\n"
     )
     with pytest.raises(ValueError, match="containing SKILL.md"):
-        investigate(config=str(broken))
+        investigate(config=str(broken), execution="local")
 
     bad = tmp_path / "bad.yaml"
     bad.write_text(f"repo: {repo}\nbudget_usd: 0\noutput_dir: {tmp_path / 'runs'}\n")
     with pytest.raises(ValueError, match="finite and positive"):
-        investigate(config=str(bad))
+        investigate(config=str(bad), execution="local")
 
 
 def test_a_value_equal_to_a_default_is_still_an_override(
@@ -838,12 +846,12 @@ def test_a_value_equal_to_a_default_is_still_an_override(
         "interactive: true\nenforce_cost_limit: false\n"
     )
     # the file's values
-    from_file = investigate(config=str(config))
+    from_file = investigate(config=str(config), execution="local")
     seed = json.loads((Path(from_file.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
     assert seed["budget_usd"] == 7
 
     # the same values the defaults would have used, passed deliberately
-    overridden = investigate(config=str(config), budget_usd=10, interactive=False)
+    overridden = investigate(config=str(config), budget_usd=10, interactive=False, execution="local")
     seed = json.loads((Path(overridden.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
     assert seed["budget_usd"] == 10, "an explicit allowance must beat the file"
 
@@ -860,7 +868,7 @@ def test_resume_runs_the_commit_it_reads(tmp_path: Path, monkeypatch: pytest.Mon
         output_dir=str(tmp_path / "runs"), hawk_api_url="https://hawk.example",
         enforce_cost_limit=False,
     )
-    first = investigate(str(repo), **common)  # type: ignore[arg-type]
+    first = investigate(str(repo), **common, execution="local")  # type: ignore[arg-type]
     root = Path(first.metadata["investigation_dir"])
     snapshotted = json.loads((root / "inputs/seed.json").read_text())["revision"]
 
@@ -871,7 +879,7 @@ def test_resume_runs_the_commit_it_reads(tmp_path: Path, monkeypatch: pytest.Mon
     moved = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     assert moved != snapshotted
 
-    resumed = investigate(str(repo), resume=str(root), **common)  # type: ignore[arg-type]
+    resumed = investigate(str(repo), resume=str(root), **common, execution="local")  # type: ignore[arg-type]
     seed = json.loads((Path(resumed.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
     assert seed["remote"]["task_package"].endswith(snapshotted), (
         "a resumed investigation must run the commit it reads, not the one HEAD moved to"
@@ -933,7 +941,7 @@ def test_remote_benchmark_package_can_include_extras(tmp_path, monkeypatch):
     package = 'git+https://example.org/benchmark.git@revision#egg=benchmark[optional]'
     task = investigate(str(git_repo(tmp_path / 'repo')), output_dir=str(tmp_path / 'runs'),
                        task_package=package, audit_package='inspect_audit',
-                       hawk_api_url='https://example.org', enforce_cost_limit=False)
+                       hawk_api_url='https://example.org', enforce_cost_limit=False, execution="local")
     root = Path(task.metadata['investigation_dir'])
     seed = json.loads((root / 'inputs/seed.json').read_text())
     assert seed['remote']['task_package'] == package

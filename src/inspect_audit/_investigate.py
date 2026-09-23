@@ -1,4 +1,4 @@
-"""Local, artifact-first investigation using Inspect's standard agent and ACP."""
+"""Investigation on Hawk, with explicit local execution for development."""
 
 import errno
 import inspect as inspect_module
@@ -76,7 +76,11 @@ ASSETS = Path(__file__).parent / "investigation"
 # `hawk` binary. See investigation/skills/VENDORED.md for provenance and what changed.
 DEFAULT_AUDITOR_IMAGE = (
     "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
-    "072e50b2ea1c51e67644e97e08cff052a52a1d661294635e1c3e360d1371b9ee"
+    "63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa"
+)
+DEFAULT_INVESTIGATOR_IMAGE = (
+    "ghcr.io/generality-labs/inspect-audit-investigator@sha256:"
+    "d21b285bc4ce2f2d34084c2ae382ab5a6996704dbb8d58d1199a1d1925fa71fa"
 )
 
 INVESTIGATION_SKILLS = (
@@ -1504,11 +1508,14 @@ def investigate(
     secrets_file: str | None = None,
     log_bucket: str | None = None,
     aws_profile: str | None = None,
+    execution: str | None = None,
+    investigator_image: str | None = None,
+    artifact_dir: str | None = None,
+    instructions: str | None = None,
 ) -> Task:
-    """Investigate source and existing logs locally, publish HTML, then discuss.
+    """Investigate source and logs on Hawk and publish a GL LaTeX report.
 
-    Requires Docker and, when interactive, --acp-server. Hawk dispatch is enabled
-    by hawk_api_url; workers execute remotely while the investigator runs locally.
+    Submit this task with Hawk. Explicit execution='local' uses Docker instead.
 
     Args:
         repo: Local Git repository or HTTPS Git URL of the benchmark.
@@ -1553,6 +1560,11 @@ def investigate(
             investigation files still load.
         log_bucket: Retained for compatibility; local logs are no longer uploaded.
         aws_profile: Retained for compatibility; job-readable inputs use native Hawk import.
+        execution: 'hawk' (default) runs the investigator and auditors on Hawk;
+            'local' explicitly runs the investigator in local Docker.
+        investigator_image: Published investigator sandbox image including LaTeX.
+        artifact_dir: Hawk job's S3 artifacts directory; publications are stored by sample UUID.
+        instructions: Operator instructions and scope, separate from benchmark background.
     """
     # the file is read before anything else is decided: a setting it carries must be
     # able to change what gets validated, which skills load and how much may be spent.
@@ -1580,6 +1592,22 @@ def investigate(
     auditor_image = settings.get("auditor_image", auditor_image)
     worker_models = settings.get("worker_models", worker_models)
     secrets_file = settings.get("secrets_file", secrets_file)
+    execution = settings.get("execution", execution) or "hawk"
+    investigator_image = settings.get("investigator_image", investigator_image) or DEFAULT_INVESTIGATOR_IMAGE
+    artifact_dir = settings.get("artifact_dir", artifact_dir)
+    instructions = settings.get("instructions", instructions)
+    if execution not in {"hawk", "local"}:
+        raise ValueError("execution must be 'hawk' or 'local'")
+    if execution == "hawk":
+        if not os.environ.get("HAWK_JOB_ID"):
+            raise ValueError(
+                "The investigator defaults to Hawk. Submit inspect_audit/investigate "
+                "with `hawk eval-set run`; use execution='local' for local Docker."
+            )
+        if not artifact_dir:
+            raise ValueError("Hawk investigation needs artifact_dir for durable reports")
+        if not artifact_dir.startswith("s3://"):
+            raise ValueError("Hawk artifact_dir must be an S3 job artifacts directory")
 
     overview = overview if overview is not None else ""
     output_dir = output_dir if output_dir is not None else "investigations"
@@ -1621,6 +1649,8 @@ def investigate(
         paths = paths or paths_from_metadata(local_repo, target_task)
         paper = paper or paper_from_metadata(local_repo, target_task)
     hawk_api_url = hawk_api_url or os.environ.get("HAWK_API_URL")
+    if execution == "hawk" and not hawk_api_url:
+        raise ValueError("Hawk investigation requires hawk_api_url or HAWK_API_URL")
     if hawk_api_url:
         # a runner installs the benchmark from git: a local checkout supplies its own
         # origin and commit, and a repository given as a URL is already that answer
@@ -1716,6 +1746,19 @@ def investigate(
     if remote is not None:
         tools += [hawk_submit(remote, root), jobs(remote, root)]
 
+    sandbox_spec = ("docker", str(root / "compose.yaml"))
+    if execution == "hawk":
+        from inspect_ai.tool import ToolDef
+
+        from ._investigation_workspace import configure, stage_workspace, synchronized
+
+        sandbox_spec = configure(root, investigator_image or "", artifact_dir or "")
+        setup_steps.append(stage_workspace(root))
+        tools = [
+            synchronized(t, root) if ToolDef(t).name in {"hawk_submit", "jobs", "logs"} else t
+            for t in tools
+        ]
+
     async def on_continue(state: AgentState) -> bool | str:
         if remote is not None:
             remote.record_local_spend()
@@ -1726,7 +1769,8 @@ def investigate(
         dataset=[
             Sample(
                 id="investigation",
-                input="Read /inputs/seed.json and invoke the investigating skill. Begin the investigation autonomously.",
+                input="Read /inputs/seed.json and invoke the investigating skill. Begin the investigation autonomously."
+                + (f"\n\nOperator instructions:\n{instructions}" if instructions else ""),
             )
         ],
         solver=react(
@@ -1738,7 +1782,7 @@ def investigate(
             truncation="auto",
             on_continue=on_continue,
         ),
-        sandbox=("docker", str(root / "compose.yaml")),
+        sandbox=sandbox_spec,
         # tool results are truncated at 16KB by default; an inventory of fifty
         # logs or a transcript dump is routinely larger, and a truncated view
         # is what the agent then reasons from
@@ -1749,6 +1793,7 @@ def investigate(
         metadata={
             "investigation_dir": str(root),
             "interactive": interactive,
+            "execution": execution,
             "capabilities": ["repository", "existing_logs", "docs", "latex_report", "acp"]
             + (["hawk_jobs"] if remote else []),
         },

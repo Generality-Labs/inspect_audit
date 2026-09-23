@@ -181,10 +181,14 @@ def check_report(root: str) -> Tool:
     """Validate structured results and generate tables for review before publication."""
     async def execute() -> str:
         """Check findings, assessments and totals; update report/assessments.tex."""
+        from ._investigation_workspace import pull, push_assessments
+
+        await pull(Path(root))
         try:
             _prepare_report(root)
         except (ValueError, OSError, KeyError, TypeError) as ex:
             raise ToolError(f"Report validation failed: {ex}") from ex
+        await push_assessments(Path(root))
         return "Records validated and tables generated. Compile with latexmk -pdf -interaction=nonstopmode -halt-on-error report.tex from /workspace/report. Render all pages with pdftoppm, inspect them with view_image, and fix layout before publishing."
     return execute
 
@@ -195,10 +199,19 @@ def publish_report(root: str) -> Tool:
 
     async def execute() -> str:
         """Compile the GL LaTeX report, save an immutable PDF/source bundle, and open discussion."""
+        from ._investigation_workspace import (
+            persist,
+            pull,
+            push_assessments,
+            remote_workspace,
+        )
+
+        await pull(Path(root))
         try:
             _prepare_report(root)
         except (ValueError, OSError, KeyError, TypeError) as ex:
             raise ToolError(f"Report assessment validation failed: {ex}") from ex
+        await push_assessments(Path(root))
         result = await sandbox().exec(
             ["latexmk", "-r", "/workspace/report/.latexmkrc", "-cd", "-pdf", "-interaction=nonstopmode", "-halt-on-error", "/workspace/report/report.tex"],
             timeout=300,
@@ -207,10 +220,15 @@ def publish_report(root: str) -> Tool:
             raise ToolError(
                 f"Report rendering failed:\n{result.stderr}\n{result.stdout}"
             )
+        await pull(Path(root))
         try:
             destination = save_publication(Path(root))
         except (ValueError, OSError) as ex:
             raise ToolError(str(ex)) from ex
+        if remote_workspace(Path(root)):
+            durable = await persist(Path(root), destination)
+            store_as(InvestigationState).published = durable
+            return f"Published {durable}/report.pdf. Give the operator a concise summary and the report path."
         store_as(InvestigationState).published = str(destination)
         return f"Published {destination / 'report.pdf'}. Give the operator a concise summary and the report path."
 

@@ -136,8 +136,11 @@ class Hawk:
         blocking `subprocess.run` here would stall every other sample in the eval for
         as long as Hawk takes to answer.
         """
+        env = dict(self.env)
+        if os.environ.get("HAWK_JOB_ID"):
+            env["HAWK_ACCESS_TOKEN"] = await self.access_token()
         result = await subprocess(
-            [self.binary, *args], text=True, env=self.env, timeout=timeout
+            [self.binary, *args], text=True, env=env, timeout=timeout
         )
         if not result.success:
             raise RuntimeError(
@@ -146,6 +149,25 @@ class Hawk:
         return str(result.stdout)
 
     async def submit(self, config_path: Path) -> str:
+        if os.environ.get("HAWK_JOB_ID"):
+            from hawk.client import HawkClient
+            from inspect_ai.hooks._hooks import get_all_hooks
+
+            config, errors = parse_config(yaml.safe_load(config_path.read_text()))
+            if errors:
+                raise ValueError(errors)
+            token = await self.access_token()
+            # Use the runner hook's current token after a possible rotation;
+            # the environment holds only the credential supplied at startup.
+            refresh_token = next((
+                getattr(hook, "_current_refresh_token", None)
+                for hook in get_all_hooks()
+                if type(hook).__module__ == "hawk.runner.refresh_token"
+            ), None) or os.environ.get("HAWK_RUNNER_REFRESH_TOKEN")
+            if not refresh_token:
+                raise RuntimeError("Hawk runner has no refresh credential for child jobs")
+            async with HawkClient(token=token, api_url=self.env["HAWK_API_URL"]) as client:
+                return str(await client.create_eval_set(config, refresh_token=refresh_token))
         # no provider key travels with the job: models route through Hawk's proxy,
         # which holds the org's keys and meters spend per user
         out = await self._run(
@@ -244,6 +266,13 @@ class Hawk:
 
     async def access_token(self) -> str:
         """The operator's Hawk token, from the CLI that holds their login."""
+        if os.environ.get("HAWK_JOB_ID"):
+            from inspect_ai.hooks._hooks import override_api_key
+
+            token = override_api_key("HAWK_ACCESS_TOKEN", "")
+            if not token:
+                raise RuntimeError("Hawk runner's token refresh hook is not available")
+            return token
         if not self._token:
             self._token = (await self._run("auth", "access-token", timeout=60)).strip()
         return self._token

@@ -291,6 +291,7 @@ def test_local_logs_remain_local_when_remote_work_is_enabled(
     target = _investigate.investigate(
         str(repo), logs=[str(log)], output_dir=str(tmp_path / "runs"), enforce_cost_limit=False,
         hawk_api_url=HAWK,
+        execution="local",
     )
     root = Path(target.metadata["investigation_dir"])
     seed = json.loads((root / "inputs/seed.json").read_text())
@@ -989,6 +990,7 @@ def test_logs_already_parked_where_hawk_can_read_them_are_not_copied(
         output_dir=str(tmp_path / "runs"),
         enforce_cost_limit=False,
         hawk_api_url=HAWK,
+        execution="local",
     )
     root = Path(target.metadata["investigation_dir"])
     seed = json.loads((root / "inputs/seed.json").read_text())
@@ -1072,6 +1074,7 @@ def test_a_local_only_investigation_has_no_log_reading_tool(
         logs=[str(log)],
         output_dir=str(tmp_path / "runs"),
         enforce_cost_limit=False,
+        execution="local",
     )
     names = {t.__name__ if hasattr(t, "__name__") else "" for t in target.solver.__dict__.get("tools", [])}
     assert "logs" not in names
@@ -1099,7 +1102,7 @@ def test_a_saved_investigation_naming_a_secrets_file_still_loads(
         f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\nhawk_api_url: {HAWK}\n"
         f"enforce_cost_limit: false\nsecrets_file: {tmp_path / '.env'}\n"
     )
-    target = _investigate.investigate(config=str(config))
+    target = _investigate.investigate(config=str(config), execution="local")
     seed = json.loads((Path(target.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
     assert "secrets" not in json.dumps(seed["remote"]).lower()
 

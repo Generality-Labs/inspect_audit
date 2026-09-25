@@ -1,0 +1,1159 @@
+{
+  "$defs": {
+    "ArtifactLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "const": "artifact",
+          "default": "artifact",
+          "title": "Kind",
+          "type": "string"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Location"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "quote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quote"
+        },
+        "role": {
+          "default": "related",
+          "enum": [
+            "primary",
+            "related"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "ArtifactLocation",
+      "type": "object"
+    },
+    "CodeLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "column": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Column"
+        },
+        "end_line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Line"
+        },
+        "file": {
+          "title": "File",
+          "type": "string"
+        },
+        "kind": {
+          "const": "code",
+          "default": "code",
+          "title": "Kind",
+          "type": "string"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line"
+        },
+        "quote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quote"
+        },
+        "role": {
+          "default": "related",
+          "enum": [
+            "primary",
+            "related"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "title": "CodeLocation",
+      "type": "object"
+    },
+    "DatasetRef": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Config"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revision"
+        },
+        "split": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Split"
+        }
+      },
+      "title": "DatasetRef",
+      "type": "object"
+    },
+    "Effect": {
+      "additionalProperties": false,
+      "properties": {
+        "affected": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Affected"
+        },
+        "denominator": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Denominator"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "enum": [
+                "measured",
+                "hypothesised"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        }
+      },
+      "title": "Effect",
+      "type": "object"
+    },
+    "Finding": {
+      "additionalProperties": false,
+      "description": "One defect record. See docs/finding-schema-envelope.md.",
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Aliases",
+          "type": "array"
+        },
+        "dimension": {
+          "enum": [
+            "construct",
+            "contentvalidity",
+            "dataset",
+            "scaffold",
+            "harness",
+            "environment",
+            "grading",
+            "resources",
+            "informativeness"
+          ],
+          "title": "Dimension",
+          "type": "string"
+        },
+        "effect": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Effect"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "fingerprint": {
+          "title": "Fingerprint",
+          "type": "string"
+        },
+        "fingerprint_version": {
+          "default": 1,
+          "title": "Fingerprint Version",
+          "type": "integer"
+        },
+        "fixed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VersionRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "history": {
+          "items": {
+            "$ref": "#/$defs/StatusChange"
+          },
+          "title": "History",
+          "type": "array"
+        },
+        "introduced": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VersionRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "locations": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "artifact": "#/$defs/ArtifactLocation",
+                "code": "#/$defs/CodeLocation",
+                "log": "#/$defs/LogLocation",
+                "sample": "#/$defs/SampleLocation",
+                "scorer": "#/$defs/ScorerLocation",
+                "transcript": "#/$defs/TranscriptLocation",
+                "url": "#/$defs/UrlLocation"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/CodeLocation"
+              },
+              {
+                "$ref": "#/$defs/SampleLocation"
+              },
+              {
+                "$ref": "#/$defs/TranscriptLocation"
+              },
+              {
+                "$ref": "#/$defs/LogLocation"
+              },
+              {
+                "$ref": "#/$defs/ScorerLocation"
+              },
+              {
+                "$ref": "#/$defs/ArtifactLocation"
+              },
+              {
+                "$ref": "#/$defs/UrlLocation"
+              }
+            ]
+          },
+          "minItems": 1,
+          "title": "Locations",
+          "type": "array"
+        },
+        "producer": {
+          "title": "Producer",
+          "type": "string"
+        },
+        "rule": {
+          "title": "Rule",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "none",
+            "minor",
+            "major",
+            "critical"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "status": {
+          "enum": [
+            "hypothesis",
+            "supported",
+            "qualified",
+            "retracted"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "subject": {
+          "$ref": "#/$defs/Subject"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "suppressions": {
+          "items": {
+            "$ref": "#/$defs/Suppression"
+          },
+          "title": "Suppressions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "fingerprint",
+        "producer",
+        "rule",
+        "subject",
+        "dimension",
+        "severity",
+        "status",
+        "summary",
+        "locations",
+        "run_id",
+        "source"
+      ],
+      "title": "Finding",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "LogLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "eval_id": {
+          "title": "Eval Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "log",
+          "default": "log",
+          "title": "Kind",
+          "type": "string"
+        },
+        "location_hint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Location Hint"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "quote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quote"
+        },
+        "role": {
+          "default": "related",
+          "enum": [
+            "primary",
+            "related"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "eval_id",
+        "path"
+      ],
+      "title": "LogLocation",
+      "type": "object"
+    },
+    "Outcome": {
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "rule": {
+          "title": "Rule",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "skip"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule",
+        "status"
+      ],
+      "title": "Outcome",
+      "type": "object"
+    },
+    "Provenance": {
+      "additionalProperties": false,
+      "description": "Who did something, when and why; mirrors inspect_ai's ProvenanceData.",
+      "properties": {
+        "author": {
+          "title": "Author",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "timestamp",
+        "author"
+      ],
+      "title": "Provenance",
+      "type": "object"
+    },
+    "Revision": {
+      "additionalProperties": false,
+      "description": "The code examined: a commit, an installed version, or both.",
+      "properties": {
+        "commit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commit"
+        },
+        "dirty": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dirty"
+        },
+        "package_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Package Version"
+        }
+      },
+      "title": "Revision",
+      "type": "object"
+    },
+    "SampleLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "dataset": {
+          "title": "Dataset",
+          "type": "string"
+        },
+        "field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Field"
+        },
+        "kind": {
+          "const": "sample",
+          "default": "sample",
+          "title": "Kind",
+          "type": "string"
+        },
+        "quote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quote"
+        },
+        "role": {
+          "default": "related",
+          "enum": [
+            "primary",
+            "related"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "sample_id": {
+          "title": "Sample Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset",
+        "sample_id"
+      ],
+      "title": "SampleLocation",
+      "type": "object"
+    },
+    "ScorerLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "eval_id": {
+          "title": "Eval Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "scorer",
+          "default": "scorer",
+          "title": "Kind",
+          "type": "string"
+        },
+        "quote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quote"
+        },
+        "role": {
+          "default": "related",
+          "enum": [
+            "primary",
+            "related"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "scorer": {
+          "title": "Scorer",
+          "type": "string"
+        }
+      },
+      "required": [
+        "eval_id",
+        "scorer"
+      ],
+      "title": "ScorerLocation",
+      "type": "object"
+    },
+    "Source": {
+      "additionalProperties": false,
+      "description": "The producer's own record, untouched, plus the log header when there is one.",
+      "properties": {
+        "eval_spec": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Eval Spec"
+        },
+        "format": {
+          "title": "Format",
+          "type": "string"
+        },
+        "record": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "format",
+        "record"
+      ],
+      "title": "Source",
+      "type": "object"
+    },
+    "StatusChange": {
+      "additionalProperties": false,
+      "properties": {
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "status": {
+          "enum": [
+            "hypothesis",
+            "supported",
+            "qualified",
+            "retracted"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "provenance"
+      ],
+      "title": "StatusChange",
+      "type": "object"
+    },
+    "Subject": {
+      "additionalProperties": false,
+      "description": "What the finding is about.",
+      "properties": {
+        "dataset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DatasetRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "eval": {
+          "title": "Eval",
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "task_args": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Task Args",
+          "type": "object"
+        },
+        "task_version": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskVersion"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "eval",
+        "revision"
+      ],
+      "title": "Subject",
+      "type": "object"
+    },
+    "Suppression": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        }
+      },
+      "required": [
+        "kind",
+        "provenance"
+      ],
+      "title": "Suppression",
+      "type": "object"
+    },
+    "TaskVersion": {
+      "additionalProperties": false,
+      "description": "inspect_evals' `N-X` task version, kept whole and split.",
+      "properties": {
+        "comparability": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Comparability"
+        },
+        "full": {
+          "title": "Full",
+          "type": "string"
+        },
+        "interface": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interface"
+        }
+      },
+      "required": [
+        "full"
+      ],
+      "title": "TaskVersion",
+      "type": "object"
+    },
+    "TranscriptLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "epoch": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Epoch"
+        },
+        "eval_id": {
+          "title": "Eval Id",
+          "type": "string"
+        },
+        "event_uuid": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Event Uuid"
+        },
+        "kind": {
+          "const": "transcript",
+          "default": "transcript",
+          "title": "Kind",
+          "type": "string"
+        },
+        "message_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message Id"
+        },
+        "quote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quote"
+        },
+        "role": {
+          "default": "related",
+          "enum": [
+            "primary",
+            "related"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "sample_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sample Id"
+        },
+        "sample_uuid": {
+          "title": "Sample Uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "eval_id",
+        "sample_uuid"
+      ],
+      "title": "TranscriptLocation",
+      "type": "object"
+    },
+    "UrlLocation": {
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "const": "url",
+          "default": "url",
+          "title": "Kind",
+          "type": "string"
+        },
+        "quote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quote"
+        },
+        "role": {
+          "default": "related",
+          "enum": [
+            "primary",
+            "related"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "UrlLocation",
+      "type": "object"
+    },
+    "VersionRef": {
+      "additionalProperties": false,
+      "properties": {
+        "commit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commit"
+        },
+        "comparability_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Comparability Version"
+        }
+      },
+      "title": "VersionRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One producer invocation over one eval: provenance, pass/fail/skip outcomes, findings.",
+  "properties": {
+    "cost_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cost Usd"
+    },
+    "duration_s": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Duration S"
+    },
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/Finding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "git_commit": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Git Commit"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "inputs": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Inputs",
+      "type": "object"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "outcomes": {
+      "items": {
+        "$ref": "#/$defs/Outcome"
+      },
+      "title": "Outcomes",
+      "type": "array"
+    },
+    "producer": {
+      "title": "Producer",
+      "type": "string"
+    },
+    "producer_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Producer Version"
+    },
+    "subject": {
+      "$ref": "#/$defs/Subject"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "timestamp",
+    "producer",
+    "subject"
+  ],
+  "title": "Run",
+  "type": "object"
+}

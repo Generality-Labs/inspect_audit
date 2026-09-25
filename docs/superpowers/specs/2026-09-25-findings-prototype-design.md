@@ -77,7 +77,7 @@ Every location has `role: Literal["primary", "related"]` default `related` and `
 
 **Source.** `format: str` (type and package version, `inspect_evals_lint.Diagnostic@0.7.0`), `record: JsonValue`, `eval_spec: dict[str, JsonValue] | None`. Not re-validated against producer models.
 
-**Finding.** `schema_version: Literal["0.1"]`, `fingerprint: str`, `fingerprint_version: int`, `subject`, `dimension`, `severity`, `status`, `summary: str`, `locations: list[AnyLocation]` (min length 1, exactly one primary), `run_id: str`, `source: Source`, `aliases: list[str]`, `suppressions: list[Suppression]`, `history: list[StatusChange]`, `introduced: VersionRef | None`, `fixed: VersionRef | None`, `effect: Effect | None`. `VersionRef` is `commit: str | None`, `comparability_version: int | None`. A computed property `primary_location` returns the primary.
+**Finding.** `schema_version: Literal["0.1"]`, `fingerprint: str`, `fingerprint_version: int`, `producer: str`, `rule: str`, `subject`, `dimension`, `severity`, `status`, `summary: str`, `locations: list[AnyLocation]` (min length 1, exactly one primary), `run_id: str`, `source: Source`, `aliases: list[str]`, `suppressions: list[Suppression]`, `history: list[StatusChange]`, `introduced: VersionRef | None`, `fixed: VersionRef | None`, `effect: Effect | None`. `VersionRef` is `commit: str | None`, `comparability_version: int | None`. A computed property `primary_location` returns the primary.
 
 **Outcome.** `rule: str`, `status: Literal["pass", "fail", "skip"]`, `message: str | None`.
 

@@ -42,11 +42,11 @@ def collect_logs(sources: Sequence[str]) -> list[Path]:
     return sorted(set(paths))
 
 
-def sweep(targets: Sequence[str], ctx: Context, producers: set[str]) -> dict[str, list[Run]]:
-    """Header first, then the selected external producers, for every target. Nothing raises."""
+def sweep(targets: Sequence[str], ctx: Context, producers: set[str], *, header: bool = True) -> dict[str, list[Run]]:
+    """Header first (when logs were supplied), then the selected external producers, for every target. Nothing raises."""
     runs_by_eval: dict[str, list[Run]] = {}
     for target in targets:
-        runs = [header_adapter.run(target, ctx)]
+        runs = [header_adapter.run(target, ctx)] if header else []
         for name in sorted(producers):
             runs.append(EXTERNAL_PRODUCERS[name](target, ctx))
         runs_by_eval[target] = runs
@@ -87,7 +87,7 @@ def _parser() -> argparse.ArgumentParser:
     run_p.add_argument("--root", required=True, type=Path, help="inspect_evals checkout")
     run_p.add_argument("--logs", action="append", default=[], help="log dir, .eval file, or hawk:<eval-set-id>; repeatable")
     run_p.add_argument("--out", required=True, type=Path)
-    run_p.add_argument("--producers", default="lint,dataset", help="external producers to run; the header producer always runs")
+    run_p.add_argument("--producers", default="lint,dataset", help="external producers to run; the header producer runs whenever --logs is given")
     run_p.add_argument("--resolve", action="store_true", help="resolve the task to compare logged sample ids (needs inspect_evals importable)")
     run_p.add_argument("--featured", action="store_true", help="add the 35 Featured evals")
     run_p.add_argument("targets", nargs="*", help="registry names, e.g. inspect_evals/stereoset")
@@ -117,7 +117,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         producers=ProducerConfig.from_env(),
         resolve=bool(args.resolve),
     )
-    runs_by_eval = sweep(targets, ctx, producers)
+    # the header producer needs logs; with no --logs it is not requested rather than skipped,
+    # so a lint-and-dataset sweep exits 0 when its producers all ran
+    runs_by_eval = sweep(targets, ctx, producers, header=bool(args.logs))
     write_outputs(args.out, runs_by_eval)
     skipped = any(
         run.outcomes and all(outcome.status == "skip" for outcome in run.outcomes)

@@ -170,7 +170,7 @@ inspect-audit-findings summary <out dir>
 
 - `TARGET` is a registry name. `--featured` appends the 35 ids from `featured.py` as `inspect_evals/<id>`. At least one target is required.
 - `--logs` accepts, repeatedly, a directory, a `.eval` file, or a `hawk:<eval-set-id>` address. Local sources are listed with `list_eval_logs(recursive=True)`. `hawk:` sources are materialised once per invocation with `inspect_audit._registry.fetch_logs`, which downloads through the Hawk API using `HAWK_API_URL` and either `HAWK_ACCESS_TOKEN` or the runner refresh environment. Logs are then partitioned by target on the header's task name, so one `--logs` directory can serve a whole sweep.
-- `--producers` selects external producers, default `lint,dataset`. The header producer always runs.
+- `--producers` selects external producers, default `lint,dataset`. The header producer runs whenever `--logs` was supplied; without logs it is not requested, so a lint-and-dataset sweep can exit 0.
 - For each target, in order: header, then the selected producers. Each writes `<out>/<slug>/<producer>.run.json` and appends to in-memory lists. After the sweep, `findings.parquet`, `runs.parquet`, `<out>/SUMMARY.md` and each `<out>/<slug>/SUMMARY.md` are written.
 - Exit code 0 if every producer ran; 1 if any run was a skip; 2 on a usage error. Findings do not affect the exit code.
 - `summary` re-renders every `SUMMARY.md` from the `*.run.json` files without re-running producers.
@@ -196,7 +196,7 @@ inspect-audit-findings summary <out dir>
 - `test_fingerprint.py`: golden value for a known input; changes with each of producer, rule, eval and primary key; unchanged when related locations change.
 - `test_io.py`: write and read a run; `findings_df` column set; parquet round trip.
 - `test_render.py`: both summaries against fixture runs, including the over-100-findings note and a skipped producer.
-- `test_lint_adapter.py`: `parse` on `fixtures/lint.json` yields 25 outcomes and one finding with the expected code location, dimension `dataset`, severity `minor`; `run` with the prefix pointed at a stub script that cats the fixture; `run` with a prefix that exits 1 yields a skip run.
+- `test_lint_adapter.py`: `parse` on `fixtures/lint.json` yields 25 outcomes and one finding with the expected code location, dimension `dataset`, severity `minor`; `run` with the prefix pointed at a stub script that cats the fixture; `run` with a prefix that exits 2 yields a skip run, while exit 1 (lint's "checks failed") still parses.
 - `test_dataset_adapter.py`: `parse` on the fixture directory yields three outcomes and 18 plus 2,123 plus 28 findings with `sample` primaries and the severity mapping; `run` with a stub; a target with no HuggingFace asset yields a skip.
 - `test_header_adapter.py`: real logs from `test_helpers.logs.run_fixture_eval` in a temporary root whose `eval.yaml` says `dataset_samples: 99`, asserting `header.dataset_samples` fires with a `log` primary and `eval_spec` present; a second log at a different task version asserting `header.version_drift`; no logs for the target yields a skip.
 - `test_cli.py`: `run` over the temporary root with both external prefixes stubbed, asserting the file layout, the parquet row counts, exit code 0; with one stub failing, exit code 1 and a skip recorded; `summary` regenerates identical markdown.

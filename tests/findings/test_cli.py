@@ -91,7 +91,15 @@ def test_featured_flag_expands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     from inspect_audit.findings import cli
 
     seen: list[list[str]] = []
-    monkeypatch.setattr(cli, "sweep", lambda targets, ctx, producers: seen.append(list(targets)) or {})
+    monkeypatch.setattr(cli, "sweep", lambda targets, ctx, producers, **kw: seen.append(list(targets)) or {})
     monkeypatch.setattr(cli, "write_outputs", lambda out, runs: None)
     assert main(["run", "--root", str(tmp_path), "--out", str(tmp_path / "o"), "--featured"]) == 0
     assert seen[0] == [f"inspect_evals/{name}" for name in FEATURED]
+
+
+def test_without_logs_the_header_producer_is_not_run_and_exit_is_zero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    out = tmp_path / "out"
+    assert main(["run", "--root", str(root), "--out", str(out), "--producers", "lint", "inspect_evals/stereoset"]) == 0
+    assert sorted(p.name for p in (out / "inspect-evals-stereoset").glob("*.run.json")) == ["lint.run.json"]

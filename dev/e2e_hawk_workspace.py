@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 from inspect_ai import eval
-from inspect_ai.model import ModelOutput, get_model
+from inspect_ai.model import ModelCost, ModelInfo, ModelOutput, get_model, set_model_info
 from inspect_ai.util import SandboxEnvironmentSpec
 
 from inspect_audit._investigate import DEFAULT_INVESTIGATOR_IMAGE, investigate
@@ -45,17 +45,21 @@ echo done
 def script() -> list[ModelOutput]:
     m = "mockllm/model"
     return [
-        ModelOutput.for_tool_call(m, "bash", {"cmd": MESSY_WORKSPACE}),
+        ModelOutput.for_tool_call(m, "bash", {"command": MESSY_WORKSPACE}),
         ModelOutput.for_tool_call(m, "jobs", {"action": "list", "label": None, "sample": None, "wait_minutes": None, "limit": None}),
         ModelOutput.for_tool_call(m, "hawk_submit", {"config": "/workspace/jobs/e2e.eval-set.yaml", "estimated_usd": 1.0, "note": None}),
         ModelOutput.for_tool_call(m, "hawk_submit", {"config": "/workspace/../etc/passwd", "estimated_usd": 1.0, "note": None}),
-        ModelOutput.for_tool_call(m, "bash", {"cmd": "echo '- e2e: second entry' >> /workspace/journal.md"}),
+        ModelOutput.for_tool_call(m, "bash", {"command": "echo '- e2e: second entry' >> /workspace/journal.md"}),
         ModelOutput.for_tool_call(m, "publish_report", {}),
+        # then stop calling tools; on_continue nudges until the message limit ends it
+        *[ModelOutput.from_content(m, "done") for _ in range(20)],
     ]
 
 
 def main() -> int:
     scratch = Path(tempfile.mkdtemp(prefix="e2e-hawk-ws-"))
+    # the allowance refuses to run an unpriced model; price the mock at zero
+    set_model_info("mockllm/model", ModelInfo(cost=ModelCost(input=0.0, output=0.0, input_cache_read=0.0, input_cache_write=0.0)))
     artifacts = scratch / "artifacts"
     os.environ["HAWK_JOB_ID"] = "local-e2e"
     task = investigate(
@@ -93,7 +97,9 @@ def main() -> int:
         if "/state/" in path or "preflight" in path or "published" in path:
             print("  ", path)
     journal = [p for p in artifacts.rglob("journal.md")]
+    notes = " ".join(str(m.text) for m in (sample.messages if sample else []) if m.role == "tool")
     ok = (
+        "evil-link" in notes and "report/plain.txt" not in notes and
         sample is not None and sample.error is None
         and journal and "second entry" in journal[0].read_text()
     )

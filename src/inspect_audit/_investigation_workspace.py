@@ -133,7 +133,7 @@ async def pull(root: Path) -> list[str]:
     # GNU tar exits 1 when a file changes while it is read; the archive is still whole
     result = await sandbox().exec([
         "tar", "--exclude=.git", "--exclude=.venv", "--exclude=__pycache__",
-        "--warning=no-file-changed", "--ignore-failed-read",
+        "--warning=no-file-changed", "--ignore-failed-read", "--hard-dereference",
         "-czf", "/tmp/investigator-workspace.tar.gz", "-C", "/workspace", *present,
     ], timeout=300)
     if result.returncode not in (0, 1):

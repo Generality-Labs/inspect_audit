@@ -20,3 +20,4 @@ dev/logs/
 .env
 .env.*
 dev/audit-logs/
+dev/logs

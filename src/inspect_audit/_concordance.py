@@ -7,13 +7,15 @@ reconstruction fault (they do not). The verdict is stored on the sample: `grade`
 refuses while it is `blocked`, and every item score carries it.
 """
 
+import re
 from contextlib import nullcontext
 from importlib.metadata import PackageNotFoundError, version
 from logging import getLogger
 from typing import Any
 
 from inspect_ai import score_async
-from inspect_ai.log import EvalSpec, read_eval_log, transcript
+from inspect_ai.event import ModelEvent, SpanBeginEvent, SpanEndEvent
+from inspect_ai.log import EvalSample, EvalSpec, read_eval_log, transcript
 from inspect_ai.model import get_model, model_roles
 from inspect_ai.scorer import (
     Score,
@@ -88,6 +90,34 @@ def drift(header: EvalSpec, task_args: dict[str, Any]) -> dict[str, Any]:
     return {"packages": packages, "args": args}
 
 
+def _family(model: str) -> str:
+    """`openai/gpt-5-mini-2025-08-07` and `openrouter/openai/gpt-5-mini` are one model."""
+    return re.sub(r"-\d{4}-?\d{2}-?\d{2}$", "", model.rsplit("/", 1)[-1]).lower()
+
+
+def scorer_models(sample: EvalSample) -> set[str]:
+    """Models the recorded scorers called for this sample (an LLM extractor or judge)."""
+    models: set[str] = set()
+    scoring: list[str] = []
+    for event in sample.events or []:
+        if isinstance(event, SpanBeginEvent):
+            if event.type in ("scorers", "scorer") or scoring:
+                scoring.append(event.id)
+        elif isinstance(event, SpanEndEvent):
+            if scoring and event.id == scoring[-1]:
+                scoring.pop()
+        elif isinstance(event, ModelEvent) and scoring:
+            models.add(event.model)
+    return models
+
+
+def grader_drift(logged: set[str], resolved: set[str]) -> dict[str, list[str]] | None:
+    """The recorded scorers used models this replay will not; None when they match."""
+    if not logged or {_family(m) for m in logged} <= {_family(m) for m in resolved}:
+        return None
+    return {"logged": sorted(logged), "resolved": sorted(resolved)}
+
+
 @scorer(metrics=[frequency(categories=[AGREE, STABLE, NOISY])], name=NAME)
 def concordance_scorer(benchmark: list[Scorer]) -> Scorer:
     """AGREE when the benchmark's scorers reproduce this attempt's recorded grades.
@@ -146,7 +176,12 @@ def classify(
         return "unvalidated", [*reasons, "scorer_count_mismatch"]
     if any(s.value == NOISY for s in scores):
         reasons.append("noise")
-    if any(s.value == STABLE for s in scores):
+    stable = [s for s in scores if s.value == STABLE]
+    if stable:
+        # a different grader model can disagree with the recorded grade without our
+        # reconstruction being wrong, so that alone never closes the grade channel
+        if all((s.metadata or {}).get("grader_drift") for s in stable):
+            return "inconclusive", [*reasons, "grader_model_drift"]
         return ("inconclusive", [*reasons, "stable_disagreement_box"]) if has_box else (
             "blocked", [*reasons, "stable_disagreement"]
         )
@@ -172,6 +207,8 @@ def concordance_gate(scorers: Scorer | list[Scorer] | None, limit: int = 15) -> 
         else:
             scores: list[Score] = []
             errors: list[str] = []
+            # what the replay can call: the audit's bound roles and its default model
+            resolved = {str(m) for m in model_roles().values()} | {str(get_model())}
             for path in logs:
                 try:
                     log = read_eval_log(path)
@@ -184,6 +221,10 @@ def concordance_gate(scorers: Scorer | list[Scorer] | None, limit: int = 15) -> 
                 con.attempted += len(log.samples)
                 if not con.drift:
                     con.drift = drift(log.eval, task_args)
+                logged = set().union(*(scorer_models(s) for s in log.samples))
+                graders = grader_drift(logged, resolved)
+                if graders:
+                    con.drift.setdefault("grader_models", {})[path] = graders
                 try:
                     scored = await score_async(
                         log, [concordance_scorer(benchmark)], action="append",
@@ -192,12 +233,15 @@ def concordance_gate(scorers: Scorer | list[Scorer] | None, limit: int = 15) -> 
                 except Exception as ex:
                     errors.append(f"rescore_failed:{type(ex).__name__}")
                     continue
-                scores += [(s.scores or {})[NAME] for s in scored.samples or [] if NAME in (s.scores or {})]
+                fresh = [(s.scores or {})[NAME] for s in scored.samples or [] if NAME in (s.scores or {})]
+                for item in fresh:
+                    item.metadata = {**(item.metadata or {}), "grader_drift": graders}
+                scores += fresh
             con.checked = len(scores)
             con.agreed = sum(1 for s in scores if s.value == AGREE)
             con.stable = [s.metadata or {} for s in scores if s.value == STABLE]
             con.noisy = [s.metadata or {} for s in scores if s.value == NOISY]
-            if con.drift.get("packages") or con.drift.get("args"):
+            if con.drift.get("packages") or con.drift.get("args") or con.drift.get("grader_models"):
                 errors.append("resolution_drift")
             con.verdict, con.reasons = classify(
                 scores, attempted=con.attempted, has_box=has_benchmark_box(), errors=errors

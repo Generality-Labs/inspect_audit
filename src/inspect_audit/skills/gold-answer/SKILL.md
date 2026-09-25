@@ -36,6 +36,15 @@ it matched the gold is not independent evidence. Fall back to external sources o
 when independent reproduction is genuinely out of reach, and if even those cannot
 settle it, grade `UNVERIFIABLE` rather than accept the benchmark's account of itself.
 
+When the gold was produced by a procedure (an engine, a solver, a simulation), run
+an independent procedure of the same kind at least as strong as the one described,
+with its settings fixed first, and install what you need. Separately, check whether
+the item meets the benchmark's own stated construction criteria (a uniqueness margin,
+a difficulty threshold). An item that fails its own filter is worth reporting even
+when the gold is right; record it in `remarks` and leave the grade to correctness.
+For a question asking for the best or only answer, an alternative must be as good
+under the question's own criterion, not merely good.
+
 ## Defensible alternatives are not merely plausible guesses
 
 For each rejected candidate, separate two questions: does reliable evidence support
@@ -62,9 +71,10 @@ that every unreviewed candidate is incorrect. Preserve contradictions and additi
 claims in the actual submission; neither silently trim them away nor assume the
 judge's accusation of a contradiction is true. Source-check the disputed claim.
 
-Read intermediate attempts too. In binary-feedback logs these are stored in
-sample.metadata.feedback_attempts: each entry has attempt, answer, feedback and
-grade. The final sample output/score does not describe every earlier rejection.
+Read intermediate attempts too. Binary-feedback logs store them in sample or score
+metadata (for example `feedback_attempts`, `chess_feedback_attempts`, or the score's
+`metadata.attempts`); list the keys rather than assuming one. The final sample
+output/score does not describe every earlier rejection.
 
 ## Start with the logs, not the web
 

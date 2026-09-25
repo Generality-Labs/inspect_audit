@@ -720,6 +720,23 @@ class Remote:
                 costs[model] = dict(costs[qualified])
         return costs, missing
 
+    def fold_prior_spend(self) -> None:
+        """Start a sample attempt: what earlier attempts spent becomes prior spend.
+
+        Inspect retries a sample on the same Task object with its usage counter back
+        at zero, so without this a retry would forget the first attempt's spend.
+        Idempotent: it recomputes from the file rather than adding to memory.
+        """
+        spent = (
+            json.loads(self._spend_path.read_text()) if self._spend_path.is_file() else {}
+        )
+        self.prior_local_usd = float(spent.get("prior_usd", 0.0)) + float(
+            spent.get("this_run_usd", 0.0)
+        )
+        self._spend_path.write_text(
+            json.dumps({"prior_usd": self.prior_local_usd, "this_run_usd": 0.0})
+        )
+
     def record_local_spend(self) -> None:
         """Keep this run's own spend on disk, so a resumed investigation inherits it."""
         local = _local_spend()[0]
@@ -948,11 +965,9 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
                 with the outcome; the reservation is the worst case, not this number.
             note: Why you are running this; recorded in the ledger. Pass null for none.
         """
-        if not config.startswith("/workspace/"):
-            raise ToolError("config must be a path under /workspace")
-        host_path = root / "work" / Path(config).relative_to("/workspace")
-        if not host_path.is_file():
-            raise ToolError(f"no such file: {config}")
+        from ._investigation_workspace import fetch_workspace_file
+
+        host_path = await fetch_workspace_file(root, config)
         try:
             data = yaml.safe_load(host_path.read_text())
         except yaml.YAMLError as ex:
@@ -1273,6 +1288,17 @@ def check_evidence_access(remote: Remote | None, root: Path, sources: list[str])
         seed["evidence_access"] = checks
         seed_path.write_text(json.dumps(seed, indent=2))
         transcript().info(json.dumps({"evidence_access": checks}))
+        return state
+
+    return solve
+
+
+@solver
+def carry_spend(remote: Remote) -> Solver:
+    """Setup: carry an earlier attempt's own spend into this one."""
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        remote.fold_prior_spend()
         return state
 
     return solve
@@ -1738,6 +1764,7 @@ def investigate(
         seed_path.write_text(json.dumps(seed, indent=2))
     setup_steps: list[Solver] = []
     if remote is not None:
+        setup_steps.append(carry_spend(remote))
         if resumed:
             setup_steps.append(reconcile_jobs(remote))
     tools: list[Tool] = [
@@ -1757,13 +1784,20 @@ def investigate(
         tools += [hawk_submit(remote, root), jobs(remote, root)]
 
     sandbox_spec = ("docker", str(root / "compose.yaml"))
+    task_cleanup = None
     if execution == "hawk":
         from inspect_ai.tool import ToolDef
 
-        from ._investigation_workspace import configure, stage_workspace, synchronized
+        from ._investigation_workspace import (
+            cleanup,
+            configure,
+            stage_workspace,
+            synchronized,
+        )
 
         sandbox_spec = configure(root, investigator_image or "", artifact_dir or "")
         setup_steps.append(stage_workspace(root))
+        task_cleanup = cleanup(root)
         tools = [
             synchronized(t, root) if ToolDef(t).name in {"hawk_submit", "jobs", "logs"} else t
             for t in tools
@@ -1793,6 +1827,7 @@ def investigate(
             on_continue=on_continue,
         ),
         sandbox=sandbox_spec,
+        cleanup=task_cleanup,
         # tool results are truncated at 16KB by default; an inventory of fifty
         # logs or a transcript dump is routinely larger, and a truncated view
         # is what the agent then reasons from

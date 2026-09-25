@@ -440,9 +440,10 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
 
         Args:
             answer: Submission to grade as the attempt's completion. Pass an
-                empty string when the submission is the state of the box
-                (apply it with `benchmark_bash` first) rather than a text
-                answer.
+                empty string to grade the session's own completed answer (a
+                loaded recorded attempt, or one fixed with attempt complete),
+                or, when there is none, the state of the box (apply it with
+                `benchmark_bash` first).
         """
         if not scorers:
             raise ToolError("This benchmark exposes no grader to grade with.")
@@ -460,6 +461,9 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
         # the grader judges the benchmark's own TaskState, never the audit's:
         # its question, its choices, its metadata, the reconstructed session
         session = store_as(BenchmarkState)
+        if not answer and session.completed and session.output is not None:
+            # a loaded attempt carries the answer the benchmark actually graded
+            answer = session.output.completion
         graded = benchmark_task_state(state, session, answer)
 
         # the benchmark's scorer calls sandbox() expecting the eval's own box; in the

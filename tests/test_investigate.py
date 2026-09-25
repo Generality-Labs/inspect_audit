@@ -945,3 +945,22 @@ def test_remote_benchmark_package_can_include_extras(tmp_path, monkeypatch):
     root = Path(task.metadata['investigation_dir'])
     seed = json.loads((root / 'inputs/seed.json').read_text())
     assert seed['remote']['task_package'] == package
+
+
+def test_a_retried_sample_carries_the_first_attempts_spend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inspect retries on the same Task with usage back at zero; the budget must not reset."""
+    from inspect_audit import _investigate
+    from inspect_audit._investigate import Remote
+
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (4.0, []))
+    r = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
+    r.fold_prior_spend()  # attempt 1 starts
+    r.record_local_spend()  # attempt 1 spent 4
+    assert r.local_usd() == 4.0
+    r.fold_prior_spend()  # attempt 2 starts with usage at zero again
+    r.fold_prior_spend()  # idempotent
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (1.0, []))
+    assert r.local_usd() == 5.0

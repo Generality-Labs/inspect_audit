@@ -224,3 +224,45 @@ def test_duplicate_named_scorers_pair_positionally(tmp_path) -> None:
     audit = _audit(source, tmp_path, _nothing, task=task())
     for v in _verdicts(audit):
         assert v["verdict"] == "validated", v
+
+
+def test_a_different_grader_model_never_blocks_the_channel() -> None:
+    """Epoch's chess logs were extracted by gemini-2.0-flash; a gpt-5-mini replay may differ."""
+    from inspect_ai.scorer import Score
+
+    from inspect_audit._concordance import grader_drift
+
+    drifted = grader_drift({"google/gemini-2.0-flash-001"}, {"openrouter/openai/gpt-5-mini"})
+    assert drifted == {"logged": ["google/gemini-2.0-flash-001"], "resolved": ["openrouter/openai/gpt-5-mini"]}
+    # one model under two names and a dated snapshot is not drift
+    assert grader_drift({"openai/gpt-5-mini-2025-08-07"}, {"openrouter/openai/gpt-5-mini"}) is None
+    assert grader_drift(set(), {"openrouter/openai/gpt-5-mini"}) is None
+
+    stable = Score(value=STABLE, metadata={"grader_drift": drifted})
+    verdict, reasons = classify([stable], attempted=1, has_box=False, errors=[])
+    assert verdict == "inconclusive" and "grader_model_drift" in reasons
+    # a stable disagreement on a log graded by the same model still blocks
+    same = Score(value=STABLE, metadata={"grader_drift": None})
+    assert classify([stable, same], attempted=2, has_box=False, errors=[])[0] == "blocked"
+
+
+def test_scorer_models_reads_only_calls_inside_scoring() -> None:
+    from inspect_ai.event import ModelEvent, SpanBeginEvent, SpanEndEvent
+    from inspect_ai.log import EvalSample
+    from inspect_ai.model import GenerateConfig, ModelOutput
+
+    from inspect_audit._concordance import scorer_models
+
+    def call(model: str) -> ModelEvent:
+        return ModelEvent(model=model, input=[], tools=[], tool_choice="none",
+                          config=GenerateConfig(), output=ModelOutput(model=model))
+
+    sample = EvalSample(id=1, epoch=1, input="fen", target="e2e4", events=[
+        call("anthropic/claude"),
+        SpanBeginEvent(id="s", name="scorers", type="scorers"),
+        SpanBeginEvent(id="t", parent_id="s", name="exact", type="scorer"),
+        call("google/gemini-2.0-flash-001"),
+        SpanEndEvent(id="t"),
+        SpanEndEvent(id="s"),
+    ])
+    assert scorer_models(sample) == {"google/gemini-2.0-flash-001"}

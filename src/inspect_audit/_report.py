@@ -226,7 +226,7 @@ def publish_report(root: str) -> Tool:
         except (ValueError, OSError) as ex:
             raise ToolError(str(ex)) from ex
         if remote_workspace(Path(root)):
-            durable = await persist(Path(root), destination)
+            durable = await persist(Path(root), destination, f"published/{destination.name}")
             store_as(InvestigationState).published = durable
             return f"Published {durable}/report.pdf. Give the operator a concise summary and the report path."
         store_as(InvestigationState).published = str(destination)

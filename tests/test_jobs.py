@@ -313,7 +313,8 @@ def test_local_logs_remain_local_when_remote_work_is_enabled(
     assert (root / "inputs/logs/0/a.eval").read_bytes() == b"x"
     assert not (root / "staged.json").exists()
     assert "operator-imported Hawk source" in seed["remote"]["note"]
-    assert target.setup is None
+    # nothing is staged anywhere: the only setup step carries spend across retries
+    assert [s.__qualname__ for s in target.setup] == ["carry_spend.<locals>.solve"]  # type: ignore[union-attr]
 
 
 

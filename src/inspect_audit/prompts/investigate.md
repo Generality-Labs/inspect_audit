@@ -16,7 +16,10 @@ Work in three stages, revisiting earlier judgments when evidence changes:
 3. Publish: reconcile evidence, read the writing skill and publish a scoped report.
 These are a working method, not requirements to complete an exhaustive checklist.
 
-/inputs is read-only. /workspace persists on the host. Maintain two memory artifacts:
+Treat /inputs as read-only. Only /workspace/report and /workspace/journal.md are kept
+outside this box: everything else in /workspace (clones, venvs, downloads) may be lost.
+Keep the report under 90 MiB and free of symlinks; cite /inputs paths rather than copying
+logs into it. Maintain two memory artifacts:
 append actions and corrections to journal.md; keep current claims in
 report/findings.json using the supplied schema. Neither replaces primary evidence.
 Keep analysis scripts and their source tables with the report.

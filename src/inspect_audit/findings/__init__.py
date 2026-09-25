@@ -1,6 +1,16 @@
 """A finding schema for eval audits: thin envelope, verbatim producer record."""
 
 from .fingerprint import FINGERPRINT_VERSION, fingerprint
+from .io import (
+    FINDING_COLUMNS,
+    RUN_COLUMNS,
+    findings_df,
+    read_run,
+    read_runs,
+    runs_df,
+    write_parquet,
+    write_run,
+)
 from .models import (
     AnyLocation,
     ArtifactLocation,
@@ -31,7 +41,9 @@ from .models import (
 )
 
 __all__ = [
+    "FINDING_COLUMNS",
     "FINGERPRINT_VERSION",
+    "RUN_COLUMNS",
     "AnyLocation",
     "ArtifactLocation",
     "CodeLocation",
@@ -57,6 +69,12 @@ __all__ = [
     "TranscriptLocation",
     "UrlLocation",
     "VersionRef",
+    "findings_df",
     "fingerprint",
+    "read_run",
+    "read_runs",
+    "runs_df",
     "utcnow",
+    "write_parquet",
+    "write_run",
 ]

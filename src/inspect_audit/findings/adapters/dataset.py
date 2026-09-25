@@ -138,7 +138,10 @@ def run(target: str, ctx: Context) -> Run:
             PRODUCER, target, ctx,
             f"inspect-dataset exit {result.returncode}: {(result.stderr or result.stdout)[-1500:]}", timestamp=timestamp,
         )
-    return parse(
-        scan_dir, target, subject_for(target, ctx), timestamp=timestamp, duration_s=duration,
-        inputs={"argv": argv, "scan_dir": str(scan_dir)},
-    )
+    try:
+        return parse(
+            scan_dir, target, subject_for(target, ctx), timestamp=timestamp, duration_s=duration,
+            inputs={"argv": argv, "scan_dir": str(scan_dir)},
+        )
+    except Exception as ex:  # a producer whose output we cannot read is a skipped producer, not a dead sweep
+        return skip_run(PRODUCER, target, ctx, f"could not parse {PRODUCER} output: {type(ex).__name__}: {ex}", timestamp=timestamp)

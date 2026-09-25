@@ -130,6 +130,9 @@ def run(target: str, ctx: Context) -> Run:
         data = json.loads(result.stdout)
     except json.JSONDecodeError as ex:
         return skip_run(PRODUCER, target, ctx, f"lint output is not JSON: {ex}; stderr: {result.stderr[-500:]}", timestamp=timestamp)
-    return parse(
-        data, target, subject_for(target, ctx), timestamp=timestamp, duration_s=duration, inputs={"argv": argv}
-    )
+    try:
+        return parse(
+            data, target, subject_for(target, ctx), timestamp=timestamp, duration_s=duration, inputs={"argv": argv}
+        )
+    except Exception as ex:  # a producer whose output we cannot read is a skipped producer, not a dead sweep
+        return skip_run(PRODUCER, target, ctx, f"could not parse {PRODUCER} output: {type(ex).__name__}: {ex}", timestamp=timestamp)

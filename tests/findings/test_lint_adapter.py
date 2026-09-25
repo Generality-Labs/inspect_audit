@@ -105,3 +105,15 @@ def test_run_with_exit_code_one_and_valid_json_parses(tmp_path: Path, monkeypatc
     ctx = Context(ie_root=root, producers=ProducerConfig(lint=(sys.executable, str(STUBS / "echo_file.py"))))
     result = run("inspect_evals/stereoset", ctx)
     assert len(result.findings) == 1
+
+
+def test_run_with_malformed_output_is_a_skip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root, _ = _subject(tmp_path)
+    bad = tmp_path / "bad.json"
+    bad.write_text("[]")  # valid JSON, wrong shape
+    monkeypatch.setenv("STUB_OUTPUT_FILE", str(bad))
+    ctx = Context(ie_root=root, producers=ProducerConfig(lint=(sys.executable, str(STUBS / "echo_file.py"))))
+    result = run("inspect_evals/stereoset", ctx)
+    assert result.findings == []
+    assert result.outcomes[0].status == "skip"
+    assert "could not parse" in (result.outcomes[0].message or "")

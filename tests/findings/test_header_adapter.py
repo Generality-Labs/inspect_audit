@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from inspect_ai import Task, eval
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.log import read_eval_log
@@ -58,11 +59,57 @@ def test_dataset_samples_mismatch_fires(tmp_path: Path) -> None:
 
 
 def test_dataset_samples_uses_the_matching_task_entry(tmp_path: Path) -> None:
-    extra = "  - name: other_task\n    dataset_samples: 3\n"
-    root = make_root(tmp_path, extra=extra)  # stereoset: 2123, other_task: 3
+    # other_task comes FIRST and its count matches the log, so a first-entry implementation would stay
+    # silent; only matching on the log's own task name (stereoset: 2123) makes the check fire
+    root = make_root(tmp_path)
+    (root / "src" / "inspect_evals" / "stereoset" / "eval.yaml").write_text(
+        "title: StereoSet\nversion: \"3-A\"\ntasks:\n  - name: other_task\n    dataset_samples: 3\n"
+        "  - name: stereoset\n    dataset_samples: 2123\n"
+    )
     log = _log(tmp_path / "logs", samples=3)
     result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log]))
     assert any(f.rule == "header.dataset_samples" for f in result.findings)
+
+
+def test_multi_task_package_matches_logs_by_yaml_task_names(tmp_path: Path) -> None:
+    # lab_bench has no task called lab_bench; its logs are named after its tasks
+    root = make_root(tmp_path)
+    package = root / "src" / "inspect_evals" / "lab_bench"
+    package.mkdir(parents=True)
+    (package / "eval.yaml").write_text(
+        "title: LAB-Bench\nversion: \"1-A\"\ntasks:\n  - name: lab_bench_litqa\n    dataset_samples: 199\n"
+        "  - name: lab_bench_suppqa\n    dataset_samples: 82\n"
+    )
+    log = _log(tmp_path / "logs", name="lab_bench_litqa", samples=3)
+    result = run("inspect_evals/lab_bench", Context(ie_root=root, logs=[log]))
+    assert not any(o.status == "skip" for o in result.outcomes)
+    finding = next(f for f in result.findings if f.rule == "header.dataset_samples")
+    assert "199" in finding.summary
+
+
+def test_resolve_skips_when_the_resolved_dataset_has_no_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import inspect_audit._resolve as resolve_module
+
+    root = make_root(tmp_path)
+    log = _log(tmp_path / "logs", samples=3)
+    idless = Task(dataset=MemoryDataset([Sample(input="q") for _ in range(3)]), scorer=match())
+    monkeypatch.setattr(resolve_module, "resolve_task", lambda spec, args=None: idless)
+    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log], resolve=True))
+    assert not any(f.rule == "header.unknown_sample_ids" for f in result.findings)
+    skip = next(o for o in result.outcomes if o.rule == "header.unknown_sample_ids")
+    assert skip.status == "skip" and "no ids" in (skip.message or "")
+
+
+def test_resolve_compares_logged_ids_against_the_resolved_dataset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import inspect_audit._resolve as resolve_module
+
+    root = make_root(tmp_path)
+    log = _log(tmp_path / "logs", samples=3)  # ids 1, 2, 3
+    smaller = Task(dataset=MemoryDataset([Sample(id=i, input="q") for i in (1, 2)]), scorer=match())
+    monkeypatch.setattr(resolve_module, "resolve_task", lambda spec, args=None: smaller)
+    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log], resolve=True))
+    finding = next(f for f in result.findings if f.rule == "header.unknown_sample_ids")
+    assert "1 of 3" in finding.summary
 
 
 def test_version_drift_across_logs(tmp_path: Path) -> None:

@@ -50,25 +50,43 @@ def _tail(name: str | None) -> str | None:
     return name.rsplit("/", 1)[-1] if name else None
 
 
-def matching_headers(logs: Sequence[Path], target: str) -> list[tuple[Path, EvalLog]]:
-    """Headers whose registry name or task name matches `target` on the unqualified name."""
-    wanted = package_of(target)
+def task_names(yaml_data: Mapping[str, Any], target: str) -> set[str]:
+    """The unqualified task names a target answers to: its package name plus every `tasks[].name` in eval.yaml."""
+    names = {package_of(target)}
+    tasks = yaml_data.get("tasks")
+    for entry in tasks if isinstance(tasks, list) else []:
+        if isinstance(entry, dict) and entry.get("name"):
+            names.add(str(entry["name"]))
+    return names
+
+
+def _header_task(header: EvalLog) -> str | None:
+    return _tail(header.eval.task_registry_name) or _tail(header.eval.task)
+
+
+def matching_headers(logs: Sequence[Path], target: str, names: set[str] | None = None) -> list[tuple[Path, EvalLog]]:
+    """Headers whose registry name or task name is one of `names` (default: the target's package name).
+
+    Multi-task packages such as lab_bench have no task named after the package, so callers pass the
+    names from eval.yaml via `task_names`.
+    """
+    wanted = names or {package_of(target)}
     matched: list[tuple[Path, EvalLog]] = []
     for path in logs:
         try:
             header = read_eval_log(str(path), header_only=True)
         except Exception:  # an unreadable log is not this eval's problem
             continue
-        if wanted in {_tail(header.eval.task_registry_name), _tail(header.eval.task)}:
+        if wanted & {_tail(header.eval.task_registry_name), _tail(header.eval.task)}:
             matched.append((path, header))
     return matched
 
 
-def _declared_samples(yaml_data: Mapping[str, Any], target: str) -> int | None:
-    wanted = package_of(target)
+def _declared_samples(yaml_data: Mapping[str, Any], task_name: str | None) -> int | None:
+    """`dataset_samples` for the eval.yaml task entry named `task_name`."""
     tasks = yaml_data.get("tasks")
     for entry in tasks if isinstance(tasks, list) else []:
-        if isinstance(entry, dict) and entry.get("name") == wanted and isinstance(entry.get("dataset_samples"), int):
+        if isinstance(entry, dict) and entry.get("name") == task_name and isinstance(entry.get("dataset_samples"), int):
             return int(entry["dataset_samples"])
     return None
 
@@ -116,9 +134,11 @@ def parse(
     run_id = new_run_id(PRODUCER, target, timestamp)
     build = _Builder(target, subject, run_id)
 
-    declared = _declared_samples(yaml_data, target)
     fired = False
+    any_declared = False
     for path, header in headers:
+        declared = _declared_samples(yaml_data, _header_task(header))
+        any_declared = any_declared or declared is not None
         actual = header.eval.dataset.samples
         if declared is not None and actual is not None and actual != declared:
             fired = True
@@ -128,7 +148,7 @@ def parse(
                 [LogLocation(role="primary", eval_id=header.eval.eval_id, path="eval.dataset.samples", location_hint=str(path), quote=str(actual))],
                 header,
             )
-    build.outcome("header.dataset_samples", fired, None if declared is not None else "eval.yaml declares no dataset_samples")
+    build.outcome("header.dataset_samples", fired, None if any_declared else "eval.yaml declares no dataset_samples for these tasks")
 
     versions = {(str(h.eval.task_version), (h.eval.packages or {}).get("inspect_evals")) for _, h in headers}
     if len(versions) > 1:
@@ -198,25 +218,30 @@ def parse(
     )
 
 
-def _resolved_ids(target: str, headers: Sequence[tuple[Path, EvalLog]]) -> set[str] | None:
+def _resolved_ids(target: str, headers: Sequence[tuple[Path, EvalLog]]) -> tuple[set[str] | None, str | None]:
+    """The resolved dataset's sample ids, or None with the reason they cannot be compared."""
     from inspect_audit._resolve import resolve_task
 
     task_args = dict(headers[0][1].eval.task_args or {}) if headers else {}
     try:
         task = resolve_task(target, task_args)
-    except Exception:  # resolution failure is reported by the caller as a skip outcome
-        return None
-    return {str(sample.id) for sample in task.dataset}
+        ids = [sample.id for sample in task.dataset]
+    except Exception as ex:
+        return None, f"could not resolve the task to compare sample ids: {type(ex).__name__}: {ex}"
+    if any(i is None for i in ids):
+        return None, "the resolved dataset has samples with no ids; Inspect assigns them at run time, so logged ids cannot be compared"
+    return {str(i) for i in ids}, None
 
 
 def run(target: str, ctx: Context) -> Run:
     """Read the headers of the logs that match `target` and run the checks."""
     timestamp = utcnow()
-    headers = matching_headers(ctx.logs, target)
+    yaml_data = eval_yaml(ctx.ie_root, target)
+    headers = matching_headers(ctx.logs, target, task_names(yaml_data, target))
     if not headers:
         return skip_run(PRODUCER, target, ctx, f"no logs for target {target} among {len(ctx.logs)} file(s)", timestamp=timestamp)
-    resolved = _resolved_ids(target, headers) if ctx.resolve else None
-    result = parse(headers, target, subject_for(target, ctx), eval_yaml(ctx.ie_root, target), timestamp=timestamp, resolved_ids=resolved)
+    resolved, reason = _resolved_ids(target, headers) if ctx.resolve else (None, None)
+    result = parse(headers, target, subject_for(target, ctx), yaml_data, timestamp=timestamp, resolved_ids=resolved)
     if ctx.resolve and resolved is None:
-        result.outcomes.append(Outcome(rule="header.unknown_sample_ids", status="skip", message="could not resolve the task to compare sample ids"))
+        result.outcomes.append(Outcome(rule="header.unknown_sample_ids", status="skip", message=reason))
     return result

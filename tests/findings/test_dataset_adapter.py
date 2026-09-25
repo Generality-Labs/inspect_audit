@@ -87,3 +87,16 @@ def test_run_with_a_failing_scan_is_a_skip(tmp_path: Path) -> None:
     result = run("inspect_evals/stereoset", ctx)
     assert result.outcomes[0].status == "skip"
     assert "boom" in (result.outcomes[0].message or "")
+
+
+def test_run_with_malformed_scan_is_a_skip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    bad = tmp_path / "badscan"
+    bad.mkdir()
+    (bad / "scan_summary.json").write_text("[]")  # valid JSON, wrong shape
+    monkeypatch.setenv("STUB_OUTPUT_DIR", str(bad))
+    ctx = Context(ie_root=root, out_dir=tmp_path / "out", producers=ProducerConfig(dataset=(sys.executable, str(STUBS / "echo_file.py"))))
+    result = run("inspect_evals/stereoset", ctx)
+    assert result.findings == []
+    assert result.outcomes[0].status == "skip"
+    assert "could not parse" in (result.outcomes[0].message or "")

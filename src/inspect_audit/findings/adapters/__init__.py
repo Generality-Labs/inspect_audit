@@ -129,5 +129,5 @@ def skip_run(
         timestamp=stamp,
         producer=producer,
         subject=subject_for(target, ctx),
-        outcomes=[Outcome(rule=producer, status="skip", message=message[-2000:])],
+        outcomes=[Outcome(rule=producer, status="skip", message=message[:2000])],
     )

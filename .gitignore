@@ -58,3 +58,12 @@ Thumbs.db
 
 # local symlink to a laptop data dir (a symlink, so no trailing slash)
 dev/logs
+
+# Claude Code scratch
+.superpowers/
+
+# private working artefacts: kept in ~/Developer/inspect_ai/audit-artefacts, never in this public repo
+agent_artefacts/
+
+# pulled Hawk logs and bundles (scripts/hawk-artefacts.yaml -> inspect-audit-findings hawk-pull)
+artefacts/

@@ -13,6 +13,7 @@ import os
 import posixpath
 import re
 import shutil
+import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -123,9 +124,12 @@ class JobLedger:
 class Hawk:
     """Thin wrapper over the `hawk` CLI, which holds the operator's login."""
 
-    def __init__(self, api_url: str, binary: str = "hawk") -> None:
+    def __init__(self, api_url: str, binary: str | None = None) -> None:
         self.env = {"HAWK_API_URL": api_url}
-        self.binary = binary
+        # the venv's own hawk, not whatever PATH finds: on Hawk runners the base
+        # image ships a hawk without the cli extras (no keyring), which fails on import
+        venv = Path(sys.executable).with_name("hawk")
+        self.binary = binary or (str(venv) if venv.exists() else "hawk")
         self._token = ""
 
     async def _run(self, *args: str, timeout: int = 600) -> str:
@@ -167,7 +171,11 @@ class Hawk:
             if not refresh_token:
                 raise RuntimeError("Hawk runner has no refresh credential for child jobs")
             async with HawkClient(token=token, api_url=self.env["HAWK_API_URL"]) as client:
-                return str(await client.create_eval_set(config, refresh_token=refresh_token))
+                created = await client.create_eval_set(config, refresh_token=refresh_token)
+                # newer clients return the API's {"eval_set_id": ..., "warnings": [...]}
+                if isinstance(created, dict):
+                    return str(created["eval_set_id"])
+                return str(created)
         # no provider key travels with the job: models route through Hawk's proxy,
         # which holds the org's keys and meters spend per user
         out = await self._run(
@@ -233,8 +241,15 @@ class Hawk:
         return await self._metadata_page("samples", eval_set_id, page, limit)
 
     async def has_sample(self, eval_set_id: str, sample_uuid: str) -> bool:
-        rows = await self._metadata_page("samples", eval_set_id, 1, self.PAGE, search=sample_uuid)
-        return any(str(row.get("uuid")) == sample_uuid for row in rows)
+        return await self.sample_uuid(eval_set_id, sample_uuid) is not None
+
+    async def sample_uuid(self, eval_set_id: str, sample: str) -> str | None:
+        """The sample's uuid, given its uuid or the warehouse row key (`pk`) shown beside it."""
+        rows = await self._metadata_page("samples", eval_set_id, 1, self.PAGE, search=sample)
+        for row in rows:
+            if sample in (str(row.get("uuid")), str(row.get("pk"))):
+                return str(row.get("uuid"))
+        return None
 
     async def _metadata_page(self, resource: str, eval_set_id: str, page: int, limit: int, *, search: str | None = None) -> list[dict[str, Any]]:
         import urllib.error

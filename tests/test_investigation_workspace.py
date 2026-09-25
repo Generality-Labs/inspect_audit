@@ -214,7 +214,8 @@ def test_child_submission_uses_rotated_runner_credentials(monkeypatch, tmp_path)
 
         async def create_eval_set(self, config, **kwargs):
             received.update(kwargs)
-            return "child-job"
+            # hawk >= 3.5 returns the API body rather than the bare id
+            return {"eval_set_id": "child-job", "warnings": []}
 
     monkeypatch.setenv("HAWK_JOB_ID", "parent-job")
     monkeypatch.setenv("HAWK_RUNNER_REFRESH_TOKEN", "startup")
@@ -226,3 +227,19 @@ def test_child_submission_uses_rotated_runner_credentials(monkeypatch, tmp_path)
     config.write_text("name: child\n")
     assert asyncio.run(_jobs.Hawk("https://hawk.example").submit(config)) == "child-job"
     assert received == {"token": "current-access", "api_url": "https://hawk.example", "refresh_token": "rotated"}
+
+
+def test_hawk_cli_is_the_venvs_own_not_paths(monkeypatch, tmp_path):
+    """Runner images put a hawk without keyring first on PATH."""
+    import sys
+
+    from inspect_audit import _jobs
+
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "python").write_text("")
+    (fake / "hawk").write_text("")
+    monkeypatch.setattr(sys, "executable", str(fake / "python"))
+    assert _jobs.Hawk("https://hawk.example").binary == str(fake / "hawk")
+    (fake / "hawk").unlink()
+    assert _jobs.Hawk("https://hawk.example").binary == "hawk"

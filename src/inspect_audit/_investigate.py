@@ -1409,8 +1409,13 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
             if action == "transcript":
                 if not sample:
                     raise ToolError("action='transcript' needs sample=<uuid> from the samples table")
-                if not await remote.hawk.has_sample(eval_set, sample):
-                    raise ToolError(f"sample {sample!r} is not in {source}")
+                uuid = await remote.hawk.sample_uuid(eval_set, sample)
+                if uuid is None:
+                    raise ToolError(
+                        f"sample {sample!r} is not in {source}; pass the `uuid` column "
+                        "of the samples table (the numeric `id` repeats across logs)"
+                    )
+                sample = uuid
                 path = await remote.hawk.transcript(sample, destination / "transcripts")
                 return f"wrote /inputs/index/{source}/transcripts/{path.name} ({path.stat().st_size:,} bytes)"
             if action == "fetch":

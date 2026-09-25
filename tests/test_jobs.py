@@ -65,7 +65,11 @@ class FakeHawk:
         return [{"uuid": f"{eval_set_id}-s1", "id": "item-1", "epoch": 1, "status": "success", "scores": []}]
 
     async def has_sample(self, eval_set_id: str, sample_uuid: str) -> bool:
-        return sample_uuid == f"{eval_set_id}-s1"
+        return await self.sample_uuid(eval_set_id, sample_uuid) is not None
+
+    async def sample_uuid(self, eval_set_id: str, sample: str) -> str | None:
+        # the warehouse row key maps to the same sample as its uuid
+        return f"{eval_set_id}-s1" if sample in (f"{eval_set_id}-s1", f"{eval_set_id}-pk1") else None
 
     async def logs(self, eval_set_id: str, lines: int = 120) -> str:
         return "uv pip install ... ok\nRunning Inspect eval-set"
@@ -942,7 +946,7 @@ def test_hawk_runs_through_inspects_subprocess_with_the_api_url_it_was_given() -
         monkey.undo()
     env = captured["env"]
     assert isinstance(env, dict) and env["HAWK_API_URL"] == "https://hawk.example"
-    assert captured["args"][:2] == ["hawk", "logs"]  # type: ignore[index]
+    assert Path(captured["args"][0]).name == "hawk" and captured["args"][1] == "logs"  # type: ignore[index]
     assert captured["timeout"] == 120
 
 
@@ -1070,6 +1074,9 @@ def test_reading_a_parked_log_source_stays_inside_the_investigation(
     mine = f"{address.removeprefix('hawk:').split('/')[0]}-s1"
     assert "transcripts/" in run(tool(action="transcript", source=alias, sample=mine, limit=None))
     assert (tmp_path / "inputs" / "index" / alias / "transcripts" / f"{mine}.md").is_file()
+    # the warehouse row key the samples table also shows resolves to the same transcript
+    pk = f"{address.removeprefix('hawk:').split('/')[0]}-pk1"
+    assert f"{mine}.md" in run(tool(action="transcript", source=alias, sample=pk, limit=None))
 
     with pytest.raises(ToolError, match="action must be"):
         run(tool(action="delete", source=alias, sample=None, limit=None))

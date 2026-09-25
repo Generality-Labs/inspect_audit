@@ -32,13 +32,14 @@ src/inspect_audit/findings/
     dataset.py      inspect-dataset scan output -> Run
     header.py       .eval headers -> Run
   featured.py       the 35 Featured eval ids, copied from inspect_evals docs/_templates/evals.ejs
+  render.py         render_eval_summary(runs) and render_sweep_summary(runs) -> markdown
   cli.py            inspect-audit-findings
   schema/
     finding.schema.json
     run.schema.json
 tests/findings/
   fixtures/         lint.json, scan_summary.json, duplicate_questions.json from the 2026-09-25 StereoSet pass
-  test_models.py test_fingerprint.py test_io.py
+  test_models.py test_fingerprint.py test_io.py test_render.py
   test_lint_adapter.py test_dataset_adapter.py test_header_adapter.py test_cli.py
 ```
 
@@ -50,7 +51,7 @@ All pydantic v2, `extra="forbid"` on envelope models.
 
 **Subject.** `eval: str` (registry name, `inspect_evals/stereoset`); `revision: Revision` with `commit: str | None`, `package_version: str | None`, `dirty: bool | None`, at least one of commit or package_version required; `task_version: TaskVersion | None` with `full: str`, `comparability: int | None`, `interface: str | None`; `dataset: DatasetRef | None` with `path`, `config`, `split`, `revision`, all `str | None`; `task_args: dict[str, JsonValue]` default empty.
 
-**Dimension.** `Literal["construct", "contentvalidity", "dataset", "scaffold", "harness", "environment", "grading", "resources", "informativeness"]`, the keys the GL framework uses in `investigation/report/framework/Content.tex` and that `_assessment.framework_checks` parses.
+**Dimension.** `Literal["construct", "contentvalidity", "dataset", "scaffold", "harness", "environment", "grading", "resources", "informativeness"]`, the keys the GL framework uses in `investigation/report/framework/Content.tex` and that `_assessment.framework_definitions` parses from `auditframework.sty`. The Literal is static because pydantic needs it so; `test_models.py` asserts it equals the parsed keys, so the two cannot drift. Moving the parser to a neutral module shared by the report and this module is deferred.
 
 **Severity.** `Literal["none", "minor", "major", "critical"]`.
 
@@ -187,13 +188,14 @@ inspect-audit-findings summary <out dir>
 
 `findings.parquet` has the envelope flattened to columns (`fingerprint`, `subject_eval`, `subject_revision_commit`, `subject_task_version_full`, `dimension`, `severity`, `status`, `summary`, `primary_kind`, `primary_key`, `run_id`, `producer`, `rule`) plus `source` and `locations` as JSON strings. `runs.parquet` has one row per run with outcome counts, duration and whether it was skipped.
 
-Per-eval `SUMMARY.md`: subject block (eval, revision, task version, dataset); one table of outcomes across producers (rule, status, message); counts of findings by producer and by dimension and severity; then every finding as a line with severity, dimension, rule, primary location key and summary, grouped by producer, with a note on any rule that produced more than 100 findings so noise is visible at a glance. Sweep `SUMMARY.md`: one row per eval with per-producer status and finding counts.
+`render.py` produces both summaries from `Run` models with plain string templating and no model calls, which is why `summary` can regenerate them from the `*.run.json` files. Per-eval `SUMMARY.md`: subject block (eval, revision, task version, dataset); one table of outcomes across producers (rule, status, message); counts of findings by producer and by dimension and severity; then every finding as a line with severity, dimension, rule, primary location key and summary, grouped by producer, with a note on any rule that produced more than 100 findings so noise is visible at a glance. Sweep `SUMMARY.md`: one row per eval with per-producer status and finding counts.
 
 ## Testing
 
 - `test_models.py`: JSON round trip for `Run`; union discrimination for every `Location` kind; rejection of zero or two primaries; schema regeneration and diff.
 - `test_fingerprint.py`: golden value for a known input; changes with each of producer, rule, eval and primary key; unchanged when related locations change.
 - `test_io.py`: write and read a run; `findings_df` column set; parquet round trip.
+- `test_render.py`: both summaries against fixture runs, including the over-100-findings note and a skipped producer.
 - `test_lint_adapter.py`: `parse` on `fixtures/lint.json` yields 25 outcomes and one finding with the expected code location, dimension `dataset`, severity `minor`; `run` with the prefix pointed at a stub script that cats the fixture; `run` with a prefix that exits 1 yields a skip run.
 - `test_dataset_adapter.py`: `parse` on the fixture directory yields three outcomes and 18 plus 2,123 plus 28 findings with `sample` primaries and the severity mapping; `run` with a stub; a target with no HuggingFace asset yields a skip.
 - `test_header_adapter.py`: real logs from `test_helpers.logs.run_fixture_eval` in a temporary root whose `eval.yaml` says `dataset_samples: 99`, asserting `header.dataset_samples` fires with a `log` primary and `eval_spec` present; a second log at a different task version asserting `header.version_drift`; no logs for the target yields a skip.
@@ -224,4 +226,4 @@ Then read the six summaries and write `agent_artefacts/findings_prototype/ACCEPT
 
 ## Commits
 
-Atomic, in this order: `.gitignore` for worktrees; schema docs and this spec; models and fingerprint with tests and schema files; IO with tests; producers config and shared adapter helpers; lint adapter with fixture and tests; dataset adapter with fixtures and tests; header adapter with tests; featured list and CLI with tests; pyproject script entry; acceptance run artefacts. No push to `main`; a PR against `dev/integrated-audits` when it is worth sharing.
+Atomic, in this order: `.gitignore` for worktrees; schema docs and this spec; models and fingerprint with tests and schema files; IO with tests; render with tests; producers config and shared adapter helpers; lint adapter with fixture and tests; dataset adapter with fixtures and tests; header adapter with tests; featured list and CLI with tests; pyproject script entry; acceptance run artefacts. No push to `main`; a PR against `dev/integrated-audits` when it is worth sharing.

@@ -64,6 +64,14 @@ def audit(
             must be nonempty and globally unique.
         concordance_limit: Maximum recorded attempts to regrade at setup.
     """
+    if os.environ.get("HAWK_JOB_ID"):
+        # Hawk applies the job's model_cost_config with set_model_cost once tasks are
+        # built, and that refuses a model Inspect has no entry for (any recent
+        # OpenRouter model, e.g. openrouter/openrouter/openai/gpt-6-sol): register
+        # the entries first, as the investigator does for itself
+        from ._investigate import register_openrouter_costs
+
+        register_openrouter_costs()
     resolved_logs = fetch_logs(logs) if logs else None
     if task is None:
         if not resolved_logs:

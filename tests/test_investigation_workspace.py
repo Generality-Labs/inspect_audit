@@ -243,3 +243,19 @@ def test_hawk_cli_is_the_venvs_own_not_paths(monkeypatch, tmp_path):
     assert _jobs.Hawk("https://hawk.example").binary == str(fake / "hawk")
     (fake / "hawk").unlink()
     assert _jobs.Hawk("https://hawk.example").binary == "hawk"
+
+
+def test_an_audit_job_on_hawk_registers_prices_before_hawk_applies_them(monkeypatch):
+    """Hawk's set_model_cost refuses models Inspect has no entry for (the gpt-6 children died so)."""
+    from inspect_audit import _investigate, _registry
+
+    class Registered(Exception):
+        pass
+
+    def register():
+        raise Registered
+
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", register)
+    monkeypatch.setenv("HAWK_JOB_ID", "inv-child")
+    with pytest.raises(Registered):
+        _registry.audit.__wrapped__(task="bench/Chess Puzzles")  # type: ignore[attr-defined]

@@ -21,7 +21,13 @@ from pathlib import Path
 
 import yaml
 from inspect_ai import eval
-from inspect_ai.model import ModelCost, ModelInfo, ModelOutput, get_model, set_model_info
+from inspect_ai.model import (
+    ModelCost,
+    ModelInfo,
+    ModelOutput,
+    get_model,
+    set_model_info,
+)
 from inspect_ai.util import SandboxEnvironmentSpec
 
 from inspect_audit._investigate import DEFAULT_INVESTIGATOR_IMAGE, investigate

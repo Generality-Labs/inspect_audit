@@ -24,6 +24,9 @@ dependencies = [
 [project.entry-points.inspect_ai]
 inspect_audit = "inspect_audit._registry"
 
+[project.scripts]
+inspect-audit-findings = "inspect_audit.findings.cli:main"
+
 [project.optional-dependencies]
 # Hawk requires Python 3.13; the core package supports 3.11+.
 remote = ["hawk[cli]>=3.4,<4; python_version >= '3.13'"]

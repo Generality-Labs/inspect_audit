@@ -39,10 +39,12 @@ from .models import (
     VersionRef,
     utcnow,
 )
+from .render import NOISE_THRESHOLD, render_eval_summary, render_sweep_summary
 
 __all__ = [
     "FINDING_COLUMNS",
     "FINGERPRINT_VERSION",
+    "NOISE_THRESHOLD",
     "RUN_COLUMNS",
     "AnyLocation",
     "ArtifactLocation",
@@ -73,6 +75,8 @@ __all__ = [
     "fingerprint",
     "read_run",
     "read_runs",
+    "render_eval_summary",
+    "render_sweep_summary",
     "runs_df",
     "utcnow",
     "write_parquet",

@@ -37,6 +37,7 @@ from pydantic import Field
 
 from ._item import AUDIT_ROOT
 from ._sandbox import BENCHMARK_SERVICE, has_benchmark_box
+from ._state import replay_choices
 
 logger = getLogger(__name__)
 
@@ -179,6 +180,9 @@ def concordance_scorer(benchmark: list[Scorer]) -> Scorer:
     names = [scorer_name(s) for s in benchmark]
 
     async def regrade(state: TaskState, target: Target) -> list[Score | None]:
+        # a log keeps choices as strings: restore which one the answer picked, or
+        # choice() grades every recorded multiple-choice answer wrong
+        replay_choices(state)
         redirect = sandbox_default(BENCHMARK_SERVICE) if has_benchmark_box() else nullcontext()
         with redirect:
             return [await s(state, target) for s in benchmark]

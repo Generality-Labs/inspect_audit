@@ -5,13 +5,15 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, cast
 
+from inspect_ai import score_async
 from inspect_ai.agent import Agent, AgentSubmit, agent, react
-from inspect_ai.model import GenerateConfig, Model, get_model
+from inspect_ai.model import GenerateConfig, Model, get_model, model_roles
 from inspect_ai.scorer import (
     Score,
     Scorer,
     Target,
     frequency,
+    mean,
     scorer,
 )
 from inspect_ai.solver import TaskState
@@ -51,7 +53,14 @@ from ._sandbox import (
     phoenix_benchmark,
     restore_benchmark,
 )
-from ._state import BenchmarkState, attempt, benchmark_task_state, benchmark_tools
+from ._state import (
+    BenchmarkState,
+    attempt,
+    benchmark_sample,
+    benchmark_tools,
+    grade_log,
+    replay_choices,
+)
 
 SKILLS = Path(__file__).parent / "skills"
 
@@ -422,6 +431,44 @@ def view_image() -> Tool:
     return execute
 
 
+@scorer(metrics=[mean()], name="inspect_audit_grade")
+def grade_collector(
+    benchmark: list[Scorer], results: list[dict[str, Any]], failure: list[BaseException]
+) -> Scorer:
+    """Run the benchmark's scorers inside the context score_async set up for its sample.
+
+    One collector rather than each scorer passed to score_async: the benchmark's
+    own metrics (dict-valued, custom) are not ours to recompute, and one failing
+    scorer must surface as the failure, not a half-scored log.
+    """
+
+    async def score(state: TaskState, target: Target) -> Score:
+        replay_choices(state)
+        # the benchmark's scorer calls sandbox() expecting the eval's own box; in the
+        # auditor's two-box world that default is us, so aim it at the benchmark.
+        # only when a benchmark box exists: redirecting to an absent name would
+        # resolve BACK to the auditor on a one-environment sample.
+        redirect = sandbox_default(BENCHMARK_SERVICE) if has_benchmark_box() else nullcontext()
+        with redirect:
+            for inner in benchmark:
+                try:
+                    graded = await inner(state, target)
+                except Exception as ex:
+                    failure.append(ex)
+                    break
+                if graded is not None:
+                    results.append(
+                        {
+                            "value": graded.value,
+                            "answer": graded.answer,
+                            "explanation": graded.explanation,
+                        }
+                    )
+        return Score(value=0)
+
+    return score
+
+
 @tool(name="grade")
 def grade_benchmark(scorers: list[Scorer]) -> Tool:
     async def execute(answer: str) -> str:
@@ -454,48 +501,48 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
                 f"See {AUDIT_ROOT}/concordance.json."
             )
 
-        # the grader judges the benchmark's own TaskState, never the audit's:
-        # its question, its choices, its metadata, the reconstructed session
+        # the grader judges the benchmark's own sample, never the audit's: its
+        # question, its choices, its metadata, the reconstructed session. Inspect's
+        # score_async rebuilds the TaskState from it exactly as `inspect score`
+        # does, binding the sample's own store, transcript and model roles.
         session = store_as(BenchmarkState)
-        if not answer and session.completed and session.output is not None:
-            # a loaded attempt carries the answer the benchmark actually graded
-            answer = session.output.completion
-        graded = benchmark_task_state(state, session, answer)
-
-        # the benchmark's scorer calls sandbox() expecting the eval's own box; in the
-        # auditor's two-box world that default is us, so aim it at the benchmark.
-        # only when a benchmark box exists: redirecting to an absent name would
-        # resolve BACK to the auditor on a one-environment sample.
-        redirect = sandbox_default(BENCHMARK_SERVICE) if has_benchmark_box() else nullcontext()
+        # an empty answer grades the session's own output: a loaded attempt carries
+        # the answer the benchmark actually graded
+        graded = benchmark_sample(
+            state, session, None if not answer and session.completed else answer
+        )
         results: list[dict[str, Any]] = []
-        with redirect:
-            for scorer in scorers:
-                try:
-                    score = await scorer(graded, graded.target)
-                except LimitExceededError:
-                    raise
-                except Exception as ex:
-                    # a grader that cannot run (its judge model is gone, its
-                    # sandbox call failed) is a fact for the auditor to record,
-                    # not a reason to error the sample and cancel the run
-                    # Provider exceptions may follow a long request dump. Prefer
-                    # the underlying exception so the diagnostic reaches the agent.
-                    cause: BaseException = ex
-                    visited = {id(cause)}
-                    while cause.__cause__ is not None and id(cause.__cause__) not in visited:
-                        cause = cause.__cause__
-                        visited.add(id(cause))
-                    raise ToolError(
-                        f"the benchmark's grader failed to run: {type(cause).__name__}: {cause!s}"
-                    ) from ex
-                if score is not None:
-                    results.append(
-                        {
-                            "value": score.value,
-                            "answer": score.answer,
-                            "explanation": score.explanation,
-                        }
-                    )
+        failure: list[BaseException] = []
+        try:
+            await score_async(
+                grade_log(state, session, graded),
+                [grade_collector(scorers, results, failure)],
+                action="overwrite",
+                model=get_model(),
+                model_roles=dict(model_roles()),
+                display="none",
+                copy=False,
+            )
+        except LimitExceededError:
+            raise
+        except Exception as ex:
+            failure.append(ex)
+        if failure:
+            # a grader that cannot run (its judge model is gone, its sandbox call
+            # failed) is a fact for the auditor to record, not a reason to error the
+            # sample and cancel the run. Provider exceptions may follow a long
+            # request dump: prefer the underlying exception so the diagnostic
+            # reaches the agent.
+            cause: BaseException = failure[0]
+            visited = {id(cause)}
+            while cause.__cause__ is not None and id(cause.__cause__) not in visited:
+                cause = cause.__cause__
+                visited.add(id(cause))
+            if isinstance(cause, LimitExceededError):
+                raise cause
+            raise ToolError(
+                f"the benchmark's grader failed to run: {type(cause).__name__}: {cause!s}"
+            ) from failure[0]
         return json.dumps(
             {
                 "scores": results if len(results) != 1 else results[0],

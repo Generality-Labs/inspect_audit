@@ -1019,16 +1019,16 @@ wheels = [
 
 [[package]]
 name = "hawk"
-version = "3.4.0"
+version = "3.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "packaging", marker = "python_full_version >= '3.13'" },
     { name = "pydantic", marker = "python_full_version >= '3.13'" },
     { name = "ruamel-yaml", marker = "python_full_version >= '3.13'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/ae/ad0fef0d73c9a7e653c69c02217b471490d82085b17039efa87836fa646a/hawk-3.4.0.tar.gz", hash = "sha256:13779521b78a87a67c3e124d53c80473db2772cf3c32b6c110655d5e61b40127", size = 3915385, upload-time = "2026-09-15T22:36:14.902Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/05/a6/8f8b449c46f10632d9d0e181c711921a83fcb711c86ce431909d117e4162/hawk-3.6.0.tar.gz", hash = "sha256:ecfad0b2c7e932ab536c88607bba81c2fa0d44f0977b57a0804d2420e55c1db9", size = 4172054, upload-time = "2026-09-24T13:08:49.038Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/25/96a5e79965cbba77cec0ec12f7cd3ce4077594e9b7a266217fdde142bbb3/hawk-3.4.0-py3-none-any.whl", hash = "sha256:57b4a613c210d5d56f7109f9770bf83a39c005082ff9168e2b86876970e632cd", size = 933925, upload-time = "2026-09-15T22:36:12.836Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/72/2bc56c146c9f21674e076a13191a6d5742b29677a834ed231645c59b1a5f/hawk-3.6.0-py3-none-any.whl", hash = "sha256:b524beebed4aebcbd75692ec4ac40cceb8348766674d42c254481af272d5bda8", size = 1027436, upload-time = "2026-09-24T13:08:46.76Z" },
 ]
 
 [package.optional-dependencies]

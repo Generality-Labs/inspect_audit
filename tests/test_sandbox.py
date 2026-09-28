@@ -18,7 +18,6 @@ from inspect_ai.util import SandboxEnvironmentSpec
 
 import inspect_audit._sandbox as sandbox_module
 from inspect_audit._sandbox import (
-    _seconds,
     audit_compose,
     has_benchmark,
     phoenix_benchmark,
@@ -689,24 +688,6 @@ def test_an_interloping_benchmark_service_moves_aside(tmp_path: Path) -> None:
     assert merged["benchmark_"]["image"] == "interloper"
     # references follow both renames
     assert merged["helper"]["depends_on"] == ["benchmark", "benchmark_"]
-
-
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        ("90s", 90),
-        ("1m30s", 90),
-        ("2h", 7200),
-        ("500ms", 1),  # sub-second rounds up, never to zero
-        ("1.5s", 2),
-        ("0s", None),  # a zero duration drops the field (k8s rejects 0)
-        ("500us", 1),  # units the old regex silently dropped
-        ("junk", None),
-        ("", None),  # empty duration -> field dropped, not periodSeconds: 0
-    ],
-)
-def test_seconds_parses_compose_durations(value: str, expected: int | None) -> None:
-    assert _seconds(value) == expected
 
 
 def test_task_pins_follow_the_install_source(monkeypatch) -> None:

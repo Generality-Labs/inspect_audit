@@ -28,6 +28,9 @@ inspect_audit = "inspect_audit._registry"
 
 [project.optional-dependencies]
 remote = ["hawk[cli]>=3.4,<4; python_version >= '3.13'"]
+k8s = [
+    "inspect-k8s-sandbox>=0.13",
+]
 
 [dependency-groups]
 dev = [
@@ -39,6 +42,7 @@ dev = [
     "pandas-stubs",
     "types-PyYAML",
     "hawk[cli]>=3.4,<4; python_version >= '3.13'",
+    "inspect-k8s-sandbox>=0.13",
 ]
 
 [tool.hatch.version]

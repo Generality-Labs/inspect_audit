@@ -99,7 +99,6 @@ INVESTIGATION_SKILLS = (
     "eval-validity-review",
     "investigate-dataset",
     "security-audit-eval",
-    "view-results",
     "debug-stuck-eval",
 )
 OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"

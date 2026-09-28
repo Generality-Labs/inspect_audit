@@ -33,7 +33,6 @@ def test_every_skill_loads_and_names_are_unique() -> None:
         "red-teaming",
         "reading-logs",
         "analyzing-logs",
-        "map-inspect-packages",
     }
     # `skill()` and `deepagent()` both reject duplicate names across parent and
     # subagents, so uniqueness is a hard requirement rather than tidiness.

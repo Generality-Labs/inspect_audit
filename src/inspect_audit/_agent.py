@@ -66,7 +66,7 @@ SKILLS = Path(__file__).parent / "skills"
 
 # support skills help with the work rather than defining it; an auditor is never
 # asked to investigate one of these
-SUPPORT_SKILLS = ("reading-logs", "analyzing-logs", "map-inspect-packages", "audit-framework")
+SUPPORT_SKILLS = ("reading-logs", "analyzing-logs", "audit-framework")
 
 
 class AuditItemSkill(BaseModel):

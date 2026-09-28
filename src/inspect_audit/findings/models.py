@@ -15,17 +15,10 @@ from pydantic import (
     model_validator,
 )
 
-Dimension = Literal[
-    "construct",
-    "contentvalidity",
-    "dataset",
-    "scaffold",
-    "harness",
-    "environment",
-    "grading",
-    "resources",
-    "informativeness",
-]
+from .taxonomy import DEFAULT_TAXONOMY, validate_against
+
+# a dimension id from the finding's taxonomy (see taxonomy.py); validated per finding, not by type
+Dimension = str
 Severity = Literal["none", "minor", "major", "critical"]
 Status = Literal["hypothesis", "supported", "qualified", "retracted"]
 Role = Literal["primary", "related"]
@@ -251,7 +244,9 @@ class Finding(BaseModel):
     producer: str
     rule: str
     subject: Subject
+    taxonomy: str = DEFAULT_TAXONOMY
     dimension: Dimension
+    check: str | None = None
     severity: Severity
     status: Status
     summary: str = Field(min_length=1)
@@ -270,6 +265,11 @@ class Finding(BaseModel):
         primaries = [location for location in self.locations if location.role == "primary"]
         if len(primaries) != 1:
             raise ValueError(f"a finding needs exactly one primary location, got {len(primaries)}")
+        return self
+
+    @model_validator(mode="after")
+    def _in_taxonomy(self) -> Finding:
+        validate_against(self.taxonomy, self.dimension, self.check)
         return self
 
     @property

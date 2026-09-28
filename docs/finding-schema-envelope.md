@@ -20,7 +20,9 @@ Alternative proposal, 2026-09-25, to compare with `finding-schema.md`. The first
 | `subject.revision` | `{commit, package_version, dirty}` | `EvalSpec.revision`, `EvalSpec.packages`, `git rev-parse` for source scans | Which code. Required. |
 | `subject.task_version` | `{full, comparability, interface}` or null | `EvalSpec.task_version`, `EvalSpec.metadata.full_task_version`, `eval.yaml` | The unit inspect_evals uses to say when scores stop being comparable. |
 | `subject.dataset` | `{path, config, split, revision}` or null | `EvalSpec.dataset`, inspect-dataset `scan_summary` | Which data. `revision` is null when unknown. |
-| `dimension` | enum of the nine GL framework dimensions | adapter table keyed by rule code | One taxonomy shared with the prose reports. |
+| `taxonomy` | str, e.g. `gl-audit@1` | constant per adapter | Which versioned taxonomy `dimension` and `check` come from. Taxonomies are data files under `findings/taxonomies/`; `gl-audit@1` is the nine-dimension LaTeX framework (a test keeps them equal), `gl-audit@2` is the strategy document's seven dimensions, draft until the LaTeX class follows. A mapping file translates v1 ids to v2. |
+| `dimension` | id in the finding's taxonomy | adapter table keyed by rule code | One taxonomy shared with the prose reports. |
+| `check` | contribution id in the finding's taxonomy, or null | adapter table where known | Finer than dimension: `C.1` in v1, `implementation.task_specification` in v2. |
 | `severity` | `none`, `minor`, `major`, `critical` | adapter mapping from the producer's own scale | Sorting and the scorecard. The mapping is written in the adapter. |
 | `status` | `hypothesis`, `supported`, `qualified`, `retracted` | deterministic producers emit `supported`; agents start at `hypothesis` | Lifecycle. Retracted rows stay so false positives can be counted. |
 | `summary` | str | producer message | One renderable sentence. |

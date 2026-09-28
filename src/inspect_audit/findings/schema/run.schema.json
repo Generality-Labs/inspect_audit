@@ -255,18 +255,19 @@
           "title": "Aliases",
           "type": "array"
         },
-        "dimension": {
-          "enum": [
-            "construct",
-            "contentvalidity",
-            "dataset",
-            "scaffold",
-            "harness",
-            "environment",
-            "grading",
-            "resources",
-            "informativeness"
+        "check": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
+          "default": null,
+          "title": "Check"
+        },
+        "dimension": {
           "title": "Dimension",
           "type": "string"
         },
@@ -416,6 +417,11 @@
           },
           "title": "Suppressions",
           "type": "array"
+        },
+        "taxonomy": {
+          "default": "gl-audit@1",
+          "title": "Taxonomy",
+          "type": "string"
         }
       },
       "required": [

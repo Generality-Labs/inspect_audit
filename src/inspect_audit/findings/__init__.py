@@ -40,8 +40,19 @@ from .models import (
     utcnow,
 )
 from .render import NOISE_THRESHOLD, render_eval_summary, render_sweep_summary
+from .taxonomy import (
+    DEFAULT_TAXONOMY,
+    TAXONOMIES,
+    Taxonomy,
+    TaxonomyMapping,
+    load_mapping,
+    load_taxonomy,
+    map_check,
+    map_dimension,
+)
 
 __all__ = [
+    "DEFAULT_TAXONOMY",
     "FINDING_COLUMNS",
     "FINGERPRINT_VERSION",
     "NOISE_THRESHOLD",
@@ -67,12 +78,19 @@ __all__ = [
     "StatusChange",
     "Subject",
     "Suppression",
+    "TAXONOMIES",
     "TaskVersion",
+    "Taxonomy",
+    "TaxonomyMapping",
     "TranscriptLocation",
     "UrlLocation",
     "VersionRef",
     "findings_df",
     "fingerprint",
+    "load_mapping",
+    "load_taxonomy",
+    "map_check",
+    "map_dimension",
     "read_run",
     "read_runs",
     "render_eval_summary",

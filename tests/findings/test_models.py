@@ -3,17 +3,13 @@
 import json
 import os
 from pathlib import Path
-from typing import get_args
 
 import pytest
 from pydantic import ValidationError
 
-import inspect_audit
-from inspect_audit._assessment import framework_definitions
 from inspect_audit.findings import models
 from inspect_audit.findings.models import (
     CodeLocation,
-    Dimension,
     Finding,
     LogLocation,
     Revision,
@@ -96,12 +92,6 @@ def test_location_keys() -> None:
 def test_locations_allow_extra_keys() -> None:
     location = CodeLocation.model_validate({"kind": "code", "file": "f.py", "snippet": "x = 1"})
     assert location.model_dump()["snippet"] == "x = 1"
-
-
-def test_dimension_matches_the_framework() -> None:
-    report = Path(inspect_audit.__file__).parent / "investigation" / "report"
-    parsed = {entry["dimension"] for entry in framework_definitions(report).values()}
-    assert parsed == set(get_args(Dimension))
 
 
 @pytest.mark.parametrize(("name", "model"), [("finding.schema.json", Finding), ("run.schema.json", Run)])

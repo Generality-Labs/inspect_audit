@@ -91,7 +91,9 @@ def item_sample(
         "audit_item": item.model_dump(),
         "assessment_ids": units,
         # the sliced logs, for the concordance gate to re-score host-side
-        "sliced_logs": [host for key, host in files.items() if key.startswith(f"{AUDIT_ROOT}/logs/")],
+        "sliced_logs": [
+            host for key, host in files.items() if key.startswith(f"{AUDIT_ROOT}/logs/")
+        ],
         "benchmark_metadata": dict(sample.metadata or {}),
         # the original session's raw material, so the benchmark's own TaskState can
         # be rebuilt at grading time: a grader must never see the audit's input,
@@ -251,9 +253,7 @@ def sample_logs(
     # Reserve original names before allocating suffixes, including names from
     # sources visited later. An eval_id identifies an evaluation, not a file:
     # copies and rescored versions can share it and must not overwrite each other.
-    source_names = {
-        source: Path(source.replace("file://", "")).name for source in by_log
-    }
+    source_names = {source: Path(source.replace("file://", "")).name for source in by_log}
     reserved_names = set(source_names.values())
 
     stage.mkdir(parents=True, exist_ok=True)
@@ -272,7 +272,10 @@ def sample_logs(
             # a missing log costs the auditor one log's attempts, not the whole item
             logger.warning(
                 "could not slice %s for sample %s: %s: %s",
-                log_file, refs[0].sample_id, type(ex).__name__, ex,
+                log_file,
+                refs[0].sample_id,
+                type(ex).__name__,
+                ex,
             )
             continue
 
@@ -321,6 +324,7 @@ def _solver_events(events: list[Event]) -> list[Event]:
     `event_tree` does the parent linkage: an earlier version tracked span ids and
     parents by hand and broke the first time inspect nested them differently.
     """
+
     def outside_scoring(node: EventTreeNode) -> list[Event]:
         if isinstance(node, EventTreeSpan):
             if node.type in ("scorers", "scorer"):
@@ -332,9 +336,7 @@ def _solver_events(events: list[Event]) -> list[Event]:
             ]
         return [node]
 
-    return [
-        event for node in event_tree(events) for event in outside_scoring(node)
-    ]
+    return [event for node in event_tree(events) for event in outside_scoring(node)]
 
 
 def benchmark_source_files(task: Task) -> dict[str, Path]:
@@ -482,9 +484,7 @@ def env_files(spec: SandboxEnvironmentType | None, *, stage: Path) -> dict[str, 
     return {f"{AUDIT_ROOT}/env/{host.name}": str(host)}
 
 
-def grading_doc(
-    task: Task, sample: Sample, *, redact: Collection[str] = ()
-) -> str:
+def grading_doc(task: Task, sample: Sample, *, redact: Collection[str] = ()) -> str:
     """Render `gold/grading.md` for one item.
 
     Args:
@@ -512,9 +512,7 @@ def grading_doc(
         or "- not recovered",
         modules=" ".join(sorted({module for _, module in named})) or "?",
         metadata_keys=(
-            ", ".join(
-                f"`{k}`" for k in sorted((sample.metadata or {}).keys()) if k not in redact
-            )
+            ", ".join(f"`{k}`" for k in sorted((sample.metadata or {}).keys()) if k not in redact)
             or "(none)"
         ),
     )

@@ -32,7 +32,10 @@ def _scores(*values: str, mismatch: bool = False) -> list[Score]:
 
 
 def test_classify_validates_only_by_checking() -> None:
-    assert classify(_scores(AGREE, AGREE), attempted=2, has_box=False, errors=[]) == ("validated", [])
+    assert classify(_scores(AGREE, AGREE), attempted=2, has_box=False, errors=[]) == (
+        "validated",
+        [],
+    )
     verdict, reasons = classify([], attempted=5, has_box=False, errors=[])
     assert (verdict, reasons) == ("unvalidated", ["checked_none"])
     verdict, reasons = classify(_scores(AGREE), attempted=3, has_box=False, errors=[])
@@ -41,22 +44,31 @@ def test_classify_validates_only_by_checking() -> None:
 
 def test_classify_blocks_on_stable_disagreement_unless_a_box_could_explain_it() -> None:
     assert classify(_scores(AGREE, STABLE), attempted=2, has_box=False, errors=[])[0] == "blocked"
-    assert classify(_scores(AGREE, STABLE), attempted=2, has_box=True, errors=[])[0] == "inconclusive"
+    assert (
+        classify(_scores(AGREE, STABLE), attempted=2, has_box=True, errors=[])[0] == "inconclusive"
+    )
 
 
 def test_classify_noise_never_blocks_and_mismatch_never_validates() -> None:
     verdict, reasons = classify(_scores(AGREE, NOISY), attempted=2, has_box=False, errors=[])
     assert (verdict, reasons) == ("validated", ["noise"])
-    verdict, reasons = classify(_scores(AGREE, mismatch=True), attempted=1, has_box=False, errors=[])
+    verdict, reasons = classify(
+        _scores(AGREE, mismatch=True), attempted=1, has_box=False, errors=[]
+    )
     assert (verdict, reasons) == ("unvalidated", ["scorer_count_mismatch"])
 
 
 def _header(**overrides) -> EvalSpec:
-    fields = dict(
-        task="bench/task", dataset={}, model="mockllm/model", config={}, created="2026-01-01T00:00:00",
-        packages={"inspect_evals": "0.1.0"}, task_args={"difficulty": "hard"},
-        revision=EvalRevision(type="git", origin="https://x/y", commit="abc"),
-    )
+    fields = {
+        "task": "bench/task",
+        "dataset": {},
+        "model": "mockllm/model",
+        "config": {},
+        "created": "2026-01-01T00:00:00",
+        "packages": {"inspect_evals": "0.1.0"},
+        "task_args": {"difficulty": "hard"},
+        "revision": EvalRevision(type="git", origin="https://x/y", commit="abc"),
+    }
     return EvalSpec(**{**fields, **overrides})
 
 
@@ -64,7 +76,10 @@ def test_drift_flags_package_and_arg_differences() -> None:
     d = drift(_header(), task_args={"difficulty": "easy"})
     assert d["packages"]["inspect_evals"]["logged"] == "0.1.0"
     assert d["args"] == {"difficulty": {"logged": "hard", "resolved": "easy"}}
-    assert drift(_header(packages={}), task_args={"difficulty": "hard"}) == {"packages": {}, "args": {}}
+    assert drift(_header(packages={}), task_args={"difficulty": "hard"}) == {
+        "packages": {},
+        "args": {},
+    }
 
 
 # ---- end to end: the gate inside a real audit eval ------------------------------
@@ -87,7 +102,10 @@ def _audit(source_log, tmp_path, body, task=None, mangle=None):
         return solve
 
     audited = audit_task(
-        task or fixture_task("graded_task"), source_log, solver=scripted(), sandbox="local",
+        task or fixture_task("graded_task"),
+        source_log,
+        solver=scripted(),
+        sandbox="local",
         items=["gold-answer"],
     )
     for staged in audited.dataset:
@@ -156,7 +174,9 @@ def test_no_attempts_is_a_label_not_a_refusal(tmp_path) -> None:
     grades = []
 
     async def body(state):
-        grades.append(json.loads(await grade_benchmark([match()])(answer="ANSWER"))["scores"]["value"])
+        grades.append(
+            json.loads(await grade_benchmark([match()])(answer="ANSWER"))["scores"]["value"]
+        )
 
     audit = _audit(None, tmp_path, body)
     assert grades and all(g == "C" for g in grades)
@@ -220,7 +240,9 @@ def test_duplicate_named_scorers_pair_positionally(tmp_path) -> None:
             scorer=[match(), match(location="begin"), includes()],
         )
 
-    source = eval(task(), model="mockllm/model", log_dir=str(tmp_path / "src"), display="none")[0].location
+    source = eval(task(), model="mockllm/model", log_dir=str(tmp_path / "src"), display="none")[
+        0
+    ].location
     audit = _audit(source, tmp_path, _nothing, task=task())
     for v in _verdicts(audit):
         assert v["verdict"] == "validated", v

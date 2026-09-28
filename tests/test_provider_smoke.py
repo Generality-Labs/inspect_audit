@@ -2,6 +2,7 @@
 
 Set OPENROUTER_API_KEY in the environment. No benchmark data is sent.
 """
+
 import asyncio
 import json
 import os
@@ -23,7 +24,7 @@ def test_verdict_schema_at_provider(all_items: bool) -> None:
     if not all_items:
         items = items[:1]
     item = items[0]
-    details = {key: "Synthetic plumbing check" for key in item.details}
+    details = dict.fromkeys(item.details, "Synthetic plumbing check")
     prompt = (
         "This is a synthetic tool-schema test. Call record_verdict once with "
         f"item={item.name!r}, grade={item.grades[0]!r}, "
@@ -38,10 +39,20 @@ def test_verdict_schema_at_provider(all_items: bool) -> None:
             config=GenerateConfig(max_tokens=2048, reasoning_effort="low", max_retries=0),
         )
         output = await model.generate(
-            prompt, tools=auditor_tools(items, benchmark_scorers=match(), media=True,
-                contract=SolverContract(tools=[ToolDef(t()) for t in (bash, python, text_editor, think)]),
-                benchmark=True) + [submit_audit(items)],
-            tool_choice=ToolFunction("record_verdict")
+            prompt,
+            tools=[
+                *auditor_tools(
+                    items,
+                    benchmark_scorers=match(),
+                    media=True,
+                    contract=SolverContract(
+                        tools=[ToolDef(t()) for t in (bash, python, text_editor, think)]
+                    ),
+                    benchmark=True,
+                ),
+                submit_audit(items),
+            ],
+            tool_choice=ToolFunction("record_verdict"),
         )
         calls = output.message.tool_calls or []
         assert len(calls) == 1

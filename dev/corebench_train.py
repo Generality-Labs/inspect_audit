@@ -52,8 +52,18 @@ def core_bench_train(difficulty: str = "medium", download: bool = True) -> Task:
             # masquerades as a complete tarball
             part = tar.with_suffix(".part")
             subprocess.run(
-                ["curl", "-fsSL", "--retry", "5", "--retry-all-errors", "-C", "-",
-                 "-o", str(part), CAPSULE_URL.format(capsule_id=cid)],
+                [
+                    "curl",
+                    "-fsSL",
+                    "--retry",
+                    "5",
+                    "--retry-all-errors",
+                    "-C",
+                    "-",
+                    "-o",
+                    str(part),
+                    CAPSULE_URL.format(capsule_id=cid),
+                ],
                 check=True,
             )
             part.rename(tar)

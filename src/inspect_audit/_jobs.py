@@ -66,9 +66,7 @@ class JobLedger:
 
     def reload(self) -> None:
         self.jobs = (
-            [Job(**j) for j in json.loads(self.path.read_text())]
-            if self.path.is_file()
-            else []
+            [Job(**j) for j in json.loads(self.path.read_text())] if self.path.is_file() else []
         )
 
     @contextmanager
@@ -103,9 +101,7 @@ class JobLedger:
     def reserved_usd(self) -> float:
         """Money held against jobs that are alive and whose real cost is not yet known."""
         return sum(
-            j.reserved_usd
-            for j in self.jobs
-            if j.actual_usd is None and j.status != "failed"
+            j.reserved_usd for j in self.jobs if j.actual_usd is None and j.status != "failed"
         )
 
     def actual_usd(self) -> float:
@@ -113,11 +109,7 @@ class JobLedger:
 
     def unpriced(self) -> list[str]:
         """Collected jobs whose cost could not be computed; their reservation stands."""
-        return [
-            j.label
-            for j in self.jobs
-            if j.actual_usd is None and j.collected_to is not None
-        ]
+        return [j.label for j in self.jobs if j.actual_usd is None and j.collected_to is not None]
 
 
 class Hawk:
@@ -139,9 +131,7 @@ class Hawk:
         env = dict(self.env)
         if os.environ.get("HAWK_JOB_ID"):
             env["HAWK_ACCESS_TOKEN"] = await self.access_token()
-        result = await subprocess(
-            [self.binary, *args], text=True, env=env, timeout=timeout
-        )
+        result = await subprocess([self.binary, *args], text=True, env=env, timeout=timeout)
         if not result.success:
             raise RuntimeError(
                 f"hawk {' '.join(args[:2])} failed: {(result.stderr or result.stdout)[-1500:]}"
@@ -159,11 +149,14 @@ class Hawk:
             token = await self.access_token()
             # Use the runner hook's current token after a possible rotation;
             # the environment holds only the credential supplied at startup.
-            refresh_token = next((
-                getattr(hook, "_current_refresh_token", None)
-                for hook in get_all_hooks()
-                if type(hook).__module__ == "hawk.runner.refresh_token"
-            ), None) or os.environ.get("HAWK_RUNNER_REFRESH_TOKEN")
+            refresh_token = next(
+                (
+                    getattr(hook, "_current_refresh_token", None)
+                    for hook in get_all_hooks()
+                    if type(hook).__module__ == "hawk.runner.refresh_token"
+                ),
+                None,
+            ) or os.environ.get("HAWK_RUNNER_REFRESH_TOKEN")
             if not refresh_token:
                 raise RuntimeError("Hawk runner has no refresh credential for child jobs")
             async with HawkClient(token=token, api_url=self.env["HAWK_API_URL"]) as client:
@@ -180,7 +173,9 @@ class Hawk:
 
     async def eval_set_exists(self, eval_set_id: str) -> bool:
         """Whether Hawk has this eval set, used to resolve a submission with no answer."""
-        out = await self._run("list", "eval-sets", "--search", eval_set_id, "--limit", "50", timeout=120)
+        out = await self._run(
+            "list", "eval-sets", "--search", eval_set_id, "--limit", "50", timeout=120
+        )
         return eval_set_id in out
 
     async def evals(self, eval_set_id: str) -> list[dict[str, str]]:
@@ -194,10 +189,15 @@ class Hawk:
             if batch and signature in seen:
                 raise RuntimeError("Hawk repeated an eval page; completion is unknown")
             seen.add(signature)
-            rows.extend({"task": str(r["task_name"]), "model": str(r["model"]),
-                         "status": str(r["status"]),
-                         "samples": f"{r['completed_samples']}/{r['total_samples']}"}
-                        for r in batch)
+            rows.extend(
+                {
+                    "task": str(r["task_name"]),
+                    "model": str(r["model"]),
+                    "status": str(r["status"]),
+                    "samples": f"{r['completed_samples']}/{r['total_samples']}",
+                }
+                for r in batch
+            )
             if len(batch) < self.PAGE:
                 return rows
             page += 1
@@ -236,7 +236,9 @@ class Hawk:
         rows = await self._metadata_page("samples", eval_set_id, 1, self.PAGE, search=sample_uuid)
         return any(str(row.get("uuid")) == sample_uuid for row in rows)
 
-    async def _metadata_page(self, resource: str, eval_set_id: str, page: int, limit: int, *, search: str | None = None) -> list[dict[str, Any]]:
+    async def _metadata_page(
+        self, resource: str, eval_set_id: str, page: int, limit: int, *, search: str | None = None
+    ) -> list[dict[str, Any]]:
         import urllib.error
         import urllib.parse
         import urllib.request
@@ -318,7 +320,9 @@ class Hawk:
         path.write_text(text)
         return path
 
-    async def transcripts(self, eval_set_id: str, out_dir: Path, limit: int | None = None) -> list[Path]:
+    async def transcripts(
+        self, eval_set_id: str, out_dir: Path, limit: int | None = None
+    ) -> list[Path]:
         """Every sample's transcript in the set, written to out_dir."""
         out_dir.mkdir(parents=True, exist_ok=True)
         args = ["transcripts", eval_set_id, "--output-dir", str(out_dir)]
@@ -368,10 +372,30 @@ class Policy:
 
 
 ALLOWED_TOP_LEVEL = {
-    "name", "eval_set_id", "packages", "tasks", "models", "model_roles", "runner", "limit",
-    "sample_shuffle", "epochs", "token_limit", "time_limit", "message_limit", "working_limit",
-    "cost_limit", "max_connections", "max_retries", "retry_attempts", "timeout", "metadata",
-    "tags", "log_images", "log_model_api", "score",
+    "name",
+    "eval_set_id",
+    "packages",
+    "tasks",
+    "models",
+    "model_roles",
+    "runner",
+    "limit",
+    "sample_shuffle",
+    "epochs",
+    "token_limit",
+    "time_limit",
+    "message_limit",
+    "working_limit",
+    "cost_limit",
+    "max_connections",
+    "max_retries",
+    "retry_attempts",
+    "timeout",
+    "metadata",
+    "tags",
+    "log_images",
+    "log_model_api",
+    "score",
 }
 ALLOWED_RUNNER = {"environment", "memory"}
 ALLOWED_MODEL_ARGS = {"config"}
@@ -387,9 +411,24 @@ IMAGE_ARG = re.compile(r"image|container|registry")
 SIZE_ARG = re.compile(r"^(n|count|limit|epochs)$|limit|sample|epoch|item|batch|repeat|attempt")
 LOG_ARG = re.compile(r"^logs?$|log_dir|log_file|transcript")
 FORBIDDEN_ARGS = {
-    "setup", "sandbox", "sandboxes", "solver", "agent", "approval", "secrets", "secret",
-    "env", "environment", "command", "entrypoint", "token", "key", "api_key",
-    "credentials", "aws_profile", "bucket",
+    "setup",
+    "sandbox",
+    "sandboxes",
+    "solver",
+    "agent",
+    "approval",
+    "secrets",
+    "secret",
+    "env",
+    "environment",
+    "command",
+    "entrypoint",
+    "token",
+    "key",
+    "api_key",
+    "credentials",
+    "aws_profile",
+    "bucket",
 }
 
 
@@ -410,9 +449,7 @@ def parse_config(config: dict[str, Any]) -> tuple[Any, list[str]]:
     try:
         return EvalSetConfig.model_validate(config), []
     except pydantic.ValidationError as ex:
-        return None, [
-            f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in ex.errors()[:12]
-        ]
+        return None, [f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in ex.errors()[:12]]
 
 
 def _model_items(config: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
@@ -465,10 +502,7 @@ def _task_arg_problems(
                 # a model reference names its provider; a bare word is a mode, not a
                 # model, and cannot reach a paid provider from a runner that holds one
                 # key. `scorer: original` is a real control and was being refused.
-                allowed = set(policy.models) | {
-                    f"openrouter/{name}"
-                    for name in policy.models
-                }
+                allowed = set(policy.models) | {f"openrouter/{name}" for name in policy.models}
                 if "/" in model and model not in allowed:
                     problems.append(f"{where}: {path}={model!r} is not an allowed model")
                 elif "/" not in model and model in policy.models:
@@ -516,9 +550,7 @@ def _string_problems(where: str, path: str, text: str, problems: list[str]) -> N
         or text.startswith("~")
         or (text.startswith("/") and not posixpath.normpath(text).startswith(_ALLOWED_ABSOLUTE))
     ):
-        problems.append(
-            f"{where}: {path} points outside this investigation: {text[:60]!r}"
-        )
+        problems.append(f"{where}: {path} points outside this investigation: {text[:60]!r}")
 
 
 def _known_log_source(logs: str, known_log_sources: set[str]) -> bool:
@@ -531,8 +563,7 @@ def _known_log_source(logs: str, known_log_sources: set[str]) -> bool:
     if logs in known_log_sources:
         return True
     return (
-        logs.startswith("hawk:")
-        and logs.removeprefix("hawk:").split("/")[0] in known_log_sources
+        logs.startswith("hawk:") and logs.removeprefix("hawk:").split("/")[0] in known_log_sources
     )
 
 
@@ -620,11 +651,15 @@ def validate_config(
         return [f"Hawk rejects this config: {p}" for p in schema_problems]
     unknown = set(config) - ALLOWED_TOP_LEVEL
     if {"generate_config", "max_tokens"} & unknown:
-        problems.append("Put generation settings under models[].items[].args.config (and the corresponding model_roles item), e.g. args.config.max_tokens.")
+        problems.append(
+            "Put generation settings under models[].items[].args.config (and the corresponding model_roles item), e.g. args.config.max_tokens."
+        )
     if "max_samples" in unknown:
-        problems.append("max_samples is controlled by Hawk infrastructure, not this job. "
-                        "Use smaller limit batches, working_limit for active work, and "
-                        "a generous time_limit for queued wall time.")
+        problems.append(
+            "max_samples is controlled by Hawk infrastructure, not this job. "
+            "Use smaller limit batches, working_limit for active work, and "
+            "a generous time_limit for queued wall time."
+        )
     if unknown:
         problems.append(f"keys not allowed: {sorted(unknown)}")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,40}", str(config.get("name", ""))):
@@ -647,10 +682,14 @@ def validate_config(
     # dislikes still hears the policy's objection rather than only the schema's
     runner = config.get("runner") or {}
     if set(runner) - ALLOWED_RUNNER:
-        problems.append(f"runner keys not allowed: {sorted(set(runner) - ALLOWED_RUNNER)} (no image, cpu, cleanup)")
+        problems.append(
+            f"runner keys not allowed: {sorted(set(runner) - ALLOWED_RUNNER)} (no image, cpu, cleanup)"
+        )
     env = runner.get("environment") or {}
     if set(env) - set(policy.env_keys):
-        problems.append(f"runner.environment keys not allowed: {sorted(set(env) - set(policy.env_keys))}")
+        problems.append(
+            f"runner.environment keys not allowed: {sorted(set(env) - set(policy.env_keys))}"
+        )
     if env.get("HAWK_API_URL") != policy.hawk_api_url:
         problems.append(f"runner.environment must set HAWK_API_URL to {policy.hawk_api_url}")
     if config.get("secrets"):
@@ -685,10 +724,14 @@ def validate_config(
             if item.isolation is not None:
                 problems.append(f"{where}: isolation is the operator's to set")
             if item.sample_ids and len(item.sample_ids) > policy.max_limit:
-                problems.append(f"{where}: {len(item.sample_ids)} sample_ids exceeds {policy.max_limit}")
+                problems.append(
+                    f"{where}: {len(item.sample_ids)} sample_ids exceeds {policy.max_limit}"
+                )
             problems += _task_arg_problems(where, item.args or {}, policy, known_log_sources)
 
-    epochs = parsed.epochs if isinstance(parsed.epochs, int) else getattr(parsed.epochs, "epochs", None)
+    epochs = (
+        parsed.epochs if isinstance(parsed.epochs, int) else getattr(parsed.epochs, "epochs", None)
+    )
     for key, value, cap in (
         ("epochs", epochs, policy.max_epochs),
         ("token_limit", parsed.token_limit, policy.max_token_limit),
@@ -699,7 +742,8 @@ def validate_config(
         elif not isinstance(value, int) or isinstance(value, bool) or value > cap:
             problems.append(f"{key} {value!r} must be an integer up to {cap}")
     if parsed.limit is not None and (
-        not isinstance(parsed.limit, int) or isinstance(config.get("limit"), bool)
+        not isinstance(parsed.limit, int)
+        or isinstance(config.get("limit"), bool)
         or not (0 < parsed.limit <= policy.max_limit)
     ):
         problems.append(
@@ -739,7 +783,9 @@ def validate_config(
     for name in _strings(config):
         bare = name.removeprefix("openrouter/")
         if name not in policy.models and bare in policy.known_models and bare not in policy.models:
-            problems.append(f"model {name!r} is not on the worker menu (found outside a model field)")
+            problems.append(
+                f"model {name!r} is not on the worker menu (found outside a model field)"
+            )
 
     worst = worst_case_usd(parsed, policy)
     if worst is None and not problems:
@@ -752,6 +798,7 @@ def validate_config(
             f"the ${policy.max_worst_case_usd:,.2f} a single job may hold; run it in parts"
         )
     return problems
+
 
 def task_package_name(spec: str) -> str:
     """The registry name of a package from its git or pip spec.
@@ -803,7 +850,9 @@ def usage_cost(logs: list[Path]) -> tuple[float | None, dict[str, dict[str, int]
                 for model, u in (summary.model_usage or {}).items():
                     per_model.setdefault(model, []).append(u)
         else:  # a log with no samples: the header is all there is
-            for model, u in (read_eval_log(str(path), header_only=True).stats.model_usage or {}).items():
+            for model, u in (
+                read_eval_log(str(path), header_only=True).stats.model_usage or {}
+            ).items():
                 per_model.setdefault(model, []).append(u)
         for model, usages in per_model.items():
             tally = usage.setdefault(model, {"input": 0, "cache_read": 0, "output": 0})
@@ -820,12 +869,16 @@ def usage_cost(logs: list[Path]) -> tuple[float | None, dict[str, dict[str, int]
                 if cost is None:
                     priced = False
                     continue
-                total += max(0.0, (
-                    (u.input_tokens or 0) * (cost.input or 0)
-                    + (u.input_tokens_cache_read or 0) * (cost.input_cache_read or 0)
-                    + (u.input_tokens_cache_write or 0) * (cost.input_cache_write or 0)
-                    + (u.output_tokens or 0) * (cost.output or 0)
-                ) / 1_000_000)
+                total += max(
+                    0.0,
+                    (
+                        (u.input_tokens or 0) * (cost.input or 0)
+                        + (u.input_tokens_cache_read or 0) * (cost.input_cache_read or 0)
+                        + (u.input_tokens_cache_write or 0) * (cost.input_cache_write or 0)
+                        + (u.output_tokens or 0) * (cost.output or 0)
+                    )
+                    / 1_000_000,
+                )
     return (total if priced else None), usage, recomputed
 
 

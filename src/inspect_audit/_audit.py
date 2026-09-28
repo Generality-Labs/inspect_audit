@@ -41,9 +41,8 @@ def benchmark_setup() -> Solver:
 
     return solve
 
-ITEM_PROMPT = (
-    f"You are auditing one benchmark sample. Its audit filesystem is at {AUDIT_ROOT}."
-)
+
+ITEM_PROMPT = f"You are auditing one benchmark sample. Its audit filesystem is at {AUDIT_ROOT}."
 
 
 # logs read per samples_df call: the read fans out one open file descriptor per
@@ -120,9 +119,7 @@ def attempts(
         matched = frame[tails.isin(names)]
         if matched.empty:
             found = ", ".join(sorted(frame["task_name"].astype(str).unique()))
-            raise ValueError(
-                f"None of these logs record task {task!r} (they record: {found})."
-            )
+            raise ValueError(f"None of these logs record task {task!r} (they record: {found}).")
         frame = matched
     if sample_ids is not None and not frame.empty:
         wanted = {str(sample) for sample in sample_ids}
@@ -230,11 +227,17 @@ def audit_task(
     in_scope = set(selected)
     units = assessment_ids if assessment_ids is not None else {sid: [sid] for sid in selected}
     if in_scope - units.keys() or units.keys() - set(ids):
-        raise ValueError("assessment_ids must cover every selected sample and name only known samples")
+        raise ValueError(
+            "assessment_ids must cover every selected sample and name only known samples"
+        )
     flat: list[str] = []
     for sid in selected:
         values = units[sid]
-        if not isinstance(values, list) or not values or any(not isinstance(v, str) or not v.strip() for v in values):
+        if (
+            not isinstance(values, list)
+            or not values
+            or any(not isinstance(v, str) or not v.strip() for v in values)
+        ):
             raise ValueError("assessment_ids must contain nonempty lists of nonempty strings")
         flat.extend(values)
     if len(flat) != len(set(flat)):
@@ -294,8 +297,7 @@ def audit_task(
         )
 
     any_media = any(
-        any(f"{AUDIT_ROOT}/media/" in key for key in (s.files or {}))
-        for s in audit_samples
+        any(f"{AUDIT_ROOT}/media/" in key for key in (s.files or {})) for s in audit_samples
     )
 
     return Task(

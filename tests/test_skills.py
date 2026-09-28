@@ -263,19 +263,17 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
     assert schema.type == "string"
     assert "Exact log, sample, epoch references" in schema.description
     assert "answer-format: examined" in schema.description
-    quote = Evidence(
-        observed="MOVE: a1a2", source="run.eval#sample=1,epoch=2,message=4"
-    )
+    quote = Evidence(observed="MOVE: a1a2", source="run.eval#sample=1,epoch=2,message=4")
 
     async def run() -> None:
-        args = dict(
-            item=item.name,
-            evidence=[quote],
-            approaches="reviewed",
-            tried="read",
-            remarks="",
-            grade="SOUND",
-        )
+        args = {
+            "item": item.name,
+            "evidence": [quote],
+            "approaches": "reviewed",
+            "tried": "read",
+            "remarks": "",
+            "grade": "SOUND",
+        }
         with pytest.raises(ToolError, match="examined"):
             await record(**args, details={})
         with pytest.raises(ToolError, match="valid JSON object"):
@@ -284,13 +282,9 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
         await record(**args, details={"examined": [quote.source]})
         await submit_audit([item])(
             environment_issues=[
-                Evidence(
-                    observed="Analysis dependency was missing", source="tool-event-1"
-                )
+                Evidence(observed="Analysis dependency was missing", source="tool-event-1")
             ],
-            unresolved=[
-                Evidence(observed="Alternative judge not tested", source="tool-event-2")
-            ],
+            unresolved=[Evidence(observed="Alternative judge not tested", source="tool-event-2")],
             improvements=[],
         )
 
@@ -341,10 +335,13 @@ def test_verdict_schema_survives_openrouter_serialization() -> None:
     from inspect_audit._agent import audit_items, record_verdict
 
     definition = ToolDef(record_verdict(audit_items()))
-    wire = openai_chat_tool_param(ToolInfo(
-        name=definition.name, description=definition.description,
-        parameters=definition.parameters,
-    ))["function"]["parameters"]
+    wire = openai_chat_tool_param(
+        ToolInfo(
+            name=definition.name,
+            description=definition.description,
+            parameters=definition.parameters,
+        )
+    )["function"]["parameters"]
 
     def check(schema):
         if schema.get("type") == "object":

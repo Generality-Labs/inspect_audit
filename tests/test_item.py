@@ -146,9 +146,7 @@ def test_redact_strips_extra_metadata_keys_and_their_names(tmp_path: Path) -> No
     list it either.
     """
     task = make_task({"answer": "42", "validator_votes": "1/3", "kind": "geometry"})
-    files = item_files(
-        task, task.dataset[0], [], stage=tmp_path, redact=("validator_votes",)
-    )
+    files = item_files(task, task.dataset[0], [], stage=tmp_path, redact=("validator_votes",))
 
     staged = json.loads(Path(files[f"{AUDIT_ROOT}/sample.json"]).read_text())[0]
     assert "validator_votes" not in staged["metadata"]
@@ -168,9 +166,7 @@ def test_benchmark_metadata_is_carried_without_a_benchmark_container(tmp_path: P
     """
     task = make_task({"answer": "42"})
     item = AuditItem(task=task.name, sample_id=42)
-    sample = item_sample(
-        task, task.dataset[0], item, prompt="p", stage=tmp_path, benchmark=False
-    )
+    sample = item_sample(task, task.dataset[0], item, prompt="p", stage=tmp_path, benchmark=False)
 
     assert (sample.metadata or {})["benchmark_metadata"] == {"answer": "42"}
 

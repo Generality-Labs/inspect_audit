@@ -75,11 +75,7 @@ def test_the_audited_tasks_environment_runs_alongside_the_auditors(tmp_path: Pat
     """
     their_compose = tmp_path / "their-compose.yaml"
     their_compose.write_text(
-        'services:\n'
-        '  default:\n'
-        '    build: .\n'
-        '    extra_hosts:\n'
-        '      - "codeocean.com:127.0.0.1"\n'
+        'services:\n  default:\n    build: .\n    extra_hosts:\n      - "codeocean.com:127.0.0.1"\n'
     )
     task = make_task(1)
     task.sandbox = ("docker", str(their_compose))  # type: ignore[assignment]
@@ -205,14 +201,13 @@ def test_attempts_can_come_from_a_sibling_variant_of_the_audited_task(
     assert not attempts(fixture_log, task=name).empty
 
 
-
-def test_resolve_task_accepts_either_registry_name_form(monkeypatch) -> None:  # noqa: ANN001
+def test_resolve_task_accepts_either_registry_name_form(monkeypatch) -> None:
     """`pkg/name` and bare `name` both resolve, whichever way the package was installed."""
     from inspect_audit import _resolve
 
     registered = {"pkg/thing": object()}
 
-    def load_tasks(specs, args):  # noqa: ANN001, ANN202
+    def load_tasks(specs, args):
         return [registered[specs[0]]] if specs[0] in registered else []
 
     monkeypatch.setattr(_resolve, "load_tasks", load_tasks)
@@ -241,13 +236,16 @@ def test_explicit_assessment_units_are_staged_without_interpreting_benchmark_met
     assert default.metadata["assessment_ids"] == ["100"]
 
 
-@pytest.mark.parametrize("units", [
-    {"100": ["a"]},
-    {"100": ["a"], "101": ["a"]},
-    {"100": [], "101": ["b"]},
-    {"100": [" "], "101": ["b"]},
-    {"100": ["a"], "101": ["b"], "unknown": ["c"]},
-])
+@pytest.mark.parametrize(
+    "units",
+    [
+        {"100": ["a"]},
+        {"100": ["a"], "101": ["a"]},
+        {"100": [], "101": ["b"]},
+        {"100": [" "], "101": ["b"]},
+        {"100": ["a"], "101": ["b"], "unknown": ["c"]},
+    ],
+)
 def test_invalid_assessment_manifest_fails_before_execution(units):
     with pytest.raises(ValueError, match="assessment_ids"):
         audit_task(make_task(2), assessment_ids=units)

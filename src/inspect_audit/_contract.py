@@ -159,9 +159,7 @@ def _as_prompt(value: Any) -> str | None:
     return None
 
 
-def discrepancies_doc(
-    contract: SolverContract, logged: dict[str, set[str]]
-) -> str | None:
+def discrepancies_doc(contract: SolverContract, logged: dict[str, set[str]]) -> str | None:
     """Render the declared-versus-ran tool diff for one item, or `None`.
 
     Args:

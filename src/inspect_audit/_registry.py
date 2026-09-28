@@ -126,16 +126,25 @@ def audit_probe() -> Solver:
 
         await run("auditor_fs", None, "ls /audit && ls /audit/logs | head -3")
         await run(
-            "auditor_logs_open", None,
-            "python -c \"from inspect_ai.log import list_eval_logs, read_eval_log; "
+            "auditor_logs_open",
+            None,
+            'python -c "from inspect_ai.log import list_eval_logs, read_eval_log; '
             "ls=list_eval_logs('/audit/logs'); print(len(ls), read_eval_log(ls[0].name, header_only=True).eval.task)\"",
         )
-        await run("auditor_egress", None,
-                  "python -c \"import urllib.request; print(urllib.request.urlopen('https://example.com', timeout=10).status)\"")
-        await run("benchmark_content", BENCHMARK_SERVICE, "pwd; ls / | head -8; ls 2>/dev/null | head -8")
+        await run(
+            "auditor_egress",
+            None,
+            "python -c \"import urllib.request; print(urllib.request.urlopen('https://example.com', timeout=10).status)\"",
+        )
+        await run(
+            "benchmark_content", BENCHMARK_SERVICE, "pwd; ls / | head -8; ls 2>/dev/null | head -8"
+        )
         await run("benchmark_isolated", BENCHMARK_SERVICE, "ls /audit 2>&1 | head -1")
-        await run("benchmark_egress", BENCHMARK_SERVICE,
-                  "timeout 10 python -c \"import urllib.request; print(urllib.request.urlopen('https://example.com', timeout=8).status)\" 2>&1 | tail -1 || echo BLOCKED")
+        await run(
+            "benchmark_egress",
+            BENCHMARK_SERVICE,
+            "timeout 10 python -c \"import urllib.request; print(urllib.request.urlopen('https://example.com', timeout=8).status)\" 2>&1 | tail -1 || echo BLOCKED",
+        )
 
         # concordance: prove the resolution and the grade channel against the
         # logs -- replay recorded attempts and require our regrade to reproduce
@@ -166,7 +175,11 @@ def fetch_logs(logs: str | list[str]) -> str:
         combined = Path(tempfile.mkdtemp(prefix="audit_corpus_"))
         for index, source in enumerate(logs):
             resolved = fetch_logs(source)
-            files = [resolved] if resolved.endswith(".eval") else [i.name for i in list_eval_logs(resolved)]
+            files = (
+                [resolved]
+                if resolved.endswith(".eval")
+                else [i.name for i in list_eval_logs(resolved)]
+            )
             for filename in files:
                 source_path = Path(filename.removeprefix("file://"))
                 shutil.copyfile(source_path, combined / f"{index}_{source_path.name}")
@@ -214,7 +227,9 @@ def _hawk_fetch(eval_sets: str) -> str:
         if selected_file:
             names = [name for name in names if Path(name).name == selected_file]
             if len(names) != 1:
-                raise ValueError(f"Expected exactly one Hawk log at {address!r}, found {len(names)}")
+                raise ValueError(
+                    f"Expected exactly one Hawk log at {address!r}, found {len(names)}"
+                )
         if not names:
             raise ValueError(f"No .eval files found in Hawk eval set {eval_set!r}.")
         # several sets share one flat directory: prefix so same-named files
@@ -255,7 +270,6 @@ def _hawk_token() -> str:
     token = os.environ.get("HAWK_ACCESS_TOKEN")
     if not token:
         raise ValueError(
-            "Fetching hawk: logs needs HAWK_ACCESS_TOKEN or the runner's token "
-            "refresh environment."
+            "Fetching hawk: logs needs HAWK_ACCESS_TOKEN or the runner's token refresh environment."
         )
     return token

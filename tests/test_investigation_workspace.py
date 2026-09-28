@@ -27,7 +27,8 @@ def test_hawk_task_uses_kubernetes_without_bind_mounts(monkeypatch, tmp_path):
     monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: None)
     monkeypatch.setattr(_investigate.tempfile, "gettempdir", lambda: str(tmp_path))
     task = investigate(
-        repo="https://example.org/benchmark.git", revision="abc123",
+        repo="https://example.org/benchmark.git",
+        revision="abc123",
         audit_package="git+https://example.org/auditor.git@abc123",
         hawk_api_url="https://hawk.example",
         artifact_dir="s3://bucket/test-investigation/artifacts",
@@ -41,7 +42,15 @@ def test_hawk_task_uses_kubernetes_without_bind_mounts(monkeypatch, tmp_path):
     assert values["automountServiceAccountToken"] is False
 
 
-@pytest.mark.parametrize("name,kind", [("../escape", tarfile.REGTYPE), ("/escape", tarfile.REGTYPE), ("link", tarfile.SYMTYPE), ("hardlink", tarfile.LNKTYPE)])
+@pytest.mark.parametrize(
+    ("name", "kind"),
+    [
+        ("../escape", tarfile.REGTYPE),
+        ("/escape", tarfile.REGTYPE),
+        ("link", tarfile.SYMTYPE),
+        ("hardlink", tarfile.LNKTYPE),
+    ],
+)
 def test_workspace_rejects_paths_and_links(tmp_path, name, kind):
     stream = io.BytesIO()
     with tarfile.open(fileobj=stream, mode="w:gz") as archive:
@@ -83,6 +92,7 @@ def test_synchronized_tool_preserves_schema_and_pushes_after_failure(monkeypatch
             """
             calls.append(config)
             raise RuntimeError("failed")
+
         return execute
 
     original = operation()
@@ -100,7 +110,9 @@ def test_persistence_keeps_nested_files(tmp_path):
 
     workspace.configure(tmp_path, "image@sha256:abc", "memory://audit-test/artifacts")
     settings = tmp_path / "remote-workspace.json"
-    settings.write_text(json.dumps({"artifact_dir": "memory://audit-test/artifacts", "sample_uuid": "sample"}))
+    settings.write_text(
+        json.dumps({"artifact_dir": "memory://audit-test/artifacts", "sample_uuid": "sample"})
+    )
     source = tmp_path / "publication"
     (source / "nested").mkdir(parents=True)
     (source / "nested/evidence.json").write_text("{}")
@@ -151,4 +163,8 @@ def test_child_submission_uses_rotated_runner_credentials(monkeypatch, tmp_path)
     config = tmp_path / "child.yaml"
     config.write_text("name: child\n")
     assert asyncio.run(_jobs.Hawk("https://hawk.example").submit(config)) == "child-job"
-    assert received == {"token": "current-access", "api_url": "https://hawk.example", "refresh_token": "rotated"}
+    assert received == {
+        "token": "current-access",
+        "api_url": "https://hawk.example",
+        "refresh_token": "rotated",
+    }

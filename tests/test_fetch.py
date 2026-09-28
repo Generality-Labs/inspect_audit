@@ -16,13 +16,13 @@ def _serve(monkeypatch, pages: dict[str, bytes]) -> None:
         def read(self) -> bytes:
             return self.body
 
-        def __enter__(self):  # noqa: ANN204
+        def __enter__(self):
             return self
 
-        def __exit__(self, *exc):  # noqa: ANN002
+        def __exit__(self, *exc):
             return False
 
-    def urlopen(url, timeout=None):  # noqa: ANN001
+    def urlopen(url, timeout=None):
         if url not in pages:
             raise ValueError(f"unexpected fetch {url!r}")
         return Response(pages[url])
@@ -45,10 +45,18 @@ def test_exact_hawk_files_exclude_partial_runs(monkeypatch):
             downloaded.append(request)
             return io.BytesIO(b"selected log")
         if request.full_url.endswith("logs?log_dir=run"):
-            return io.BytesIO(json.dumps({"files": [{"name": "run/complete.eval"}, {"name": "run/partial.eval"}]}).encode())
+            return io.BytesIO(
+                json.dumps(
+                    {"files": [{"name": "run/complete.eval"}, {"name": "run/partial.eval"}]}
+                ).encode()
+            )
         payload = json.loads(request.data)
         assert payload["logs"] == ["run/complete.eval"]
-        return io.BytesIO(json.dumps({"urls": [{"filename": "complete.eval", "url": "https://download.test/complete"}]}).encode())
+        return io.BytesIO(
+            json.dumps(
+                {"urls": [{"filename": "complete.eval", "url": "https://download.test/complete"}]}
+            ).encode()
+        )
 
     monkeypatch.setattr(urllib.request, "urlopen", open_url)
     result = Path(fetch_logs("hawk:run/complete.eval"))
@@ -70,6 +78,7 @@ def test_multiple_log_sources_preserve_same_named_files(tmp_path):
 
 def test_directory_sources_accept_inspect_file_uris(tmp_path):
     from test_helpers.logs import run_fixture_eval
+
     folder = tmp_path / "logs with spaces"
     run_fixture_eval(str(folder))
     copied = Path(fetch_logs([str(folder)]))

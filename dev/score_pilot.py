@@ -3,8 +3,8 @@
 Usage: .venv/bin/python dev/score_pilot.py <audit_log_dir>
 """
 
+import contextlib
 import glob
-import json
 import sys
 
 import pandas as pd
@@ -12,10 +12,8 @@ from inspect_ai.log import list_eval_logs, read_eval_log
 
 # transcript_id -> (source log, capsule, repeat) via their scan parquets
 frames = []
-for p in glob.glob(
-    "reference/abc-scout-scanners/scans/**/*.parquet", recursive=True
-):
-    try:
+for p in glob.glob("reference/abc-scout-scanners/scans/**/*.parquet", recursive=True):
+    with contextlib.suppress(Exception):
         frames.append(
             pd.read_parquet(
                 p,
@@ -27,15 +25,12 @@ for p in glob.glob(
                 ],
             )
         )
-    except Exception:
-        pass
 mapping = pd.concat(frames).drop_duplicates("transcript_id")
 mapping["log_name"] = mapping.transcript_source_uri.str.split("/").str[-1]
 
 labels = pd.read_csv("out/mohl_labels.csv")
 gta = labels[
-    (labels.transcript_task_set == "core_bench")
-    & (labels.criterion == "ground_truth_access")
+    (labels.transcript_task_set == "core_bench") & (labels.criterion == "ground_truth_access")
 ].drop_duplicates("transcript_id")
 gta = gta.merge(mapping.drop(columns=["transcript_task_id"]), on="transcript_id")
 
@@ -63,14 +58,14 @@ for info in list_eval_logs(sys.argv[1]):
                 and i.get("kind") != "listed"
             ]
             rows.append(
-                dict(
-                    item=str(s.id),
-                    grade=score.value if score else None,
-                    transcript=lab.transcript_id,
-                    human=bool(lab.human_violation),
-                    predicted=bool(hits),
-                    kinds=",".join(sorted({str(i.get("kind")) for i in hits})),
-                )
+                {
+                    "item": str(s.id),
+                    "grade": score.value if score else None,
+                    "transcript": lab.transcript_id,
+                    "human": bool(lab.human_violation),
+                    "predicted": bool(hits),
+                    "kinds": ",".join(sorted({str(i.get("kind")) for i in hits})),
+                }
             )
 
 df = pd.DataFrame(rows)

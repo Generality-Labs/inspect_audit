@@ -24,12 +24,17 @@ def remote_workspace(root: Path) -> bool:
 def configure(root: Path, image: str, artifact_dir: str) -> tuple[str, str]:
     (root / "remote-workspace.json").write_text(json.dumps({"artifact_dir": artifact_dir}))
     values = {
-        "services": {"default": {
-            "image": image, "command": ["sleep", "infinity"],
-            "workingDir": "/workspace",
-            "resources": {"requests": {"cpu": "2", "memory": "8Gi"},
-                          "limits": {"cpu": "4", "memory": "16Gi"}},
-        }},
+        "services": {
+            "default": {
+                "image": image,
+                "command": ["sleep", "infinity"],
+                "workingDir": "/workspace",
+                "resources": {
+                    "requests": {"cpu": "2", "memory": "8Gi"},
+                    "limits": {"cpu": "4", "memory": "16Gi"},
+                },
+            }
+        },
         "automountServiceAccountToken": False,
     }
     path = root / "investigator.values.yaml"
@@ -57,11 +62,15 @@ async def push(root: Path, *, initial: bool = False) -> None:
         if initial:
             archive.add(root / "work", arcname="workspace")
     await sandbox().write_file("/tmp/investigator-inputs.tar.gz", stream.getvalue())
-    result = await sandbox().exec([
-        "python", "-c",
-        "import tarfile; t=tarfile.open('/tmp/investigator-inputs.tar.gz'); "
-        "t.extractall('/', filter='data')",
-    ], timeout=300)
+    result = await sandbox().exec(
+        [
+            "python",
+            "-c",
+            "import tarfile; t=tarfile.open('/tmp/investigator-inputs.tar.gz'); "
+            "t.extractall('/', filter='data')",
+        ],
+        timeout=300,
+    )
     if not result.success:
         raise ToolError(f"Could not stage investigator inputs: {result.stderr}")
     manifest_path.write_text(json.dumps(current))
@@ -80,10 +89,20 @@ def extract_workspace(data: bytes, destination: Path) -> None:
 async def pull(root: Path) -> None:
     if not remote_workspace(root):
         return
-    result = await sandbox().exec([
-        "tar", "--exclude=.git", "--exclude=.venv", "--exclude=__pycache__",
-        "-czf", "/tmp/investigator-workspace.tar.gz", "-C", "/workspace", ".",
-    ], timeout=300)
+    result = await sandbox().exec(
+        [
+            "tar",
+            "--exclude=.git",
+            "--exclude=.venv",
+            "--exclude=__pycache__",
+            "-czf",
+            "/tmp/investigator-workspace.tar.gz",
+            "-C",
+            "/workspace",
+            ".",
+        ],
+        timeout=300,
+    )
     if not result.success:
         raise ToolError(f"Could not collect investigator workspace: {result.stderr}")
     data = await sandbox().read_file("/tmp/investigator-workspace.tar.gz", text=False)
@@ -137,11 +156,18 @@ def stage_workspace(root: Path) -> Solver:
             raise RuntimeError("The investigator image cannot run latexmk")
         probe = root / "preflight"
         probe.mkdir(exist_ok=True)
-        (probe / "preflight.json").write_text(json.dumps({
-            "sandbox": "ready", "latex": "available", "sample_uuid": state.uuid,
-        }))
+        (probe / "preflight.json").write_text(
+            json.dumps(
+                {
+                    "sandbox": "ready",
+                    "latex": "available",
+                    "sample_uuid": state.uuid,
+                }
+            )
+        )
         await persist(root, probe)
         return state
+
     return solve
 
 
@@ -157,6 +183,9 @@ def synchronized(tool: Tool, root: Path) -> Tool:
             await push(root)
 
     return ToolDef(
-        execute, name=definition.name, description=definition.description,
-        parameters=definition.parameters, parallel=False,
+        execute,
+        name=definition.name,
+        description=definition.description,
+        parameters=definition.parameters,
+        parallel=False,
     ).as_tool()

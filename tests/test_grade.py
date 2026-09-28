@@ -87,10 +87,7 @@ def test_the_grader_sees_benchmark_metadata_only() -> None:
 
 def test_the_answer_is_the_completion_and_bare_grade_is_empty() -> None:
     current = audit_state({})
-    assert (
-        benchmark_task_state(current, make_session(), "1066").output.completion
-        == "1066"
-    )
+    assert benchmark_task_state(current, make_session(), "1066").output.completion == "1066"
     assert benchmark_task_state(current, make_session(), "").output.completion == ""
 
 

@@ -60,9 +60,6 @@ SKILLS = Path(__file__).parent / "skills"
 SUPPORT_SKILLS = ("reading-logs", "analyzing-logs", "map-inspect-packages", "audit-framework")
 
 
-
-
-
 class AuditItemSkill(BaseModel):
     """One audit item, read from its skill's frontmatter."""
 
@@ -83,9 +80,7 @@ class AuditItemSkill(BaseModel):
 _GRANTABLE_TOOLS = frozenset({"attempt", "grade", "reset"})
 
 
-def _item_skill(
-    name: str, description: str, metadata: dict[str, Any]
-) -> AuditItemSkill:
+def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> AuditItemSkill:
     """Read one item skill's frontmatter contract, loudly.
 
     The frontmatter drives grade validation, evidence rules and tool grants, so
@@ -225,9 +220,7 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
         # misses the contract becomes a retry rather than a lost verdict
         skill = lookup.get(item)
         if skill is None:
-            raise ToolError(
-                f"Unknown item {item!r}. Expected one of {', '.join(lookup)}."
-            )
+            raise ToolError(f"Unknown item {item!r}. Expected one of {', '.join(lookup)}.")
         try:
             # Accept dictionaries from existing Python callers, while the model-facing
             # schema uses a string: arbitrary objects cannot use OpenAI strict schemas.
@@ -237,18 +230,12 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
         if not isinstance(recorded_details, dict):
             raise ToolError("details must encode a JSON object")
         if grade not in skill.grades:
-            raise ToolError(
-                f"Grade for {item} must be one of {', '.join(skill.grades)}."
-            )
+            raise ToolError(f"Grade for {item} must be one of {', '.join(skill.grades)}.")
         if not evidence and grade not in skill.unevidenced:
-            raise ToolError(
-                f"A grade of {grade} needs at least one observation with its source."
-            )
+            raise ToolError(f"A grade of {grade} needs at least one observation with its source.")
         for entry in evidence:
             if not entry.observed.strip() or not entry.source.strip():
-                raise ToolError(
-                    "Every piece of evidence needs both an observation and its source."
-                )
+                raise ToolError("Every piece of evidence needs both an observation and its source.")
         missing = [key for key in skill.details if key not in recorded_details]
         if missing:
             asks = ", ".join(f"{key} ({skill.details[key]})" for key in missing)
@@ -263,12 +250,20 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
             metadata = current.metadata or {}
             expected = metadata.get("assessment_ids")
             if expected is None:
-                expected = [str((metadata.get("audit_item") or {}).get("sample_id", current.sample_id))]
+                expected = [
+                    str((metadata.get("audit_item") or {}).get("sample_id", current.sample_id))
+                ]
             try:
-                labels = validate_labels(recorded_details["question_assessments"], expected, require_classification=True)
-                overall = ("DEFECT" if any(r.status == "DEFECT" for r in labels) else
-                           "UNRESOLVED" if any(r.status in ("UNRESOLVED", "NOT_ASSESSED") for r in labels)
-                           else "NO_ISSUE_FOUND")
+                labels = validate_labels(
+                    recorded_details["question_assessments"], expected, require_classification=True
+                )
+                overall = (
+                    "DEFECT"
+                    if any(r.status == "DEFECT" for r in labels)
+                    else "UNRESOLVED"
+                    if any(r.status in ("UNRESOLVED", "NOT_ASSESSED") for r in labels)
+                    else "NO_ISSUE_FOUND"
+                )
                 if grade != overall:
                     raise ValueError(f"Overall grade must be {overall} for these question labels")
             except ValueError as ex:
@@ -297,14 +292,14 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
     definition.parameters.properties["details"] = ToolParam(
         type="string",
         description="JSON-encoded object. Required fields by item:\n"
-        + "\n".join(
-            f"{item.name}: {', '.join(item.details) or '(none)'}" for item in items
-        ),
+        + "\n".join(f"{item.name}: {', '.join(item.details) or '(none)'}" for item in items),
     )
     # Keep arbitrary nested skill data inside the JSON string and validate it above.
     details = definition.parameters.properties["details"]
-    details.description = (details.description or "") + "\n" + "\n".join(
-        f"{key}: {'; '.join(descriptions)}" for key, descriptions in fields.items()
+    details.description = (
+        (details.description or "")
+        + "\n"
+        + "\n".join(f"{key}: {'; '.join(descriptions)}" for key, descriptions in fields.items())
     )
     return definition.as_tool()
 
@@ -349,9 +344,7 @@ def audit_probe() -> Tool:
         # give the probe the same PATH the evaluated agent had, or the auditor
         # concludes a present tool is missing
         try:
-            result = await sandbox(service).exec(
-                ["bash", "--login", "-c", cmd], timeout=timeout
-            )
+            result = await sandbox(service).exec(["bash", "--login", "-c", cmd], timeout=timeout)
         except TimeoutError as ex:
             raise ToolError(
                 f"The audit probe exceeded its {timeout}-second deadline. "
@@ -382,9 +375,7 @@ def view_image() -> Tool:
         try:
             data = await sandbox().read_file(path, text=False)
         except Exception as ex:
-            raise ToolError(
-                f"Could not read {path!r}: {type(ex).__name__}: {ex}"
-            ) from None
+            raise ToolError(f"Could not read {path!r}: {type(ex).__name__}: {ex}") from None
         if not isinstance(data, bytes):
             raise ToolError(f"{path!r} did not read back as bytes.")
         if Path(path).suffix.lower() == ".svg" or b"<svg" in data[:4096]:
@@ -393,7 +384,8 @@ def view_image() -> Tool:
             try:
                 result = await sandbox().exec(
                     [
-                        "python", "-c",
+                        "python",
+                        "-c",
                         "import base64, subprocess, sys; "
                         "p = subprocess.run(['rsvg-convert', '--', sys.argv[1]], "
                         "capture_output=True, check=True, timeout=45); "
@@ -414,8 +406,12 @@ def view_image() -> Tool:
             with Image.open(BytesIO(data)) as preview:
                 image_format = preview.format
                 preview.verify()
-            mime = {"PNG": "image/png", "JPEG": "image/jpeg",
-                    "GIF": "image/gif", "WEBP": "image/webp"}.get(image_format or "")
+            mime = {
+                "PNG": "image/png",
+                "JPEG": "image/jpeg",
+                "GIF": "image/gif",
+                "WEBP": "image/webp",
+            }.get(image_format or "")
             if mime is None:
                 raise ValueError(f"unsupported image format {image_format}; export a PNG")
         except Exception as ex:
@@ -466,9 +462,7 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
         # auditor's two-box world that default is us, so aim it at the benchmark.
         # only when a benchmark box exists: redirecting to an absent name would
         # resolve BACK to the auditor on a one-environment sample.
-        redirect = (
-            sandbox_default(BENCHMARK_SERVICE) if has_benchmark_box() else nullcontext()
-        )
+        redirect = sandbox_default(BENCHMARK_SERVICE) if has_benchmark_box() else nullcontext()
         results: list[dict[str, Any]] = []
         with redirect:
             for scorer in scorers:
@@ -484,15 +478,11 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
                     # the underlying exception so the diagnostic reaches the agent.
                     cause: BaseException = ex
                     visited = {id(cause)}
-                    while (
-                        cause.__cause__ is not None
-                        and id(cause.__cause__) not in visited
-                    ):
+                    while cause.__cause__ is not None and id(cause.__cause__) not in visited:
                         cause = cause.__cause__
                         visited.add(id(cause))
                     raise ToolError(
-                        f"the benchmark's grader failed to run: {type(cause).__name__}: "
-                        f"{str(cause)}"
+                        f"the benchmark's grader failed to run: {type(cause).__name__}: {cause!s}"
                     ) from ex
                 if score is not None:
                     results.append(
@@ -557,9 +547,7 @@ def reset_benchmark() -> Tool:
                 # worktree was never found reads as "reset nothing" rather than a
                 # silent success -- the auditor can see it and reach for hard
                 if reset_repos:
-                    summary = (
-                        f"benchmark reset in place (repos: {', '.join(reset_repos)})"
-                    )
+                    summary = f"benchmark reset in place (repos: {', '.join(reset_repos)})"
                 else:
                     summary = (
                         "benchmark reset in place; no git worktree was reset "
@@ -778,9 +766,7 @@ def audit_agent(
         ),
         tools=tools,
         model=resolved,
-        submit=AgentSubmit(
-            tool=submit_audit(scoped), name="submit", keep_in_messages=True
-        ),
+        submit=AgentSubmit(tool=submit_audit(scoped), name="submit", keep_in_messages=True),
     )
 
 
@@ -804,9 +790,7 @@ def item_scorer(item: AuditItemSkill) -> Scorer:
             return Score(
                 value=verdict.grade,
                 answer=verdict.grade,
-                explanation="\n\n".join(
-                    f"{e.observed}\n  -- {e.source}" for e in verdict.evidence
-                )
+                explanation="\n\n".join(f"{e.observed}\n  -- {e.source}" for e in verdict.evidence)
                 or None,
                 metadata={
                     "concordance": concordance,

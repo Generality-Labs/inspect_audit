@@ -8,6 +8,7 @@ thing, with no model spend.
 Requires Docker; deselect with `-m "not docker"`.
 """
 
+import contextlib
 import json
 from pathlib import Path
 from textwrap import dedent
@@ -178,7 +179,9 @@ def test_a_mirrored_tool_enacts_in_the_box_and_records_the_call(tmp_path: Path) 
             await mirrored(command="echo enacted > /work/proof.txt")
 
             proof = await sandbox("benchmark").exec(["cat", "/work/proof.txt"], timeout=60)
-            state.store.set("in_box", proof.stdout.strip() if proof.success else f"FAIL {proof.stderr}")
+            state.store.set(
+                "in_box", proof.stdout.strip() if proof.success else f"FAIL {proof.stderr}"
+            )
 
             session = state.store_as(BenchmarkState)
             state.store.set("provenance", session.provenance_mix())
@@ -264,10 +267,8 @@ def test_phoenix_reset_revives_a_bricked_benchmark_box(tmp_path: Path) -> None:
             state.store.set("files_before", await _cat("/work/given.txt"))
 
             # BRICK: kill PID 1 -- the container exits.
-            try:
+            with contextlib.suppress(Exception):
                 await sandbox("benchmark").exec(["sh", "-c", "kill 1"], timeout=30)
-            except Exception:
-                pass
             # prove the box is ACTUALLY down before the reset, so the test cannot
             # pass by a rebuild that was never needed
             probe = await sandbox("benchmark").exec(["true"], timeout=20)

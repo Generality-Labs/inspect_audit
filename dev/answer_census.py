@@ -16,13 +16,15 @@ from pathlib import Path
 
 CACHE = Path.home() / "Library/Caches/inspect_evals/CORE-Bench/data"
 
+
 def golds(record):
     out = []
     for d in record["results"]:
         for q, v in d.items():
             out.append((q, str(v)))
     # dedupe on question
-    return {q: v for q, v in out}
+    return dict(out)
+
 
 rows = []
 for name in ("core_test.json", "core_train.json"):
@@ -49,22 +51,34 @@ for name in ("core_test.json", "core_train.json"):
                 generic = bool(re.fullmatch(r"[a-z]+", v)) and len(v) < 8
                 r = subprocess.run(
                     ["grep", "-rInwF", "--exclude=*.eval", v, str(root)],
-                    capture_output=True, text=True,
+                    capture_output=True,
+                    text=True,
                 )
                 lines = [ln for ln in r.stdout.splitlines() if ln]
                 files = {ln.split(":", 1)[0] for ln in lines}
-                rows.append(dict(capsule=cid, split=name, numeric=numeric,
-                                 generic=generic, question=q[:60], gold=v[:30],
-                                 hits=len(files),
-                                 example=lines[0].split(str(root))[-1][:160] if lines else ""))
+                rows.append(
+                    {
+                        "capsule": cid,
+                        "split": name,
+                        "numeric": numeric,
+                        "generic": generic,
+                        "question": q[:60],
+                        "gold": v[:30],
+                        "hits": len(files),
+                        "example": lines[0].split(str(root))[-1][:160] if lines else "",
+                    }
+                )
         print(f"{cid} done", file=sys.stderr)
 
 import csv
+
 with open("dev/audit-logs/answer_census.csv", "w") as f:
     w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-    w.writeheader(); w.writerows(rows)
+    w.writeheader()
+    w.writerows(rows)
 
 import collections
+
 by_type = collections.defaultdict(lambda: [0, 0])
 per_item = collections.defaultdict(lambda: [0, 0])
 for r in rows:
@@ -75,7 +89,7 @@ for r in rows:
     per_item[r["capsule"]][1] += r["hits"] > 0
 print("\nquestions with gold present pre-execution (after medium scrub):")
 for k, (n, h) in by_type.items():
-    print(f"  {k:8s} {h}/{n} = {h/n:.0%}")
+    print(f"  {k:8s} {h}/{n} = {h / n:.0%}")
 items_any = sum(1 for n, h in per_item.values() if h > 0)
 items_all = sum(1 for n, h in per_item.values() if h == n)
 print(f"items with >=1 answer present: {items_any}/{len(per_item)}")

@@ -215,7 +215,7 @@ uv run --with <worktree> inspect-audit-findings run --root . --logs logs --out /
     inspect_evals/strong_reject inspect_evals/simpleqa
 ```
 
-Then read the six summaries and write `agent_artefacts/findings_prototype/ACCEPTANCE.md` listing, per eval, what the output got wrong or missed, and what the aggregator will need first. That list is the input to the next design conversation.
+Then read the six summaries and write `agent_artefacts/findings_prototype/ACCEPTANCE.md` (the `agent_artefacts/` directory is gitignored: audit outputs and internal planning stay in the private `~/Developer/inspect_ai/audit-artefacts` copy, not in this public repository) listing, per eval, what the output got wrong or missed, and what the aggregator will need first. That list is the input to the next design conversation.
 
 ## Open gaps recorded, not solved
 

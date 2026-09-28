@@ -2844,7 +2844,7 @@ EOF
 ### Task 9: Acceptance run
 
 **Files:**
-- Create: `agent_artefacts/findings_prototype/ACCEPTANCE.md`
+- Create: `agent_artefacts/findings_prototype/ACCEPTANCE.md` (the `agent_artefacts/` directory is gitignored: audit outputs and internal planning stay in the private `~/Developer/inspect_ai/audit-artefacts` copy, not in this public repository)
 - Create: `agent_artefacts/findings_prototype/out/` (the run outputs, committed except `*.parquet` larger than 5 MB)
 
 **Interfaces:**

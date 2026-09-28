@@ -262,9 +262,21 @@ def test_hawk_cli_is_the_venvs_own_not_paths(monkeypatch, tmp_path):
     (fake / "python").write_text("")
     (fake / "hawk").write_text("")
     monkeypatch.setattr(sys, "executable", str(fake / "python"))
+    monkeypatch.setenv("HAWK_JOB_ID", "runner")
     assert _jobs.Hawk("https://hawk.example").binary == str(fake / "hawk")
     (fake / "hawk").unlink()
     assert _jobs.Hawk("https://hawk.example").binary == "hawk"
+    # on a laptop the login lives in the operator's own install on PATH, found past
+    # the venv's copy that `uv run` puts first
+    (fake / "hawk").write_text("")
+    (fake / "hawk").chmod(0o755)
+    own = tmp_path / "tools"
+    own.mkdir()
+    (own / "hawk").write_text("")
+    (own / "hawk").chmod(0o755)
+    monkeypatch.delenv("HAWK_JOB_ID")
+    monkeypatch.setenv("PATH", f"{fake}:{own}")
+    assert _jobs.Hawk("https://hawk.example").binary == str(own / "hawk")
 
 
 def test_an_audit_job_on_hawk_registers_prices_before_hawk_applies_them(monkeypatch):

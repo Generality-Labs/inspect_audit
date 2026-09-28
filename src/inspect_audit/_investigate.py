@@ -38,12 +38,14 @@ from inspect_ai.util import LimitExceededError, sample_limits, store_as
 from . import prompts
 from ._agent import SKILLS, SUPPORT_SKILLS, view_image
 from ._jobs import (
+    JOB_TERMINAL,
     Hawk,
     Job,
     JobLedger,
     Policy,
     copy_into_inputs,
     expected_evals,
+    http_status,
     parse_config,
     slug,
     task_package_name,
@@ -1053,6 +1055,27 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
     return execute
 
 
+async def settle_failed_start(remote: Remote, label: str, job: Job, status: str | None) -> str:
+    """A job that ended without producing a log ran nothing and cost nothing: say why."""
+    try:
+        reason = await remote.hawk.first_error(job.eval_set_id)
+    except Exception as ex:  # the reason is a courtesy; the settlement is not
+        reason = f"(runner log unavailable: {type(ex).__name__})"
+    remote.settle(
+        label,
+        status="failed_at_start",
+        actual_usd=0.0,
+        cost_note=f"job {status} before writing a log",
+    )
+    reason = reason or "no error line in the runner log; see jobs(action='logs')"
+    return (
+        f"{label} ({job.eval_set_id}) {status} at startup without writing a log: "
+        f"{reason}. "
+        f"Nothing ran, so nothing was spent; ${job.reserved_usd:.2f} released. "
+        "Fix the cause before resubmitting."
+    )
+
+
 @tool
 def jobs(remote: Remote, root: Path) -> Tool:
     """Watching, reading, waiting on, collecting and stopping remote jobs."""
@@ -1066,8 +1089,9 @@ def jobs(remote: Remote, root: Path) -> Tool:
     ) -> str:
         """Watch and manage the Hawk jobs this investigation launched.
 
-        Every action is the `hawk` command of the same name, run here on the operator's
-        login, restricted to your own jobs. Reads are always safe; the only actions that
+        Every action goes through Hawk's API on the operator's login, restricted to your
+        own jobs; the job's own lifecycle status (pending, running, complete, failed...)
+        decides whether it has finished. Reads are always safe; the only actions that
         change anything are "stop" and "collect".
 
         Args:
@@ -1090,7 +1114,8 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 "transcripts" - every sample's transcript, written to the same place;
                     `limit` caps how many.
                 "wait" - block, spending no tokens, until the job finishes or
-                    wait_minutes pass.
+                    wait_minutes pass. A job that failed at startup is settled at $0
+                    and the runner's first error line is returned.
                 "collect" - download the job's .eval logs to /inputs/jobs/<label>/,
                     record the real cost, release the reservation.
                 "stop" - gracefully stop a running job; completed samples are scored.
@@ -1180,12 +1205,16 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     + ", ".join(f.name for f in files[:10])
                     + (" …" if len(files) > 10 else "")
                 )
+            status: str | None = None
             if action == "evals":
+                status = await remote.hawk.job_status(job.eval_set_id)
                 rows = await remote.hawk.evals(job.eval_set_id)
             elif action == "wait":
-                rows = await wait_for(
+                status, rows = await wait_for(
                     remote.hawk, job.eval_set_id, wait_minutes or 20, expected=job.expected_evals
                 )
+                if status in ("failed", "deleted") and not rows:
+                    return await settle_failed_start(remote, label, job, status)
             elif action == "stop":
                 await remote.hawk.stop(job.eval_set_id)
                 if not await remote.hawk.evals(job.eval_set_id):
@@ -1201,29 +1230,29 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 remote.settle(label, status="stopped")
                 return f"stop requested for {label} ({job.eval_set_id}); collect it once its evals settle"
             elif action == "collect":
+                status = await remote.hawk.job_status(job.eval_set_id)
                 rows = await remote.hawk.evals(job.eval_set_id)
-                stopped = job.status == "stopped"
-                if stopped and not rows:
+                if status in ("failed", "deleted") and not rows:
+                    return await settle_failed_start(remote, label, job, status)
+                if job.status == "stopped" and not rows:
                     remote.settle(label, actual_usd=0.0, cost_note="stopped before any eval ran")
                     return f"{label} was stopped before any eval ran; nothing to collect, ${job.reserved_usd:.2f} released"
-                terminal = bool(rows) and all(
-                    r["status"] in ("success", "error", "cancelled") for r in rows
-                )
-                if not terminal or (not stopped and len(rows) < job.expected_evals):
-                    state = (
+                # the job's own status decides: eval rows look finished between an
+                # eval's error and its retry, while the retry is still spending
+                if status not in JOB_TERMINAL:
+                    listed = (
                         ", ".join(f"{r['task']} {r['status']} {r['samples']}" for r in rows)
                         or "no evals yet"
                     )
                     return (
-                        f"{label} is not finished ({len(rows)} of {job.expected_evals} evals listed; {state}). "
-                        f"No files downloaded. Use jobs(action='wait', label='{label}') before collecting. "
-                        "If there are no evals, inspect watch/logs once for a startup failure."
+                        f"{label} is {status or 'unknown to Hawk'}, not finished ({listed}). "
+                        f"No files downloaded. Use jobs(action='wait', label='{label}') before collecting."
                     )
                 files = await remote.hawk.download(
                     job.eval_set_id, root / "jobs" / "downloads" / label
                 )
                 if not files:
-                    raise ToolError("no .eval files were downloaded")
+                    return await settle_failed_start(remote, label, job, status)
                 dest = copy_into_inputs(files, root / "inputs", label)
                 cost, usage, recomputed = usage_cost(files)
                 # an unpriced model leaves the real cost unknown. The hold is settled at the
@@ -1237,10 +1266,12 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     else "unpriced model: charged at the reservation",
                     collected_to=str(dest),
                     evals=[dict(r) for r in rows],
-                    status="success" if all(r["status"] == "success" for r in rows) else "error",
+                    status="success"
+                    if status == "complete" and all(r["status"] == "success" for r in rows)
+                    else "error",
                 )
                 job = remote.ledger.get(label) or job
-                lines = [f"collected {len(files)} log(s) to /inputs/jobs/{label}/"]
+                lines = [f"collected {len(files)} log(s) to /inputs/jobs/{label}/ (job {status})"]
                 lines += [f"  {r['task']} {r['model']}: {r['status']} {r['samples']}" for r in rows]
                 lines.append(
                     (
@@ -1270,34 +1301,31 @@ def jobs(remote: Remote, root: Path) -> Tool:
         except ToolError:
             raise
         except Exception as ex:
-            message = str(ex)
-            if "403" in message or "404" in message:
+            if http_status(ex) in (403, 404):
                 raise ToolError(
                     f"Hawk has nothing to show for {label} ({job.eval_set_id}): it is "
                     f"{job.status}. A job that never started has no pod to watch and no "
-                    "monitoring to report; jobs(action='list') shows what happened to it."
+                    "monitoring to report; jobs(action='evals') shows its lifecycle status."
                 ) from ex
-            raise ToolError(f"hawk error: {ex}") from ex
-        if rows:
-            status = (
+            raise ToolError(f"hawk error: {type(ex).__name__}: {ex}") from ex
+        if rows or status is not None:
+            ledger_status = (
                 "success"
-                if all(r["status"] == "success" for r in rows)
-                else (
-                    "error"
-                    if any(r["status"] in ("error", "cancelled") for r in rows)
-                    and all(r["status"] in ("success", "error", "cancelled") for r in rows)
-                    else "running"
-                )
+                if status == "complete" and all(r["status"] == "success" for r in rows)
+                else "error"
+                if status in JOB_TERMINAL
+                else "running"
             )
             # every write goes through the lock: a bare save() here would rewrite the
             # whole file from a stale copy and could drop another process's reservation
-            remote.settle(label, status=status, evals=[dict(r) for r in rows])
-            job.status, job.evals = status, [dict(r) for r in rows]
+            remote.settle(label, status=ledger_status, evals=[dict(r) for r in rows])
+            job.status, job.evals = ledger_status, [dict(r) for r in rows]
         return (
-            f"{label} ({job.eval_set_id}): {job.status}\n"
-            + "\n".join(f"  {r['task']} {r['model']}: {r['status']} {r['samples']}" for r in rows)
-            if rows
-            else f"{label} ({job.eval_set_id}): no evals listed; use jobs(action='watch') or jobs(action='logs') to diagnose"
+            f"{label} ({job.eval_set_id}): job {status or 'unknown to Hawk'}, ledger {job.status}\n"
+            + (
+                "\n".join(f"  {r['task']} {r['model']}: {r['status']} {r['samples']}" for r in rows)
+                or "  no evals listed yet; jobs(action='logs') shows the runner's own log"
+            )
         )
 
     return execute

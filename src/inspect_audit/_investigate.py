@@ -1,5 +1,6 @@
 """Investigation on Hawk, with explicit local execution for development."""
 
+import asyncio
 import errno
 import inspect as inspect_module
 import json
@@ -686,6 +687,8 @@ class Remote:
                 "OPENROUTER_API_KEY on a laptop, or a secrets_file holding either. "
                 "Pass provider='middleman' to route child jobs through Hawk's proxy instead."
             )
+        if provider == "openrouter-direct":
+            _check_openrouter_ids(worker_models)
         self.root = root
         self.provider = provider
         self.provider_key = provider_key
@@ -924,6 +927,35 @@ OPERATOR_KEY_VAR = "INSPECT_AUDIT_OPENROUTER_API_KEY"
 # hook answers every provider key with the Hawk token, which OpenRouter refuses. The
 # runner's S3 and Hawk API credentials use separate HAWK_TOKEN_REFRESH_* variables.
 MODEL_KEY_HOOK_VAR = "HAWK_RUNNER_REFRESH_URL"
+
+
+def _check_openrouter_ids(worker_models: list[str]) -> None:
+    """Refuse worker names OpenRouter does not serve, before anything is spent.
+
+    A direct child sends its model item to OpenRouter as the model id, so a worker
+    must be written as OpenRouter lists it. Middleman's route names carry an extra
+    `openrouter/` (2026-09-28: `openrouter/openai/gpt-6-luna` passed every check and
+    every child got HTTP 400 "not a valid model ID"). Nothing is rewritten: the
+    operator's name is either an OpenRouter id or a configuration error. Without a
+    listing (no network at prep) the live worker check at start still catches it.
+    """
+    if not OPENROUTER_IDS:
+        return
+    unknown = [m for m in worker_models if m not in OPENROUTER_IDS]
+    if not unknown:
+        return
+    hints = [
+        f"{m!r} (OpenRouter lists {m.removeprefix('openrouter/')!r}; the extra "
+        "'openrouter/' is Middleman's spelling)"
+        if m.removeprefix("openrouter/") in OPENROUTER_IDS
+        else repr(m)
+        for m in unknown
+    ]
+    raise ValueError(
+        "provider 'openrouter-direct' sends each worker's name to OpenRouter as its model "
+        f"id, and OpenRouter does not serve: {', '.join(hints)}. Write worker_models as "
+        f"OpenRouter ids ({OPENROUTER_MODELS}), or pass provider='middleman'."
+    )
 
 
 def operator_key(secrets_file: str | None) -> str | None:
@@ -1603,6 +1635,80 @@ def check_evidence_access(remote: Remote | None, root: Path, sources: list[str])
     return solve
 
 
+@solver
+def check_workers(remote: Remote, root: Path) -> Solver:
+    """Call every worker once the way a child job will, before the lead model starts.
+
+    A direct child sends its model item to OpenRouter with the operator's key; this
+    makes that same request with a few output tokens. A refusal (bad id, bad key, no
+    credit, model not routable) is deterministic: every child naming that worker
+    would fail, so the run stops here for nothing rather than paying the lead model
+    to find out. A timeout or server error is recorded for the agent and not fatal.
+    The probe tokens (a fraction of a cent) are outside Inspect's usage accounting.
+    """
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        import httpx
+
+        checks: list[dict[str, Any]] = []
+        async with httpx.AsyncClient(timeout=60) as client:
+            for model in remote.worker_models:
+                checks.append(await _probe_worker(client, model, remote.provider_key or ""))
+        seed_path = root / "inputs" / "seed.json"
+        seed = json.loads(seed_path.read_text())
+        seed["worker_access"] = checks
+        seed_path.write_text(json.dumps(seed, indent=2))
+        transcript().info(json.dumps({"worker_access": checks}))
+        refused = [c for c in checks if c["status"] == "refused"]
+        if refused:
+            raise RuntimeError(
+                "OpenRouter refused a worker model the way it would refuse every child job "
+                "that names it, so the investigation stops before spending on the lead model: "
+                + "; ".join(f"{c['model']}: {c['reason']}" for c in refused)
+            )
+        return state
+
+    return solve
+
+
+async def _probe_worker(client: Any, model: str, key: str) -> dict[str, Any]:
+    import httpx
+
+    check: dict[str, Any] = {"model": model, "status": "unavailable", "reason": ""}
+    for attempt in range(2):
+        try:
+            response = await client.post(
+                f"{OPENROUTER_BASE_URL}/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": "Reply with OK."}],
+                    "max_tokens": 16,
+                },
+            )
+        except httpx.HTTPError as ex:
+            check["reason"] = f"{type(ex).__name__}: {ex}"
+        else:
+            body = response.text[:500]
+            if response.status_code == 200:
+                # OpenRouter reports some upstream failures as a 200 with an error body
+                error = (response.json() or {}).get("error")
+                if not error:
+                    return {"model": model, "status": "ok", "reason": ""}
+                check["reason"] = f"error in response: {str(error)[:500]}"
+            elif response.status_code < 500 and response.status_code not in (408, 429):
+                return {
+                    "model": model,
+                    "status": "refused",
+                    "reason": f"HTTP {response.status_code}: {body}",
+                }
+            else:
+                check["reason"] = f"HTTP {response.status_code}: {body}"
+        if attempt == 0:
+            await asyncio.sleep(5)
+    return check
+
+
 def _harness_failure(ex: BaseException) -> bool:
     """A failure in our own machinery rather than in one evidence source.
 
@@ -2202,6 +2308,8 @@ def investigate(
         setup_steps.append(carry_spend(remote))
         if resumed:
             setup_steps.append(reconcile_jobs(remote))
+        if remote.provider == "openrouter-direct":
+            setup_steps.append(check_workers(remote, root))
     tools: list[Tool] = [
         # a shell dump is the one place the agent routinely wants more than the
         # 32KB default; everything else writes large results to files

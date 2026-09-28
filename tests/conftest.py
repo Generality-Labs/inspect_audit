@@ -29,3 +29,17 @@ def operator_openrouter_key(monkeypatch: pytest.MonkeyPatch) -> None:
     Tests about a missing key delete it themselves.
     """
     monkeypatch.setenv("INSPECT_AUDIT_OPENROUTER_API_KEY", "sk-or-test-operator")
+
+
+@pytest.fixture(autouse=True)
+def openrouter_serves_every_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The start-of-run worker check would call OpenRouter; tests never reach it.
+
+    Tests of the check itself restore the real probe behind a mock transport.
+    """
+    from inspect_audit import _investigate
+
+    async def ok(client: object, model: str, key: str) -> dict[str, str]:
+        return {"model": model, "status": "ok", "reason": ""}
+
+    monkeypatch.setattr(_investigate, "_probe_worker", ok)

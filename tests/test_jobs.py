@@ -10,6 +10,7 @@ from test_investigate import git_repo
 
 from inspect_audit import _jobs
 from inspect_audit._investigate import Remote, hawk_submit, jobs
+from inspect_audit._investigate import _probe_worker as real_probe_worker
 from inspect_audit._jobs import (
     Job,
     JobLedger,
@@ -557,8 +558,11 @@ def test_local_logs_remain_local_when_remote_work_is_enabled(
     assert (root / "inputs/logs/0/a.eval").read_bytes() == b"x"
     assert not (root / "staged.json").exists()
     assert "operator-imported Hawk source" in seed["remote"]["note"]
-    # nothing is staged anywhere: the only setup step carries spend across retries
-    assert [s.__qualname__ for s in target.setup] == ["carry_spend.<locals>.solve"]  # type: ignore[union-attr]
+    # nothing is staged: setup carries spend across retries and, direct, checks the workers
+    assert [s.__qualname__ for s in target.setup] == [  # type: ignore[union-attr]
+        "carry_spend.<locals>.solve",
+        "check_workers.<locals>.solve",
+    ]
 
 
 def test_jobs_status_wait_collect_release_reservation(
@@ -1795,6 +1799,108 @@ def test_one_source_with_a_broken_warehouse_record_is_a_note_not_a_stop(tmp_path
     # the same failure on every source is still a broken harness
     with pytest.raises(RuntimeError, match="broken"):
         run(check_evidence_access(r, tmp_path, ["hawk:polluted-a", "hawk:polluted-b"])(None, None))
+
+
+def test_a_middleman_spelling_is_refused_as_a_direct_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """09-28 luna run: worker 'openrouter/openai/gpt-6-luna' reached OpenRouter as the
+    model id and the pilot child got HTTP 400; it must fail at start, naming the fix."""
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "OPENROUTER_IDS", {"openai/gpt-6-luna", "openai/gpt-5-mini"})
+    args = (tmp_path, HAWK, TASK_PKG, AUDIT_PKG, IMAGE)
+    with pytest.raises(ValueError, match="OpenRouter lists 'openai/gpt-6-luna'"):
+        Remote(*args, ["openrouter/openai/gpt-6-luna"], 10.0, "openrouter-direct", "key")
+    Remote(*args, ["openai/gpt-6-luna", "openai/gpt-5-mini"], 10.0, "openrouter-direct", "key")
+    # through Middleman the route name is the right one
+    Remote(*args, ["openrouter/openai/gpt-6-luna"], 10.0, "middleman")
+
+
+def openrouter(monkeypatch: pytest.MonkeyPatch, reply) -> list[dict]:
+    """Serve OpenRouter's chat endpoint from `reply(model) -> httpx.Response`."""
+    import httpx
+
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_probe_worker", real_probe_worker)
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        sent.append({"model": body["model"], "auth": request.headers["authorization"]})
+        return reply(body["model"])
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw)
+    )
+
+    async def no_wait(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(_investigate.asyncio, "sleep", no_wait)
+    return sent
+
+
+def test_a_worker_openrouter_refuses_stops_the_run_before_the_lead_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    from inspect_audit._investigate import check_workers
+
+    invalid = {"error": {"message": "openai/gpt-5.6-luna is not a valid model ID", "code": 400}}
+    sent = openrouter(
+        monkeypatch,
+        lambda model: (
+            httpx.Response(400, json=invalid)
+            if "luna" in model
+            else httpx.Response(200, json={"choices": [{"message": {"content": "OK"}}]})
+        ),
+    )
+    r = remote(tmp_path)
+    r.provider_key = "sk-operator"
+    (tmp_path / "inputs").mkdir()
+    seed = tmp_path / "inputs/seed.json"
+    seed.write_text("{}")
+    with pytest.raises(RuntimeError, match="not a valid model ID"):
+        run(check_workers(r, tmp_path)(None, None))
+    # the request a direct child makes: the item as the model id, the operator's key
+    assert sent == [
+        {"model": "openai/gpt-5.6-luna", "auth": "Bearer sk-operator"},
+        {"model": "openai/gpt-5-mini", "auth": "Bearer sk-operator"},
+    ]
+    checks = json.loads(seed.read_text())["worker_access"]
+    assert [c["status"] for c in checks] == ["refused", "ok"]
+
+
+def test_a_worker_outage_is_recorded_not_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 503, or OpenRouter's 200 carrying an upstream error, may clear: note it, go on."""
+    import httpx
+
+    from inspect_audit._investigate import check_workers
+
+    sent = openrouter(
+        monkeypatch,
+        lambda model: (
+            httpx.Response(503, text="no provider available")
+            if "luna" in model
+            else httpx.Response(200, json={"error": {"message": "upstream timeout", "code": 502}})
+        ),
+    )
+    r = remote(tmp_path)
+    r.provider_key = "sk-operator"
+    (tmp_path / "inputs").mkdir()
+    seed = tmp_path / "inputs/seed.json"
+    seed.write_text("{}")
+    run(check_workers(r, tmp_path)(None, None))
+    checks = json.loads(seed.read_text())["worker_access"]
+    assert [c["status"] for c in checks] == ["unavailable", "unavailable"]
+    assert "503" in checks[0]["reason"] and "upstream timeout" in checks[1]["reason"]
+    assert len(sent) == 4  # each retried once
 
 
 @pytest.mark.parametrize(

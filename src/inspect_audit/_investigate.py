@@ -103,6 +103,10 @@ INVESTIGATION_SKILLS = (
     "security-audit-eval",
     "view-results",
     "debug-stuck-eval",
+    "babysit-eval",
+    "check-trajectories-workflow",
+    "eval-report-workflow",
+    "read-eval-logs",
 )
 # compact the investigator's context once it passes this many tokens
 COMPACTION_TOKENS = 200_000

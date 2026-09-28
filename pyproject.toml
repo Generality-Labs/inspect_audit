@@ -4,12 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inspect_audit"
-version = "0.0.1"
+dynamic = ["version"]
 description = "Benchmark validity auditing for Inspect AI evals"
-authors = [{ name = "Generality Labs" }]
 readme = "README.md"
+license = "MIT"
+authors = [{ name = "James Mann", email = "james.mann@generality.org" }]
+# Hawk needs 3.13 (see the `remote` extra); the core package runs on 3.11+.
+# .python-version pins 3.13 so local and CI environments get Hawk.
 requires-python = ">=3.11"
-license = { text = "MIT License" }
 dependencies = [
     "inspect-ai>=0.3.259",
     "pandas>=2.0.0",
@@ -25,41 +27,96 @@ dependencies = [
 inspect_audit = "inspect_audit._registry"
 
 [project.optional-dependencies]
-# Hawk requires Python 3.13; the core package supports 3.11+.
 remote = ["hawk[cli]>=3.4,<4; python_version >= '3.13'"]
+
+[dependency-groups]
 dev = [
-    "ruff",
-    "mypy",
-    "pytest",
+    "pytest>=8.0.0",
+    "pytest-cov>=7.0.0",
     "pytest-xdist",
+    "basedpyright>=1.39",
+    "pre-commit>=4.0.0",
     "pandas-stubs",
     "types-PyYAML",
     "hawk[cli]>=3.4,<4; python_version >= '3.13'",
 ]
 
+[tool.hatch.version]
+path = "src/inspect_audit/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/inspect_audit"]
+
 [tool.ruff]
+line-length = 100
 src = ["src"]
-# Keep vendored skills unchanged.
+target-version = "py311"
+# Vendored skills stay byte-identical to upstream (src/inspect_audit/skills/VENDORED.md).
 extend-exclude = ["src/inspect_audit/skills"]
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "D", "I", "B", "SIM101", "PLE"]
-ignore = ["D10", "E501"]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "D",     # pydocstyle
+    "C4",    # flake8-comprehensions
+    "PT",    # flake8-pytest-style
+    "PIE",   # flake8-pie
+    "DTZ",   # flake8-datetimez (timezone-aware datetimes)
+    "ISC",   # implicit-str-concat (catches missing commas)
+    "ASYNC", # flake8-async
+    "N",     # pep8-naming
+    "FURB",  # refurb (modernization)
+    "RUF",   # ruff-specific rules
+    "PLE",   # pylint errors
+    "PLW",   # pylint warnings
+]
+ignore = [
+    "E501",   # line-too-long — the formatter owns line length
+    "D10",    # missing docstrings — don't force them
+    "D415",   # first-line punctuation — the module docstring is the project
+    # description, whose punctuation varies
+    "ISC001", # single-line implicit concat — conflicts with the formatter
+    # Project choices, kept when adopting the template:
+    "ASYNC109", # `timeout` parameters are forwarded to sandbox exec, not implemented with wait_for
+    "ASYNC240", # small local file reads inside async code are deliberate, not offloaded
+    "PT011",    # tests assert the exception type; matching message text is per-test
+    "PT018",    # composite assertions read as one claim, and pytest shows both operands
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
-[tool.mypy]
-strict = true
-mypy_path = "src"
-files = ["src"]
-exclude = ["src/inspect_audit/skills/"]
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"] # tests don't need docstring linting
+"dev/**" = ["E402"] # one-off analysis scripts import where they need to
 
-[[tool.mypy.overrides]]
-module = ["matplotlib", "matplotlib.*", "inspect_evals", "inspect_evals.*"]
-ignore_missing_imports = true
+[tool.basedpyright]
+pythonVersion = "3.11"
+# "strict" (pyright's), not basedpyright's stricter default "recommended" —
+# the based-only rules (reportAny etc.) are opt-in per project.
+typeCheckingMode = "strict"
+reportMissingTypeStubs = false # third-party libs are often untyped
+# mypy strict, which this replaced, never tracked partially-unknown types through
+# untyped libraries (docker, yaml, pandas); these would need ~200 casts for no safety.
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportUnknownMemberType = false
+# Data parsed from JSON and YAML is guarded at runtime even where the annotations
+# say it cannot vary; the guards stay.
+reportUnnecessaryIsInstance = false
+reportUnnecessaryComparison = false
+include = ["src"]
+exclude = ["src/inspect_audit/skills", "**/__pycache__"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "tests"]
 testpaths = ["tests"]
+pythonpath = ["src", "tests"]
 markers = ["docker: needs a running Docker daemon"]
+# The docker suite is deselected by default; `pytest -m docker` runs it alone.
+addopts = "-rA --durations=10 --color=yes --cov=src --cov-report=term-missing -m 'not docker'"

@@ -155,7 +155,7 @@ class Hawk:
             )
         return str(result.stdout)
 
-    async def submit(self, config_path: Path) -> str:
+    async def submit(self, config_path: Path, secrets: dict[str, str] | None = None) -> str:
         if os.environ.get("HAWK_JOB_ID"):
             from hawk.client import HawkClient
             from inspect_ai.hooks._hooks import get_all_hooks
@@ -179,15 +179,27 @@ class Hawk:
             async with HawkClient(token=token, api_url=self.env["HAWK_API_URL"]) as client:
                 # the runner installs the server's hawk, whose client may return the
                 # API body {"eval_set_id": ..., "warnings": [...]} rather than the id
-                created: Any = await client.create_eval_set(config, refresh_token=refresh_token)
+                created: Any = await client.create_eval_set(
+                    config, refresh_token=refresh_token, secrets=secrets
+                )
                 if isinstance(created, dict):
                     return str(created["eval_set_id"])
                 return str(created)
         # no provider key travels with the job: models route through Hawk's proxy,
         # which holds the org's keys and meters spend per user
-        out = await self._run(
-            "eval-set", "run", str(config_path), "--skip-confirm", "--log-dir-allow-dirty"
-        )
+        args = ["eval-set", "run", str(config_path), "--skip-confirm", "--log-dir-allow-dirty"]
+        secrets_file = None
+        if secrets:
+            # the CLI takes secrets from a dotenv file; written beside the config, owner-only
+            secrets_file = config_path.with_suffix(".secrets")
+            secrets_file.write_text("".join(f"{k}={v}\n" for k, v in secrets.items()))
+            secrets_file.chmod(0o600)
+            args += ["--secrets-file", str(secrets_file)]
+        try:
+            out = await self._run(*args)
+        finally:
+            if secrets_file is not None:
+                secrets_file.unlink(missing_ok=True)
         match = re.search(r"Eval set ID:\s*(\S+)", out)
         if not match:
             raise RuntimeError(f"could not find the eval set id in hawk's output:\n{out[-800:]}")
@@ -478,6 +490,112 @@ def http_status(ex: BaseException) -> int | None:
 JOB_TERMINAL = {"complete", "failed", "deleted"}
 
 
+@dataclass(frozen=True)
+class Worker:
+    """One allowed worker model, in every spelling the pipeline needs.
+
+    `item` is the model item a Hawk config names under the `openrouter` provider group;
+    `inspect_name` is what the runner calls it (the group prepended, even when the item
+    already starts with `openrouter/`), and so what task arguments, prices and logs
+    use. The agent may write either; submission rewrites to the right one.
+    """
+
+    item: str
+    price: dict[str, float] | None = None
+
+    @property
+    def inspect_name(self) -> str:
+        return f"openrouter/{self.item}"
+
+    @property
+    def spellings(self) -> set[str]:
+        return {self.item, self.inspect_name, self.item.removeprefix("openrouter/")}
+
+
+def _worker_for(name: str, workers: list[Worker]) -> Worker | None:
+    matches = [w for w in workers if name in w.spellings]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _task_arg_models(args: Any, visit: Any) -> Any:
+    """Apply `visit(name) -> name` to every model named in task arguments, at any depth."""
+    if isinstance(args, dict):
+        out = {}
+        for key, value in args.items():
+            if MODEL_ARG.search(str(key).lower()):
+                if isinstance(value, str):
+                    out[key] = visit(value)
+                elif isinstance(value, list):
+                    out[key] = [
+                        visit(v) if isinstance(v, str) else _task_arg_models(v, visit)
+                        for v in value
+                    ]
+                else:
+                    out[key] = _task_arg_models(value, visit)
+            else:
+                out[key] = _task_arg_models(value, visit)
+        return out
+    if isinstance(args, list):
+        return [_task_arg_models(v, visit) for v in args]
+    return args
+
+
+def canonicalise(config: dict[str, Any], workers: list[Worker]) -> list[str]:
+    """Rewrite every worker spelling to the one its position needs; return what changed.
+
+    Model items and role items take the worker's item; task arguments take its
+    Inspect name, which also turns a bare `openai/...` (Inspect's direct provider:
+    unmetered, outside the job's cost limit) into the metered route.
+    """
+    rewrites: list[str] = []
+    for _, group in _model_items(config):
+        if not isinstance(group, dict):
+            continue
+        for item in group.get("items") or []:
+            if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+                continue
+            worker = _worker_for(item["name"], workers)
+            if worker is not None and item["name"] != worker.item:
+                rewrites.append(f"model item {item['name']!r} -> {worker.item!r}")
+                item["name"] = worker.item
+
+    def visit(name: str) -> str:
+        worker = _worker_for(name, workers)
+        if worker is None or name == worker.inspect_name:
+            return name
+        rewrites.append(f"task argument model {name!r} -> {worker.inspect_name!r}")
+        return worker.inspect_name
+
+    for task in config.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        for item in task.get("items") or []:
+            if isinstance(item, dict) and isinstance(item.get("args"), dict):
+                item["args"] = _task_arg_models(item["args"], visit)
+    return rewrites
+
+
+def named_models(config: dict[str, Any], workers: list[Worker]) -> set[str]:
+    """Every worker the job will construct, by Inspect name: its prices are the job's."""
+    names: set[str] = set()
+    for _, group in _model_items(config):
+        if isinstance(group, dict):
+            for item in group.get("items") or []:
+                if isinstance(item, dict) and (w := _worker_for(str(item.get("name")), workers)):
+                    names.add(w.inspect_name)
+
+    def visit(name: str) -> str:
+        if worker := _worker_for(name, workers):
+            names.add(worker.inspect_name)
+        return name
+
+    for task in config.get("tasks") or []:
+        for item in (task.get("items") or []) if isinstance(task, dict) else []:
+            if isinstance(item, dict):
+                _task_arg_models(item.get("args") or {}, visit)
+    return names
+
+
 @dataclass
 class Policy:
     """What a submitted eval-set config may contain. Enforced in code, not prompt.
@@ -648,9 +766,15 @@ def _task_arg_problems(
                 # a model reference names its provider; a bare word is a mode, not a
                 # model, and cannot reach a paid provider from a runner that holds one
                 # key. `scorer: original` is a real control and was being refused.
-                allowed = set(policy.models) | {f"openrouter/{name}" for name in policy.models}
+                # a task builds a model from this string with Inspect's own providers,
+                # so only the metered route is allowed: a bare `openai/...` would reach
+                # the provider directly, outside the job's prices and cost limit
+                allowed = {f"openrouter/{name}" for name in policy.models}
                 if "/" in model and model not in allowed:
-                    problems.append(f"{where}: {path}={model!r} is not an allowed model")
+                    problems.append(
+                        f"{where}: {path}={model!r} is not an allowed model; task arguments "
+                        f"name a worker by its Inspect name: {', '.join(sorted(allowed))}"
+                    )
                 elif "/" not in model and model in policy.models:
                     continue
             return
@@ -845,7 +969,10 @@ def validate_config(
             problems.append(f"{where}: models must use package openai, provider openrouter")
         for item in group.get("items") or []:
             if item.get("name") not in policy.models:
-                problems.append(f"{where}: model not allowed: {item.get('name')!r}")
+                problems.append(
+                    f"{where}: model not allowed: {item.get('name')!r}; model items are "
+                    f"{', '.join(sorted(policy.models))}"
+                )
             args = item.get("args") or {}
             extra = set(args) - ALLOWED_MODEL_ARGS
             if extra:

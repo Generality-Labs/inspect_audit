@@ -134,6 +134,9 @@ def drift(header: EvalSpec, task_args: dict[str, Any]) -> dict[str, Any]:
         if installed != recorded:
             packages[package] = {"logged": recorded, "resolved": installed}
     recorded_args = header.task_args or {}
+    if header.task_registry_name == "inspect_audit/benchmark":
+        # a job the investigator ran: the wrapper's own arguments carry the benchmark's
+        recorded_args = dict(recorded_args.get("task_args") or {})
     args = {
         key: {"logged": recorded_args.get(key), "resolved": task_args.get(key)}
         for key in sorted(set(recorded_args) | set(task_args))

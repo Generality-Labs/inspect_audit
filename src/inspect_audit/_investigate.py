@@ -43,9 +43,12 @@ from ._jobs import (
     Job,
     JobLedger,
     Policy,
+    Worker,
+    canonicalise,
     copy_into_inputs,
     expected_evals,
     http_status,
+    named_models,
     parse_config,
     slug,
     task_package_name,
@@ -56,6 +59,7 @@ from ._jobs import (
     worst_case_usd,
     write_config,
 )
+from ._prices import valid_price
 from ._report import (
     InvestigationState,
     check_report,
@@ -251,6 +255,10 @@ def register_openrouter_costs(timeout: float = 15) -> int:
                 )
             }
         except (TypeError, ValueError):
+            continue
+        if not valid_price(per_million):
+            # a router lists -1 ("depends on the route"): registering it would price
+            # every call at minus a million dollars
             continue
         try:
             # set_model_info creates the entry; set_model_cost needs one to exist
@@ -640,14 +648,28 @@ class Remote:
         auditor_image: str,
         worker_models: list[str],
         allowance_usd: float,
+        provider: str = "middleman",
+        provider_key: str | None = None,
     ) -> None:
+        if provider not in PROVIDERS:
+            raise ValueError(f"provider must be one of {', '.join(PROVIDERS)}")
+        if provider == "openrouter-direct" and not provider_key:
+            raise ValueError(
+                "provider 'openrouter-direct' needs the operator's OPENROUTER_API_KEY "
+                "(from secrets_file, or the runner's environment)"
+            )
         self.root = root
+        self.provider = provider
+        self.provider_key = provider_key
         self.hawk = Hawk(hawk_api_url)
         self.hawk_api_url = hawk_api_url
         self.task_package = task_package
         self.audit_package = audit_package
         self.auditor_image = auditor_image
         self.worker_models = worker_models
+        self.workers = [
+            Worker(item=m, price=_registered_price(qualified_model_name(m))) for m in worker_models
+        ]
         self.allowance_usd = allowance_usd
         self.ledger = JobLedger(root)
         self.policy = Policy(
@@ -683,40 +705,43 @@ class Remote:
         """A fresh id per job. Reusing one makes Hawk resume that set instead."""
         return f"{self.policy.id_prefix}{slug(label)}-{uuid4().hex[:8]}"[:43]
 
-    def model_costs(self) -> tuple[dict[str, dict[str, float]], list[str]]:
-        """Prices for the worker models, so the runner can enforce its cost limit.
+    def model_costs(
+        self, named: set[str] | None = None
+    ) -> tuple[dict[str, dict[str, float]], list[str]]:
+        """Prices for the workers a job names, so the runner can enforce its cost limit.
 
         The agent may not write these: a job whose prices are its own invention has a
         cost limit that means nothing. They come from the same registry the local
-        allowance is accounted with.
+        allowance is accounted with, keyed by the Inspect name the job runs under.
 
-        Both the key and the lookup use the name the job will run under. A worker is
-        named in a config the way Hawk composes it, provider group then item, so
-        `openai/gpt-5.6-luna` under the `openrouter` group is `openrouter/openai/
-        gpt-5.6-luna` to Inspect, in the runner's cost table and in its logs. Returns
-        the prices and the workers that have none: without a price a cost limit cannot
-        bind, so that list is a refusal, not a warning.
+        Only the named workers: Hawk applies every stamped price with Inspect's
+        set_model_cost, which refuses a model the runner's Inspect does not know, so
+        pricing an unused worker could stop a job that never calls it. Returns the
+        prices and the workers without a valid one: without a price a cost limit
+        cannot bind, so that list is a refusal, not a warning.
         """
-        from inspect_ai.model import get_model_info
-
         costs: dict[str, dict[str, float]] = {}
         missing: list[str] = []
-        for model in self.worker_models:
-            qualified = qualified_model_name(model)
-            info = get_model_info(qualified)
-            cost = info.cost if info else None
-            if cost is None or not (cost.input or cost.output):
-                missing.append(model)
+        for worker in self.workers:
+            if named is not None and worker.inspect_name not in named:
                 continue
-            costs[qualified] = {
-                "input": cost.input or 0.0,
-                "output": cost.output or 0.0,
-                "input_cache_read": cost.input_cache_read or 0.0,
-                "input_cache_write": cost.input_cache_write or 0.0,
-            }
-            if model.startswith("openrouter/"):
-                costs[model] = dict(costs[qualified])
+            price = _registered_price(worker.inspect_name)
+            if price is None:
+                missing.append(worker.inspect_name)
+                continue
+            costs[worker.inspect_name] = price
         return costs, missing
+
+    def worker_table(self) -> list[dict[str, Any]]:
+        """The workers as the agent should name them, with the prices they are held to."""
+        return [
+            {
+                "model_item": w.item,
+                "task_arg_model": w.inspect_name,
+                "price_per_million_tokens": _registered_price(w.inspect_name),
+            }
+            for w in self.workers
+        ]
 
     def fold_prior_spend(self) -> None:
         """Start a sample attempt: what earlier attempts spent becomes prior spend.
@@ -831,27 +856,35 @@ class Remote:
         return notes
 
 
+PROVIDERS = ("middleman", "openrouter-direct")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+def _registered_price(inspect_name: str) -> dict[str, float] | None:
+    """The price Inspect holds for a model, per million tokens, if it is a usable one.
+
+    OpenRouter's larger-context tier (some models bill input 2x and output 1.5x past
+    272k prompt tokens) is not modelled: a long call is under-counted until Inspect's
+    ModelCost can express tiers.
+    """
+    from inspect_ai.model import get_model_info
+
+    info = get_model_info(inspect_name)
+    cost = info.cost if info else None
+    if cost is None:
+        return None
+    price = {
+        "input": cost.input or 0.0,
+        "output": cost.output or 0.0,
+        "input_cache_read": cost.input_cache_read or 0.0,
+        "input_cache_write": cost.input_cache_write or 0.0,
+    }
+    return price if valid_price(price) else None
+
+
 def qualified_model_name(model: str) -> str:
     """The name a worker runs under: the OpenRouter group, then the model's own id."""
     return f"openrouter/{model}"
-
-
-def _models_named(config: dict[str, object]) -> set[str]:
-    """Every model the config will actually construct, qualified as Hawk composes it."""
-    named: set[str] = set()
-    models = config.get("models")
-    groups: list[object] = list(models) if isinstance(models, list) else []
-    roles = config.get("model_roles")
-    if isinstance(roles, dict):
-        groups += list(roles.values())
-    for group in groups:
-        if not isinstance(group, dict):
-            continue
-        provider = str(group.get("name", ""))
-        for item in group.get("items") or []:
-            if isinstance(item, dict) and item.get("name"):
-                named.add(f"{provider}/{item['name']}")
-    return named
 
 
 def _local_spend() -> tuple[float | None, list[str]]:
@@ -945,6 +978,64 @@ def investigation_budget(
     return execute
 
 
+def ship_prices(
+    config: dict[str, Any], costs: dict[str, dict[str, float]], audit_package: str
+) -> None:
+    """Carry the job's prices into its tasks, so they register before Hawk applies them.
+
+    Hawk applies `model_cost_config` with Inspect's set_model_cost, which refuses a
+    model the runner's Inspect has no entry for (its fork predates GPT-6). An
+    inspect_audit task registers `model_prices` itself, offline. A benchmark task runs
+    none of our code, so its items are routed through `inspect_audit/benchmark`, which
+    registers the prices and returns the benchmark's own task, name and all.
+    """
+    for entry in config.get("tasks") or []:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("name") == "inspect_audit":
+            for item in entry.get("items") or []:
+                item["args"] = {**(item.get("args") or {}), "model_prices": costs}
+            continue
+        registry = entry.get("name")
+        entry["items"] = [
+            {
+                **item,
+                "name": "benchmark",
+                "args": {
+                    "task": f"{registry}/{item['name']}",
+                    "task_args": item.get("args") or {},
+                    "model_prices": costs,
+                },
+            }
+            for item in entry.get("items") or []
+        ]
+        entry["package"], entry["name"] = audit_package, "inspect_audit"
+    packages = config.setdefault("packages", [])
+    if audit_package not in packages:
+        packages.append(audit_package)
+
+
+def route_direct(config: dict[str, Any]) -> None:
+    """Send the job's models straight to OpenRouter on the operator's key, not Hawk's proxy.
+
+    Hawk points OPENROUTER_BASE_URL at its proxy for any provider it routes; the
+    operator's key sent there is refused. Every model group and any model a task
+    builds by name must go to OpenRouter itself.
+    """
+    runner = config.setdefault("runner", {})
+    runner.setdefault("environment", {})["OPENROUTER_BASE_URL"] = OPENROUTER_BASE_URL
+    for _, group in _groups(config):
+        for item in group.get("items") or []:
+            item["args"] = {**(item.get("args") or {}), "base_url": OPENROUTER_BASE_URL}
+
+
+def _groups(config: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    found = [("models", g) for g in config.get("models") or [] if isinstance(g, dict)]
+    roles = config.get("model_roles") or {}
+    found += [(f"model_roles.{k}", g) for k, g in roles.items() if isinstance(g, dict)]
+    return found
+
+
 @tool
 def hawk_submit(remote: Remote, root: Path) -> Tool:
     """Submit an eval-set config you wrote to Hawk, after policy checks."""
@@ -984,7 +1075,17 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
             raise ToolError("config must be a YAML mapping")
         if not (estimated_usd > 0):
             raise ToolError("estimated_usd must be positive: say what you expect this to cost")
+        for entry in data.get("tasks") or []:
+            for item in (entry.get("items") or []) if isinstance(entry, dict) else []:
+                if isinstance(item, dict) and "model_prices" in (item.get("args") or {}):
+                    raise ToolError(
+                        "model_prices is set at submission from the investigation's own "
+                        "registry; remove it from the config"
+                    )
 
+        # either spelling of a worker is accepted and rewritten to the one its position
+        # needs; the agent is told what changed rather than refused for it
+        rewrites = canonicalise(data, remote.workers)
         problems = validate_config(data, remote.policy, remote.known_sources)
         if problems:
             raise ToolError("config refused:\n- " + "\n- ".join(problems))
@@ -992,19 +1093,19 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
         label = str(data["name"]).removeprefix(remote.policy.id_prefix)
         eval_set_id = remote.new_eval_set_id(label)
         data["eval_set_id"] = eval_set_id
-        costs, unpriced = remote.model_costs()
-        named = _models_named(data)
-        blind = sorted(named & {qualified_model_name(m) for m in unpriced})
-        if blind:
+        costs, unpriced = remote.model_costs(named_models(data, remote.workers))
+        if unpriced:
             raise ToolError(
-                f"no registered price for {', '.join(blind)}, so cost_limit could not be "
-                "enforced in the runner and the job's spend would be unbounded. Use a model "
-                "that is priced, or ask the operator to register a price for this one."
+                f"no valid registered price for {', '.join(sorted(unpriced))}, so cost_limit "
+                "could not be enforced in the runner and the job's spend would be unbounded. "
+                "Use a model that is priced, or ask the operator to register a price for it."
             )
-        # every worker's price, not only the ones named here: a task that builds its
-        # own grader still charges the same key, and an unpriced model is invisible to
-        # the runner's cost limit
+        # only the models this job names: Hawk applies each stamped price with
+        # set_model_cost, which refuses a model the runner's Inspect does not know
         data["model_cost_config"] = costs
+        ship_prices(data, costs, remote.audit_package)
+        if remote.provider == "openrouter-direct":
+            route_direct(data)
         parsed, _ = parse_config(data)
         worst = worst_case_usd(parsed, remote.policy)
         if worst is None:  # pragma: no cover - validate_config already refused this
@@ -1034,7 +1135,12 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
         write_config(root, label, data)
 
         try:
-            returned = await remote.hawk.submit(submitted_path)
+            returned = await remote.hawk.submit(
+                submitted_path,
+                {"OPENROUTER_API_KEY": remote.provider_key}
+                if remote.provider == "openrouter-direct" and remote.provider_key
+                else None,
+            )
         except Exception as ex:
             # the job is already written down as pending; ask Hawk whether it landed
             notes = await remote.reconcile()
@@ -1046,7 +1152,8 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
         remote.settle(label, status="submitted", eval_set_id=eval_set_id)
         remote.known_sources.add(eval_set_id)
         remote.save_sources()
-        return (
+        rewritten = ("Rewrote: " + "; ".join(rewrites) + ". ") if rewrites else ""
+        return rewritten + (
             f"Submitted {data['name']!r} as Hawk eval set {eval_set_id}. Reserved "
             f"${worst:.2f}, the most it can spend (you estimated ${estimated_usd:.2f}). "
             f"jobs(action='watch', label='{label}') shows it running; jobs(action='wait', "
@@ -1689,6 +1796,7 @@ def investigate(
     artifact_dir: str | None = None,
     instructions: str | None = None,
     required_coverage: float | None = None,
+    provider: str | None = None,
 ) -> Task:
     """Investigate source and logs on Hawk and publish a GL LaTeX report.
 
@@ -1732,9 +1840,9 @@ def investigate(
         auditor_image: Published auditor image for sample-audit jobs on k8s.
         worker_models: OpenRouter model ids the agent may run (benchmark workers, auditors,
             graders). Prices for these are registered so costs are accounted.
-        secrets_file: Ignored. Jobs no longer carry a provider key: models route
-            through Hawk's proxy, which holds the org's keys. Accepted so that saved
-            investigation files still load.
+        secrets_file: Dotenv file holding the operator's OPENROUTER_API_KEY, for
+            provider='openrouter-direct' on a laptop. On a Hawk runner the key comes from
+            the runner's own environment (a secret on the investigator's eval set).
         log_bucket: Retained for compatibility; local logs are no longer uploaded.
         aws_profile: Retained for compatibility; job-readable inputs use native Hawk import.
         execution: 'hawk' (default) runs the investigator and auditors on Hawk;
@@ -1742,6 +1850,10 @@ def investigate(
         investigator_image: Published investigator sandbox image including LaTeX.
         artifact_dir: Hawk job's S3 artifacts directory; publications are stored by sample UUID.
         instructions: Operator instructions and scope, separate from benchmark background.
+        provider: How child jobs reach models. 'middleman' (default) routes through
+            Hawk's proxy on the org's keys, metered per user. 'openrouter-direct' sends
+            them straight to OpenRouter on the operator's own key, shipped to each child
+            as a runner secret.
         required_coverage: Fraction of the question population (0-1) the published
             coverage.json must assess for the run to count as complete. A publication
             short of it is scored `published_incomplete`, not success. None sets no bar.
@@ -1779,6 +1891,9 @@ def investigate(
     artifact_dir = settings.get("artifact_dir", artifact_dir)
     instructions = settings.get("instructions", instructions)
     required_coverage = settings.get("required_coverage", required_coverage)
+    provider = settings.get("provider", provider) or "middleman"
+    if provider not in PROVIDERS:
+        raise ValueError(f"provider must be one of {', '.join(PROVIDERS)}")
     if required_coverage is not None and not (0 < float(required_coverage) <= 1):
         raise ValueError("required_coverage must be a fraction in (0, 1]")
     if execution not in {"hawk", "local"}:
@@ -1837,8 +1952,15 @@ def investigate(
     local_repo = Path(repo).expanduser()
     if local_repo.is_dir():
         target_task = target_task or _only_task(local_repo)
-    if secrets_file:
-        logger.warning("secrets_file is ignored: jobs route models through Hawk's proxy")
+    provider_key: str | None = None
+    if provider == "openrouter-direct":
+        provider_key = os.environ.get("OPENROUTER_API_KEY")
+        if secrets_file and not provider_key:
+            from dotenv import dotenv_values
+
+            provider_key = dotenv_values(Path(secrets_file).expanduser()).get("OPENROUTER_API_KEY")
+    elif secrets_file:
+        logger.warning("secrets_file is only read for provider='openrouter-direct'")
     if local_repo.is_dir():
         paths = paths or paths_from_metadata(local_repo, target_task)
         paper = paper or paper_from_metadata(local_repo, target_task)
@@ -1892,6 +2014,8 @@ def investigate(
             auditor_image,
             worker_models or DEFAULT_WORKERS,
             budget_usd,
+            provider,
+            provider_key,
         )
         seed_path = root / "inputs" / "seed.json"
         seed = json.loads(seed_path.read_text())
@@ -1907,7 +2031,11 @@ def investigate(
             "hawk": hawk_api_url,
             "task_package": task_package,
             "worker_models": worker_models or DEFAULT_WORKERS,
-            "model_names": "Use worker_models verbatim as model item names under the openrouter factory. Task model arguments use the full Inspect name: openrouter/ followed by that item name, even when the item already starts with openrouter/.",
+            # one row per worker: the model item a config names under the openrouter
+            # provider group, the name task arguments use, and the price it is held to.
+            # hawk_submit accepts either spelling in either place and rewrites it
+            "workers": remote.worker_table(),
+            "provider": provider,
             "audit_package": audit_package,
             "auditor_image": auditor_image,
             # every remote log source explicitly supplied by the operator

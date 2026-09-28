@@ -244,6 +244,7 @@ def test_child_submission_uses_rotated_runner_credentials(monkeypatch, tmp_path)
     config = tmp_path / "child.yaml"
     config.write_text("name: child\n")
     assert asyncio.run(_jobs.Hawk("https://hawk.example").submit(config)) == "child-job"
+    received.pop("secrets", None)
     assert received == {
         "token": "current-access",
         "api_url": "https://hawk.example",

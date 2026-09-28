@@ -59,8 +59,9 @@ class FakeHawk:
     ) -> list[object]:
         return []
 
-    async def submit(self, config_path: Path) -> str:
+    async def submit(self, config_path: Path, secrets: dict[str, str] | None = None) -> str:
         self.submitted.append(config_path)
+        self.secrets = secrets
         # real Hawk honours a pinned eval_set_id and echoes it back
         return str(yaml.safe_load(config_path.read_text())["eval_set_id"])
 
@@ -768,7 +769,9 @@ def test_a_lost_submission_response_is_reconciled_not_resubmitted(
     (tmp_path / "inputs").mkdir(exist_ok=True)
     landed: list[str] = []
 
-    async def submit_then_lose_the_answer(config_path: Path) -> str:
+    async def submit_then_lose_the_answer(
+        config_path: Path, secrets: dict[str, str] | None = None
+    ) -> str:
         landed.append(str(yaml.safe_load(config_path.read_text())["eval_set_id"]))
         raise TimeoutError("connection reset while waiting for hawk")
 
@@ -1013,7 +1016,7 @@ def test_submission_is_refused_when_a_named_model_has_no_registered_price(
     (tmp_path / "inputs").mkdir(exist_ok=True)
     config = filled_example("benchmark.eval-set.yaml", name="inv-unpriced")
     config["models"][0]["items"][0]["name"] = unpriced
-    with pytest.raises(ToolError, match=f"no registered price for openrouter/{unpriced}"):
+    with pytest.raises(ToolError, match=f"no valid registered price for openrouter/{unpriced}"):
         run(
             hawk_submit(r, tmp_path)(
                 config=_write(tmp_path, "unpriced.eval-set.yaml", config),
@@ -1212,11 +1215,45 @@ def test_ordinary_task_arguments_still_pass() -> None:
         "subset": "hard",
         "samples": ["q1", "q2"],
         "dataset_path": "/inputs/source/data.csv",
-        "grader_model": "openai/gpt-5-mini",
+        "grader_model": "openrouter/openai/gpt-5-mini",
         "auditor_image": IMAGE,
         "max_items": 3,
     }
     assert validate_config(config, policy(), set()) == []
+
+
+def test_worker_spellings_are_rewritten_not_refused() -> None:
+    """sol6 09-25 wrote its grader under the wrong spelling and was refused."""
+    from inspect_audit._jobs import Worker, canonicalise, named_models
+
+    workers = [Worker("openrouter/openai/gpt-6-sol"), Worker("openai/gpt-5-mini")]
+    config = filled_example("benchmark.eval-set.yaml")
+    config["models"][0]["items"][0]["name"] = "openrouter/openrouter/openai/gpt-6-sol"
+    config["model_roles"] = {
+        "grader": {
+            "package": "openai",
+            "name": "openrouter",
+            "items": [{"name": "openrouter/openai/gpt-5-mini"}],
+        }
+    }
+    config["tasks"][0]["items"][0]["args"] = {"judge_model": "openai/gpt-5-mini"}
+    rewrites = canonicalise(config, workers)
+    assert config["models"][0]["items"][0]["name"] == "openrouter/openai/gpt-6-sol"
+    assert config["model_roles"]["grader"]["items"][0]["name"] == "openai/gpt-5-mini"
+    # a bare openai/... in a task argument is Inspect's direct provider: unmetered
+    assert config["tasks"][0]["items"][0]["args"]["judge_model"] == "openrouter/openai/gpt-5-mini"
+    assert len(rewrites) == 3
+    assert named_models(config, workers) == {
+        "openrouter/openrouter/openai/gpt-6-sol",
+        "openrouter/openai/gpt-5-mini",
+    }
+
+
+def test_a_direct_provider_model_in_task_args_is_refused() -> None:
+    config = filled_example("benchmark.eval-set.yaml")
+    config["tasks"][0]["items"][0]["args"] = {"grader_model": "openai/gpt-5-mini"}
+    problems = validate_config(config, policy(), set())
+    assert any("name a worker by its Inspect name" in p for p in problems), problems
 
 
 def test_policy_rules_that_had_no_test(tmp_path: Path) -> None:
@@ -1908,3 +1945,99 @@ def test_the_laptop_token_comes_from_the_hawk_login() -> None:
         monkey.undo()
     assert captured["args"][1:] == ["auth", "access-token"]  # type: ignore[index]
     assert captured["env"]["HAWK_API_URL"] == "https://hawk.example"  # type: ignore[index]
+
+
+def test_prices_are_the_jobs_own_and_travel_with_its_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hawk's set_model_cost refused gpt-6-sol in every child, benchmark and audit alike."""
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    _price("openrouter/openai/gpt-5.6-luna")
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+    out = run(
+        hawk_submit(r, tmp_path)(
+            config=_write(
+                tmp_path, "b.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-b")
+            ),
+            estimated_usd=0.2,
+            note=None,
+        )
+    )
+    assert "Submitted" in out
+    submitted = yaml.safe_load(r.hawk.submitted[-1].read_text())  # type: ignore[attr-defined]
+    named = {g["items"][0]["name"] for g in submitted["models"]}
+    # only the models this job names are priced
+    assert set(submitted["model_cost_config"]) == {f"openrouter/{n}" for n in named}
+    # a benchmark task runs through the wrapper, which registers the prices itself
+    task = submitted["tasks"][0]
+    assert task["name"] == "inspect_audit" and task["items"][0]["name"] == "benchmark"
+    assert task["items"][0]["args"]["model_prices"] == submitted["model_cost_config"]
+    assert "/" in task["items"][0]["args"]["task"]
+    assert r.audit_package in submitted["packages"]
+
+
+def test_openrouter_direct_ships_the_operators_key_and_routes_past_the_proxy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit import _investigate
+    from inspect_audit._investigate import OPENROUTER_BASE_URL, Remote
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    _price("openrouter/openai/gpt-5.6-luna")
+    with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
+        Remote(
+            tmp_path, HAWK, "pkg", "pkg", IMAGE, ["openai/gpt-5.6-luna"], 10.0, "openrouter-direct"
+        )
+    r = remote(tmp_path)
+    r.provider, r.provider_key = "openrouter-direct", "sk-or-test"
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+    run(
+        hawk_submit(r, tmp_path)(
+            config=_write(
+                tmp_path, "d.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-d")
+            ),
+            estimated_usd=0.2,
+            note=None,
+        )
+    )
+    submitted = yaml.safe_load(r.hawk.submitted[-1].read_text())  # type: ignore[attr-defined]
+    assert submitted["runner"]["environment"]["OPENROUTER_BASE_URL"] == OPENROUTER_BASE_URL
+    assert all(
+        i["args"]["base_url"] == OPENROUTER_BASE_URL
+        for g in submitted["models"]
+        for i in g["items"]
+    )
+    assert r.hawk.secrets == {"OPENROUTER_API_KEY": "sk-or-test"}  # type: ignore[attr-defined]
+    assert "sk-or-test" not in r.hawk.submitted[-1].read_text()  # type: ignore[attr-defined]
+
+
+def test_an_agent_cannot_set_its_own_prices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+    config = filled_example("benchmark.eval-set.yaml", name="inv-p")
+    config["tasks"][0]["items"][0]["args"] = {"model_prices": {"x": {"input": 0, "output": 0}}}
+    with pytest.raises(ToolError, match="model_prices is set at submission"):
+        run(
+            hawk_submit(r, tmp_path)(
+                config=_write(tmp_path, "p.eval-set.yaml", config), estimated_usd=0.2, note=None
+            )
+        )
+
+
+def test_invalid_prices_are_not_prices() -> None:
+    from inspect_audit._prices import valid_price
+
+    assert valid_price({"input": 2, "output": 10})
+    assert not valid_price({"input": -1, "output": 10})  # a router's "depends"
+    assert not valid_price({"input": 0, "output": 0})
+    assert not valid_price(None)

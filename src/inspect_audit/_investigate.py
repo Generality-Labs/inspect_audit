@@ -101,6 +101,7 @@ INVESTIGATION_SKILLS = (
     "eval-validity-review",
     "investigate-dataset",
     "security-audit-eval",
+    "view-results",
     "debug-stuck-eval",
 )
 # compact the investigator's context once it passes this many tokens

@@ -39,9 +39,7 @@ Prove the intended configuration on one or two samples with retries off. Verify 
 candidate, tools, scorer and outputs all worked before scaling. For healthy work,
 inspect startup once and use jobs(action="wait"), which waits without model tokens.
 Use watch for progress, logs for runner errors, and trace/stacktrace for stuck work.
-The debug-stuck-eval reference explains diagnostics if needed. You can read only the
-jobs you submitted, not other people's eval sets; jobs(action="list") shows yours, and
-after collect, read the .eval logs themselves whenever you want to count anything.
+The view-results and debug-stuck-eval references explain diagnostics if needed.
 
 jobs(action="samples") lists outcomes; transcripts writes selected evidence under
 /inputs/jobs/<label>/transcripts/. collect downloads logs and settles measured spending.

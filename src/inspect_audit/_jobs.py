@@ -1021,6 +1021,11 @@ def validate_config(
                     f"{where}: {len(item.sample_ids)} sample_ids exceeds {policy.max_limit}"
                 )
             problems += _task_arg_problems(where, item.args or {}, policy, known_log_sources)
+            if task.name == "inspect_audit":
+                # our own tasks' rules, checked here rather than minutes into the runner
+                from ._registry import task_arg_problems
+
+                problems += [f"{where}: {p}" for p in task_arg_problems(item.name, item.args or {})]
 
     epochs = (
         parsed.epochs if isinstance(parsed.epochs, int) else getattr(parsed.epochs, "epochs", None)

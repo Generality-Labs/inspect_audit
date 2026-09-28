@@ -1,3 +1,4 @@
+import inspect as inspect_module
 import json
 import os
 import shutil
@@ -10,6 +11,7 @@ from inspect_ai.log import list_eval_logs
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox
 
+from ._agent import audit_items, effort_problem
 from ._audit import audit_task
 from ._concordance import Concordance
 from ._investigate import investigate as investigate
@@ -310,3 +312,33 @@ def _hawk_token() -> str:
             "Fetching hawk: logs needs HAWK_ACCESS_TOKEN or the runner's token refresh environment."
         )
     return token
+
+
+def task_arg_problems(name: str, args: dict[str, Any]) -> list[str]:
+    """What this package's task `name` would refuse in `args` before it touches anything.
+
+    A child job installs for minutes before its task loads; the 09-28 Luna smoke
+    child died there on reasoning_effort without model, and Hawk had accepted the
+    config because the rule is ours. The checks that need the audited benchmark
+    still run only in the runner.
+    """
+    tasks = {"audit": audit, "benchmark": benchmark, "investigate": investigate}
+    if name not in tasks:
+        return [f"inspect_audit has no task {name!r}; it has {', '.join(sorted(tasks))}"]
+    try:
+        inspect_module.signature(tasks[name]).bind(**args)
+    except TypeError as ex:
+        return [f"{name}: {ex}"]
+    if name != "audit":
+        return []
+    problems: list[str] = []
+    if problem := effort_problem(args.get("model"), args.get("reasoning_effort")):
+        problems.append(
+            f"audit: {problem}. On Hawk, set the auditor's effort on its model item "
+            "instead: models[].items[].args.config.reasoning_effort"
+        )
+    try:
+        audit_items(args.get("items"))
+    except ValueError as ex:
+        problems.append(f"audit: {ex}")
+    return problems

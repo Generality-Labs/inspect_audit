@@ -142,6 +142,21 @@ def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> AuditI
     )
 
 
+def effort_problem(model: object, reasoning_effort: object) -> str | None:
+    """Why an auditor's reasoning effort cannot apply, if it cannot.
+
+    There is nothing to bind it to without an explicit model (the eval's model is not
+    resolved at task-construction time), and dropping the knob silently corrupts
+    effort comparisons.
+    """
+    if reasoning_effort is not None and model is None:
+        return (
+            "reasoning_effort needs an explicit model to bind to: pass "
+            "model= alongside it (the eval-level --model cannot carry it)"
+        )
+    return None
+
+
 def audit_items(items: list[str] | None = None) -> list[AuditItemSkill]:
     """The audit items an auditor can investigate, one skill each.
 
@@ -778,15 +793,9 @@ def audit_agent(
     # resolve the model object here so a generate config binds to it -- react
     # re-resolves a bare string without one, so the config would be dropped
     resolved: str | Model | None = model
+    if problem := effort_problem(model, reasoning_effort):
+        raise ValueError(problem)
     if reasoning_effort is not None:
-        if model is None:
-            # there is nothing to bind the config to yet (the eval's model is
-            # not resolved at task-construction time), and dropping the knob
-            # silently corrupts effort comparisons
-            raise ValueError(
-                "reasoning_effort needs an explicit model to bind to: pass "
-                "model= alongside it (the eval-level --model cannot carry it)"
-            )
         # a str arg so the CLI can pass it; GenerateConfig validates the value
         resolved = get_model(
             model, config=GenerateConfig(reasoning_effort=cast(Any, reasoning_effort))

@@ -13,6 +13,7 @@ from inspect_audit._concordance import (
     AGREE,
     NOISY,
     STABLE,
+    UNSCORED,
     Concordance,
     _grade,
     classify,
@@ -25,6 +26,36 @@ def test_grades_compare_the_way_inspect_metrics_do() -> None:
     assert _grade("I") == _grade(0) == _grade(False) == 0.0
     assert _grade("P") == 0.5
     assert _grade({"a": "C", "b": 0}) == _grade({"b": 0.0, "a": 1})
+
+
+def test_labels_are_grades_not_zeros() -> None:
+    """value_to_float read every unknown string as 0.0, so different labels agreed."""
+    assert _grade("A") != _grade("B")
+    assert _grade("correct") != _grade("incorrect")
+    assert _grade({"x": "A"}) != _grade({"x": "B"})
+    assert _grade("complied") == _grade("complied")
+
+
+def test_unscored_is_one_grade_not_noise() -> None:
+    assert _grade(None) == _grade(float("nan")) == UNSCORED
+    assert _grade(None) != _grade(0)
+
+
+def test_scores_pair_by_scorer_name_not_position() -> None:
+    from inspect_audit._concordance import paired
+
+    recorded = {"judge": Score(value="C"), "exact": Score(value="I")}
+    fresh = [Score(value="I"), Score(value="C")]
+    pairs = paired(recorded, fresh, ["exact", "judge"])
+    assert [(i, r.value, f.value) for i, r, f in pairs] == [(0, "I", "I"), (1, "C", "C")]
+    # repeats are numbered the way inspect names them in the log
+    repeated = {"match": Score(value="C"), "match1": Score(value="I")}
+    assert [
+        r.value
+        for _, r, _ in paired(repeated, [Score(value="C"), Score(value="I")], ["match", "match"])
+    ] == ["C", "I"]
+    # no names: positional
+    assert [r.value for _, r, _ in paired(recorded, fresh, [None, None])] == ["C", "I"]
 
 
 def _scores(*values: str, mismatch: bool = False) -> list[Score]:
@@ -278,8 +309,10 @@ def test_scorer_models_reads_only_calls_inside_scoring() -> None:
 
     from inspect_audit._concordance import scorer_models
 
-    def call(model: str) -> ModelEvent:
+    def call(model: str, span: str | None = None) -> ModelEvent:
+        # real events carry the id of the span they ran in; event_tree nests by it
         return ModelEvent(
+            span_id=span,
             model=model,
             input=[],
             tools=[],
@@ -296,9 +329,9 @@ def test_scorer_models_reads_only_calls_inside_scoring() -> None:
         events=[
             call("anthropic/claude"),
             SpanBeginEvent(id="s", name="scorers", type="scorers"),
-            SpanBeginEvent(id="t", parent_id="s", name="exact", type="scorer"),
-            call("google/gemini-2.0-flash-001"),
-            SpanEndEvent(id="t"),
+            SpanBeginEvent(id="t", parent_id="s", name="exact", type="scorer", span_id="s"),
+            call("google/gemini-2.0-flash-001", span="t"),
+            SpanEndEvent(id="t", span_id="s"),
             SpanEndEvent(id="s"),
         ],
     )

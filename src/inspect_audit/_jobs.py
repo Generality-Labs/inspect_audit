@@ -185,8 +185,7 @@ class Hawk:
                 if isinstance(created, dict):
                     return str(created["eval_set_id"])
                 return str(created)
-        # no provider key travels with the job: models route through Hawk's proxy,
-        # which holds the org's keys and meters spend per user
+        # a provider key, when the job goes direct, travels as a runner secret
         args = ["eval-set", "run", str(config_path), "--skip-confirm", "--log-dir-allow-dirty"]
         secrets_file = None
         if secrets:

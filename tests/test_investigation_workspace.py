@@ -294,3 +294,29 @@ def test_an_audit_job_on_hawk_registers_prices_before_hawk_applies_them(monkeypa
     monkeypatch.setenv("HAWK_JOB_ID", "inv-child")
     with pytest.raises(RegisteredError):
         _registry.audit.__wrapped__(task="bench/Chess Puzzles")  # type: ignore[attr-defined]
+
+
+def test_children_default_to_the_operators_key_and_say_so_when_it_is_missing(monkeypatch, tmp_path):
+    from inspect_audit import _investigate
+
+    monkeypatch.setenv("HAWK_JOB_ID", "test-investigation")
+    monkeypatch.delenv("INSPECT_AUDIT_OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: None)
+    monkeypatch.setattr(_investigate.tempfile, "gettempdir", lambda: str(tmp_path))
+    args = {
+        "repo": "https://example.org/benchmark.git",
+        "revision": "abc123",
+        "audit_package": "git+https://example.org/auditor.git@abc123",
+        "hawk_api_url": "https://hawk.example",
+        "artifact_dir": "s3://bucket/test-investigation/artifacts",
+        "enforce_cost_limit": False,
+    }
+    with pytest.raises(ValueError, match="provider='middleman'"):
+        investigate(**args)
+    seed = json.loads(
+        (
+            Path(investigate(**args, provider="middleman").metadata["investigation_dir"])
+            / "inputs/seed.json"
+        ).read_text()
+    )
+    assert seed["remote"]["provider"] == "middleman"

@@ -20,3 +20,12 @@ def fixture_log_epochs(tmp_path_factory: pytest.TempPathFactory) -> str:
 def graded_log(tmp_path_factory: pytest.TempPathFactory) -> str:
     """A real log whose recorded grades are mixed (C, I, C)."""
     return run_graded_eval(str(tmp_path_factory.mktemp("graded_log")))
+
+
+@pytest.fixture(autouse=True)
+def operator_openrouter_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Child jobs default to the operator's own OpenRouter key; tests supply a fake one.
+
+    Tests about a missing key delete it themselves.
+    """
+    monkeypatch.setenv("INSPECT_AUDIT_OPENROUTER_API_KEY", "sk-or-test-operator")

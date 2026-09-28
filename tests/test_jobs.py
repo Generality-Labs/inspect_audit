@@ -2005,6 +2005,8 @@ def test_openrouter_direct_ships_the_operators_key_and_routes_past_the_proxy(
     )
     submitted = yaml.safe_load(r.hawk.submitted[-1].read_text())  # type: ignore[attr-defined]
     assert submitted["runner"]["environment"]["OPENROUTER_BASE_URL"] == OPENROUTER_BASE_URL
+    # Hawk's model-key hook would swap the key for Hawk's token; the child switches it off
+    assert submitted["runner"]["environment"]["HAWK_RUNNER_REFRESH_URL"] == ""
     assert all(
         i["args"]["base_url"] == OPENROUTER_BASE_URL
         for g in submitted["models"]
@@ -2041,3 +2043,24 @@ def test_invalid_prices_are_not_prices() -> None:
     assert not valid_price({"input": -1, "output": 10})  # a router's "depends"
     assert not valid_price({"input": 0, "output": 0})
     assert not valid_price(None)
+
+
+def test_the_operator_key_is_never_read_from_a_runners_openrouter_variable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On a runner OPENROUTER_API_KEY is Hawk's token after the hook runs, not a key."""
+    from inspect_audit._investigate import OPERATOR_KEY_VAR, operator_key
+
+    monkeypatch.delenv(OPERATOR_KEY_VAR, raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "hawk-access-token")
+    monkeypatch.setenv("HAWK_JOB_ID", "inv-parent")
+    assert operator_key(None) is None
+    monkeypatch.setenv(OPERATOR_KEY_VAR, "sk-or-operator")
+    assert operator_key(None) == "sk-or-operator"
+    monkeypatch.delenv(OPERATOR_KEY_VAR)
+    monkeypatch.delenv("HAWK_JOB_ID")
+    assert operator_key(None) == "hawk-access-token"  # a laptop's own key is fine
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    env = tmp_path / ".env"
+    env.write_text(f"{OPERATOR_KEY_VAR}=sk-or-file\n")
+    assert operator_key(str(env)) == "sk-or-file"

@@ -655,8 +655,10 @@ class Remote:
             raise ValueError(f"provider must be one of {', '.join(PROVIDERS)}")
         if provider == "openrouter-direct" and not provider_key:
             raise ValueError(
-                "provider 'openrouter-direct' needs the operator's OPENROUTER_API_KEY "
-                "(from secrets_file, or the runner's environment)"
+                "provider 'openrouter-direct' (the default) needs the operator's OpenRouter "
+                f"key: {OPERATOR_KEY_VAR} as a secret on the investigator's eval set, "
+                "OPENROUTER_API_KEY on a laptop, or a secrets_file holding either. "
+                "Pass provider='middleman' to route child jobs through Hawk's proxy instead."
             )
         self.root = root
         self.provider = provider
@@ -857,7 +859,36 @@ class Remote:
 
 
 PROVIDERS = ("middleman", "openrouter-direct")
+# child jobs go straight to OpenRouter on the operator's key unless told otherwise
+DEFAULT_PROVIDER = "openrouter-direct"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# The operator's key, under a name no Inspect provider reads. On a Hawk runner the
+# refresh hook rewrites OPENROUTER_API_KEY to the Hawk token the moment an OpenRouter
+# model is built (inspect_ai/model/_model.py `_apply_api_key_overrides`), so the
+# investigator's copy must live somewhere the hook never touches.
+OPERATOR_KEY_VAR = "INSPECT_AUDIT_OPENROUTER_API_KEY"
+# Setting this empty stops Hawk installing its refresh hook in a child runner
+# (hawk/runner/refresh_token.py `install_hook` needs token, url and client id). That
+# hook answers every provider key with the Hawk token, which OpenRouter refuses. The
+# runner's S3 and Hawk API credentials use separate HAWK_TOKEN_REFRESH_* variables.
+MODEL_KEY_HOOK_VAR = "HAWK_RUNNER_REFRESH_URL"
+
+
+def operator_key(secrets_file: str | None) -> str | None:
+    """The operator's OpenRouter key for child jobs, from wherever this process has it.
+
+    On a Hawk runner OPENROUTER_API_KEY holds Hawk's own token, not a key, so it is
+    only trusted off-runner.
+    """
+    key = os.environ.get(OPERATOR_KEY_VAR)
+    if not key and not os.environ.get("HAWK_JOB_ID"):
+        key = os.environ.get("OPENROUTER_API_KEY")
+    if not key and secrets_file:
+        from dotenv import dotenv_values
+
+        values = dotenv_values(Path(secrets_file).expanduser())
+        key = values.get(OPERATOR_KEY_VAR) or values.get("OPENROUTER_API_KEY")
+    return key or None
 
 
 def _registered_price(inspect_name: str) -> dict[str, float] | None:
@@ -1022,8 +1053,11 @@ def route_direct(config: dict[str, Any]) -> None:
     operator's key sent there is refused. Every model group and any model a task
     builds by name must go to OpenRouter itself.
     """
-    runner = config.setdefault("runner", {})
-    runner.setdefault("environment", {})["OPENROUTER_BASE_URL"] = OPENROUTER_BASE_URL
+    environment = config.setdefault("runner", {}).setdefault("environment", {})
+    # runner.environment is the last layer of Hawk's job secrets (eval_set_server
+    # merges it over provider secrets), so these win over Hawk's proxy settings
+    environment["OPENROUTER_BASE_URL"] = OPENROUTER_BASE_URL
+    environment[MODEL_KEY_HOOK_VAR] = ""
     for _, group in _groups(config):
         for item in group.get("items") or []:
             item["args"] = {**(item.get("args") or {}), "base_url": OPENROUTER_BASE_URL}
@@ -1840,9 +1874,10 @@ def investigate(
         auditor_image: Published auditor image for sample-audit jobs on k8s.
         worker_models: OpenRouter model ids the agent may run (benchmark workers, auditors,
             graders). Prices for these are registered so costs are accounted.
-        secrets_file: Dotenv file holding the operator's OPENROUTER_API_KEY, for
-            provider='openrouter-direct' on a laptop. On a Hawk runner the key comes from
-            the runner's own environment (a secret on the investigator's eval set).
+        secrets_file: Dotenv file holding the operator's OpenRouter key
+            (INSPECT_AUDIT_OPENROUTER_API_KEY or OPENROUTER_API_KEY), for
+            provider='openrouter-direct'. On a Hawk runner, pass it as the secret
+            INSPECT_AUDIT_OPENROUTER_API_KEY on the investigator's eval set instead.
         log_bucket: Retained for compatibility; local logs are no longer uploaded.
         aws_profile: Retained for compatibility; job-readable inputs use native Hawk import.
         execution: 'hawk' (default) runs the investigator and auditors on Hawk;
@@ -1850,10 +1885,11 @@ def investigate(
         investigator_image: Published investigator sandbox image including LaTeX.
         artifact_dir: Hawk job's S3 artifacts directory; publications are stored by sample UUID.
         instructions: Operator instructions and scope, separate from benchmark background.
-        provider: How child jobs reach models. 'middleman' (default) routes through
-            Hawk's proxy on the org's keys, metered per user. 'openrouter-direct' sends
-            them straight to OpenRouter on the operator's own key, shipped to each child
-            as a runner secret.
+        provider: How child jobs reach models. 'openrouter-direct' (default) sends them
+            straight to OpenRouter on the operator's own key, shipped to each child as a
+            runner secret, with Hawk's model-key hook switched off in that child.
+            'middleman' routes them through Hawk's proxy on the org's keys. The
+            investigator's own model calls on Hawk go through Hawk's proxy either way.
         required_coverage: Fraction of the question population (0-1) the published
             coverage.json must assess for the run to count as complete. A publication
             short of it is scored `published_incomplete`, not success. None sets no bar.
@@ -1891,7 +1927,7 @@ def investigate(
     artifact_dir = settings.get("artifact_dir", artifact_dir)
     instructions = settings.get("instructions", instructions)
     required_coverage = settings.get("required_coverage", required_coverage)
-    provider = settings.get("provider", provider) or "middleman"
+    provider = settings.get("provider", provider) or DEFAULT_PROVIDER
     if provider not in PROVIDERS:
         raise ValueError(f"provider must be one of {', '.join(PROVIDERS)}")
     if required_coverage is not None and not (0 < float(required_coverage) <= 1):
@@ -1954,11 +1990,7 @@ def investigate(
         target_task = target_task or _only_task(local_repo)
     provider_key: str | None = None
     if provider == "openrouter-direct":
-        provider_key = os.environ.get("OPENROUTER_API_KEY")
-        if secrets_file and not provider_key:
-            from dotenv import dotenv_values
-
-            provider_key = dotenv_values(Path(secrets_file).expanduser()).get("OPENROUTER_API_KEY")
+        provider_key = operator_key(secrets_file)
     elif secrets_file:
         logger.warning("secrets_file is only read for provider='openrouter-direct'")
     if local_repo.is_dir():

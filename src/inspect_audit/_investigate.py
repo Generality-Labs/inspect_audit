@@ -59,7 +59,9 @@ from ._jobs import (
 from ._report import (
     InvestigationState,
     check_report,
+    investigation_outcome,
     operator_turn,
+    report_blocker,
 )
 from ._report import (
     publish_report as publish_report,
@@ -1333,19 +1335,38 @@ def jobs(remote: Remote, root: Path) -> Tool:
 
 @solver
 def check_evidence_access(remote: Remote | None, root: Path, sources: list[str]) -> Solver:
-    """Check supplied remote evidence before spending on the lead model."""
+    """Check supplied remote evidence before spending on the lead model.
+
+    Three reads per source: the sample index (what the investigator lists), one
+    transcript, and one presigned log download (the path a child job's `logs`
+    argument takes, a different permission from the index). A per-source HTTP
+    refusal is a fact about that source, recorded for the agent. Anything else --
+    an import error, a missing binary, a token that will not refresh, or one and
+    the same failure on every source -- is our harness broken, and the sample fails
+    here, before the first model call, rather than paying a model to discover it.
+    """
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        checks = []
+        checks: list[dict[str, Any]] = []
+        harness: list[str] = []
         for address in sources:
-            check = {"source": address, "status": "unavailable", "reason": ""}
+            check: dict[str, Any] = {
+                "source": address,
+                "status": "unavailable",
+                "reason": "",
+                "paths": {},
+            }
+            if remote is None or not address.startswith("hawk:"):
+                check["reason"] = (
+                    "No supported reader: supply an indexed Hawk eval set or local logs"
+                )
+                checks.append(check)
+                continue
+            eval_set = address.removeprefix("hawk:").split("/")[0]
+            failure: BaseException | None = None
             try:
-                if remote is None or not address.startswith("hawk:"):
-                    raise ValueError(
-                        "No supported reader: supply an indexed Hawk eval set or local logs"
-                    )
-                eval_set = address.removeprefix("hawk:").split("/")[0]
                 rows = await remote.hawk.samples(eval_set, 1)
+                check["paths"]["index"] = "readable" if rows else "empty"
                 if not rows:
                     raise ValueError(
                         "No indexed samples. A storage prefix is not necessarily an imported eval set"
@@ -1354,18 +1375,41 @@ def check_evidence_access(remote: Remote | None, root: Path, sources: list[str])
                     str(rows[0]["uuid"]),
                     root / "inputs" / "index" / _alias(address) / "transcripts",
                 )
+                check["paths"]["transcript"] = "readable"
+                files = await remote.hawk.log_files(eval_set)
+                if not files:
+                    raise ValueError("The eval set lists no .eval files to download")
+                await remote.hawk.download_url(files[0])
+                check["paths"]["download"] = "readable"
                 check.update(
                     status="readable",
-                    reason="Sample index and one transcript retrieved; not a complete coverage check",
+                    reason="Sample index, one transcript and one log download URL retrieved; "
+                    "not a complete coverage check",
                 )
             except Exception as ex:
-                check["reason"] = str(ex)[-1500:]
+                failure = ex
+                check["reason"] = f"{type(ex).__name__}: {str(ex)[-1500:]}"
+            if (
+                failure is not None
+                and http_status(failure) is None
+                and not isinstance(failure, ValueError)
+            ):
+                harness.append(check["reason"])
             checks.append(check)
         seed_path = root / "inputs" / "seed.json"
         seed = json.loads(seed_path.read_text())
         seed["evidence_access"] = checks
         seed_path.write_text(json.dumps(seed, indent=2))
         transcript().info(json.dumps({"evidence_access": checks}))
+        failed = [c["reason"] for c in checks if c["status"] != "readable"]
+        same_everywhere = len(failed) >= 2 and len(failed) == len(checks) and len(set(failed)) == 1
+        if harness or same_everywhere:
+            raise RuntimeError(
+                "The investigation's own access to its evidence is broken, so it stops before "
+                "spending on the lead model: "
+                + (harness[0] if harness else failed[0])
+                + ". Fix the harness (installed packages, Hawk login, token refresh) and relaunch."
+            )
         return state
 
     return solve
@@ -1571,6 +1615,8 @@ def _samples_summary(rows: list[dict[str, Any]]) -> str:
 async def _continue(
     state: AgentState, interactive: bool, remote: Remote | None = None
 ) -> bool | str:
+    if store_as(InvestigationState).outcome == "blocked":
+        return False
     over = remote.over_allowance() if remote is not None else None
     if over is not None:
         # Inspect's cost limit only sees this agent's own calls, so a run whose children
@@ -1642,6 +1688,7 @@ def investigate(
     investigator_image: str | None = None,
     artifact_dir: str | None = None,
     instructions: str | None = None,
+    required_coverage: float | None = None,
 ) -> Task:
     """Investigate source and logs on Hawk and publish a GL LaTeX report.
 
@@ -1695,6 +1742,9 @@ def investigate(
         investigator_image: Published investigator sandbox image including LaTeX.
         artifact_dir: Hawk job's S3 artifacts directory; publications are stored by sample UUID.
         instructions: Operator instructions and scope, separate from benchmark background.
+        required_coverage: Fraction of the question population (0-1) the published
+            coverage.json must assess for the run to count as complete. A publication
+            short of it is scored `published_incomplete`, not success. None sets no bar.
     """
     # the file is read before anything else is decided: a setting it carries must be
     # able to change what gets validated, which skills load and how much may be spent.
@@ -1728,6 +1778,9 @@ def investigate(
     )
     artifact_dir = settings.get("artifact_dir", artifact_dir)
     instructions = settings.get("instructions", instructions)
+    required_coverage = settings.get("required_coverage", required_coverage)
+    if required_coverage is not None and not (0 < float(required_coverage) <= 1):
+        raise ValueError("required_coverage must be a fraction in (0, 1]")
     if execution not in {"hawk", "local"}:
         raise ValueError("execution must be 'hawk' or 'local'")
     if execution == "hawk":
@@ -1884,8 +1937,14 @@ def investigate(
         investigation_budget(budget_usd, enforce_cost_limit, remote),
         view_image(),
         check_report(str(root)),
-        publish_report(str(root)),
+        publish_report(str(root), required_coverage),
+        report_blocker(),
     ]
+    if required_coverage is not None:
+        seed_path = root / "inputs" / "seed.json"
+        seed = json.loads(seed_path.read_text())
+        seed["required_coverage"] = float(required_coverage)
+        seed_path.write_text(json.dumps(seed, indent=2))
     seed_logs = json.loads((root / "inputs" / "seed.json").read_text()).get("logs") or []
     remote_sources = [
         str(e["remote"]) for e in seed_logs if isinstance(e, dict) and e.get("remote")
@@ -1930,6 +1989,7 @@ def investigate(
                 + (f"\n\nOperator instructions:\n{instructions}" if instructions else ""),
             )
         ],
+        scorer=investigation_outcome(),
         solver=react(
             name="investigator",
             prompt=prompts.INVESTIGATE,

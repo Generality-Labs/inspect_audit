@@ -40,7 +40,11 @@ operator-defined exposure policy. Use curl for web access; no browser is availab
 Fill report/Findings.tex in the supplied GL LaTeX template. Compile report/report.tex with latexmk, render the PDF pages with pdftoppm, and inspect every page with view_image.
 Call publish_report to save a version. Batch mode ends after publication. Explicit
 interactive mode permits operator follow-ups and another publication. If evidence is
-insufficient, publish that limited conclusion rather than inventing findings.
+insufficient, publish that limited conclusion rather than inventing findings. If a
+deterministic failure in our audit setup (not the benchmark) makes the operator's primary
+request impossible, call report_blocker with the evidence instead of publishing around it.
+The seed's required_coverage, when set, is the share of questions the published coverage
+must assess for the run to count as complete.
 
 When the operator requests an exhaustive audit, maintain an explicit question manifest.
 Infer the assessment units from the benchmark and operator overview. By default

@@ -1630,7 +1630,52 @@ def test_remote_evidence_is_checked_before_investigation(tmp_path: Path) -> None
     run(check_evidence_access(r, tmp_path, ["hawk:valid", "s3://unsupported"])(None, None))
     checks = json.loads(seed.read_text())["evidence_access"]
     assert [c["status"] for c in checks] == ["readable", "unavailable"]
+    assert checks[0]["paths"] == {
+        "index": "readable",
+        "transcript": "readable",
+        "download": "readable",
+    }
     assert list((tmp_path / "inputs/index").rglob("*.md"))
+
+
+def test_a_broken_harness_stops_the_run_before_the_first_model_call(tmp_path: Path) -> None:
+    """Luna 09-25: the same keyring ImportError on all five sources, and the run went on."""
+    from inspect_audit._investigate import check_evidence_access
+
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir()
+    (tmp_path / "inputs/seed.json").write_text("{}")
+
+    async def broken(sample_uuid: str, out_dir: Path) -> Path:
+        raise ModuleNotFoundError("No module named 'keyring'")
+
+    r.hawk.transcript = broken  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="keyring"):
+        run(check_evidence_access(r, tmp_path, ["hawk:valid"])(None, None))
+
+
+def test_a_source_the_child_cannot_download_is_a_note_not_a_stop(tmp_path: Path) -> None:
+    """Another user's set: listable through /meta, 403 on the presigned download."""
+    from hawk.client import HawkAPIError
+
+    from inspect_audit._investigate import check_evidence_access
+
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir()
+    seed = tmp_path / "inputs/seed.json"
+    seed.write_text("{}")
+
+    async def forbidden(log_path: str) -> str:
+        if "theirs" in log_path:
+            raise HawkAPIError(403, "Forbidden")
+        return "https://s3.example/signed"
+
+    r.hawk.download_url = forbidden  # type: ignore[method-assign]
+    run(check_evidence_access(r, tmp_path, ["hawk:mine", "hawk:theirs"])(None, None))
+    checks = json.loads(seed.read_text())["evidence_access"]
+    assert [c["status"] for c in checks] == ["readable", "unavailable"]
+    assert "403" in checks[1]["reason"] or "Forbidden" in checks[1]["reason"]
+    assert checks[1]["paths"] == {"index": "readable", "transcript": "readable"}
 
 
 @pytest.mark.parametrize(

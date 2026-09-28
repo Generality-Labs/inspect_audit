@@ -1072,3 +1072,58 @@ def test_a_retried_sample_carries_the_first_attempts_spend(
     r.fold_prior_spend()  # idempotent
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (1.0, []))
     assert r.local_usd() == 5.0
+
+
+def test_a_run_short_of_its_required_coverage_is_recorded_incomplete(tmp_path: Path) -> None:
+    """Luna and sol6 on 09-25: 0/100 assessed, published, recorded as success."""
+    from inspect_audit._report import record_outcome
+
+    def coverage(not_assessed: int) -> None:
+        (tmp_path / "coverage.json").write_text(
+            json.dumps(
+                {
+                    "denominator": 100,
+                    "counts": {"NO_ISSUE_FOUND": 100 - not_assessed, "NOT_ASSESSED": not_assessed},
+                }
+            )
+        )
+
+    assert record_outcome(tmp_path, None)[0] == "published_complete"
+    assert record_outcome(tmp_path, 1.0) == (
+        "published_incomplete",
+        ["100% question coverage was required and the report has no coverage.json"],
+    )
+    coverage(100)
+    outcome, reasons = record_outcome(tmp_path, 1.0)
+    assert outcome == "published_incomplete" and reasons == [
+        "0/100 questions assessed; 100% was required"
+    ]
+    coverage(5)
+    assert record_outcome(tmp_path, 0.9) == ("published_complete", ["95/100 questions assessed"])
+
+
+def test_a_blocked_investigation_ends_and_scores_as_blocked() -> None:
+    from inspect_ai.util._store import Store, init_subtask_store
+
+    from inspect_audit import _investigate
+    from inspect_audit._report import InvestigationState, investigation_outcome, report_blocker
+
+    store = Store()
+    init_subtask_store(store)
+    out = asyncio.run(report_blocker()(reason="every child job dies at load: Model not found"))
+    assert "blocked" in out.lower()
+
+    class _State:
+        output = None
+
+    assert asyncio.run(_investigate._continue(_State(), interactive=True)) is False  # type: ignore[arg-type]
+
+    class _Task:
+        def store_as(self, cls: type) -> object:
+            return store_as_(cls)
+
+    from inspect_ai.util import store_as as store_as_
+
+    scored = asyncio.run(investigation_outcome()(_Task(), None))  # type: ignore[arg-type]
+    assert scored.value == "blocked" and "Model not found" in (scored.explanation or "")
+    assert store_as_(InvestigationState).outcome == "blocked"

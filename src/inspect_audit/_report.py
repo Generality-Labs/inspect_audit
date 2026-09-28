@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from acp.schema import ElicitationSchema, ElicitationStringPropertySchema
 from inspect_ai.agent import AgentState
+from inspect_ai.scorer import Score, Scorer, Target, frequency, scorer
+from inspect_ai.solver import TaskState
 from inspect_ai.tool import Tool, ToolError, tool
 from inspect_ai.util import (
     StoreModel,
@@ -48,6 +50,38 @@ class InvestigationState(StoreModel):
     # set when the agent has been told the shared allowance is gone; the next turn
     # ends the sample rather than asking again
     allowance_notified: bool = False
+    # how the investigation ended, for the outcome scorer: published_complete,
+    # published_incomplete (short of the operator's required coverage), blocked
+    outcome: str | None = None
+    outcome_reasons: list[str] = Field(default_factory=list)
+
+
+def assessed_fraction(coverage_path: Path) -> tuple[float, str] | None:
+    """The share of the question population with a label, and a readable count."""
+    if not coverage_path.is_file():
+        return None
+    coverage = json.loads(coverage_path.read_text())
+    denominator = int(coverage.get("denominator") or 0)
+    if not denominator:
+        return 0.0, "0 questions"
+    counts = coverage.get("counts") or {}
+    assessed = denominator - int(counts.get("NOT_ASSESSED", denominator))
+    return assessed / denominator, f"{assessed}/{denominator} questions assessed"
+
+
+def record_outcome(report: Path, required_coverage: float | None) -> tuple[str, list[str]]:
+    """Whether a publication delivered what the operator asked for."""
+    if required_coverage is None:
+        return "published_complete", ["no coverage requirement was set"]
+    measured = assessed_fraction(report / "coverage.json")
+    if measured is None:
+        return "published_incomplete", [
+            f"{required_coverage:.0%} question coverage was required and the report has no coverage.json"
+        ]
+    fraction, count = measured
+    if fraction + 1e-9 < required_coverage:
+        return "published_incomplete", [f"{count}; {required_coverage:.0%} was required"]
+    return "published_complete", [count]
 
 
 class EvidenceRef(BaseModel):
@@ -213,7 +247,7 @@ def check_report(root: str) -> Tool:
 
 
 @tool
-def publish_report(root: str) -> Tool:
+def publish_report(root: str, required_coverage: float | None = None) -> Tool:
     """Render and persist a report before entering discussion mode."""
 
     async def execute() -> str:
@@ -251,11 +285,71 @@ def publish_report(root: str) -> Tool:
             destination = save_publication(Path(root))
         except (ValueError, OSError) as ex:
             raise ToolError(str(ex)) from ex
+        investigation = store_as(InvestigationState)
+        investigation.outcome, investigation.outcome_reasons = record_outcome(
+            destination, required_coverage
+        )
+        shortfall = (
+            f" Recorded as INCOMPLETE: {'; '.join(investigation.outcome_reasons)}. Say so plainly "
+            "in the summary; publishing again after more coverage replaces this outcome."
+            if investigation.outcome == "published_incomplete"
+            else ""
+        )
         if remote_workspace(Path(root)):
             durable = await persist(Path(root), destination, f"published/{destination.name}")
-            store_as(InvestigationState).published = durable
-            return f"Published {durable}/report.pdf. Give the operator a concise summary and the report path."
-        store_as(InvestigationState).published = str(destination)
-        return f"Published {destination / 'report.pdf'}. Give the operator a concise summary and the report path."
+            investigation.published = durable
+            return f"Published {durable}/report.pdf.{shortfall} Give the operator a concise summary and the report path."
+        investigation.published = str(destination)
+        return f"Published {destination / 'report.pdf'}.{shortfall} Give the operator a concise summary and the report path."
 
     return execute
+
+
+@tool
+def report_blocker() -> Tool:
+    """End the investigation as blocked, when our own setup stops the operator's ask."""
+
+    async def execute(reason: str) -> str:
+        """Stop the investigation because something outside the benchmark prevents the work.
+
+        Use this when a deterministic failure in the audit setup (not in the benchmark)
+        makes the operator's primary request impossible: child jobs cannot start, the
+        evidence cannot be read, a required tool is missing. Publishing a polished
+        report around that gap would record a failed run as a success. The run ends
+        immediately and is scored as blocked, with your reason.
+
+        Args:
+            reason: What is broken, the evidence for it, and what would unblock it.
+        """
+        if not reason.strip():
+            raise ToolError("say what is blocking the investigation and what would unblock it")
+        investigation = store_as(InvestigationState)
+        investigation.outcome = "blocked"
+        investigation.outcome_reasons = [reason.strip()]
+        return "Recorded as blocked. The investigation ends now; the operator sees your reason."
+
+    return execute
+
+
+OUTCOMES = ["published_complete", "published_incomplete", "blocked", "unpublished"]
+
+
+@scorer(metrics=[frequency(categories=OUTCOMES)])
+def investigation_outcome() -> Scorer:
+    """How the investigation ended, so a run that delivered nothing does not read as success."""
+
+    async def score(state: TaskState, target: Target) -> Score:
+        investigation = state.store_as(InvestigationState)
+        outcome = investigation.outcome or (
+            "published_complete" if investigation.published else "unpublished"
+        )
+        return Score(
+            value=outcome,
+            explanation="; ".join(investigation.outcome_reasons) or None,
+            metadata={
+                "published": investigation.published,
+                "reasons": investigation.outcome_reasons,
+            },
+        )
+
+    return score

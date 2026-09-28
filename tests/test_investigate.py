@@ -1127,3 +1127,71 @@ def test_a_blocked_investigation_ends_and_scores_as_blocked() -> None:
     scored = asyncio.run(investigation_outcome()(_Task(), None))  # type: ignore[arg-type]
     assert scored.value == "blocked" and "Model not found" in (scored.explanation or "")
     assert store_as_(InvestigationState).outcome == "blocked"
+
+
+def test_a_checkpoint_resume_restores_the_ledger_without_counting_spend_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inspect restores its cost counter on resume; prior spend must not be re-added."""
+    from inspect_ai.util._store import Store, init_subtask_store
+
+    from inspect_audit import _investigate
+    from inspect_audit._investigate import Remote
+    from inspect_audit._jobs import Job
+
+    first, fresh = tmp_path / "first", tmp_path / "fresh"
+    for root in (first, fresh):
+        (root / "work").mkdir(parents=True)
+    store = Store()
+    init_subtask_store(store)
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (3.0, []))
+
+    r = Remote(
+        first, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0, provider="middleman"
+    )
+    r.fold_prior_spend()  # the first attempt starts: nothing prior
+    r.snapshot_record()
+    with r.ledger.transaction() as ledger:
+        ledger.add(
+            Job(
+                label="pilot",
+                kind="eval-set",
+                eval_set_id="inv-pilot-1",
+                config_path="x",
+                submitted_at="now",
+                estimated_usd=1.0,
+                reserved_usd=2.0,
+                status="submitted",
+            )
+        )
+    r.known_sources.add("hawk:imported-x")
+    r.record_local_spend()  # spent 3 so far
+    r.snapshot_record()  # what the checkpoint captures
+
+    # an in-run requeue on the same host: setup folds the file again (0 + 3 = 3 prior)
+    r.fold_prior_spend()
+    assert r.local_usd() == 6.0  # the double count this guards against
+    # hydrate restores the Store, then on_resume rebuilds from it
+    r.restore_record()
+    assert r.local_usd() == 3.0
+
+    # a resume on a fresh runner: no files, only the restored Store
+    r2 = Remote(
+        fresh, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0, provider="middleman"
+    )
+    assert r2.ledger.get("pilot") is None
+    r2.restore_record()
+    assert r2.ledger.get("pilot") is not None
+    assert "hawk:imported-x" in r2.known_sources
+    assert r2.local_usd() == 3.0
+
+
+def test_the_hosted_investigator_checkpoints_its_workspace_and_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit import _investigate
+
+    args = _investigate._checkpointing(True, None)
+    config = args["checkpoint"]
+    assert config.sandbox_paths == {"default": ["/workspace", "/inputs"]}
+    assert _investigate._checkpointing(False, None) == {}

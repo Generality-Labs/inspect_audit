@@ -147,6 +147,24 @@ def validate_findings(root: Path) -> list[Finding]:
     return findings
 
 
+def cited_inputs(root: Path) -> list[str]:
+    """The /inputs paths the current findings cite, for fetching before validation."""
+    path = root / "work/report/findings.json"
+    try:
+        records = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return []
+    return sorted(
+        {
+            str(evidence.get("path"))
+            for finding in records
+            if isinstance(finding, dict)
+            for evidence in finding.get("evidence") or []
+            if isinstance(evidence, dict) and str(evidence.get("path", "")).startswith("/inputs/")
+        }
+    )
+
+
 def save_publication(root: Path) -> Path:
     """Copy a self-contained rendered report outside the agent's writable mount."""
     report = root / "work" / "report"
@@ -253,6 +271,7 @@ def publish_report(root: str, required_coverage: float | None = None) -> Tool:
     async def execute() -> str:
         """Compile the GL LaTeX report, save an immutable PDF/source bundle, and open discussion."""
         from ._investigation_workspace import (
+            fetch_inputs_files,
             persist,
             pull,
             push_assessments,
@@ -281,6 +300,9 @@ def publish_report(root: str, required_coverage: float | None = None) -> Tool:
         if not result.success:
             raise ToolError(f"Report rendering failed:\n{result.stderr}\n{result.stdout}")
         await pull(Path(root))
+        # cited /inputs evidence the host lacks (a resumed run's collected logs are in
+        # the restored box, not in the fresh runner's scratch directory)
+        await fetch_inputs_files(Path(root), cited_inputs(Path(root)))
         try:
             destination = save_publication(Path(root))
         except (ValueError, OSError) as ex:

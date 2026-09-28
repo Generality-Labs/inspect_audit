@@ -218,6 +218,30 @@ async def fetch_workspace_file(root: Path, path: str) -> Path:
     return resolved
 
 
+async def fetch_inputs_files(root: Path, paths: list[str]) -> None:
+    """Copy /inputs files the host does not have back from the box, on demand.
+
+    A run resumed on a fresh runner has its collected job logs in the restored box but
+    not in the host's scratch directory; publication validates cited evidence on the
+    host, so it asks for exactly the files it cites.
+    """
+    if not remote_workspace(root):
+        return
+    for path in paths:
+        normal = posixpath.normpath(path)
+        if not normal.startswith("/inputs/"):
+            continue
+        host = root / "inputs" / Path(normal).relative_to("/inputs")
+        if host.exists():
+            continue
+        try:
+            content = await sandbox().read_file(normal, text=False)
+        except FileNotFoundError:
+            continue  # validation reports it as missing, with the path
+        host.parent.mkdir(parents=True, exist_ok=True)
+        host.write_bytes(content)
+
+
 async def push_assessments(root: Path) -> None:
     if remote_workspace(root):
         path = root / "work/report/assessments.tex"
@@ -227,7 +251,14 @@ async def push_assessments(root: Path) -> None:
 
 def _destination(root: Path, name: str) -> str:
     settings = json.loads((root / "remote-workspace.json").read_text())
-    return f"{settings['artifact_dir'].rstrip('/')}/{settings['sample_uuid']}/{name}"
+    # keyed by sample and epoch, not by uuid: Inspect gives a resumed sample a new
+    # uuid, and a resume must find (and add to) what the interrupted run saved
+    key = settings.get("sample_key") or settings["sample_uuid"]
+    return f"{settings['artifact_dir'].rstrip('/')}/{key}/{name}"
+
+
+def sample_key(state: TaskState) -> str:
+    return f"{state.sample_id}-epoch{state.epoch}"
 
 
 def _upload(files: dict[str, Path], destination: str) -> None:
@@ -290,6 +321,7 @@ def stage_workspace(root: Path) -> Solver:
         path = root / "remote-workspace.json"
         settings = json.loads(path.read_text())
         settings["sample_uuid"] = state.uuid
+        settings["sample_key"] = sample_key(state)
         path.write_text(json.dumps(settings))
         # a retried sample gets a fresh pod: everything must be sent again
         for name in ("transferred-inputs.json", "saved-state.json"):
@@ -331,7 +363,7 @@ def cleanup(root: Path) -> Any:
 
 
 def synchronized(tool: Tool, root: Path) -> Tool:
-    """Keep trusted host tools independent of the sandbox provider.
+    """Deliver what a trusted host tool wrote to the box, and save the records.
 
     Sync problems are reported alongside the tool's own result, never instead of
     it: a submission that went through must not look like one that failed.
@@ -339,11 +371,10 @@ def synchronized(tool: Tool, root: Path) -> Tool:
     definition = ToolDef(tool)
 
     async def execute(**kwargs: Any) -> Any:
+        # no pull first: these tools read nothing the agent wrote except a job config,
+        # which hawk_submit fetches itself. What they write (collected logs, indexes,
+        # transcripts) goes into the box afterwards, and the records are saved.
         notes: list[str] = []
-        try:
-            notes += await pull(root)
-        except Exception as ex:
-            notes.append(f"workspace sync before this call failed: {ex}")
         try:
             result = await tool(**kwargs)
         finally:

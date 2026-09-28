@@ -120,7 +120,8 @@ def test_synchronized_tool_preserves_schema_and_pushes_after_failure(monkeypatch
     assert ToolDef(wrapped).parameters == ToolDef(original).parameters
     with pytest.raises(RuntimeError, match="failed"):
         asyncio.run(wrapped(config="job.yaml"))
-    assert calls == ["pull", "push", "save_state"]
+    # no workspace pull per call: the host tools read nothing the agent wrote
+    assert calls == ["push", "save_state"]
 
 
 def test_sync_failure_is_reported_beside_a_successful_result(monkeypatch, tmp_path):
@@ -130,8 +131,7 @@ def test_sync_failure_is_reported_beside_a_successful_result(monkeypatch, tmp_pa
     result = asyncio.run(workspace.synchronized(operation(), tmp_path)(config="job.yaml"))
     assert result.startswith("submitted job.yaml")
     assert "push after this call failed: tar timed out" in result
-    assert "env/bin/python" in result
-    assert calls == ["pull", "push", "save_state"]
+    assert calls == ["push", "save_state"]
 
 
 def _remote_root(tmp_path, base="memory://audit-test/artifacts"):
@@ -343,3 +343,45 @@ def test_the_pull_guard_follows_the_sandboxs_own_read_limit(monkeypatch):
         assert workspace.max_pull_bytes() > 900 * 1024**2
     finally:
         reset_sandbox_limits(tokens)
+
+
+def test_state_is_keyed_by_sample_and_epoch_so_a_resume_finds_it(tmp_path):
+    """Inspect gives a resumed sample a new uuid; the saved state must not move."""
+    root = _remote_root(tmp_path)
+    settings = json.loads((root / "remote-workspace.json").read_text())
+    settings["sample_key"] = "investigation-epoch1"
+    (root / "remote-workspace.json").write_text(json.dumps(settings))
+    assert workspace._destination(root, "state").endswith("/investigation-epoch1/state")
+
+
+def test_publication_fetches_only_the_inputs_it_cites(monkeypatch, tmp_path):
+    """A resumed run's collected logs are in the box, not on the fresh host."""
+    from inspect_audit import _report
+
+    root = _remote_root(tmp_path)
+    (root / "inputs/jobs/pilot").mkdir(parents=True)
+    (root / "inputs/jobs/pilot/have.eval").write_text("x")
+    report = root / "work/report"
+    report.mkdir(parents=True)
+    evidence = [
+        {"path": "/inputs/jobs/pilot/have.eval", "location": "s1"},
+        {"path": "/inputs/jobs/pilot/missing.eval", "location": "s2"},
+        {"path": "figure.png", "location": "fig"},
+    ]
+    (report / "findings.json").write_text(json.dumps([{"id": "F1", "evidence": evidence}]))
+    assert _report.cited_inputs(root) == [
+        "/inputs/jobs/pilot/have.eval",
+        "/inputs/jobs/pilot/missing.eval",
+    ]
+
+    read: list[str] = []
+
+    class Box:
+        async def read_file(self, path, text=True):
+            read.append(path)
+            return b"restored"
+
+    monkeypatch.setattr(workspace, "sandbox", Box)
+    asyncio.run(workspace.fetch_inputs_files(root, _report.cited_inputs(root)))
+    assert read == ["/inputs/jobs/pilot/missing.eval"]
+    assert (root / "inputs/jobs/pilot/missing.eval").read_bytes() == b"restored"

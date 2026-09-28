@@ -11,6 +11,7 @@ import subprocess
 import tarfile
 import tempfile
 import urllib.request
+from dataclasses import asdict
 from importlib.metadata import version
 from logging import getLogger
 from pathlib import Path
@@ -33,7 +34,8 @@ from inspect_ai.model import (
 from inspect_ai.model._model import sample_model_usage
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
-from inspect_ai.util import LimitExceededError, sample_limits, store_as
+from inspect_ai.util import LimitExceededError, StoreModel, sample_limits, store_as
+from pydantic import Field
 
 from . import prompts
 from ._agent import SKILLS, SUPPORT_SKILLS, view_image
@@ -637,6 +639,24 @@ def prepare_workspace(
     return root
 
 
+class InvestigationRecord(StoreModel):
+    """The host's records, mirrored into the sample Store so a checkpoint carries them.
+
+    The ledger and spend files live in the runner's scratch directory, which a resumed
+    run on a fresh pod does not have. Inspect checkpoints the Store and restores it on
+    resume, so the records travel with the conversation they belong to.
+
+    `prior_usd` is spend that Inspect's own cost counter does not include: earlier
+    attempts that were not resumed from a checkpoint (a task retry, `resume=` of an
+    investigation directory). A checkpoint resume restores the counter itself, so it
+    must restore this figure rather than add the previous attempt again.
+    """
+
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+    known_sources: list[str] = Field(default_factory=list)
+    prior_usd: float = 0.0
+
+
 class Remote:
     """Everything the dispatch tools need that the agent must not hold."""
 
@@ -759,6 +779,32 @@ class Remote:
         )
         self._spend_path.write_text(
             json.dumps({"prior_usd": self.prior_local_usd, "this_run_usd": 0.0})
+        )
+
+    def snapshot_record(self) -> None:
+        """Mirror the ledger, sources and prior spend into the sample Store."""
+        self.ledger.reload()
+        record = store_as(InvestigationRecord)
+        record.jobs = [asdict(j) for j in self.ledger.jobs]
+        record.known_sources = sorted(self.known_sources)
+        record.prior_usd = self.prior_local_usd
+
+    def restore_record(self) -> str:
+        """Rebuild the host files from a restored Store, after a checkpoint resume.
+
+        Prior spend is taken from the record, never re-folded from disk: Inspect has
+        restored its cost counter, which already holds everything this sample spent.
+        """
+        record = store_as(InvestigationRecord)
+        with self.ledger.transaction() as ledger:
+            ledger.jobs = [Job(**j) for j in record.jobs]
+        self.known_sources = set(record.known_sources) | {j.eval_set_id for j in self.ledger.jobs}
+        self.save_sources()
+        self.prior_local_usd = record.prior_usd
+        self.record_local_spend()
+        return (
+            f"restored {len(record.jobs)} job(s) and {len(record.known_sources)} log "
+            f"source(s); prior spend ${record.prior_usd:.2f}"
         )
 
     def record_local_spend(self) -> None:
@@ -1563,9 +1609,32 @@ def carry_spend(remote: Remote) -> Solver:
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         remote.fold_prior_spend()
+        # a checkpoint resume replaces this with the checkpointed record, and on_resume
+        # takes prior spend from there (setup runs before the checkpoint is restored)
+        remote.snapshot_record()
         return state
 
     return solve
+
+
+def checkpoint_record(remote: Remote) -> Any:
+    """Task on_checkpoint: write the host's records into the Store being captured."""
+
+    async def on_checkpoint(state: TaskState) -> None:
+        remote.snapshot_record()
+
+    return on_checkpoint
+
+
+def resume_record(remote: Remote) -> Any:
+    """Task on_resume: rebuild the ledger and spend from the Store, then ask Hawk."""
+
+    async def on_resume(state: TaskState, attempt: str) -> str:
+        restored = remote.restore_record()
+        notes = await remote.reconcile()
+        return "; ".join([restored, *notes])
+
+    return on_resume
 
 
 @solver
@@ -1790,6 +1859,29 @@ async def _continue(
     return await operator_turn(state)
 
 
+def _checkpointing(enabled: bool, remote: Remote | None) -> dict[str, Any]:
+    """Task checkpoint arguments, when enabled and this Inspect has checkpointing.
+
+    Captures the workspace and the inputs (collected job logs live there), and hands
+    the host's records through the Store so a resumed run on a fresh runner knows its
+    jobs and what it has spent.
+    """
+    if not enabled:
+        return {}
+    try:
+        from inspect_ai.util import CheckpointConfig
+    except ImportError:  # an Inspect without checkpointing: run without it
+        logger.warning("this Inspect has no checkpointing; the investigation cannot resume")
+        return {}
+    args: dict[str, Any] = {
+        "checkpoint": CheckpointConfig(sandbox_paths={"default": ["/workspace", "/inputs"]})
+    }
+    if remote is not None:
+        args["on_checkpoint"] = checkpoint_record(remote)
+        args["on_resume"] = resume_record(remote)
+    return args
+
+
 def _resumable(resume: str) -> Path:
     """An existing investigation directory, with its inputs, workspace and ledger."""
     root = Path(resume).expanduser().resolve()
@@ -1829,6 +1921,7 @@ def investigate(
     artifact_dir: str | None = None,
     instructions: str | None = None,
     required_coverage: float | None = None,
+    checkpoint: bool | None = None,
     provider: str | None = None,
 ) -> Task:
     """Investigate source and logs on Hawk and publish a GL LaTeX report.
@@ -1890,6 +1983,10 @@ def investigate(
         required_coverage: Fraction of the question population (0-1) the published
             coverage.json must assess for the run to count as complete. A publication
             short of it is scored `published_incomplete`, not success. None sets no bar.
+        checkpoint: Checkpoint the investigation with Inspect so an interrupted run
+            resumes (`hawk eval-set resume`, `inspect eval-retry`) with its conversation,
+            workspace, job ledger and spend. Defaults to on for execution='hawk' and off
+            locally, where the workspace is a bind mount that already outlives the run.
     """
     # the file is read before anything else is decided: a setting it carries must be
     # able to change what gets validated, which skills load and how much may be spent.
@@ -1924,6 +2021,7 @@ def investigate(
     artifact_dir = settings.get("artifact_dir", artifact_dir)
     instructions = settings.get("instructions", instructions)
     required_coverage = settings.get("required_coverage", required_coverage)
+    checkpoint = settings.get("checkpoint", checkpoint)
     provider = settings.get("provider", provider) or DEFAULT_PROVIDER
     if provider not in PROVIDERS:
         raise ValueError(f"provider must be one of {', '.join(PROVIDERS)}")
@@ -2137,6 +2235,10 @@ def investigate(
             remote.record_local_spend()
         return await _continue(state, interactive, remote)
 
+    checkpointing = _checkpointing(
+        execution == "hawk" if checkpoint is None else bool(checkpoint), remote
+    )
+
     return Task(
         setup=setup_steps or None,
         dataset=[
@@ -2160,6 +2262,7 @@ def investigate(
         ),
         sandbox=sandbox_spec,
         cleanup=task_cleanup,
+        **checkpointing,
         # per-tool limits: bash above; the host tools summarise and write the rest to files
         config=GenerateConfig(max_tool_output=32 * 1024),
         cost_limit=budget_usd if enforce_cost_limit else None,

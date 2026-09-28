@@ -324,7 +324,7 @@ def audit_probe() -> Tool:
                 evaluated agent held); a multi-service benchmark also has its
                 sibling services, addressable by name. An unknown name is
                 rejected with the list of this item's boxes.
-            timeout: Probe deadline in seconds (1–3600); null uses 180. For a
+            timeout: Probe deadline in seconds (1-3600); null uses 180. For a
                 benchmark timeout reproduction, allow time beyond its own
                 deadline. This does not change the benchmark's grading limit.
         """

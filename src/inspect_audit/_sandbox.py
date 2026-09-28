@@ -231,7 +231,7 @@ async def phoenix_benchmark(script: str | None, files: dict[str, str] | None = N
             "phoenix reset needs the docker sandbox; this run's provider is not "
             "docker, where rebuilding a bricked box from its image is unsupported."
         ) from None
-    project = docker._project
+    project = docker._project  # pyright: ignore[reportPrivateUsage]
 
     services = await compose_services(project)
     targets = [name for name in services if name != AUDITOR_SERVICE_NAME]
@@ -849,9 +849,11 @@ def _values_service(
         out["env"] = _env(src.pop("environment"))
     if "volumes" in src:
         out["volumes"] = src.pop("volumes")
-    if "healthcheck" in src:
-        if (probe := _readiness_probe(src.pop("healthcheck"), name)) is not None:
-            out["readinessProbe"] = probe
+    if (
+        "healthcheck" in src
+        and (probe := _readiness_probe(src.pop("healthcheck"), name)) is not None
+    ):
+        out["readinessProbe"] = probe
     if resources := _resources(src):
         out["resources"] = resources
     if "user" in src:

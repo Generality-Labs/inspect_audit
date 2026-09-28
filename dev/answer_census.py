@@ -28,7 +28,7 @@ def golds(record):
 
 rows = []
 for name in ("core_test.json", "core_train.json"):
-    for rec in json.load(open(CACHE / name)):
+    for rec in json.loads((CACHE / name).read_text()):
         cid = rec["capsule_id"]
         tar = CACHE / f"{cid}.tar.gz"
         if not tar.exists():
@@ -53,6 +53,7 @@ for name in ("core_test.json", "core_train.json"):
                     ["grep", "-rInwF", "--exclude=*.eval", v, str(root)],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 lines = [ln for ln in r.stdout.splitlines() if ln]
                 files = {ln.split(":", 1)[0] for ln in lines}

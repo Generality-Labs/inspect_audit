@@ -45,7 +45,8 @@ _to_float = value_to_float()
 def _grade(value: Value) -> Any:
     """A grade as inspect's metrics see it, so 1, 1.0, True and "C" compare equal."""
     if isinstance(value, dict):
-        return {str(k): _grade(v) for k, v in sorted(value.items())}
+        # Mapping values may be None; value_to_float logs that and returns 0.0.
+        return {str(k): _grade(v) for k, v in sorted(value.items())}  # pyright: ignore[reportArgumentType]
     if isinstance(value, list):
         return [_grade(v) for v in value]
     return _to_float(value)

@@ -336,7 +336,7 @@ def test_publication_switches_from_work_to_discussion(
     async def operator_reply(state: AgentState) -> str:
         return "Show me the supporting transcript."
 
-    monkeypatch.setattr(_investigate, "_operator_turn", operator_reply)
+    monkeypatch.setattr(_investigate, "operator_turn", operator_reply)
     assert asyncio.run(_investigate._continue(state, True)) == "Show me the supporting transcript."
 
 
@@ -887,7 +887,7 @@ def test_the_config_file_decides_before_anything_is_built(
     broken.write_text(
         f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\nextra_skills: ['{not_a_skill}']\n"
     )
-    with pytest.raises(ValueError, match="containing SKILL.md"):
+    with pytest.raises(ValueError, match=r"containing SKILL\.md"):
         investigate(config=str(broken), execution="local")
 
     bad = tmp_path / "bad.yaml"

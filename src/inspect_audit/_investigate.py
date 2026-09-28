@@ -56,8 +56,8 @@ from ._jobs import (
 )
 from ._report import (
     InvestigationState,
-    _operator_turn,
     check_report,
+    operator_turn,
 )
 from ._report import (
     publish_report as publish_report,
@@ -343,6 +343,7 @@ def git_package_spec(repo: Path, revision: str | None = None) -> str | None:
         ["git", "-C", str(repo), "branch", "-r", "--contains", commit],
         capture_output=True,
         text=True,
+        check=False,
     )
     if on_remote.returncode != 0 or not on_remote.stdout.strip():
         logger.warning(
@@ -1541,7 +1542,7 @@ async def _continue(
         )
     if not interactive:
         return False
-    return await _operator_turn(state)
+    return await operator_turn(state)
 
 
 def _resumable(resume: str) -> Path:

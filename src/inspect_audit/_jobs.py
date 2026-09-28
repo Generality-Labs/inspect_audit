@@ -14,7 +14,7 @@ import posixpath
 import re
 import shutil
 import time
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
+import anyio.to_thread
 import yaml
 from inspect_ai.util import display_counter, subprocess
 
@@ -70,7 +71,7 @@ class JobLedger:
         )
 
     @contextmanager
-    def transaction(self) -> Iterator["JobLedger"]:
+    def transaction(self) -> Generator["JobLedger", None, None]:
         """Exclusive access: re-read from disk, yield, write back on a clean exit."""
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.lock_path, "w") as handle:

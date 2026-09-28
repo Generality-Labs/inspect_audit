@@ -476,13 +476,13 @@ def _strict_parameters(schema: dict[str, Any]) -> dict[str, Any]:
         required = set(schema.get("required", []))
         properties = {}
         for name, value in schema["properties"].items():
-            value = _strict_parameters(value)
+            strict = _strict_parameters(value)
             if name not in required:
-                value = {
-                    "description": value.get("description", ""),
-                    "anyOf": [value, {"type": "null"}],
+                strict = {
+                    "description": strict.get("description", ""),
+                    "anyOf": [strict, {"type": "null"}],
                 }
-            properties[name] = value
+            properties[name] = strict
         schema.update(properties=properties, required=list(properties), additionalProperties=False)
     if isinstance(schema.get("items"), dict):
         schema["items"] = _strict_parameters(schema["items"])

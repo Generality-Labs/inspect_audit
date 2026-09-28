@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
+import anyio.to_thread
 import yaml
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import Tool, ToolDef, ToolError

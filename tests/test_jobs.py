@@ -1769,7 +1769,8 @@ def test_repeated_sample_page_is_not_an_infinite_population(monkeypatch) -> None
 
 def test_failed_ledger_transaction_restores_memory(tmp_path: Path) -> None:
     ledger = JobLedger(tmp_path)
-    with pytest.raises(ValueError), ledger.transaction():
+    # The raise inside the block is the failure under test.
+    with pytest.raises(ValueError), ledger.transaction():  # noqa: PT012
         ledger.add(Job("a", "audit", "id", "x", "now", 1))
         raise ValueError("abort")
     assert ledger.jobs == []

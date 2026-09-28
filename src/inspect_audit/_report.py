@@ -19,7 +19,7 @@ from inspect_ai.util import (
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 
-async def _operator_turn(state: AgentState) -> bool | str:
+async def operator_turn(state: AgentState) -> bool | str:
     """Hand the floor to the operator whenever the model stops calling tools.
 
     react()'s default on_continue nudges the model to keep going, which makes

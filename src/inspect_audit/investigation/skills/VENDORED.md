@@ -15,9 +15,11 @@ below derive from upstream skills and are adapted, not verbatim copies.
 | view-results | METR hawk `.claude/skills` | 45f629c (2026-08-25) |
 | debug-stuck-eval | same | 45f629c |
 | babysit-eval | same | 45f629c |
+| babysitting-evals | meridianlabs-ai/inspect-skills `plugins/inspect-skills/skills` (0.4.5) | 8a9dbaf (2026-09-26) |
 
-Both source repositories are MIT licensed (Copyright (c) 2024 UK AI Security Institute;
-Copyright (c) 2026 METR). `reading-logs`, `analyzing-logs` and `map-inspect-packages`
+All source repositories are MIT licensed (Copyright (c) 2024 UK AI Security Institute;
+Copyright (c) 2026 METR; Meridian Labs, see ../../skills/LICENSE.meridian). babysitting-evals is
+verbatim apart from an added `In this container` section mapping `inspect ctl` onto `jobs()`. `reading-logs`, `analyzing-logs` and `map-inspect-packages`
 are mounted too and live in `../../skills` with their own note.
 
 ## What was changed

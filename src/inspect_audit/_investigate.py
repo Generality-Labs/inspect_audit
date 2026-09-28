@@ -104,6 +104,7 @@ INVESTIGATION_SKILLS = (
     "view-results",
     "debug-stuck-eval",
     "babysit-eval",
+    "babysitting-evals",
     "check-trajectories-workflow",
     "eval-report-workflow",
     "read-eval-logs",

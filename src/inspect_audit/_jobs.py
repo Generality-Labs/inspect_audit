@@ -1108,7 +1108,7 @@ def usage_cost(logs: list[Path]) -> tuple[float | None, dict[str, dict[str, int]
     a price the benchmark's own code rewrote cannot add allowance.
     """
     from inspect_ai.log import read_eval_log, read_eval_log_sample_summaries
-    from inspect_ai.model import get_model_info
+    from inspect_ai.model import compute_model_cost, get_model_info
 
     total = 0.0
     priced = True
@@ -1141,16 +1141,9 @@ def usage_cost(logs: list[Path]) -> tuple[float | None, dict[str, dict[str, int]
                 if cost is None:
                     priced = False
                     continue
-                total += max(
-                    0.0,
-                    (
-                        (u.input_tokens or 0) * (cost.input or 0)
-                        + (u.input_tokens_cache_read or 0) * (cost.input_cache_read or 0)
-                        + (u.input_tokens_cache_write or 0) * (cost.input_cache_write or 0)
-                        + (u.output_tokens or 0) * (cost.output or 0)
-                    )
-                    / 1_000_000,
-                )
+                # Inspect's own arithmetic; a summary does not record the cache TTL, so
+                # cache writes are billed at the standard rate
+                total += max(0.0, compute_model_cost(cost, u))
     return (total if priced else None), usage, recomputed
 
 

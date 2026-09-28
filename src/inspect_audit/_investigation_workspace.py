@@ -26,8 +26,20 @@ logger = logging.getLogger(__name__)
 # (clones, venvs, downloads) stays in the box, so its links and sizes cannot break
 # the sync. Job configs are fetched one file at a time by hawk_submit.
 MIRRORED = ("report", "journal.md")
-# Kubernetes read_file refuses more than 100 MiB; say what is large before it does.
-MAX_PULL_BYTES = 90 * 1024 * 1024
+
+
+def max_pull_bytes() -> int:
+    """What the sandbox will read back in one go, with headroom for the archive.
+
+    Inspect's own read limit (`SandboxEnvironmentLimits`), which Hawk raises to 1 GiB
+    through INSPECT_SANDBOX_MAX_READ_FILE_SIZE; a fixed number refused pulls there that
+    would have transferred fine.
+    """
+    from inspect_ai.util import SandboxEnvironmentLimits
+
+    return int(SandboxEnvironmentLimits.MAX_READ_FILE_SIZE * 0.9)
+
+
 # Host-side records that must outlive the runner pod.
 STATE_FILES = ("jobs.json", "local_spend.json", "log_sources.json")
 
@@ -135,12 +147,12 @@ async def pull(root: Path) -> list[str]:
         raise ToolError(f"Could not inspect the workspace: {listing.stderr}")
     lines = listing.stdout.split()
     present, size = lines[:-1], int(lines[-1]) if lines else 0
-    if size > MAX_PULL_BYTES:
+    if size > (limit := max_pull_bytes()):
         biggest = await sandbox().exec(
             ["sh", "-c", "cd /workspace && du -ab report | sort -rn | head -8"], timeout=120
         )
         raise ToolError(
-            f"/workspace/report is {size // 2**20} MiB, over the {MAX_PULL_BYTES // 2**20} MiB "
+            f"/workspace/report is {size // 2**20} MiB, over the {limit // 2**20} MiB "
             f"the host can read back. Move large files out of /workspace/report "
             f"(cite /inputs paths instead of copying logs):\n{biggest.stdout}"
         )
@@ -351,4 +363,7 @@ def synchronized(tool: Tool, root: Path) -> Tool:
         description=definition.description,
         parameters=definition.parameters,
         parallel=False,
+        viewer=definition.viewer,
+        model_input=definition.model_input,
+        max_output=definition.max_output,
     ).as_tool()

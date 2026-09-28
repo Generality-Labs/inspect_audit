@@ -320,3 +320,26 @@ def test_children_default_to_the_operators_key_and_say_so_when_it_is_missing(mon
         ).read_text()
     )
     assert seed["remote"]["provider"] == "middleman"
+
+
+def test_synchronized_keeps_the_tools_output_limit_and_viewer(monkeypatch, tmp_path):
+    from inspect_ai.tool import ToolDef
+
+    calls = []
+    _sync_recorder(monkeypatch, calls)
+    original = ToolDef(operation(), max_output=1234).as_tool()
+    wrapped = workspace.synchronized(original, tmp_path)
+    assert ToolDef(wrapped).max_output == 1234
+
+
+def test_the_pull_guard_follows_the_sandboxs_own_read_limit(monkeypatch):
+    """Hawk raises the read limit to 1 GiB; Inspect applies it when an eval starts."""
+    from inspect_ai.util._sandbox.limits import reset_sandbox_limits, set_sandbox_limits
+
+    assert workspace.max_pull_bytes() < 100 * 1024**2
+    monkeypatch.setenv("INSPECT_SANDBOX_MAX_READ_FILE_SIZE", str(1024**3))
+    tokens = set_sandbox_limits()
+    try:
+        assert workspace.max_pull_bytes() > 900 * 1024**2
+    finally:
+        reset_sandbox_limits(tokens)

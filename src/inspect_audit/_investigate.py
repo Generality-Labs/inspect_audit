@@ -32,7 +32,7 @@ from inspect_ai.model import (
 )
 from inspect_ai.model._model import sample_model_usage
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.tool import Tool, ToolError, bash, skill, tool
+from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
 from inspect_ai.util import LimitExceededError, sample_limits, store_as
 
 from . import prompts
@@ -101,6 +101,8 @@ INVESTIGATION_SKILLS = (
     "security-audit-eval",
     "debug-stuck-eval",
 )
+# compact the investigator's context once it passes this many tokens
+COMPACTION_TOKENS = 200_000
 OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"
 OPENROUTER_IDS: set[str] = set()  # every id the price registry has seen this process
 DEFAULT_WORKERS = [
@@ -2087,7 +2089,9 @@ def investigate(
         if resumed:
             setup_steps.append(reconcile_jobs(remote))
     tools: list[Tool] = [
-        bash(timeout=300),
+        # a shell dump is the one place the agent routinely wants more than the
+        # 32KB default; everything else writes large results to files
+        ToolDef(bash(timeout=300), max_output=128 * 1024).as_tool(),
         skill(skill_paths),
         investigation_budget(budget_usd, enforce_cost_limit, remote),
         view_image(),
@@ -2113,8 +2117,6 @@ def investigate(
     sandbox_spec = ("docker", str(root / "compose.yaml"))
     task_cleanup = None
     if execution == "hawk":
-        from inspect_ai.tool import ToolDef
-
         from ._investigation_workspace import (
             cleanup,
             configure,
@@ -2150,16 +2152,16 @@ def investigate(
             prompt=prompts.INVESTIGATE,
             submit=False,
             tools=tools,
-            compaction=CompactionSummary(threshold=0.8),
+            # an absolute threshold: 0.8 of a 1.05M-token context fired at ~840k,
+            # long after every turn had become expensive
+            compaction=CompactionSummary(threshold=COMPACTION_TOKENS),
             truncation="auto",
             on_continue=on_continue,
         ),
         sandbox=sandbox_spec,
         cleanup=task_cleanup,
-        # tool results are truncated at 16KB by default; an inventory of fifty
-        # logs or a transcript dump is routinely larger, and a truncated view
-        # is what the agent then reasons from
-        config=GenerateConfig(max_tool_output=200 * 1024),
+        # per-tool limits: bash above; the host tools summarise and write the rest to files
+        config=GenerateConfig(max_tool_output=32 * 1024),
         cost_limit=budget_usd if enforce_cost_limit else None,
         token_limit=token_limit,
         working_limit=4 * 3600,

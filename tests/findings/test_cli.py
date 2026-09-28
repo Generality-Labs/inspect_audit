@@ -10,6 +10,7 @@ from test_header_adapter import _log
 
 from inspect_audit.findings.cli import collect_logs, main
 from inspect_audit.findings.featured import FEATURED
+from inspect_audit.findings.producers import ProducerConfig
 
 FIXTURES = Path(__file__).parent / "fixtures"
 ASSET = "external_assets:\n  - type: huggingface\n    source: McGill-NLP/stereoset\n    fetch_method: hf_dataset\n    state: pinned\n"
@@ -103,3 +104,53 @@ def test_without_logs_the_header_producer_is_not_run_and_exit_is_zero(tmp_path: 
     out = tmp_path / "out"
     assert main(["run", "--root", str(root), "--out", str(out), "--producers", "lint", "inspect_evals/stereoset"]) == 0
     assert sorted(p.name for p in (out / "inspect-evals-stereoset").glob("*.run.json")) == ["lint.run.json"]
+
+
+def test_hawk_logs_source_is_downloaded_into_the_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from test_hawk import STUB as HAWK_STUB
+
+    src = _log(tmp_path / "src", samples=3)
+    monkeypatch.setenv("STUB_EVAL_SRC", str(src))
+    monkeypatch.setenv("INSPECT_AUDIT_HAWK_CMD", f"{sys.executable} {HAWK_STUB}")
+    cache = tmp_path / "hawkcache"
+    paths = collect_logs(["hawk:scicode-a"], hawk_cache=cache, producers=ProducerConfig.from_env())
+    assert paths == [cache / "scicode-a" / src.name]
+
+
+def test_hawk_task_flag_resolves_sets_by_task(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from inspect_audit.findings import cli, hawk
+    from inspect_audit.findings.hawk import EvalSetInfo
+
+    found = [EvalSetInfo(eval_set_id="scicode-a", created_at="2026-09-24T08:46:40Z", created_by="u1", eval_count=9,
+                         task_names=["inspect_evals/scicode"])]
+    monkeypatch.setattr(hawk, "find_eval_sets", lambda task, **kw: found)
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(cli, "collect_logs", lambda sources, **kw: seen.setdefault("sources", list(sources)) and [])
+    monkeypatch.setattr(cli, "sweep", lambda targets, ctx, producers, **kw: {})
+    monkeypatch.setattr(cli, "write_outputs", lambda out, runs: None)
+    assert main(["run", "--root", str(tmp_path), "--out", str(tmp_path / "o"), "--hawk-task", "inspect_evals/scicode",
+                 "inspect_evals/scicode"]) == 0
+    assert seen["sources"] == ["hawk:scicode-a"]
+
+
+def test_hawk_task_flag_refuses_too_many_sets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from inspect_audit.findings import hawk
+    from inspect_audit.findings.hawk import EvalSetInfo
+
+    many = [EvalSetInfo(eval_set_id=f"s{i}", created_at="2026-09-24T00:00:00Z", created_by="u", eval_count=1,
+                        task_names=["inspect_evals/scicode"]) for i in range(25)]
+    monkeypatch.setattr(hawk, "find_eval_sets", lambda task, **kw: many)
+    assert main(["run", "--root", str(tmp_path), "--out", str(tmp_path / "o"), "--hawk-task", "inspect_evals/scicode",
+                 "inspect_evals/scicode"]) == 2
+
+
+def test_hawk_sets_subcommand_lists_matches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from inspect_audit.findings import hawk
+    from inspect_audit.findings.hawk import EvalSetInfo
+
+    found = [EvalSetInfo(eval_set_id="scicode-a", created_at="2026-09-24T08:46:40Z", created_by="u1", eval_count=9,
+                         task_names=["inspect_evals/scicode"])]
+    monkeypatch.setattr(hawk, "find_eval_sets", lambda task, **kw: found)
+    assert main(["hawk-sets", "inspect_evals/scicode"]) == 0
+    out = capsys.readouterr().out
+    assert "scicode-a" in out and "9" in out

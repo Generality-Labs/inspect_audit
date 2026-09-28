@@ -32,6 +32,7 @@ src/inspect_audit/findings/
     dataset.py      inspect-dataset scan output -> Run
     header.py       .eval headers -> Run
   featured.py       the 35 Featured eval ids, copied from inspect_evals docs/_templates/evals.ejs
+  hawk.py           find_eval_sets(task) via the hawk client; download_eval_set(id, cache) via the hawk CLI
   render.py         render_eval_summary(runs) and render_sweep_summary(runs) -> markdown
   cli.py            inspect-audit-findings
   schema/
@@ -43,7 +44,7 @@ tests/findings/
   test_lint_adapter.py test_dataset_adapter.py test_header_adapter.py test_cli.py
 ```
 
-`findings/models.py`, `fingerprint.py`, `io.py` and `adapters/` import nothing from the rest of inspect_audit, so the module can be lifted into its own package later. `cli.py` is the one exception: it imports `inspect_audit._registry.fetch_logs` to resolve `hawk:` log sources. Nothing else in inspect_audit imports `findings`.
+`findings/` imports nothing from the rest of inspect_audit except `adapters/header.py`, which imports `inspect_audit._resolve.resolve_task` behind `--resolve`. `hawk:` log sources are handled by `findings/hawk.py` (added 2026-09-28): discovery through the optional `hawk` Python client, which resolves the operator's `hawk login` token from the keyring, and download by shelling out to the `hawk` CLI into a cache under `~/.cache/inspect_audit/hawk/`. The earlier plan to reuse `_registry.fetch_logs` was dropped because it needs runner-style token environment variables and re-downloads into a temp directory every run. Nothing else in inspect_audit imports `findings`.
 
 ## Models
 
@@ -169,7 +170,7 @@ inspect-audit-findings summary <out dir>
 ```
 
 - `TARGET` is a registry name. `--featured` appends the 35 ids from `featured.py` as `inspect_evals/<id>`. At least one target is required.
-- `--logs` accepts, repeatedly, a directory, a `.eval` file, or a `hawk:<eval-set-id>` address. Local sources are listed with `list_eval_logs(recursive=True)`. `hawk:` sources are materialised once per invocation with `inspect_audit._registry.fetch_logs`, which downloads through the Hawk API using `HAWK_API_URL` and either `HAWK_ACCESS_TOKEN` or the runner refresh environment. Logs are then partitioned by target on the header's task name, so one `--logs` directory can serve a whole sweep.
+- `--logs` accepts, repeatedly, a directory, a `.eval` file, or a `hawk:<eval-set-id>` address. Local sources are listed with `list_eval_logs(recursive=True)`. `hawk:` sources are pulled with `hawk download` into `--hawk-cache` (default `~/.cache/inspect_audit/hawk/<set>`), where the CLI skips files already present. `--hawk-task <task>` resolves to every eval set whose `task_names` include the task, refusing above `--hawk-limit` (default 20) so a task with hundreds of sets is not pulled by accident; `hawk-sets <task>` lists them without pulling. Logs are then partitioned by target on the header's task name, so one corpus can serve a whole sweep.
 - `--producers` selects external producers, default `lint,dataset`. The header producer runs whenever `--logs` was supplied; without logs it is not requested, so a lint-and-dataset sweep can exit 0.
 - For each target, in order: header, then the selected producers. Each writes `<out>/<slug>/<producer>.run.json` and appends to in-memory lists. After the sweep, `findings.parquet`, `runs.parquet`, `<out>/SUMMARY.md` and each `<out>/<slug>/SUMMARY.md` are written.
 - Exit code 0 if every producer ran; 1 if any run was a skip; 2 on a usage error. Findings do not affect the exit code.

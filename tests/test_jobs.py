@@ -1768,6 +1768,35 @@ def test_a_source_the_child_cannot_download_is_a_note_not_a_stop(tmp_path: Path)
     assert checks[1]["paths"] == {"index": "readable", "transcript": "readable"}
 
 
+def test_one_source_with_a_broken_warehouse_record_is_a_note_not_a_stop(tmp_path: Path) -> None:
+    """09-28: two sets' warehouse rows pointed at a stray copy, so their transcripts
+    failed with a non-HTTP error; the preflight took that for a broken harness and
+    stopped a run whose other sources were fine."""
+    from inspect_audit._investigate import check_evidence_access
+
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir()
+    seed = tmp_path / "inputs/seed.json"
+    seed.write_text("{}")
+
+    async def transcript(sample_uuid: str, out_dir: Path) -> Path:
+        if "polluted" in sample_uuid:
+            raise Exception("imported-x/s3://bucket/evals/run/artifacts/_inputs/index: HTTP 404")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "t.md").write_text("ok")
+        return out_dir / "t.md"
+
+    r.hawk.transcript = transcript  # type: ignore[method-assign]
+    run(check_evidence_access(r, tmp_path, ["hawk:clean", "hawk:polluted"])(None, None))
+    checks = json.loads(seed.read_text())["evidence_access"]
+    assert [c["status"] for c in checks] == ["readable", "unavailable"]
+    assert "HTTP 404" in checks[1]["reason"]
+
+    # the same failure on every source is still a broken harness
+    with pytest.raises(RuntimeError, match="broken"):
+        run(check_evidence_access(r, tmp_path, ["hawk:polluted-a", "hawk:polluted-b"])(None, None))
+
+
 @pytest.mark.parametrize(
     "change",
     [

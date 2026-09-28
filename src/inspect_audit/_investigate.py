@@ -1578,11 +1578,7 @@ def check_evidence_access(remote: Remote | None, root: Path, sources: list[str])
             except Exception as ex:
                 failure = ex
                 check["reason"] = f"{type(ex).__name__}: {str(ex)[-1500:]}"
-            if (
-                failure is not None
-                and http_status(failure) is None
-                and not isinstance(failure, ValueError)
-            ):
+            if failure is not None and _harness_failure(failure):
                 harness.append(check["reason"])
             checks.append(check)
         seed_path = root / "inputs" / "seed.json"
@@ -1591,8 +1587,11 @@ def check_evidence_access(remote: Remote | None, root: Path, sources: list[str])
         seed_path.write_text(json.dumps(seed, indent=2))
         transcript().info(json.dumps({"evidence_access": checks}))
         failed = [c["reason"] for c in checks if c["status"] != "readable"]
-        same_everywhere = len(failed) >= 2 and len(failed) == len(checks) and len(set(failed)) == 1
-        if harness or same_everywhere:
+        # one unreadable source is a fact about that source (2026-09-28: warehouse rows
+        # re-pointed at a stray copy 404ed on transcripts for two sets); every source
+        # failing, or a failure in our own machinery, means the harness is broken
+        nothing_readable = len(checks) >= 2 and len(failed) == len(checks)
+        if harness or nothing_readable:
             raise RuntimeError(
                 "The investigation's own access to its evidence is broken, so it stops before "
                 "spending on the lead model: "
@@ -1602,6 +1601,22 @@ def check_evidence_access(remote: Remote | None, root: Path, sources: list[str])
         return state
 
     return solve
+
+
+def _harness_failure(ex: BaseException) -> bool:
+    """A failure in our own machinery rather than in one evidence source.
+
+    Missing modules or binaries (the 09-25 runner found a hawk without keyring) and
+    credentials that cannot be obtained break every read, whatever the source.
+    """
+    if isinstance(ex, (ImportError, FileNotFoundError)):
+        return True
+    status = http_status(ex)
+    if status == 401:
+        return True
+    return isinstance(ex, RuntimeError) and any(
+        word in str(ex).lower() for word in ("token", "refresh credential", "keyring")
+    )
 
 
 @solver

@@ -595,20 +595,30 @@ def has_benchmark(spec: SandboxEnvironmentSpec | None) -> bool:
 
 
 def sample_sandbox(task: Task, sample: Sample) -> SandboxEnvironmentSpec | None:
-    """The sandbox an audited sample actually runs in (its own, else its task's)."""
-    # resolve_sandbox already falls back to the task's sandbox for a bare sample
-    return resolve_sandbox(task, sample.sandbox)
+    """The sandbox an audited sample actually ran in, resolved the way Inspect resolves it.
 
+    Inspect's own precedence (inspect_ai/_eval/loader.py `resolve_task_sandbox`, then
+    _eval/task/sandbox.py `resolve_sandbox`, which Hawk's runner also uses): the task's
+    implicit compose.yaml/Dockerfile is found, the task's type wins over the sample's,
+    and a sample config overrides only when compatible. Relative config paths are made
+    absolute against the audited task's directory, not the audit's.
+    """
+    from inspect_ai._eval.loader import resolve_task_sandbox
+    from inspect_ai._eval.task.sandbox import resolve_sandbox as inspect_resolve_sandbox
+    from inspect_ai._util._async import run_coroutine
 
-def resolve_sandbox(
-    task: Task, sandbox: SandboxEnvironmentType | None = None
-) -> SandboxEnvironmentSpec | None:
-    """The audited task's own sandbox, with any relative config path made absolute."""
-    spec = resolve_sandbox_environment(sandbox if sandbox is not None else task.sandbox)
+    # a sample built in code may carry the raw (type, config) form; Inspect's resolver
+    # expects the normalised spec its dataset loaders produce
+    normalised = sample.model_copy(update={"sandbox": resolve_sandbox_environment(sample.sandbox)})
+    spec = run_coroutine(
+        inspect_resolve_sandbox(
+            resolve_task_sandbox(task, resolve_sandbox_environment(task.sandbox)),
+            normalised,
+            task.name,
+        )
+    )
     if spec is None:
         return None
-    # inspect resolves relative config paths against the running task's directory,
-    # which is the audit's, not the audited task's
     if isinstance(spec.config, str) and not Path(spec.config).is_absolute():
         return SandboxEnvironmentSpec(
             spec.type, (Path(task_run_dir(task)) / spec.config).as_posix()

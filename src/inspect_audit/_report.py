@@ -1,4 +1,5 @@
 """Finding validation, report publication and shared ACP turn-taking."""
+
 import json
 import os
 import shutil
@@ -18,7 +19,7 @@ from inspect_ai.util import (
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 
-async def _operator_turn(state: AgentState) -> bool | str:
+async def operator_turn(state: AgentState) -> bool | str:
     """Hand the floor to the operator whenever the model stops calling tools.
 
     react()'s default on_continue nudges the model to keep going, which makes
@@ -31,11 +32,7 @@ async def _operator_turn(state: AgentState) -> bool | str:
     result = await request_input(
         message="Reply to the agent",
         schema=ElicitationSchema(
-            properties={
-                "message": ElicitationStringPropertySchema(
-                    type="string", title="Message"
-                )
-            },
+            properties={"message": ElicitationStringPropertySchema(type="string", title="Message")},
             required=["message"],
         ),
     )
@@ -63,8 +60,15 @@ class EvidenceRef(BaseModel):
 
 
 Section = Literal[
-    "construct", "contentvalidity", "dataset", "scaffold", "harness",
-    "environment", "grading", "resources", "informativeness",
+    "construct",
+    "contentvalidity",
+    "dataset",
+    "scaffold",
+    "harness",
+    "environment",
+    "grading",
+    "resources",
+    "informativeness",
 ]
 
 
@@ -88,32 +92,24 @@ class Finding(BaseModel):
 def validate_findings(root: Path) -> list[Finding]:
     """Validate shape and file provenance, not the truth of an interpretation."""
     report = root / "work/report"
-    findings = TypeAdapter(list[Finding]).validate_json(
-        (report / "findings.json").read_text()
-    )
+    findings = TypeAdapter(list[Finding]).validate_json((report / "findings.json").read_text())
     ids = [f.id for f in findings]
     if len(set(ids)) != len(ids):
         raise ValueError("Finding ids must be unique")
     for finding in findings:
         if finding.status in ("supported", "qualified") and not finding.evidence:
-            raise ValueError(
-                f"{finding.id}: supported/qualified findings require evidence"
-            )
+            raise ValueError(f"{finding.id}: supported/qualified findings require evidence")
         for evidence in finding.evidence:
             path = Path(evidence.path)
             if path.is_absolute():
                 if not path.is_relative_to("/inputs"):
-                    raise ValueError(
-                        f"Evidence must be bundle-relative or under /inputs: {path}"
-                    )
+                    raise ValueError(f"Evidence must be bundle-relative or under /inputs: {path}")
                 base, relative = root / "inputs", path.relative_to("/inputs")
             else:
                 base, relative = report, path
             resolved = (base / relative).resolve()
             if not resolved.is_relative_to(base.resolve()) or not resolved.is_file():
-                raise ValueError(
-                    f"Evidence file is missing or outside its allowed root: {path}"
-                )
+                raise ValueError(f"Evidence file is missing or outside its allowed root: {path}")
     return findings
 
 
@@ -122,7 +118,14 @@ def save_publication(root: Path) -> Path:
     report = root / "work" / "report"
     if report.is_symlink() or any(p.is_symlink() for p in report.rglob("*")):
         raise ValueError("Report bundles must contain real files, not symlinks")
-    for name in ("report.tex", "Findings.tex", "metadata.tex", "assessments.tex", "report.pdf", "findings.json"):
+    for name in (
+        "report.tex",
+        "Findings.tex",
+        "metadata.tex",
+        "assessments.tex",
+        "report.pdf",
+        "findings.json",
+    ):
         if not (report / name).is_file():
             raise ValueError(f"Missing report artifact: {name}")
     findings = validate_findings(root)
@@ -130,7 +133,9 @@ def save_publication(root: Path) -> Path:
         from ._assessment import assessment_latex, validate_latex_structure
 
         assessment_latex(report)
-        validate_latex_structure(report, [(f.id, f.section) for f in findings if f.status in ("supported", "qualified")])
+        validate_latex_structure(
+            report, [(f.id, f.section) for f in findings if f.status in ("supported", "qualified")]
+        )
     if (report / "_inputs").exists():
         raise ValueError("_inputs is reserved for publication's input evidence")
     destination = root / "published" / uuid4().hex
@@ -138,7 +143,17 @@ def save_publication(root: Path) -> Path:
     shutil.copytree(
         report,
         destination,
-        ignore=shutil.ignore_patterns("__pycache__", ".quarto", "*.pyc", "*.aux", "*.log", "*.fls", "*.fdb_latexmk", "*.out", "preview"),
+        ignore=shutil.ignore_patterns(
+            "__pycache__",
+            ".quarto",
+            "*.pyc",
+            "*.aux",
+            "*.log",
+            "*.fls",
+            "*.fdb_latexmk",
+            "*.out",
+            "preview",
+        ),
     )
     # Keep the agent's single register; rewrite only the published snapshot's
     # input addresses so its evidence survives independently of this workspace.
@@ -173,12 +188,15 @@ def _prepare_report(root: str) -> None:
     findings = validate_findings(Path(root))
     if (report / "framework/auditframework.sty").exists():
         (report / "assessments.tex").write_text(assessment_latex(report))
-        validate_latex_structure(report, [(f.id, f.section) for f in findings if f.status in ("supported", "qualified")])
+        validate_latex_structure(
+            report, [(f.id, f.section) for f in findings if f.status in ("supported", "qualified")]
+        )
 
 
 @tool
 def check_report(root: str) -> Tool:
     """Validate structured results and generate tables for review before publication."""
+
     async def execute() -> str:
         """Check findings, assessments and totals; update report/assessments.tex."""
         from ._investigation_workspace import pull, push_assessments
@@ -190,6 +208,7 @@ def check_report(root: str) -> Tool:
             raise ToolError(f"Report validation failed: {ex}") from ex
         await push_assessments(Path(root))
         return "Records validated and tables generated. Compile with latexmk -pdf -interaction=nonstopmode -halt-on-error report.tex from /workspace/report. Render all pages with pdftoppm, inspect them with view_image, and fix layout before publishing."
+
     return execute
 
 
@@ -213,13 +232,20 @@ def publish_report(root: str) -> Tool:
             raise ToolError(f"Report assessment validation failed: {ex}") from ex
         await push_assessments(Path(root))
         result = await sandbox().exec(
-            ["latexmk", "-r", "/workspace/report/.latexmkrc", "-cd", "-pdf", "-interaction=nonstopmode", "-halt-on-error", "/workspace/report/report.tex"],
+            [
+                "latexmk",
+                "-r",
+                "/workspace/report/.latexmkrc",
+                "-cd",
+                "-pdf",
+                "-interaction=nonstopmode",
+                "-halt-on-error",
+                "/workspace/report/report.tex",
+            ],
             timeout=300,
         )
         if not result.success:
-            raise ToolError(
-                f"Report rendering failed:\n{result.stderr}\n{result.stdout}"
-            )
+            raise ToolError(f"Report rendering failed:\n{result.stderr}\n{result.stdout}")
         await pull(Path(root))
         try:
             destination = save_publication(Path(root))

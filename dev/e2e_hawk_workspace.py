@@ -52,10 +52,24 @@ def script() -> list[ModelOutput]:
     m = "mockllm/model"
     return [
         ModelOutput.for_tool_call(m, "bash", {"command": MESSY_WORKSPACE}),
-        ModelOutput.for_tool_call(m, "jobs", {"action": "list", "label": None, "sample": None, "wait_minutes": None, "limit": None}),
-        ModelOutput.for_tool_call(m, "hawk_submit", {"config": "/workspace/jobs/e2e.eval-set.yaml", "estimated_usd": 1.0, "note": None}),
-        ModelOutput.for_tool_call(m, "hawk_submit", {"config": "/workspace/../etc/passwd", "estimated_usd": 1.0, "note": None}),
-        ModelOutput.for_tool_call(m, "bash", {"command": "echo '- e2e: second entry' >> /workspace/journal.md"}),
+        ModelOutput.for_tool_call(
+            m,
+            "jobs",
+            {"action": "list", "label": None, "sample": None, "wait_minutes": None, "limit": None},
+        ),
+        ModelOutput.for_tool_call(
+            m,
+            "hawk_submit",
+            {"config": "/workspace/jobs/e2e.eval-set.yaml", "estimated_usd": 1.0, "note": None},
+        ),
+        ModelOutput.for_tool_call(
+            m,
+            "hawk_submit",
+            {"config": "/workspace/../etc/passwd", "estimated_usd": 1.0, "note": None},
+        ),
+        ModelOutput.for_tool_call(
+            m, "bash", {"command": "echo '- e2e: second entry' >> /workspace/journal.md"}
+        ),
         ModelOutput.for_tool_call(m, "publish_report", {}),
         # then stop calling tools; on_continue nudges until the message limit ends it
         *[ModelOutput.from_content(m, "done") for _ in range(20)],
@@ -65,7 +79,12 @@ def script() -> list[ModelOutput]:
 def main() -> int:
     scratch = Path(tempfile.mkdtemp(prefix="e2e-hawk-ws-"))
     # the allowance refuses to run an unpriced model; price the mock at zero
-    set_model_info("mockllm/model", ModelInfo(cost=ModelCost(input=0.0, output=0.0, input_cache_read=0.0, input_cache_write=0.0)))
+    set_model_info(
+        "mockllm/model",
+        ModelInfo(
+            cost=ModelCost(input=0.0, output=0.0, input_cache_read=0.0, input_cache_write=0.0)
+        ),
+    )
     artifacts = scratch / "artifacts"
     os.environ["HAWK_JOB_ID"] = "local-e2e"
     task = investigate(
@@ -82,18 +101,37 @@ def main() -> int:
     root = Path(task.metadata["investigation_dir"])
     (root / "remote-workspace.json").write_text(json.dumps({"artifact_dir": f"file://{artifacts}"}))
     compose = scratch / "compose.yaml"
-    compose.write_text(yaml.safe_dump({"services": {"default": {
-        "image": DEFAULT_INVESTIGATOR_IMAGE, "platform": "linux/amd64",
-        "command": "sleep infinity", "init": True, "working_dir": "/workspace",
-    }}}))
+    compose.write_text(
+        yaml.safe_dump(
+            {
+                "services": {
+                    "default": {
+                        "image": DEFAULT_INVESTIGATOR_IMAGE,
+                        "platform": "linux/amd64",
+                        "command": "sleep infinity",
+                        "init": True,
+                        "working_dir": "/workspace",
+                    }
+                }
+            }
+        )
+    )
     task.sandbox = SandboxEnvironmentSpec("docker", str(compose))
 
     [log] = eval(
-        task, model=get_model("mockllm/model", custom_outputs=script()),
-        message_limit=20, log_dir=str(scratch / "logs"), display="plain",
+        task,
+        model=get_model("mockllm/model", custom_outputs=script()),
+        message_limit=20,
+        log_dir=str(scratch / "logs"),
+        display="plain",
     )
     sample = log.samples[0] if log.samples else None
-    print("status:", log.status, "| sample error:", sample.error.message if sample and sample.error else None)
+    print(
+        "status:",
+        log.status,
+        "| sample error:",
+        sample.error.message if sample and sample.error else None,
+    )
     for message in sample.messages if sample else []:
         if message.role == "tool":
             print(f"--- {message.function}: {str(message.text)[:600]}")
@@ -102,12 +140,15 @@ def main() -> int:
     for path in saved:
         if "/state/" in path or "preflight" in path or "published" in path:
             print("  ", path)
-    journal = [p for p in artifacts.rglob("journal.md")]
+    journal = list(artifacts.rglob("journal.md"))
     notes = " ".join(str(m.text) for m in (sample.messages if sample else []) if m.role == "tool")
     ok = (
-        "evil-link" in notes and "report/plain.txt" not in notes and
-        sample is not None and sample.error is None
-        and journal and "second entry" in journal[0].read_text()
+        "evil-link" in notes
+        and "report/plain.txt" not in notes
+        and sample is not None
+        and sample.error is None
+        and journal
+        and "second entry" in journal[0].read_text()
     )
     print("PASS" if ok else "FAIL", "| scratch:", scratch)
     if ok:

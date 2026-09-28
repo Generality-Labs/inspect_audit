@@ -113,9 +113,7 @@ def seed_new(state: BenchmarkState, input: JsonValue, prompt: str | None) -> Non
             AttemptMessage(provenance="authored", message=ChatMessageSystem(content=prompt))
         )
     if isinstance(input, str):
-        messages.append(
-            AttemptMessage(provenance="real", message=ChatMessageUser(content=input))
-        )
+        messages.append(AttemptMessage(provenance="real", message=ChatMessageUser(content=input)))
     elif isinstance(input, list):
         for item in input:
             messages.append(AttemptMessage.model_validate({"provenance": "real", "message": item}))
@@ -185,8 +183,7 @@ def append_message(
                 ]
             except (ValueError, TypeError, KeyError) as ex:
                 raise ValueError(
-                    "tool_calls must be a JSON list of {id, function, arguments} "
-                    f"objects: {ex}"
+                    f"tool_calls must be a JSON list of {{id, function, arguments}} objects: {ex}"
                 ) from None
         message = ChatMessageAssistant(content=content, tool_calls=calls, model=AUTHORED_MODEL)
     elif role == "tool":
@@ -342,7 +339,9 @@ async def mirror_state(state: BenchmarkState, root: str) -> None:
     """
     await sandbox().write_file(
         f"{root}/{ATTEMPT_DIR}/messages.json",
-        json.dumps([m.model_dump(exclude_none=True) for m in state.messages], indent=1, default=str),
+        json.dumps(
+            [m.model_dump(exclude_none=True) for m in state.messages], indent=1, default=str
+        ),
     )
     await sandbox().write_file(f"{root}/{ATTEMPT_DIR}/state.json", receipt(state))
 
@@ -465,8 +464,7 @@ def benchmark_tools(defs: list[ToolDef], root: str) -> list[Tool]:
         root: The cell root (`/audit`).
     """
     return [
-        _submit_tool(d, root) if d.name in _SUBMIT_NAMES else _mirror_tool(d, root)
-        for d in defs
+        _submit_tool(d, root) if d.name in _SUBMIT_NAMES else _mirror_tool(d, root) for d in defs
     ]
 
 
@@ -478,11 +476,13 @@ def _strict_parameters(schema: dict[str, Any]) -> dict[str, Any]:
         required = set(schema.get("required", []))
         properties = {}
         for name, value in schema["properties"].items():
-            value = _strict_parameters(value)
+            strict = _strict_parameters(value)
             if name not in required:
-                value = {"description": value.get("description", ""),
-                         "anyOf": [value, {"type": "null"}]}
-            properties[name] = value
+                strict = {
+                    "description": strict.get("description", ""),
+                    "anyOf": [strict, {"type": "null"}],
+                }
+            properties[name] = strict
         schema.update(properties=properties, required=list(properties), additionalProperties=False)
     if isinstance(schema.get("items"), dict):
         schema["items"] = _strict_parameters(schema["items"])
@@ -516,8 +516,7 @@ def _mirror_tool(d: ToolDef, root: str) -> Tool:
         # replaced was dead code and the tool would have run in the auditor
         if not has_benchmark_box():
             raise ToolError(
-                f"{d.name!r} runs in the benchmark environment, which this item "
-                "does not have."
+                f"{d.name!r} runs in the benchmark environment, which this item does not have."
             )
         kwargs = _restore_omissions(kwargs, original)
         with sandbox_default(BENCHMARK_SERVICE):

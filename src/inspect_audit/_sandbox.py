@@ -192,9 +192,7 @@ async def restore_benchmark(script: str | None) -> list[str]:
 AUDITOR_SERVICE_NAME = "default"
 
 
-async def phoenix_benchmark(
-    script: str | None, files: dict[str, str] | None = None
-) -> str:
+async def phoenix_benchmark(script: str | None, files: dict[str, str] | None = None) -> str:
     """Rebuild the benchmark box from its image, then repopulate per-sample state.
 
     Where `restore_benchmark` reverts filesystem state *inside a live box*, this
@@ -233,7 +231,7 @@ async def phoenix_benchmark(
             "phoenix reset needs the docker sandbox; this run's provider is not "
             "docker, where rebuilding a bricked box from its image is unsupported."
         ) from None
-    project = docker._project
+    project = docker._project  # pyright: ignore[reportPrivateUsage]
 
     services = await compose_services(project)
     targets = [name for name in services if name != AUDITOR_SERVICE_NAME]
@@ -295,7 +293,9 @@ async def phoenix_benchmark(
         detail = (
             "the rebuild timed out and the box is still not up"
             if timed_out
-            else (result.stderr or "")[:500] if result is not None else ""
+            else (result.stderr or "")[:500]
+            if result is not None
+            else ""
         )
         raise RuntimeError(
             f"the benchmark box did not come back after a rebuild ({', '.join(down)}) "
@@ -312,9 +312,7 @@ async def phoenix_benchmark(
     # `sandbox_env(name)` for it would raise or mis-resolve to the auditor.
     if files:
         live = set(benchmark_boxes())
-        wanted = {
-            file.split(":", 1)[0] for file in files if ":" in file
-        }
+        wanted = {file.split(":", 1)[0] for file in files if ":" in file}
         unreachable = wanted - live - {AUDITOR_SERVICE_NAME}
         if unreachable:
             raise RuntimeError(
@@ -385,7 +383,6 @@ async def _image_declares_volumes(service: dict[str, Any]) -> bool:
     return bool(declared) and declared not in ("null", "{}")
 
 
-
 AUDITOR_SERVICE: dict[str, Any] = {
     "build": {"context": None, "dockerfile": "Dockerfile"},
     "command": "sleep infinity",
@@ -440,10 +437,10 @@ def _service_renames(services: dict[str, Any]) -> dict[str, str]:
         taken.add(name)
         return name
 
-    if BENCHMARK_SERVICE in services and BENCHMARK_SERVICE != default_service:
+    if BENCHMARK_SERVICE in services and default_service != BENCHMARK_SERVICE:
         renames[BENCHMARK_SERVICE] = uniquify(BENCHMARK_SERVICE)
     renames[default_service] = BENCHMARK_SERVICE
-    if AUDITOR_SERVICE_NAME in services and AUDITOR_SERVICE_NAME != default_service:
+    if AUDITOR_SERVICE_NAME in services and default_service != AUDITOR_SERVICE_NAME:
         renames[AUDITOR_SERVICE_NAME] = uniquify(AUDITOR_SERVICE_NAME)
     return renames
 
@@ -582,9 +579,7 @@ def benchmark_source(
         if is_dockerfile(source.name):
             # Inspect's Dockerfile template builds `./Dockerfile`; point it at the
             # audited task's actual Dockerfile, absolute so no anchoring is needed
-            merged = yaml.safe_load(
-                COMPOSE_DOCKERFILE_YAML.format(dockerfile=INSPECT_DOCKERFILE)
-            )
+            merged = yaml.safe_load(COMPOSE_DOCKERFILE_YAML.format(dockerfile=INSPECT_DOCKERFILE))
             merged["services"]["default"]["build"] = {
                 "context": str(source.parent),
                 "dockerfile": source.name,
@@ -686,6 +681,7 @@ def audit_compose(
 # paths inside a compose file are relative to that file's directory, and the
 # merged file lives somewhere else
 
+
 def _anchor(value: Any, base: Path) -> Any:
     if isinstance(value, str) and not value.startswith(("/", "$")) and ":" not in value:
         return str((base / value).resolve())
@@ -723,7 +719,6 @@ def _anchor_volume(volume: Any, base: Path) -> Any:
         bound["source"] = _anchor(bound.get("source"), base)
         return bound
     return volume
-
 
 
 _MEMORY = re.compile(r"^(?P<value>\d+(?:\.\d+)?)(?P<unit>gb?|mb?|kb?|b)$", re.IGNORECASE)
@@ -764,7 +759,9 @@ def _env(value: dict[str, Any] | list[str]) -> list[dict[str, str]]:
 def _readiness_probe(src: dict[str, Any], name: str) -> dict[str, Any] | None:
     test = src.get("test")
     if not isinstance(test, list) or test[:1] not in (["CMD"], ["CMD-SHELL"]):
-        logger.warning(f"dropping 'healthcheck' from service '{name}': only CMD and CMD-SHELL tests convert")
+        logger.warning(
+            f"dropping 'healthcheck' from service '{name}': only CMD and CMD-SHELL tests convert"
+        )
         return None
     command = test[1:] if test[0] == "CMD" else ["sh", "-c", test[1]]
     probe: dict[str, Any] = {"exec": {"command": command}}
@@ -816,7 +813,9 @@ def _security_context(user: Any) -> dict[str, Any]:
     return context
 
 
-def _values_service(name: str, service: dict[str, Any], benchmark_image: str | None) -> dict[str, Any]:
+def _values_service(
+    name: str, service: dict[str, Any], benchmark_image: str | None
+) -> dict[str, Any]:
     """Convert one compose service to a chart service, dropping what k8s cannot express."""
     src = dict(service)
     out: dict[str, Any] = {}
@@ -850,9 +849,11 @@ def _values_service(name: str, service: dict[str, Any], benchmark_image: str | N
         out["env"] = _env(src.pop("environment"))
     if "volumes" in src:
         out["volumes"] = src.pop("volumes")
-    if "healthcheck" in src:
-        if (probe := _readiness_probe(src.pop("healthcheck"), name)) is not None:
-            out["readinessProbe"] = probe
+    if (
+        "healthcheck" in src
+        and (probe := _readiness_probe(src.pop("healthcheck"), name)) is not None
+    ):
+        out["readinessProbe"] = probe
     if resources := _resources(src):
         out["resources"] = resources
     if "user" in src:
@@ -908,9 +909,7 @@ def audit_values(
         theirs: dict[str, Any] = compose.get("services") or {}
         renames = _service_renames(theirs)
         for name, service in theirs.items():
-            converted[renames.get(name, name)] = _values_service(
-                name, service, benchmark_image
-            )
+            converted[renames.get(name, name)] = _values_service(name, service, benchmark_image)
         if volumes := compose.get("volumes"):
             values["volumes"] = {name: {} for name in volumes}
         if networks := compose.get("networks"):

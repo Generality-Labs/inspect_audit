@@ -56,8 +56,8 @@ from ._jobs import (
 )
 from ._report import (
     InvestigationState,
-    _operator_turn,
     check_report,
+    operator_turn,
 )
 from ._report import (
     publish_report as publish_report,
@@ -227,9 +227,7 @@ def register_openrouter_costs(timeout: float = 15) -> int:
     cost limit then fails loudly at start rather than silently not applying.
     """
     try:
-        request = urllib.request.Request(
-            OPENROUTER_MODELS, headers={"User-Agent": "inspect_audit"}
-        )
+        request = urllib.request.Request(OPENROUTER_MODELS, headers={"User-Agent": "inspect_audit"})
         with urllib.request.urlopen(request, timeout=timeout) as response:
             models = json.load(response)["data"]
     except Exception as ex:
@@ -292,9 +290,7 @@ def _investigation_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
     # defaults to None, so "given" is "not None": passing the same value the default
     # would have used is still passing it, and a file cannot turn something back on
     return {
-        key: value
-        for key, value in loaded.items()
-        if key != "config" and passed.get(key) is None
+        key: value for key, value in loaded.items() if key != "config" and passed.get(key) is None
     }
 
 
@@ -345,7 +341,9 @@ def git_package_spec(repo: Path, revision: str | None = None) -> str | None:
     url = origin.removesuffix(".git").replace("git@github.com:", "https://github.com/")
     on_remote = subprocess.run(
         ["git", "-C", str(repo), "branch", "-r", "--contains", commit],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if on_remote.returncode != 0 or not on_remote.stdout.strip():
         logger.warning(
@@ -388,17 +386,13 @@ def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | No
     if directory is None:
         return None
     chosen = {str(directory.relative_to(source))}
-    chosen |= {
-        str(path.relative_to(source)) for path in _imported_by(source, directory)
-    }
+    chosen |= {str(path.relative_to(source)) for path in _imported_by(source, directory)}
     for top in ("pyproject.toml", "README.md"):
         if (source / top).is_file():
             chosen.add(top)
     # a file inside a directory already named adds nothing to the snapshot
     directories = {c for c in chosen if (source / c).is_dir()}
-    return sorted(
-        c for c in chosen if not any(c.startswith(f"{d}/") for d in directories)
-    )
+    return sorted(c for c in chosen if not any(c.startswith(f"{d}/") for d in directories))
 
 
 def _imported_by(source: Path, directory: Path, depth: int = 3) -> set[Path]:
@@ -427,7 +421,11 @@ def _imported_by(source: Path, directory: Path, depth: int = 3) -> set[Path]:
                     continue
                 for dotted in pattern.findall(text):
                     target = _module_path(package, dotted)
-                    if target is not None and target not in found and directory not in target.parents:
+                    if (
+                        target is not None
+                        and target not in found
+                        and directory not in target.parents
+                    ):
                         imported.add(target)
         found |= imported
         # a module's own imports count too: the scorer that imports the constants
@@ -489,8 +487,10 @@ def _task_directory(source: Path, target_task: str | None) -> Path | None:
 # `@task` may name the task itself, or take the function's name. Both spellings, and
 # the registry name may carry spaces where the function has underscores.
 def _declaring_file(source: Path, name: str) -> Path | None:
-    function = re.compile(rf"^\s*def {re.escape(name.replace(' ', '_').lower())}\s*\(", re.M)
-    declared = re.compile(rf"@task\([^)]*name\s*=\s*[\"']{re.escape(name)}[\"']", re.S)
+    function = re.compile(
+        rf"^\s*def {re.escape(name.replace(' ', '_').lower())}\s*\(", re.MULTILINE
+    )
+    declared = re.compile(rf"@task\([^)]*name\s*=\s*[\"']{re.escape(name)}[\"']", re.DOTALL)
     fallback: Path | None = None
     for path in sorted(source.rglob("*.py")):
         if any(part in {".git", "tests", "test", "build", ".venv"} for part in path.parts):
@@ -570,9 +570,7 @@ def prepare_workspace(
         if not files:
             raise ValueError(f"No Inspect logs found: {source}")
         for file in files:
-            relative = Path(str(index)) / (
-                file.name if path.is_file() else file.relative_to(path)
-            )
+            relative = Path(str(index)) / (file.name if path.is_file() else file.relative_to(path))
             _link_or_copy(file, inputs / "logs" / relative)
             log_index.append(
                 {"source": str(file), "staged": f"/inputs/logs/{relative}", "remote": None}
@@ -600,9 +598,7 @@ def prepare_workspace(
         "# Activity journal\n\nAppend actions and corrections with evidence references.\n"
     )
     (root / "Dockerfile").write_text(
-        (ASSETS / "Dockerfile")
-        .read_text()
-        .replace("INSPECT_VERSION", version("inspect-ai"))
+        (ASSETS / "Dockerfile").read_text().replace("INSPECT_VERSION", version("inspect-ai"))
     )
     (root / ".dockerignore").write_text("*\n!Dockerfile\n")
     compose = {
@@ -659,9 +655,7 @@ class Remote:
             hawk_api_url=hawk_api_url,
         )
         self._spend_path = root / "local_spend.json"
-        spent = (
-            json.loads(self._spend_path.read_text()) if self._spend_path.is_file() else {}
-        )
+        spent = json.loads(self._spend_path.read_text()) if self._spend_path.is_file() else {}
         # a resumed run starts Inspect's usage accounting from zero; what earlier runs
         # of this investigation spent is carried forward from disk
         self.prior_local_usd = float(spent.get("prior_usd", 0.0)) + float(
@@ -727,9 +721,7 @@ class Remote:
         at zero, so without this a retry would forget the first attempt's spend.
         Idempotent: it recomputes from the file rather than adding to memory.
         """
-        spent = (
-            json.loads(self._spend_path.read_text()) if self._spend_path.is_file() else {}
-        )
+        spent = json.loads(self._spend_path.read_text()) if self._spend_path.is_file() else {}
         self.prior_local_usd = float(spent.get("prior_usd", 0.0)) + float(
             spent.get("this_run_usd", 0.0)
         )
@@ -881,7 +873,10 @@ def investigation_budget(
         """Show the allowance, spend so far by model, and tokens used."""
         usage = sample_model_usage()
         spend = sample_limits().cost
-        lines = [f"Allowance: ${budget_usd:.2f}" + (" (enforced)" if enforce_cost_limit else " (planning only)")]
+        lines = [
+            f"Allowance: ${budget_usd:.2f}"
+            + (" (enforced)" if enforce_cost_limit else " (planning only)")
+        ]
         total = spend.usage
         unpriced: list[str] = []
         for name, value in usage.items():
@@ -924,9 +919,18 @@ def investigation_budget(
                     "  collected but unpriced, so their real cost is unknown and their "
                     f"reservation is still held: {', '.join(remote.ledger.unpriced())}"
                 )
-            committed = remote.prior_local_usd + total + remote.ledger.actual_usd() + remote.ledger.reserved_usd()
-            lines.append(f"Committed {'at least' if unpriced else 'in total'}: ${committed:.2f} of ${budget_usd:.2f}")
-            lines.append(f"Prior lead segments: ${remote.prior_local_usd:.2f}; current lead segment: ${total:.2f}")
+            committed = (
+                remote.prior_local_usd
+                + total
+                + remote.ledger.actual_usd()
+                + remote.ledger.reserved_usd()
+            )
+            lines.append(
+                f"Committed {'at least' if unpriced else 'in total'}: ${committed:.2f} of ${budget_usd:.2f}"
+            )
+            lines.append(
+                f"Prior lead segments: ${remote.prior_local_usd:.2f}; current lead segment: ${total:.2f}"
+            )
             if not unpriced and not remote.ledger.unpriced():
                 lines.append(f"Shared remaining allowance: ${max(0.0, budget_usd - committed):.2f}")
         lines.append(
@@ -1017,7 +1021,9 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
             note=note or "",
             expected_evals=expected_evals(parsed),
         )
-        replacing_failed = (remote.ledger.get(label) or Job("", "", "", "", "", 0)).status == "failed"
+        replacing_failed = (
+            remote.ledger.get(label) or Job("", "", "", "", "", 0)
+        ).status == "failed"
         if submitted_path.exists() and not replacing_failed:
             raise ToolError(f"{submitted_path.name} already exists; choose another name")
         remote.reserve_and_record(job)
@@ -1102,7 +1108,11 @@ def jobs(remote: Remote, root: Path) -> Tool:
             return "\n".join(
                 f"{j.label} ({j.kind}) {j.eval_set_id}: {j.status}"
                 + (f", collected to /inputs/jobs/{j.label}" if j.collected_to else "")
-                + (f", ${j.actual_usd:.2f}" if j.actual_usd is not None else f", reserved ${j.estimated_usd:.2f}")
+                + (
+                    f", ${j.actual_usd:.2f}"
+                    if j.actual_usd is not None
+                    else f", reserved ${j.estimated_usd:.2f}"
+                )
                 for j in ledger.jobs
             )
         if not label or not (job := ledger.get(label)):
@@ -1122,12 +1132,14 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     job.eval_set_id
                 )
             if action == "stacktrace":
-                return f"{label} ({job.eval_set_id}) runner stacks:\n" + await remote.hawk.stacktrace(
-                    job.eval_set_id
+                return (
+                    f"{label} ({job.eval_set_id}) runner stacks:\n"
+                    + await remote.hawk.stacktrace(job.eval_set_id)
                 )
             if action == "status":
-                return f"{label} ({job.eval_set_id}) monitoring report:\n" + await remote.hawk.status(
-                    job.eval_set_id
+                return (
+                    f"{label} ({job.eval_set_id}) monitoring report:\n"
+                    + await remote.hawk.status(job.eval_set_id)
                 )
             if action == "samples":
                 rows_json = await remote.hawk.samples(job.eval_set_id, limit)
@@ -1143,7 +1155,9 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 return "\n".join(out)
             if action == "transcript":
                 if not sample:
-                    raise ToolError("action='transcript' needs sample=<uuid> from jobs(action='samples')")
+                    raise ToolError(
+                        "action='transcript' needs sample=<uuid> from jobs(action='samples')"
+                    )
                 # a sample uuid addresses any sample in the deployment, so membership in
                 # this job is checked here rather than trusted from the argument
                 known = await remote.hawk.samples(job.eval_set_id)
@@ -1177,7 +1191,12 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 if not await remote.hawk.evals(job.eval_set_id):
                     # nothing ran, so nothing was spent: a stopped job with no evals can
                     # never be collected, and its reservation must not outlive it
-                    remote.settle(label, status="stopped", actual_usd=0.0, cost_note="stopped before any eval ran")
+                    remote.settle(
+                        label,
+                        status="stopped",
+                        actual_usd=0.0,
+                        cost_note="stopped before any eval ran",
+                    )
                     return f"stopped {label} ({job.eval_set_id}) before any eval ran; ${job.reserved_usd:.2f} released"
                 remote.settle(label, status="stopped")
                 return f"stop requested for {label} ({job.eval_set_id}); collect it once its evals settle"
@@ -1187,15 +1206,22 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 if stopped and not rows:
                     remote.settle(label, actual_usd=0.0, cost_note="stopped before any eval ran")
                     return f"{label} was stopped before any eval ran; nothing to collect, ${job.reserved_usd:.2f} released"
-                terminal = bool(rows) and all(r["status"] in ("success", "error", "cancelled") for r in rows)
+                terminal = bool(rows) and all(
+                    r["status"] in ("success", "error", "cancelled") for r in rows
+                )
                 if not terminal or (not stopped and len(rows) < job.expected_evals):
-                    state = ", ".join(f"{r['task']} {r['status']} {r['samples']}" for r in rows) or "no evals yet"
+                    state = (
+                        ", ".join(f"{r['task']} {r['status']} {r['samples']}" for r in rows)
+                        or "no evals yet"
+                    )
                     return (
                         f"{label} is not finished ({len(rows)} of {job.expected_evals} evals listed; {state}). "
                         f"No files downloaded. Use jobs(action='wait', label='{label}') before collecting. "
                         "If there are no evals, inspect watch/logs once for a startup failure."
                     )
-                files = await remote.hawk.download(job.eval_set_id, root / "jobs" / "downloads" / label)
+                files = await remote.hawk.download(
+                    job.eval_set_id, root / "jobs" / "downloads" / label
+                )
                 if not files:
                     raise ToolError("no .eval files were downloaded")
                 dest = copy_into_inputs(files, root / "inputs", label)
@@ -1206,7 +1232,9 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 remote.settle(
                     label,
                     actual_usd=cost if cost is not None else job.reserved_usd,
-                    cost_note="" if cost is not None else "unpriced model: charged at the reservation",
+                    cost_note=""
+                    if cost is not None
+                    else "unpriced model: charged at the reservation",
                     collected_to=str(dest),
                     evals=[dict(r) for r in rows],
                     status="success" if all(r["status"] == "success" for r in rows) else "error",
@@ -1229,7 +1257,10 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     else f"cost unknown: a model in this job has no registered price, so the job is "
                     f"charged its full ${job.reserved_usd:.2f} reservation"
                 )
-                lines += [f"  {m}: in {u['input']:,} cache_read {u['cache_read']:,} out {u['output']:,}" for m, u in usage.items()]
+                lines += [
+                    f"  {m}: in {u['input']:,} cache_read {u['cache_read']:,} out {u['output']:,}"
+                    for m, u in usage.items()
+                ]
                 return "\n".join(lines)
             else:
                 raise ToolError(
@@ -1248,16 +1279,26 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 ) from ex
             raise ToolError(f"hawk error: {ex}") from ex
         if rows:
-            status = "success" if all(r["status"] == "success" for r in rows) else (
-                "error" if any(r["status"] in ("error", "cancelled") for r in rows) and all(r["status"] in ("success", "error", "cancelled") for r in rows) else "running"
+            status = (
+                "success"
+                if all(r["status"] == "success" for r in rows)
+                else (
+                    "error"
+                    if any(r["status"] in ("error", "cancelled") for r in rows)
+                    and all(r["status"] in ("success", "error", "cancelled") for r in rows)
+                    else "running"
+                )
             )
             # every write goes through the lock: a bare save() here would rewrite the
             # whole file from a stale copy and could drop another process's reservation
             remote.settle(label, status=status, evals=[dict(r) for r in rows])
             job.status, job.evals = status, [dict(r) for r in rows]
-        return f"{label} ({job.eval_set_id}): {job.status}\n" + "\n".join(
-            f"  {r['task']} {r['model']}: {r['status']} {r['samples']}" for r in rows
-        ) if rows else f"{label} ({job.eval_set_id}): no evals listed; use jobs(action='watch') or jobs(action='logs') to diagnose"
+        return (
+            f"{label} ({job.eval_set_id}): {job.status}\n"
+            + "\n".join(f"  {r['task']} {r['model']}: {r['status']} {r['samples']}" for r in rows)
+            if rows
+            else f"{label} ({job.eval_set_id}): no evals listed; use jobs(action='watch') or jobs(action='logs') to diagnose"
+        )
 
     return execute
 
@@ -1265,21 +1306,30 @@ def jobs(remote: Remote, root: Path) -> Tool:
 @solver
 def check_evidence_access(remote: Remote | None, root: Path, sources: list[str]) -> Solver:
     """Check supplied remote evidence before spending on the lead model."""
+
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         checks = []
         for address in sources:
             check = {"source": address, "status": "unavailable", "reason": ""}
             try:
                 if remote is None or not address.startswith("hawk:"):
-                    raise ValueError("No supported reader: supply an indexed Hawk eval set or local logs")
+                    raise ValueError(
+                        "No supported reader: supply an indexed Hawk eval set or local logs"
+                    )
                 eval_set = address.removeprefix("hawk:").split("/")[0]
                 rows = await remote.hawk.samples(eval_set, 1)
                 if not rows:
-                    raise ValueError("No indexed samples. A storage prefix is not necessarily an imported eval set")
+                    raise ValueError(
+                        "No indexed samples. A storage prefix is not necessarily an imported eval set"
+                    )
                 await remote.hawk.transcript(
-                    str(rows[0]["uuid"]), root / "inputs" / "index" / _alias(address) / "transcripts"
+                    str(rows[0]["uuid"]),
+                    root / "inputs" / "index" / _alias(address) / "transcripts",
                 )
-                check.update(status="readable", reason="Sample index and one transcript retrieved; not a complete coverage check")
+                check.update(
+                    status="readable",
+                    reason="Sample index and one transcript retrieved; not a complete coverage check",
+                )
             except Exception as ex:
                 check["reason"] = str(ex)[-1500:]
             checks.append(check)
@@ -1398,7 +1448,9 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
             if action == "samples":
                 rows = await remote.hawk.samples(eval_set, limit)
                 if not rows:
-                    raise ToolError(f"{source}: no accessible indexed samples; this may be an indexing or permission problem, not an empty benchmark")
+                    raise ToolError(
+                        f"{source}: no accessible indexed samples; this may be an indexing or permission problem, not an empty benchmark"
+                    )
                 destination.mkdir(parents=True, exist_ok=True)
                 table = destination / "samples.csv"
                 _write_samples_csv(rows, table)
@@ -1408,7 +1460,9 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
                 )
             if action == "transcript":
                 if not sample:
-                    raise ToolError("action='transcript' needs sample=<uuid> from the samples table")
+                    raise ToolError(
+                        "action='transcript' needs sample=<uuid> from the samples table"
+                    )
                 uuid = await remote.hawk.sample_uuid(eval_set, sample)
                 if uuid is None:
                     raise ToolError(
@@ -1440,18 +1494,29 @@ def _write_samples_csv(rows: list[dict[str, Any]], path: Path) -> None:
 
     scorers = sorted({s.get("scorer", "") for r in rows for s in (r.get("scores") or [])})
     columns = [
-        "uuid", "id", "epoch", "model", "task_name", "status", "limit", "error_message",
-        "input_tokens", "output_tokens", "reasoning_tokens", "total_tokens",
-        "message_count", "action_count", "total_time_seconds", "is_invalid",
+        "uuid",
+        "id",
+        "epoch",
+        "model",
+        "task_name",
+        "status",
+        "limit",
+        "error_message",
+        "input_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+        "total_tokens",
+        "message_count",
+        "action_count",
+        "total_time_seconds",
+        "is_invalid",
     ]
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(columns + scorers)
         for row in rows:
             scored = {s.get("scorer"): s.get("value") for s in (row.get("scores") or [])}
-            writer.writerow(
-                [row.get(c) for c in columns] + [scored.get(s) for s in scorers]
-            )
+            writer.writerow([row.get(c) for c in columns] + [scored.get(s) for s in scorers])
 
 
 def _samples_summary(rows: list[dict[str, Any]]) -> str:
@@ -1506,7 +1571,7 @@ async def _continue(
         )
     if not interactive:
         return False
-    return await _operator_turn(state)
+    return await operator_turn(state)
 
 
 def _resumable(resume: str) -> Path:
@@ -1630,7 +1695,9 @@ def investigate(
     worker_models = settings.get("worker_models", worker_models)
     secrets_file = settings.get("secrets_file", secrets_file)
     execution = settings.get("execution", execution) or "hawk"
-    investigator_image = settings.get("investigator_image", investigator_image) or DEFAULT_INVESTIGATOR_IMAGE
+    investigator_image = (
+        settings.get("investigator_image", investigator_image) or DEFAULT_INVESTIGATOR_IMAGE
+    )
     artifact_dir = settings.get("artifact_dir", artifact_dir)
     instructions = settings.get("instructions", instructions)
     if execution not in {"hawk", "local"}:
@@ -1647,9 +1714,14 @@ def investigate(
             raise ValueError("Hawk artifact_dir must be an S3 job artifacts directory")
 
     overview = overview if overview is not None else ""
-    output_dir = output_dir if output_dir is not None else (
-        str(Path(tempfile.gettempdir()) / "inspect-audit")
-        if execution == "hawk" else "investigations"
+    output_dir = (
+        output_dir
+        if output_dir is not None
+        else (
+            str(Path(tempfile.gettempdir()) / "inspect-audit")
+            if execution == "hawk"
+            else "investigations"
+        )
     )
     budget_usd = budget_usd if budget_usd is not None else 10.0
     enforce_cost_limit = enforce_cost_limit if enforce_cost_limit is not None else True
@@ -1673,9 +1745,10 @@ def investigate(
     if resumed and revision is None:
         # the snapshot is not retaken, so the commit a runner installs is the one that
         # snapshot was taken at, not wherever the checkout has moved to since
-        revision = str(
-            json.loads((resumed / "inputs" / "seed.json").read_text()).get("revision") or ""
-        ) or None
+        revision = (
+            str(json.loads((resumed / "inputs" / "seed.json").read_text()).get("revision") or "")
+            or None
+        )
 
     # what can be worked out is worked out: the audited repository already says which
     # commit it is, which directory the task lives in and which paper it comes from,
@@ -1731,8 +1804,13 @@ def investigate(
     remote: Remote | None = None
     if hawk_api_url:
         remote = Remote(
-            root, hawk_api_url, task_package or "", audit_package or "", auditor_image,
-            worker_models or DEFAULT_WORKERS, budget_usd,
+            root,
+            hawk_api_url,
+            task_package or "",
+            audit_package or "",
+            auditor_image,
+            worker_models or DEFAULT_WORKERS,
+            budget_usd,
         )
         seed_path = root / "inputs" / "seed.json"
         seed = json.loads(seed_path.read_text())
@@ -1781,7 +1859,9 @@ def investigate(
         publish_report(str(root)),
     ]
     seed_logs = json.loads((root / "inputs" / "seed.json").read_text()).get("logs") or []
-    remote_sources = [str(e["remote"]) for e in seed_logs if isinstance(e, dict) and e.get("remote")]
+    remote_sources = [
+        str(e["remote"]) for e in seed_logs if isinstance(e, dict) and e.get("remote")
+    ]
     if remote_sources:
         setup_steps.append(check_evidence_access(remote, root, remote_sources))
         tools.append(supplied_logs(remote, root, remote_sources))

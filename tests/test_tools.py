@@ -6,7 +6,6 @@ exercise the naming, the schema preservation, the submit special-case, and the
 recording; execution against a real benchmark box is covered under Docker.
 """
 
-
 from types import SimpleNamespace
 
 import anyio
@@ -101,9 +100,7 @@ def test_auditor_mounts_the_family_only_with_a_box() -> None:
 
 def _auditor_tool_names(contract: SolverContract, *, benchmark: bool) -> set[str]:
     (item,) = audit_items(["gold-answer"])
-    tools = auditor_tools(
-        [item], contract=contract, benchmark=benchmark, benchmark_scorers=match()
-    )
+    tools = auditor_tools([item], contract=contract, benchmark=benchmark, benchmark_scorers=match())
     return {d.name for d in anyio.run(tool_defs, tools)}
 
 
@@ -232,13 +229,11 @@ def test_audit_probe_reaches_any_named_box_and_refuses_unknown_ones(monkeypatch)
         def __init__(self, name: str) -> None:
             self.name = name
 
-        async def exec(self, cmd, timeout=None):  # noqa: D102
+        async def exec(self, cmd, timeout=None):
             ran.append((self.name, cmd[-1]))
             return SimpleNamespace(success=True, stdout=f"out:{self.name}", stderr="")
 
-    monkeypatch.setattr(
-        agent_module, "benchmark_boxes", lambda: ["benchmark", "victim"]
-    )
+    monkeypatch.setattr(agent_module, "benchmark_boxes", lambda: ["benchmark", "victim"])
     monkeypatch.setattr(agent_module, "sandbox", lambda name=None: Box(name))
 
     probe = audit_probe()
@@ -248,7 +243,7 @@ def test_audit_probe_reaches_any_named_box_and_refuses_unknown_ones(monkeypatch)
     with pytest.raises(ToolError, match="benchmark, victim"):
         anyio.run(lambda: probe(cmd="ls /", service="victmi", timeout=None))
 
-    monkeypatch.setattr(agent_module, "benchmark_boxes", lambda: [])
+    monkeypatch.setattr(agent_module, "benchmark_boxes", list)
     with pytest.raises(ToolError, match="no benchmark environment"):
         anyio.run(lambda: probe(cmd="ls /", service="benchmark", timeout=None))
 
@@ -294,12 +289,20 @@ def test_mirrored_optional_arguments_preserve_callable_defaults() -> None:
 
     original = ToolDef(text_editor()).parameters.model_dump(exclude_none=True)
     strict = _strict_parameters(original)
-    assert set(strict['required']) == set(strict['properties'])
-    assert set(original['required']) < set(original['properties'])
-    args = dict(command='view', path='/test.txt', file_text=None, insert_line=None,
-                new_str=None, old_str=None, view_range=None, undo_edit=None)
+    assert set(strict["required"]) == set(strict["properties"])
+    assert set(original["required"]) < set(original["properties"])
+    args = {
+        "command": "view",
+        "path": "/test.txt",
+        "file_text": None,
+        "insert_line": None,
+        "new_str": None,
+        "old_str": None,
+        "view_range": None,
+        "undo_edit": None,
+    }
     restored = _restore_omissions(args, original)
-    assert restored == {'command': 'view', 'path': '/test.txt'}
+    assert restored == {"command": "view", "path": "/test.txt"}
 
 
 def test_image_preview_validates_bytes_and_rasterizes_svg(monkeypatch):
@@ -321,7 +324,9 @@ def test_image_preview_validates_bytes_and_rasterizes_svg(monkeypatch):
         calls.append(command)
         return SimpleNamespace(success=True, stdout=base64.b64encode(png).decode(), stderr="")
 
-    monkeypatch.setattr(agent_module, "sandbox", lambda: SimpleNamespace(read_file=read_file, exec=execute))
+    monkeypatch.setattr(
+        agent_module, "sandbox", lambda: SimpleNamespace(read_file=read_file, exec=execute)
+    )
     view = agent_module.view_image()
     result = anyio.run(view, "/image.wrong-extension")
     assert result[0].image.startswith("data:image/png;base64,")
@@ -342,6 +347,8 @@ def test_failed_svg_conversion_is_a_tool_error(monkeypatch):
     async def execute(command, timeout):
         return SimpleNamespace(success=False, stdout="", stderr="rsvg-convert missing")
 
-    monkeypatch.setattr(agent_module, "sandbox", lambda: SimpleNamespace(read_file=read_file, exec=execute))
+    monkeypatch.setattr(
+        agent_module, "sandbox", lambda: SimpleNamespace(read_file=read_file, exec=execute)
+    )
     with pytest.raises(ToolError, match="export a PNG"):
         anyio.run(agent_module.view_image(), "/architecture.svg")

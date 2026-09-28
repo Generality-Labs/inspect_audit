@@ -27,7 +27,8 @@ def test_hawk_task_uses_kubernetes_without_bind_mounts(monkeypatch, tmp_path):
     monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: None)
     monkeypatch.setattr(_investigate.tempfile, "gettempdir", lambda: str(tmp_path))
     task = investigate(
-        repo="https://example.org/benchmark.git", revision="abc123",
+        repo="https://example.org/benchmark.git",
+        revision="abc123",
         audit_package="git+https://example.org/auditor.git@abc123",
         hawk_api_url="https://hawk.example",
         artifact_dir="s3://bucket/test-investigation/artifacts",
@@ -41,7 +42,16 @@ def test_hawk_task_uses_kubernetes_without_bind_mounts(monkeypatch, tmp_path):
     assert values["automountServiceAccountToken"] is False
 
 
-@pytest.mark.parametrize("name,kind", [("../escape", tarfile.REGTYPE), ("/escape", tarfile.REGTYPE), ("link", tarfile.SYMTYPE), ("hardlink", tarfile.LNKTYPE), ("fifo", tarfile.FIFOTYPE)])
+@pytest.mark.parametrize(
+    ("name", "kind"),
+    [
+        ("../escape", tarfile.REGTYPE),
+        ("/escape", tarfile.REGTYPE),
+        ("link", tarfile.SYMTYPE),
+        ("hardlink", tarfile.LNKTYPE),
+        ("fifo", tarfile.FIFOTYPE),
+    ],
+)
 def test_workspace_skips_paths_and_links_without_failing(tmp_path, name, kind):
     """A venv or a cloned repo makes links; they are left out, never fatal."""
     stream = io.BytesIO()
@@ -98,6 +108,7 @@ def operation(fail: bool = False):
         if fail:
             raise RuntimeError("failed")
         return f"submitted {config}"
+
     return execute
 
 
@@ -125,7 +136,9 @@ def test_sync_failure_is_reported_beside_a_successful_result(monkeypatch, tmp_pa
 
 def _remote_root(tmp_path, base="memory://audit-test/artifacts"):
     workspace.configure(tmp_path, "image@sha256:abc", base)
-    (tmp_path / "remote-workspace.json").write_text(json.dumps({"artifact_dir": base, "sample_uuid": "sample"}))
+    (tmp_path / "remote-workspace.json").write_text(
+        json.dumps({"artifact_dir": base, "sample_uuid": "sample"})
+    )
     return tmp_path
 
 
@@ -163,7 +176,9 @@ def test_state_survives_the_pod_and_uploads_only_changes(tmp_path, monkeypatch):
     assert fs.cat(f"{base}/work/journal.md") == b"# journal"
 
     uploaded = []
-    monkeypatch.setattr(workspace, "_upload", lambda files, destination: uploaded.append(sorted(files)))
+    monkeypatch.setattr(
+        workspace, "_upload", lambda files, destination: uploaded.append(sorted(files))
+    )
     asyncio.run(workspace.save_state(root))
     assert uploaded == []
     (root / "jobs.json").write_text('{"jobs": [1]}')
@@ -175,7 +190,10 @@ def test_workspace_file_fetch_refuses_escapes(tmp_path):
     (tmp_path / "work").mkdir()
     (tmp_path / "secret.yaml").write_text("x: 1")
     (tmp_path / "work" / "ok.yaml").write_text("x: 2")
-    assert asyncio.run(workspace.fetch_workspace_file(tmp_path, "/workspace/ok.yaml")).read_text() == "x: 2"
+    assert (
+        asyncio.run(workspace.fetch_workspace_file(tmp_path, "/workspace/ok.yaml")).read_text()
+        == "x: 2"
+    )
     for bad in ("/workspace/../secret.yaml", "/etc/passwd", "/workspace/missing.yaml"):
         with pytest.raises(ToolError):
             asyncio.run(workspace.fetch_workspace_file(tmp_path, bad))
@@ -226,7 +244,11 @@ def test_child_submission_uses_rotated_runner_credentials(monkeypatch, tmp_path)
     config = tmp_path / "child.yaml"
     config.write_text("name: child\n")
     assert asyncio.run(_jobs.Hawk("https://hawk.example").submit(config)) == "child-job"
-    assert received == {"token": "current-access", "api_url": "https://hawk.example", "refresh_token": "rotated"}
+    assert received == {
+        "token": "current-access",
+        "api_url": "https://hawk.example",
+        "refresh_token": "rotated",
+    }
 
 
 def test_hawk_cli_is_the_venvs_own_not_paths(monkeypatch, tmp_path):
@@ -249,13 +271,13 @@ def test_an_audit_job_on_hawk_registers_prices_before_hawk_applies_them(monkeypa
     """Hawk's set_model_cost refuses models Inspect has no entry for (the gpt-6 children died so)."""
     from inspect_audit import _investigate, _registry
 
-    class Registered(Exception):
+    class RegisteredError(Exception):
         pass
 
     def register():
-        raise Registered
+        raise RegisteredError
 
     monkeypatch.setattr(_investigate, "register_openrouter_costs", register)
     monkeypatch.setenv("HAWK_JOB_ID", "inv-child")
-    with pytest.raises(Registered):
+    with pytest.raises(RegisteredError):
         _registry.audit.__wrapped__(task="bench/Chess Puzzles")  # type: ignore[attr-defined]

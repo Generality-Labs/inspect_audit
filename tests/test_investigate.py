@@ -48,7 +48,10 @@ def test_headless_defaults_enforce_the_allowance_without_a_token_cap(
     assert target.cost_limit == 10
     assert target.token_limit is None
     planning = investigate(
-        repo, output_dir=str(tmp_path / "runs"), enforce_cost_limit=False, token_limit="output:500k",
+        repo,
+        output_dir=str(tmp_path / "runs"),
+        enforce_cost_limit=False,
+        token_limit="output:500k",
         execution="local",
     )
     assert planning.cost_limit is None
@@ -68,7 +71,21 @@ def test_snapshot_paths_paper_download_and_docs_mount(
     (repo / "other_eval").mkdir()
     (repo / "other_eval" / "noise.py").write_text("# not under audit\n")
     subprocess.run(["git", "-C", str(repo), "add", "other_eval"], check=True)
-    subprocess.run(["git", "-C", str(repo), "-c", "user.name=T", "-c", "user.email=t@e.org", "commit", "-qm", "more"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@e.org",
+            "commit",
+            "-qm",
+            "more",
+        ],
+        check=True,
+    )
     docs = tmp_path / "inspect-docs"
     docs.mkdir()
     (docs / "index.md").write_text("# docs\n")
@@ -80,15 +97,15 @@ def test_snapshot_paths_paper_download_and_docs_mount(
         def read(self) -> bytes:
             return self.body
 
-        def __enter__(self):  # noqa: ANN204
+        def __enter__(self):
             return self
 
-        def __exit__(self, *exc):  # noqa: ANN002
+        def __exit__(self, *exc):
             return False
 
     fetched: list[str] = []
 
-    def urlopen(request, timeout=None):  # noqa: ANN001
+    def urlopen(request, timeout=None):
         fetched.append(request.full_url)
         return Response(b"%PDF-1.4 fake")
 
@@ -129,9 +146,7 @@ def test_budget_does_not_turn_missing_prices_into_zero(
         _investigate,
         "sample_model_usage",
         lambda: {
-            "priced": ModelUsage(
-                input_tokens=1, output_tokens=1, total_tokens=2, total_cost=2
-            ),
+            "priced": ModelUsage(input_tokens=1, output_tokens=1, total_tokens=2, total_cost=2),
             "other": ModelUsage(
                 input_tokens=1,
                 output_tokens=1,
@@ -146,9 +161,7 @@ def test_budget_does_not_turn_missing_prices_into_zero(
         usage = 2.0 if missing else 3.0
         remaining = 8.0 if missing else 7.0
 
-    monkeypatch.setattr(
-        _investigate, "sample_limits", lambda: SimpleNamespace(cost=_Cost())
-    )
+    monkeypatch.setattr(_investigate, "sample_limits", lambda: SimpleNamespace(cost=_Cost()))
     text = asyncio.run(_investigate.investigation_budget(10, True)())
     assert "Allowance: $10.00 (enforced)" in text
     if missing:
@@ -161,11 +174,19 @@ def test_budget_does_not_turn_missing_prices_into_zero(
 def test_resumed_budget_displays_shared_remaining_allowance(monkeypatch):
     from inspect_audit import _investigate
 
-    monkeypatch.setattr(_investigate, "sample_model_usage", lambda: {})
-    monkeypatch.setattr(_investigate, "sample_limits", lambda: SimpleNamespace(
-        cost=SimpleNamespace(usage=3.0, remaining=97.0)))
-    ledger = SimpleNamespace(reload=lambda: None, jobs=[], actual_usd=lambda: 10.0,
-                             reserved_usd=lambda: 20.0, unpriced=lambda: [])
+    monkeypatch.setattr(_investigate, "sample_model_usage", dict)
+    monkeypatch.setattr(
+        _investigate,
+        "sample_limits",
+        lambda: SimpleNamespace(cost=SimpleNamespace(usage=3.0, remaining=97.0)),
+    )
+    ledger = SimpleNamespace(
+        reload=lambda: None,
+        jobs=[],
+        actual_usd=lambda: 10.0,
+        reserved_usd=lambda: 20.0,
+        unpriced=list,
+    )
     remote = SimpleNamespace(ledger=ledger, prior_local_usd=7.0)
     text = asyncio.run(_investigate.investigation_budget(100, True, remote)())
     assert "Committed in total: $40.00 of $100.00" in text
@@ -185,34 +206,29 @@ def test_findings_validate_and_bundle_input_evidence(tmp_path: Path) -> None:
     for name in ("Findings.tex", "metadata.tex", "assessments.tex"):
         (report / name).write_text("Fixture")
     (report / "report.pdf").write_text("<p>Report</p>")
-    finding = dict(
-        id="F1",
-        section="grading",
-        claim="A claim",
-        status="supported",
-        origin="historical",
-        evidence=[dict(path="/inputs/trace.txt", location="line 1")],
-        reproduce="Read line 1",
-        limitations="",
-    )
+    finding = {
+        "id": "F1",
+        "section": "grading",
+        "claim": "A claim",
+        "status": "supported",
+        "origin": "historical",
+        "evidence": [{"path": "/inputs/trace.txt", "location": "line 1"}],
+        "reproduce": "Read line 1",
+        "limitations": "",
+    }
     register = report / "findings.json"
     register.write_text(json.dumps([finding]))
     destination = save_publication(tmp_path)
     saved = json.loads((destination / "findings.json").read_text())
-    assert (
-        destination / saved[0]["evidence"][0]["path"]
-    ).read_text() == "primary evidence"
-    assert (
-        json.loads(register.read_text())[0]["evidence"][0]["path"]
-        == "/inputs/trace.txt"
-    )
+    assert (destination / saved[0]["evidence"][0]["path"]).read_text() == "primary evidence"
+    assert json.loads(register.read_text())[0]["evidence"][0]["path"] == "/inputs/trace.txt"
     for change in [
-        dict(status="confirmed"),
-        dict(section="vibes"),
-        dict(evidence=[]),
-        dict(evidence=[dict(path="../escape", location="line 1")]),
-        dict(evidence=[dict(path="/etc/passwd", location="line 1")]),
-        dict(evidence=[dict(path="missing", location="line 1")]),
+        {"status": "confirmed"},
+        {"section": "vibes"},
+        {"evidence": []},
+        {"evidence": [{"path": "../escape", "location": "line 1"}]},
+        {"evidence": [{"path": "/etc/passwd", "location": "line 1"}]},
+        {"evidence": [{"path": "missing", "location": "line 1"}]},
     ]:
         register.write_text(json.dumps([{**finding, **change}]))
         with pytest.raises(ValueError):
@@ -268,7 +284,8 @@ def test_snapshot_excludes_untracked_secrets_and_retains_publications(
     tmp_path: Path,
 ) -> None:
     target = investigate(
-        str(git_repo(tmp_path / "repo")), output_dir=str(tmp_path / "runs"),
+        str(git_repo(tmp_path / "repo")),
+        output_dir=str(tmp_path / "runs"),
         execution="local",
     )
     root = Path(target.metadata["investigation_dir"])
@@ -319,11 +336,8 @@ def test_publication_switches_from_work_to_discussion(
     async def operator_reply(state: AgentState) -> str:
         return "Show me the supporting transcript."
 
-    monkeypatch.setattr(_investigate, "_operator_turn", operator_reply)
-    assert (
-        asyncio.run(_investigate._continue(state, True))
-        == "Show me the supporting transcript."
-    )
+    monkeypatch.setattr(_investigate, "operator_turn", operator_reply)
+    assert asyncio.run(_investigate._continue(state, True)) == "Show me the supporting transcript."
 
 
 @solver
@@ -347,6 +361,7 @@ def render_probe(root: str) -> Solver:
         assert result.success, result.stderr
         # Exercise the same SVG preview that crashed real investigations.
         from inspect_audit._agent import view_image
+
         await sandbox().write_file(
             "/workspace/report/architecture.svg",
             '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50">'
@@ -367,9 +382,7 @@ def render_probe(root: str) -> Solver:
 def test_real_container_renders_and_exports_report(tmp_path: Path) -> None:
     set_model_info(
         "mockllm/model",
-        ModelInfo(
-            cost=ModelCost(input=0, output=0, input_cache_read=0, input_cache_write=0)
-        ),
+        ModelInfo(cost=ModelCost(input=0, output=0, input_cache_read=0, input_cache_write=0)),
     )
     target = investigate(
         str(git_repo(tmp_path / "repo")),
@@ -379,9 +392,7 @@ def test_real_container_renders_and_exports_report(tmp_path: Path) -> None:
     )
     root = Path(target.metadata["investigation_dir"])
     target = task_with(target, solver=render_probe(str(root)))
-    log = eval(
-        target, model="mockllm/model", display="none", log_dir=str(tmp_path / "logs")
-    )[0]
+    log = eval(target, model="mockllm/model", display="none", log_dir=str(tmp_path / "logs"))[0]
     assert log.status == "success", log.error
     published = list((root / "published").glob("*/report.pdf"))
     assert len(published) == 1
@@ -392,9 +403,7 @@ def test_real_container_renders_and_exports_report(tmp_path: Path) -> None:
 def test_agent_reads_logs_and_publishes_before_batch_exit(tmp_path: Path) -> None:
     set_model_info(
         "mockllm/model",
-        ModelInfo(
-            cost=ModelCost(input=0, output=0, input_cache_read=0, input_cache_write=0)
-        ),
+        ModelInfo(cost=ModelCost(input=0, output=0, input_cache_read=0, input_cache_write=0)),
     )
     source_log = run_fixture_eval(str(tmp_path / "source_logs"))
     target = investigate(
@@ -417,9 +426,7 @@ PY"""
     model = get_model(
         "mockllm/model",
         custom_outputs=[
-            ModelOutput.for_tool_call(
-                "mockllm/model", "skill", {"command": "investigating"}
-            ),
+            ModelOutput.for_tool_call("mockllm/model", "skill", {"command": "investigating"}),
             ModelOutput.for_tool_call("mockllm/model", "bash", {"command": script}),
             ModelOutput.for_tool_call("mockllm/model", "budget", {}),
             ModelOutput.for_tool_call("mockllm/model", "publish_report", {}),
@@ -435,9 +442,7 @@ PY"""
     from inspect_ai.model import ChatMessageTool
 
     assert not [
-        m.error
-        for m in log.samples[0].messages
-        if isinstance(m, ChatMessageTool) and m.error
+        m.error for m in log.samples[0].messages if isinstance(m, ChatMessageTool) and m.error
     ]
 
 
@@ -451,11 +456,19 @@ def test_the_same_input_cited_twice_publishes_once(tmp_path: Path) -> None:
     for name in ("Findings.tex", "metadata.tex", "assessments.tex"):
         (report / name).write_text("Fixture")
     (report / "report.pdf").write_text("<p>Report</p>")
-    finding = dict(
-        id="F1", section="dataset", claim="A", status="supported", origin="source",
-        evidence=[dict(path="/inputs/paper.pdf", location="p. 1"), dict(path="/inputs/paper.pdf", location="p. 2")],
-        reproduce="read", limitations="",
-    )
+    finding = {
+        "id": "F1",
+        "section": "dataset",
+        "claim": "A",
+        "status": "supported",
+        "origin": "source",
+        "evidence": [
+            {"path": "/inputs/paper.pdf", "location": "p. 1"},
+            {"path": "/inputs/paper.pdf", "location": "p. 2"},
+        ],
+        "reproduce": "read",
+        "limitations": "",
+    }
     (report / "findings.json").write_text(json.dumps([finding, {**finding, "id": "F2"}]))
     destination = save_publication(tmp_path)
     saved = json.loads((destination / "findings.json").read_text())
@@ -483,9 +496,7 @@ def test_mounted_skills_are_wellformed_and_adapted() -> None:
         if name not in ours:
             assert "## In this container" in text, name
             leftovers = [
-                line
-                for line in text.splitlines()
-                if "uv run" in line and "gnore" not in line
+                line for line in text.splitlines() if "uv run" in line and "gnore" not in line
             ]
             assert not leftovers, (name, leftovers)
 
@@ -496,23 +507,35 @@ def test_resume_reuses_the_directory_ledger_and_staged_logs(
     """A restarted investigator must not stage its inputs again or lose its jobs."""
     from inspect_audit import _investigate
 
-    async def noop_generate(state, **kwargs):  # noqa: ANN001, ANN003, ANN202
+    async def noop_generate(state, **kwargs):
         return state
 
-    def run_setup(target) -> None:  # noqa: ANN001
+    def run_setup(target) -> None:
         setup = target.setup
         for step in setup if isinstance(setup, list) else [setup]:
             if step is not None:
                 asyncio.run(step(None, noop_generate))
+
     repo_path = git_repo(tmp_path / "repo")
-    subprocess.run(["git", "-C", str(repo_path), "remote", "add", "origin", "https://github.com/org/bench.git"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_path),
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/org/bench.git",
+        ],
+        check=True,
+    )
     repo = str(repo_path)
     log = run_fixture_eval(str(tmp_path / "logs"))
-    common = dict(
-        logs=[str(log)],
-        hawk_api_url="https://hawk.example",
-        output_dir=str(tmp_path / "runs"),
-    )
+    common = {
+        "logs": [str(log)],
+        "hawk_api_url": "https://hawk.example",
+        "output_dir": str(tmp_path / "runs"),
+    }
     first = investigate(repo, **common, execution="local")  # type: ignore[arg-type]
     root = Path(first.metadata["investigation_dir"])
     run_setup(first)
@@ -578,8 +601,16 @@ def test_a_remote_reservation_stops_the_investigator_spending_the_same_money_loc
 
     with r.ledger.transaction() as ledger:
         ledger.add(
-            Job(label="big", kind="eval-set", eval_set_id="inv-big-1", config_path="x",
-                submitted_at="now", estimated_usd=5.0, reserved_usd=8.0, status="submitted")
+            Job(
+                label="big",
+                kind="eval-set",
+                eval_set_id="inv-big-1",
+                config_path="x",
+                submitted_at="now",
+                estimated_usd=5.0,
+                reserved_usd=8.0,
+                status="submitted",
+            )
         )
     message = r.over_allowance()
     assert message is not None and "$11.00" in message and "$8.00" in message
@@ -610,7 +641,9 @@ def test_a_resumed_investigation_remembers_what_it_already_spent(
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (1.5, []))
     resumed = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
     assert resumed.prior_local_usd == 2.0
-    assert resumed.local_usd() == 3.5, "the earlier run's spend must still count against the allowance"
+    assert resumed.local_usd() == 3.5, (
+        "the earlier run's spend must still count against the allowance"
+    )
 
 
 def test_what_can_be_derived_is_derived(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -647,10 +680,29 @@ def test_what_can_be_derived_is_derived(tmp_path: Path, monkeypatch: pytest.Monk
     assert paths_from_metadata(repo, "suite/not_here") is None
 
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "git@github.com:org/suite.git"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", "git@github.com:org/suite.git"],
+        check=True,
+    )
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
-    subprocess.run(["git", "-C", str(repo), "-c", "user.name=T", "-c", "user.email=t@e.org", "commit", "-qm", "c"], check=True)
-    commit = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@e.org",
+            "commit",
+            "-qm",
+            "c",
+        ],
+        check=True,
+    )
+    commit = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
     assert git_package_spec(repo) == f"git+https://github.com/org/suite@{commit}"
 
     # a repository with no remote cannot be installed in a runner, and says so
@@ -687,9 +739,13 @@ def test_the_task_directory_is_found_without_inspect_evals_conventions(tmp_path:
         '@task(name="Example Questions")\ndef example_puzzles(epochs: int = 1) -> Task:\n    ...\n'
     )
     (repo / "bench/task/other").mkdir()
-    (repo / "bench/task/other/__init__.py").write_text('@task\ndef something_else() -> Task:\n    ...\n')
+    (repo / "bench/task/other/__init__.py").write_text(
+        "@task\ndef something_else() -> Task:\n    ...\n"
+    )
     (repo / "tests").mkdir()
-    (repo / "tests/test_example.py").write_text('@task(name="Example Questions")\ndef example_puzzles():\n    ...\n')
+    (repo / "tests/test_example.py").write_text(
+        '@task(name="Example Questions")\ndef example_puzzles():\n    ...\n'
+    )
 
     # the registry name, which is not the function name and carries a space
     chosen = paths_from_metadata(repo, "bench/Example Questions")
@@ -720,11 +776,15 @@ def test_an_investigation_can_be_a_file_and_the_command_line_still_wins(
         "enforce_cost_limit: false\n"
     )
     from_file = investigate(config=str(config), execution="local")
-    seed = json.loads((Path(from_file.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
+    seed = json.loads(
+        (Path(from_file.metadata["investigation_dir"]) / "inputs/seed.json").read_text()
+    )
     assert seed["budget_usd"] == 100 and seed["overview"] == "read the grader first"
 
     overridden = investigate(config=str(config), budget_usd=7, execution="local")
-    seed = json.loads((Path(overridden.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
+    seed = json.loads(
+        (Path(overridden.metadata["investigation_dir"]) / "inputs/seed.json").read_text()
+    )
     assert seed["budget_usd"] == 7, "an argument given on the command line beats the file"
 
     typo = tmp_path / "typo.yaml"
@@ -734,7 +794,7 @@ def test_an_investigation_can_be_a_file_and_the_command_line_still_wins(
     with pytest.raises(ValueError, match="no such investigation file"):
         investigate(config=str(tmp_path / "nowhere.yaml"), execution="local")
     with pytest.raises(ValueError, match="needs a repo"):
-        investigate( execution="local")
+        investigate(execution="local")
 
 
 def test_the_only_task_a_repository_declares_needs_no_naming(tmp_path: Path) -> None:
@@ -742,7 +802,9 @@ def test_the_only_task_a_repository_declares_needs_no_naming(tmp_path: Path) -> 
 
     one = tmp_path / "one"
     (one / "bench").mkdir(parents=True)
-    (one / "bench/task.py").write_text('@task(name="Example Questions")\ndef example_puzzles():\n    ...\n')
+    (one / "bench/task.py").write_text(
+        '@task(name="Example Questions")\ndef example_puzzles():\n    ...\n'
+    )
     assert _only_task(one) == "Example Questions"
 
     several = tmp_path / "several"
@@ -806,7 +868,9 @@ def test_the_config_file_decides_before_anything_is_built(
     repo = git_repo(tmp_path / "repo")
     skill = tmp_path / "house-style"
     skill.mkdir()
-    (skill / "SKILL.md").write_text("---\nname: house-style\ndescription: ours\n---\n\nRead this.\n")
+    (skill / "SKILL.md").write_text(
+        "---\nname: house-style\ndescription: ours\n---\n\nRead this.\n"
+    )
     config = tmp_path / "investigation.yaml"
     config.write_text(
         f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\nenforce_cost_limit: false\n"
@@ -823,7 +887,7 @@ def test_the_config_file_decides_before_anything_is_built(
     broken.write_text(
         f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\nextra_skills: ['{not_a_skill}']\n"
     )
-    with pytest.raises(ValueError, match="containing SKILL.md"):
+    with pytest.raises(ValueError, match=r"containing SKILL\.md"):
         investigate(config=str(broken), execution="local")
 
     bad = tmp_path / "bad.yaml"
@@ -835,7 +899,7 @@ def test_the_config_file_decides_before_anything_is_built(
 def test_a_value_equal_to_a_default_is_still_an_override(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """"Given" cannot mean "different from the default", or a file wins arguments it should not."""
+    """ "Given" cannot mean "different from the default", or a file wins arguments it should not."""
     from inspect_audit import _investigate
 
     monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
@@ -847,12 +911,18 @@ def test_a_value_equal_to_a_default_is_still_an_override(
     )
     # the file's values
     from_file = investigate(config=str(config), execution="local")
-    seed = json.loads((Path(from_file.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
+    seed = json.loads(
+        (Path(from_file.metadata["investigation_dir"]) / "inputs/seed.json").read_text()
+    )
     assert seed["budget_usd"] == 7
 
     # the same values the defaults would have used, passed deliberately
-    overridden = investigate(config=str(config), budget_usd=10, interactive=False, execution="local")
-    seed = json.loads((Path(overridden.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
+    overridden = investigate(
+        config=str(config), budget_usd=10, interactive=False, execution="local"
+    )
+    seed = json.loads(
+        (Path(overridden.metadata["investigation_dir"]) / "inputs/seed.json").read_text()
+    )
     assert seed["budget_usd"] == 10, "an explicit allowance must beat the file"
 
 
@@ -862,12 +932,16 @@ def test_resume_runs_the_commit_it_reads(tmp_path: Path, monkeypatch: pytest.Mon
 
     monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
     repo = git_repo(tmp_path / "repo")
-    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "https://github.com/org/bench.git"], check=True)
-    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-test\n")
-    common = dict(
-        output_dir=str(tmp_path / "runs"), hawk_api_url="https://hawk.example",
-        enforce_cost_limit=False,
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", "https://github.com/org/bench.git"],
+        check=True,
     )
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-test\n")
+    common = {
+        "output_dir": str(tmp_path / "runs"),
+        "hawk_api_url": "https://hawk.example",
+        "enforce_cost_limit": False,
+    }
     first = investigate(str(repo), **common, execution="local")  # type: ignore[arg-type]
     root = Path(first.metadata["investigation_dir"])
     snapshotted = json.loads((root / "inputs/seed.json").read_text())["revision"]
@@ -875,12 +949,30 @@ def test_resume_runs_the_commit_it_reads(tmp_path: Path, monkeypatch: pytest.Mon
     # the checkout moves on
     (repo / "later.py").write_text("# a later commit\n")
     subprocess.run(["git", "-C", str(repo), "add", "later.py"], check=True)
-    subprocess.run(["git", "-C", str(repo), "-c", "user.name=T", "-c", "user.email=t@e.org", "commit", "-qm", "later"], check=True)
-    moved = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@e.org",
+            "commit",
+            "-qm",
+            "later",
+        ],
+        check=True,
+    )
+    moved = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
     assert moved != snapshotted
 
     resumed = investigate(str(repo), resume=str(root), **common, execution="local")  # type: ignore[arg-type]
-    seed = json.loads((Path(resumed.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
+    seed = json.loads(
+        (Path(resumed.metadata["investigation_dir"]) / "inputs/seed.json").read_text()
+    )
     assert seed["remote"]["task_package"].endswith(snapshotted), (
         "a resumed investigation must run the commit it reads, not the one HEAD moved to"
     )
@@ -907,7 +999,9 @@ def test_the_snapshot_follows_what_the_task_imports(tmp_path: Path) -> None:
         "from suite.shared.helpers import prepare\n"
         '@task(name="Thing")\ndef thing():\n    ...\n'
     )
-    (package / "shared" / "helpers.py").write_text("from suite.constants import X\n\ndef prepare():\n    ...\n")
+    (package / "shared" / "helpers.py").write_text(
+        "from suite.constants import X\n\ndef prepare():\n    ...\n"
+    )
     (package / "unrelated" / "other.py").write_text("# another eval entirely\n")
     (repo / "pyproject.toml").write_text("[project]\nname='suite'\n")
 
@@ -927,24 +1021,38 @@ def _declare_fixture_assessments(root: Path) -> None:
     from inspect_audit._assessment import framework_checks
 
     report = root / "work/report"
-    rows = [dict(id=key, assessment="Not assessed", result="Infrastructure smoke test; no benchmark judgments", evidence=[])
-            for key in framework_checks(report)]
+    rows = [
+        {
+            "id": key,
+            "assessment": "Not assessed",
+            "result": "Infrastructure smoke test; no benchmark judgments",
+            "evidence": [],
+        }
+        for key in framework_checks(report)
+    ]
     (report / "assessments.json").write_text(json.dumps(rows))
     from inspect_audit._assessment import assessment_latex
+
     (report / "assessments.tex").write_text(assessment_latex(report))
 
 
 def test_remote_benchmark_package_can_include_extras(tmp_path, monkeypatch):
     from inspect_audit import _investigate
 
-    monkeypatch.setattr(_investigate, 'register_openrouter_costs', lambda: 0)
-    package = 'git+https://example.org/benchmark.git@revision#egg=benchmark[optional]'
-    task = investigate(str(git_repo(tmp_path / 'repo')), output_dir=str(tmp_path / 'runs'),
-                       task_package=package, audit_package='inspect_audit',
-                       hawk_api_url='https://example.org', enforce_cost_limit=False, execution="local")
-    root = Path(task.metadata['investigation_dir'])
-    seed = json.loads((root / 'inputs/seed.json').read_text())
-    assert seed['remote']['task_package'] == package
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: 0)
+    package = "git+https://example.org/benchmark.git@revision#egg=benchmark[optional]"
+    task = investigate(
+        str(git_repo(tmp_path / "repo")),
+        output_dir=str(tmp_path / "runs"),
+        task_package=package,
+        audit_package="inspect_audit",
+        hawk_api_url="https://example.org",
+        enforce_cost_limit=False,
+        execution="local",
+    )
+    root = Path(task.metadata["investigation_dir"])
+    seed = json.loads((root / "inputs/seed.json").read_text())
+    assert seed["remote"]["task_package"] == package
 
 
 def test_a_retried_sample_carries_the_first_attempts_spend(

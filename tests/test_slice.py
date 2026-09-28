@@ -70,9 +70,7 @@ def test_header_survives_except_the_dataset_ids_which_narrow(
     assert [(s.id, s.epoch) for s in read_eval_log_samples(sliced_file)] == [(1, 1)]
 
 
-def test_every_epoch_of_an_item_stays_together(
-    fixture_log_epochs: str, tmp_path: Path
-) -> None:
+def test_every_epoch_of_an_item_stays_together(fixture_log_epochs: str, tmp_path: Path) -> None:
     files, _ = sample_logs(refs(fixture_log_epochs, "1", 1, 2, 3), stage=tmp_path)
     log = read_eval_log(next(iter(files.values())))
     assert sorted(s.epoch for s in (log.samples or [])) == [1, 2, 3]
@@ -81,18 +79,14 @@ def test_every_epoch_of_an_item_stays_together(
 def test_one_file_per_source_log_keeping_its_name(fixture_log: str, tmp_path: Path) -> None:
     """A case reads like the logs it came from, so names are not rewritten."""
     other = run_fixture_eval(str(tmp_path / "other"), name="other_task")
-    files, _ = sample_logs(
-        refs(fixture_log, "1", 1) + refs(other, "1", 1), stage=tmp_path / "case"
-    )
+    files, _ = sample_logs(refs(fixture_log, "1", 1) + refs(other, "1", 1), stage=tmp_path / "case")
 
     assert {Path(p).name for p in files} == {
         Path(log.replace("file://", "")).name for log in (fixture_log, other)
     }
 
 
-def test_an_unreadable_log_costs_one_model_not_the_case(
-    fixture_log: str, tmp_path: Path
-) -> None:
+def test_an_unreadable_log_costs_one_model_not_the_case(fixture_log: str, tmp_path: Path) -> None:
     files, _ = sample_logs(
         refs(fixture_log, "1", 1) + refs(str(tmp_path / "missing.eval"), "1", 1),
         stage=tmp_path / "case",
@@ -136,8 +130,7 @@ def test_colliding_names_preserve_every_source_and_its_attempt(
         assert log.samples and len(log.samples) == 1
         observed[log.eval.model] = log.samples[0].input
     assert observed == {
-        f"mockllm/{directory}": f"question from {directory}"
-        for directory in ("a", "b", "c")
+        f"mockllm/{directory}": f"question from {directory}" for directory in ("a", "b", "c")
     }
 
     # Assignment depends on source identity, not the incoming attempt order.
@@ -146,8 +139,7 @@ def test_colliding_names_preserve_every_source_and_its_attempt(
         Path(path).name: read_eval_log(path, header_only=True).eval.model
         for path in reordered.values()
     } == {
-        Path(path).name: read_eval_log(path, header_only=True).eval.model
-        for path in files.values()
+        Path(path).name: read_eval_log(path, header_only=True).eval.model for path in files.values()
     }
 
 

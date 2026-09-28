@@ -41,7 +41,7 @@ def test_restore_reverts_git_state_before_rerunning_setup(monkeypatch) -> None:
     calls: list[str] = []
 
     class FakeBox:
-        async def exec(self, cmd, timeout=None, input=None):  # noqa: D102
+        async def exec(self, cmd, timeout=None, input=None):
             calls.append(cmd[-1])
             return SimpleNamespace(success=True, stdout="", stderr="")
 
@@ -70,7 +70,7 @@ def test_restore_raises_on_an_unreachable_box_so_the_caller_can_rebuild(monkeypa
     """
 
     class DeadBox:
-        async def exec(self, cmd, timeout=None, input=None):  # noqa: D102
+        async def exec(self, cmd, timeout=None, input=None):
             return SimpleNamespace(success=False, stdout="", stderr="no such container")
 
     monkeypatch.setattr(sandbox_module, "benchmark_boxes", lambda: ["benchmark"])
@@ -89,7 +89,7 @@ def test_restore_raises_when_the_revert_itself_cannot_run(monkeypatch) -> None:
     """
 
     class NoBashBox:
-        async def exec(self, cmd, timeout=None, input=None):  # noqa: D102
+        async def exec(self, cmd, timeout=None, input=None):
             if cmd == ["true"]:
                 return SimpleNamespace(success=True, stdout="", stderr="")
             return SimpleNamespace(success=False, stdout="", stderr="bash: not found")
@@ -111,7 +111,7 @@ def test_restore_reverts_every_benchmark_box(monkeypatch) -> None:
 
     def make_box(name: str):
         class Box:
-            async def exec(self, cmd, timeout=None, input=None):  # noqa: D102
+            async def exec(self, cmd, timeout=None, input=None):
                 if "git" in cmd[-1]:
                     reverted.append(name)
                 return SimpleNamespace(success=True, stdout="", stderr="")
@@ -121,9 +121,7 @@ def test_restore_reverts_every_benchmark_box(monkeypatch) -> None:
     async def fake_setup(script):
         pass
 
-    monkeypatch.setattr(
-        sandbox_module, "benchmark_boxes", lambda: ["benchmark", "victim"]
-    )
+    monkeypatch.setattr(sandbox_module, "benchmark_boxes", lambda: ["benchmark", "victim"])
     monkeypatch.setattr(sandbox_module, "sandbox_env", lambda name=None: make_box(name))
     monkeypatch.setattr(sandbox_module, "run_benchmark_setup", fake_setup)
 
@@ -175,9 +173,11 @@ def test_soft_reset_reports_the_repos_it_reset(monkeypatch) -> None:
     """
 
     class Box:
-        async def exec(self, cmd, timeout=None, input=None):  # noqa: D102
+        async def exec(self, cmd, timeout=None, input=None):
             if "git" in cmd[-1]:
-                return SimpleNamespace(success=True, stdout="reset /repo/a\nreset /repo/b\n", stderr="")
+                return SimpleNamespace(
+                    success=True, stdout="reset /repo/a\nreset /repo/b\n", stderr=""
+                )
             return SimpleNamespace(success=True, stdout="", stderr="")
 
     async def fake_setup(script):
@@ -195,7 +195,7 @@ def test_soft_reset_reports_nothing_when_no_repo_is_found(monkeypatch) -> None:
     """No git output -> the receipt shows it reset nothing (the look-here signal)."""
 
     class Box:
-        async def exec(self, cmd, timeout=None, input=None):  # noqa: D102
+        async def exec(self, cmd, timeout=None, input=None):
             return SimpleNamespace(success=True, stdout="", stderr="")
 
     async def fake_setup(script):
@@ -273,7 +273,7 @@ def test_restore_refuses_without_a_benchmark_box(monkeypatch) -> None:
     sample, so without this guard the reset would git-wipe the auditor's own
     container and report success.
     """
-    monkeypatch.setattr(sandbox_module, "benchmark_boxes", lambda: [])
+    monkeypatch.setattr(sandbox_module, "benchmark_boxes", list)
 
     with pytest.raises(RuntimeError, match="no benchmark box"):
         asyncio.run(restore_benchmark("echo setup"))
@@ -374,9 +374,7 @@ def test_phoenix_recreates_every_non_auditor_service(monkeypatch) -> None:
 
 def test_phoenix_raises_when_the_box_does_not_come_back(monkeypatch) -> None:
     """A brick that reached past the container leaves nothing running -- a finding."""
-    _patch_phoenix(
-        monkeypatch, services={"default": {}, "benchmark": {}}, running=[]
-    )
+    _patch_phoenix(monkeypatch, services={"default": {}, "benchmark": {}}, running=[])
 
     with pytest.raises(RuntimeError, match="did not come back"):
         asyncio.run(phoenix_benchmark("echo setup"))
@@ -434,9 +432,7 @@ def test_phoenix_refuses_to_reseed_a_file_for_an_exited_service(monkeypatch) -> 
     assert calls  # (recreate targets still include writer)
 
     with pytest.raises(RuntimeError, match="no live box by that name"):
-        asyncio.run(
-            phoenix_benchmark(None, {"writer:/seed.txt": "/host/seed.txt"})
-        )
+        asyncio.run(phoenix_benchmark(None, {"writer:/seed.txt": "/host/seed.txt"}))
 
 
 def test_phoenix_is_unsupported_off_docker(monkeypatch) -> None:
@@ -535,11 +531,11 @@ def test_phoenix_relays_sample_files_then_runs_setup(monkeypatch, tmp_path: Path
     envs = {name: FakeEnv(name) for name in ("default", "benchmark", "victim")}
     # phoenix resolves the auditor as sandbox_env() and each target by name;
     # _patch_phoenix's box fake is replaced by name-aware envs for this test
-    monkeypatch.setattr(
-        sandbox_module, "sandbox_env", lambda name="default": envs[name]
-    )
+    monkeypatch.setattr(sandbox_module, "sandbox_env", lambda name="default": envs[name])
     # keep the docker unwrap working: as_type must still return the project
-    envs["default"].as_type = lambda _cls: SimpleNamespace(_project=SimpleNamespace(name="proj", config="/x/compose.yaml", env={}))  # type: ignore[attr-defined]
+    envs["default"].as_type = lambda _cls: SimpleNamespace(
+        _project=SimpleNamespace(name="proj", config="/x/compose.yaml", env={})
+    )  # type: ignore[attr-defined]
 
     async def ordered_setup(script):
         order.append("setup")
@@ -670,9 +666,7 @@ def test_a_benchmark_service_named_default_cannot_replace_the_auditor(
     assert merged["benchmark"]["image"] == "i"
     assert merged["default_"]["image"] == "victim"
     # no benchmark service may carry a default claim into the merge
-    assert not any(
-        svc.get("x-default") for name, svc in merged.items() if name != "default"
-    )
+    assert not any(svc.get("x-default") for name, svc in merged.items() if name != "default")
 
 
 def test_an_interloping_benchmark_service_moves_aside(tmp_path: Path) -> None:
@@ -715,17 +709,17 @@ def test_seconds_parses_compose_durations(value: str, expected: int | None) -> N
     assert _seconds(value) == expected
 
 
-def test_task_pins_follow_the_install_source(monkeypatch) -> None:  # noqa: ANN001
+def test_task_pins_follow_the_install_source(monkeypatch) -> None:
     """A git-installed task package pins to its commit; a local install is skipped."""
     import json
 
     from inspect_audit import _sandbox
 
     class Dist:
-        def __init__(self, direct):  # noqa: ANN001
+        def __init__(self, direct):
             self.direct = direct
 
-        def read_text(self, name: str):  # noqa: ANN202
+        def read_text(self, name: str):
             return json.dumps(self.direct) if self.direct is not None else None
 
     cases = {
@@ -737,9 +731,7 @@ def test_task_pins_follow_the_install_source(monkeypatch) -> None:  # noqa: ANN0
         "editable": ({"url": "file:///home/me/pkg", "dir_info": {"editable": True}}, ""),
     }
     for dist, (direct, expected) in cases.items():
-        monkeypatch.setattr(
-            "importlib.metadata.distribution", lambda name, d=direct: Dist(d)
-        )
+        monkeypatch.setattr("importlib.metadata.distribution", lambda name, d=direct: Dist(d))
         assert _sandbox._direct_url_requirement(dist) == expected
 
 
@@ -771,16 +763,19 @@ def test_the_container_templates_are_files_that_render() -> None:
     assert "kube-dns" in containers.EGRESS_POLICY
 
 
-@pytest.mark.parametrize('combined', [False, True])
+@pytest.mark.parametrize("combined", [False, True])
 def test_git_requirement_is_one_shell_argument(tmp_path, monkeypatch, combined) -> None:
     import shlex
-    requirement = 'inspect_evals @ git+https://github.com/org/inspect_evals@abc123'
-    monkeypatch.setattr(sandbox_module, 'task_requirements', lambda task: [requirement])
+
+    requirement = "inspect_evals @ git+https://github.com/org/inspect_evals@abc123"
+    monkeypatch.setattr(sandbox_module, "task_requirements", lambda task: [requirement])
     if combined:
-        _, config = audit_compose(make_task(), None, stage=tmp_path / 'stage')
+        _, config = audit_compose(make_task(), None, stage=tmp_path / "stage")
     else:
         _, config = sandbox_module.audit_sandbox(make_task())
-    dockerfile = (Path(config).parent / 'Dockerfile').read_text()
-    command = next(line[4:] for line in dockerfile.splitlines() if line.startswith('RUN pip install'))
+    dockerfile = (Path(config).parent / "Dockerfile").read_text()
+    command = next(
+        line[4:] for line in dockerfile.splitlines() if line.startswith("RUN pip install")
+    )
     assert requirement in shlex.split(command)
-    assert '@' not in shlex.split(command)
+    assert "@" not in shlex.split(command)

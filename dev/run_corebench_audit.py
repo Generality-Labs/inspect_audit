@@ -26,9 +26,7 @@ LOGS = sorted(
 # openrouter pricing per 1M tokens, fetched 2026-08-18
 set_model_cost(
     MODEL,
-    ModelCost(
-        input=0.20, output=1.20, input_cache_read=0.02, input_cache_write=0.25
-    ),
+    ModelCost(input=0.20, output=1.20, input_cache_read=0.02, input_cache_write=0.25),
 )
 
 log_dir, samples = sys.argv[1], sys.argv[2:]

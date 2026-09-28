@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
+import anyio.to_thread
 import yaml
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import Tool, ToolDef, ToolError
@@ -38,12 +39,17 @@ def remote_workspace(root: Path) -> bool:
 def configure(root: Path, image: str, artifact_dir: str) -> tuple[str, str]:
     (root / "remote-workspace.json").write_text(json.dumps({"artifact_dir": artifact_dir}))
     values = {
-        "services": {"default": {
-            "image": image, "command": ["sleep", "infinity"],
-            "workingDir": "/workspace",
-            "resources": {"requests": {"cpu": "2", "memory": "8Gi"},
-                          "limits": {"cpu": "4", "memory": "16Gi"}},
-        }},
+        "services": {
+            "default": {
+                "image": image,
+                "command": ["sleep", "infinity"],
+                "workingDir": "/workspace",
+                "resources": {
+                    "requests": {"cpu": "2", "memory": "8Gi"},
+                    "limits": {"cpu": "4", "memory": "16Gi"},
+                },
+            }
+        },
         "automountServiceAccountToken": False,
     }
     path = root / "investigator.values.yaml"
@@ -76,11 +82,15 @@ async def push(root: Path, *, initial: bool = False) -> None:
     if not changed:
         return
     await sandbox().write_file("/tmp/investigator-inputs.tar.gz", stream.getvalue())
-    result = await sandbox().exec([
-        "python", "-c",
-        "import tarfile; t=tarfile.open('/tmp/investigator-inputs.tar.gz'); "
-        "t.extractall('/', filter='data')",
-    ], timeout=300)
+    result = await sandbox().exec(
+        [
+            "python",
+            "-c",
+            "import tarfile; t=tarfile.open('/tmp/investigator-inputs.tar.gz'); "
+            "t.extractall('/', filter='data')",
+        ],
+        timeout=300,
+    )
     if not result.success:
         raise ToolError(f"Could not stage investigator inputs: {result.stderr}")
     manifest_path.write_text(json.dumps(current))
@@ -111,8 +121,14 @@ async def pull(root: Path) -> list[str]:
     if not remote_workspace(root):
         return []
     listing = await sandbox().exec(
-        ["sh", "-c", "cd /workspace && for p in \"$@\"; do [ -e \"$p\" ] && echo \"$p\"; done; "
-         "du -sb \"$@\" 2>/dev/null | awk '{s+=$1} END {print s+0}'", "sh", *MIRRORED],
+        [
+            "sh",
+            "-c",
+            'cd /workspace && for p in "$@"; do [ -e "$p" ] && echo "$p"; done; '
+            "du -sb \"$@\" 2>/dev/null | awk '{s+=$1} END {print s+0}'",
+            "sh",
+            *MIRRORED,
+        ],
         timeout=120,
     )
     if not listing.success:
@@ -131,11 +147,23 @@ async def pull(root: Path) -> list[str]:
     if not present:
         return []
     # GNU tar exits 1 when a file changes while it is read; the archive is still whole
-    result = await sandbox().exec([
-        "tar", "--exclude=.git", "--exclude=.venv", "--exclude=__pycache__",
-        "--warning=no-file-changed", "--ignore-failed-read", "--hard-dereference",
-        "-czf", "/tmp/investigator-workspace.tar.gz", "-C", "/workspace", *present,
-    ], timeout=300)
+    result = await sandbox().exec(
+        [
+            "tar",
+            "--exclude=.git",
+            "--exclude=.venv",
+            "--exclude=__pycache__",
+            "--warning=no-file-changed",
+            "--ignore-failed-read",
+            "--hard-dereference",
+            "-czf",
+            "/tmp/investigator-workspace.tar.gz",
+            "-C",
+            "/workspace",
+            *present,
+        ],
+        timeout=300,
+    )
     if result.returncode not in (0, 1):
         raise ToolError(f"Could not collect investigator workspace: {result.stderr}")
     data = await sandbox().read_file("/tmp/investigator-workspace.tar.gz", text=False)
@@ -152,7 +180,9 @@ async def pull(root: Path) -> list[str]:
             if (staged / name).exists():
                 shutil.move(str(staged / name), target)
     if skipped:
-        shown = ", ".join(skipped[:10]) + (f" and {len(skipped) - 10} more" if len(skipped) > 10 else "")
+        shown = ", ".join(skipped[:10]) + (
+            f" and {len(skipped) - 10} more" if len(skipped) > 10 else ""
+        )
         return [f"not mirrored (links or special files): {shown}"]
     return []
 
@@ -258,11 +288,18 @@ def stage_workspace(root: Path) -> Solver:
             raise RuntimeError("The investigator image cannot run latexmk")
         probe = root / "preflight"
         probe.mkdir(exist_ok=True)
-        (probe / "preflight.json").write_text(json.dumps({
-            "sandbox": "ready", "latex": "available", "sample_uuid": state.uuid,
-        }))
+        (probe / "preflight.json").write_text(
+            json.dumps(
+                {
+                    "sandbox": "ready",
+                    "latex": "available",
+                    "sample_uuid": state.uuid,
+                }
+            )
+        )
         await persist(root, probe, "preflight")
         return state
+
     return solve
 
 
@@ -309,6 +346,9 @@ def synchronized(tool: Tool, root: Path) -> Tool:
         return result
 
     return ToolDef(
-        execute, name=definition.name, description=definition.description,
-        parameters=definition.parameters, parallel=False,
+        execute,
+        name=definition.name,
+        description=definition.description,
+        parameters=definition.parameters,
+        parallel=False,
     ).as_tool()

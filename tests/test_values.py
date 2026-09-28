@@ -123,6 +123,7 @@ def test_helm_renders_the_generated_values(tmp_path: Path) -> None:
         ["helm", "template", "audit-values-test", str(CHART), "--values", str(path)],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert rendered.returncode == 0, rendered.stderr
     assert "inspect/service: default" in rendered.stdout

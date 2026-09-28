@@ -47,7 +47,8 @@ _to_float = value_to_float()
 def _grade(value: Value) -> Any:
     """A grade as inspect's metrics see it, so 1, 1.0, True and "C" compare equal."""
     if isinstance(value, dict):
-        return {str(k): _grade(v) for k, v in sorted(value.items())}
+        # Mapping values may be None; value_to_float logs that and returns 0.0.
+        return {str(k): _grade(v) for k, v in sorted(value.items())}  # pyright: ignore[reportArgumentType]
     if isinstance(value, list):
         return [_grade(v) for v in value]
     return _to_float(value)
@@ -135,7 +136,11 @@ def concordance_scorer(benchmark: list[Scorer]) -> Scorer:
     async def score(state: TaskState, target: Target) -> Score | None:
         recorded = list((state.scores or {}).values())[: len(benchmark)]
         fresh = await regrade(state, target)
-        pairs = [(i, r, f) for i, (r, f) in enumerate(zip(recorded, fresh, strict=False)) if f is not None]
+        pairs = [
+            (i, r, f)
+            for i, (r, f) in enumerate(zip(recorded, fresh, strict=False))
+            if f is not None
+        ]
         if not pairs:
             return None
         mismatch = len(recorded) != len(benchmark)
@@ -155,7 +160,10 @@ def concordance_scorer(benchmark: list[Scorer]) -> Scorer:
                 again = await regrade(state, target)
             except Exception:
                 continue
-            if any(a is None or f is None or _grade(a.value) != _grade(f.value) for a, f in ((again[i], fresh[i]) for i in disagree)):
+            if any(
+                a is None or f is None or _grade(a.value) != _grade(f.value)
+                for a, f in ((again[i], fresh[i]) for i in disagree)
+            ):
                 stable = False
                 break
         return Score(value=STABLE if stable else NOISY, metadata=metadata)
@@ -182,8 +190,10 @@ def classify(
         # reconstruction being wrong, so that alone never closes the grade channel
         if all((s.metadata or {}).get("grader_drift") for s in stable):
             return "inconclusive", [*reasons, "grader_model_drift"]
-        return ("inconclusive", [*reasons, "stable_disagreement_box"]) if has_box else (
-            "blocked", [*reasons, "stable_disagreement"]
+        return (
+            ("inconclusive", [*reasons, "stable_disagreement_box"])
+            if has_box
+            else ("blocked", [*reasons, "stable_disagreement"])
         )
     if len(scores) < attempted:
         reasons.append("partial_coverage")
@@ -227,13 +237,19 @@ def concordance_gate(scorers: Scorer | list[Scorer] | None, limit: int = 15) -> 
                     con.drift.setdefault("grader_models", {})[path] = graders
                 try:
                     scored = await score_async(
-                        log, [concordance_scorer(benchmark)], action="append",
-                        model=get_model(), model_roles=dict(model_roles()), display="plain",
+                        log,
+                        [concordance_scorer(benchmark)],
+                        action="append",
+                        model=get_model(),
+                        model_roles=dict(model_roles()),
+                        display="plain",
                     )
                 except Exception as ex:
                     errors.append(f"rescore_failed:{type(ex).__name__}")
                     continue
-                fresh = [(s.scores or {})[NAME] for s in scored.samples or [] if NAME in (s.scores or {})]
+                fresh = [
+                    (s.scores or {})[NAME] for s in scored.samples or [] if NAME in (s.scores or {})
+                ]
                 for item in fresh:
                     item.metadata = {**(item.metadata or {}), "grader_drift": graders}
                 scores += fresh
@@ -248,7 +264,9 @@ def concordance_gate(scorers: Scorer | list[Scorer] | None, limit: int = 15) -> 
             )
         transcript().info({"concordance": con.model_dump()})
         try:
-            await sandbox().write_file(f"{AUDIT_ROOT}/concordance.json", con.model_dump_json(indent=1))
+            await sandbox().write_file(
+                f"{AUDIT_ROOT}/concordance.json", con.model_dump_json(indent=1)
+            )
         except Exception as ex:  # the store is the record; the file is for the auditor to read
             logger.warning("could not write concordance.json into the audit box: %s", ex)
         return state

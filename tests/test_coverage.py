@@ -4,15 +4,31 @@ from inspect_audit._coverage import coverage_summary, validate_labels
 
 
 def label(qid, status):
-    return dict(question_id=qid, status=status, checks=["compared specification and tests"],
-                evidence=["source.py:12"], explanation="Observed evidence")
+    return {
+        "question_id": qid,
+        "status": status,
+        "checks": ["compared specification and tests"],
+        "evidence": ["source.py:12"],
+        "explanation": "Observed evidence",
+    }
 
 
 def test_missing_and_disputed_labels_never_become_clean():
-    result = coverage_summary(["1.1", "1.2", "1.3"], [
-        label("1.1", "NO_ISSUE_FOUND"), label("1.1", "NO_ISSUE_FOUND"),
-        label("1.2", "DEFECT"), label("1.2", "NO_ISSUE_FOUND")])
-    assert result["counts"] == dict(NO_ISSUE_FOUND=1, DEFECT=0, UNRESOLVED=1, NOT_ASSESSED=1)
+    result = coverage_summary(
+        ["1.1", "1.2", "1.3"],
+        [
+            label("1.1", "NO_ISSUE_FOUND"),
+            label("1.1", "NO_ISSUE_FOUND"),
+            label("1.2", "DEFECT"),
+            label("1.2", "NO_ISSUE_FOUND"),
+        ],
+    )
+    assert result["counts"] == {
+        "NO_ISSUE_FOUND": 1,
+        "DEFECT": 0,
+        "UNRESOLVED": 1,
+        "NOT_ASSESSED": 1,
+    }
     assert sum(result["counts"].values()) == result["denominator"] == 3
 
 
@@ -48,41 +64,69 @@ def test_recorded_question_verdicts_round_trip_into_coverage(tmp_path, units):
     @solver
     def review():
         async def solve(state, generate):
-            args = dict(item="question-labels", grade="NO_ISSUE_FOUND", approaches="reviewed",
-                        tried="checked", remarks="", evidence=[Evidence(observed="check", source="source.py:12")])
+            args = {
+                "item": "question-labels",
+                "grade": "NO_ISSUE_FOUND",
+                "approaches": "reviewed",
+                "tried": "checked",
+                "remarks": "",
+                "evidence": [Evidence(observed="check", source="source.py:12")],
+            }
             with pytest.raises(ToolError, match="every expected question"):
                 await record(**args, details=json.dumps({"question_assessments": []}))
             with pytest.raises(ToolError, match="defect type"):
-                await record(**{**args, "grade": "DEFECT"}, details=json.dumps({
-                    "question_assessments": [label(qid, "DEFECT") for qid in expected]}))
-            await record(**args, details=json.dumps({"question_assessments": [label(qid, "NO_ISSUE_FOUND") for qid in expected]}))
+                await record(
+                    **{**args, "grade": "DEFECT"},
+                    details=json.dumps(
+                        {"question_assessments": [label(qid, "DEFECT") for qid in expected]}
+                    ),
+                )
+            await record(
+                **args,
+                details=json.dumps(
+                    {"question_assessments": [label(qid, "NO_ISSUE_FOUND") for qid in expected]}
+                ),
+            )
             return state
+
         return solve
 
     metadata = {"benchmark_metadata": {"arbitrary_structure": ["not", "assessment", "ids"]}}
     if units is not None:
         metadata["assessment_ids"] = units
-    task = Task(dataset=[Sample(id="1", input="review", metadata=metadata)],
-        solver=review(), scorer=item_scorer(item))
-    log = eval(task, model="mockllm/model", log_dir=str(tmp_path/'logs'), display="none")[0]
+    task = Task(
+        dataset=[Sample(id="1", input="review", metadata=metadata)],
+        solver=review(),
+        scorer=item_scorer(item),
+    )
+    log = eval(task, model="mockllm/model", log_dir=str(tmp_path / "logs"), display="none")[0]
     assert log.status == "success", log.error
-    result = export_coverage([log.location], [*expected, "missing"], tmp_path/'coverage.json')
-    assert result['counts'] == dict(NO_ISSUE_FOUND=len(expected), DEFECT=0, UNRESOLVED=0, NOT_ASSESSED=1)
-    assert 'sample=1' in result['questions'][0]['assessments'][0]['evidence'][-1]
+    result = export_coverage([log.location], [*expected, "missing"], tmp_path / "coverage.json")
+    assert result["counts"] == {
+        "NO_ISSUE_FOUND": len(expected),
+        "DEFECT": 0,
+        "UNRESOLVED": 0,
+        "NOT_ASSESSED": 1,
+    }
+    assert "sample=1" in result["questions"][0]["assessments"][0]["evidence"][-1]
 
 
 def test_defect_counts_deduplicate_and_outstanding_units_survive():
     rows = [
-        {**label('parent.a', 'DEFECT'), 'defect_types': ['missing_information', 'incorrect_reference_or_test']},
-        {**label('parent.a', 'DEFECT'), 'defect_types': ['missing_information']},
-        label('parent.b', 'UNRESOLVED'), label('other', 'DEFECT'),
+        {
+            **label("parent.a", "DEFECT"),
+            "defect_types": ["missing_information", "incorrect_reference_or_test"],
+        },
+        {**label("parent.a", "DEFECT"), "defect_types": ["missing_information"]},
+        label("parent.b", "UNRESOLVED"),
+        label("other", "DEFECT"),
     ]
-    result = coverage_summary(['parent.a', 'parent.b', 'other'], rows)
-    assert result['defect_counts'] == {'incorrect_reference_or_test': 1, 'missing_information': 1}
-    assert result['unclassified_defects'] == 1
-    assert result['outstanding_ids'] == ['parent.b']
-    with pytest.raises(ValueError, match='defect type'):
-        validate_labels([label('old', 'DEFECT')], ['old'], require_classification=True)
-    assert validate_labels([label('old', 'DEFECT')], ['old'])
-    custom = {**label('new', 'DEFECT'), 'defect_types': ['novel_mechanism']}
-    assert validate_labels([custom], ['new'], require_classification=True)
+    result = coverage_summary(["parent.a", "parent.b", "other"], rows)
+    assert result["defect_counts"] == {"incorrect_reference_or_test": 1, "missing_information": 1}
+    assert result["unclassified_defects"] == 1
+    assert result["outstanding_ids"] == ["parent.b"]
+    with pytest.raises(ValueError, match="defect type"):
+        validate_labels([label("old", "DEFECT")], ["old"], require_classification=True)
+    assert validate_labels([label("old", "DEFECT")], ["old"])
+    custom = {**label("new", "DEFECT"), "defect_types": ["novel_mechanism"]}
+    assert validate_labels([custom], ["new"], require_classification=True)

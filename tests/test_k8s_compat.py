@@ -1,4 +1,5 @@
 """Catch the Helm version parsing regression before a paid Hawk pilot."""
+
 from semver import Version
 
 

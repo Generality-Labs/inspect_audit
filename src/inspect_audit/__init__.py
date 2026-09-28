@@ -9,13 +9,13 @@ from ._resolve import resolve_task, resolve_task_from_log
 __version__ = "0.0.1"
 
 __all__ = [
-    "audit_task",
-    "audit_agent",
-    "investigate",
-    "attempts",
     "AttemptRef",
     "AuditItem",
+    "__version__",
+    "attempts",
+    "audit_agent",
+    "audit_task",
+    "investigate",
     "resolve_task",
     "resolve_task_from_log",
-    "__version__",
 ]

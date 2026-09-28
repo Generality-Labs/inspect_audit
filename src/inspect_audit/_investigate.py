@@ -1823,8 +1823,6 @@ def investigate(
     auditor_image: str | None = None,
     worker_models: list[str] | None = None,
     secrets_file: str | None = None,
-    log_bucket: str | None = None,
-    aws_profile: str | None = None,
     execution: str | None = None,
     investigator_image: str | None = None,
     artifact_dir: str | None = None,
@@ -1878,8 +1876,6 @@ def investigate(
             (INSPECT_AUDIT_OPENROUTER_API_KEY or OPENROUTER_API_KEY), for
             provider='openrouter-direct'. On a Hawk runner, pass it as the secret
             INSPECT_AUDIT_OPENROUTER_API_KEY on the investigator's eval set instead.
-        log_bucket: Retained for compatibility; local logs are no longer uploaded.
-        aws_profile: Retained for compatibility; job-readable inputs use native Hawk import.
         execution: 'hawk' (default) runs the investigator and auditors on Hawk;
             'local' explicitly runs the investigator in local Docker.
         investigator_image: Published investigator sandbox image including LaTeX.

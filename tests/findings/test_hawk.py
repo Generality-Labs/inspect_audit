@@ -86,3 +86,57 @@ def test_hawk_command_override_is_shell_split() -> None:
     config = ProducerConfig.from_env({"INSPECT_AUDIT_HAWK_CMD": "uv run hawk"})
     assert config.hawk == ("uv", "run", "hawk")
     assert ProducerConfig().hawk == ("hawk",)
+
+
+def test_manifest_loads_logs_and_artifacts(tmp_path: Path) -> None:
+    from inspect_audit.findings.hawk import load_manifest
+
+    manifest = tmp_path / "m.yaml"
+    manifest.write_text(
+        "dest: artefacts/hawk\nlogs:\n  - id: set-a\n    note: a\n  - id: set-b\nartifacts:\n  - id: inv-1\n    note: bundle\n"
+    )
+    loaded = load_manifest(manifest)
+    assert loaded.dest == Path("artefacts/hawk")
+    assert [(e.id, e.note) for e in loaded.logs] == [("set-a", "a"), ("set-b", "")]
+    assert [(e.id, e.note) for e in loaded.artifacts] == [("inv-1", "bundle")]
+
+
+def test_manifest_rejects_unknown_keys_and_missing_ids(tmp_path: Path) -> None:
+    from inspect_audit.findings.hawk import load_manifest
+
+    bad = tmp_path / "m.yaml"
+    bad.write_text("dest: x\nlogs:\n  - note: no id\n")
+    with pytest.raises(ValueError):
+        load_manifest(bad)
+    bad.write_text("dest: x\nbogus: 1\n")
+    with pytest.raises(ValueError):
+        load_manifest(bad)
+
+
+def test_pull_manifest_fetches_logs_and_artifacts_into_dest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from inspect_audit.findings.hawk import Manifest, ManifestEntry, pull_manifest
+
+    src = _log(tmp_path / "src")
+    monkeypatch.setenv("STUB_EVAL_SRC", str(src))
+    monkeypatch.setenv("STUB_HAWK_LOG", str(tmp_path / "calls.log"))
+    config = ProducerConfig(hawk=(sys.executable, str(STUB)))
+    manifest = Manifest(dest=tmp_path / "dest", logs=[ManifestEntry(id="set-a", note="")], artifacts=[ManifestEntry(id="inv-1", note="")])
+    report = pull_manifest(manifest, config)
+    assert (tmp_path / "dest" / "logs" / "set-a" / src.name).is_file()
+    assert (tmp_path / "dest" / "artifacts" / "inv-1" / "bundle.txt").is_file()
+    calls = (tmp_path / "calls.log").read_text().splitlines()
+    assert calls[0].startswith("download set-a -o ")
+    assert calls[1].startswith("download-artifacts inv-1 -o ")
+    assert [(r.kind, r.id, r.files) for r in report] == [("logs", "set-a", 1), ("artifacts", "inv-1", 1)]
+
+
+def test_pull_manifest_records_failures_and_continues(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from inspect_audit.findings.hawk import Manifest, ManifestEntry, pull_manifest
+
+    src = _log(tmp_path / "src")
+    monkeypatch.setenv("STUB_EVAL_SRC", str(src))
+    monkeypatch.setenv("STUB_FAIL_ID", "set-bad")
+    config = ProducerConfig(hawk=(sys.executable, str(STUB)))
+    manifest = Manifest(dest=tmp_path / "dest", logs=[ManifestEntry(id="set-bad", note=""), ManifestEntry(id="set-ok", note="")], artifacts=[])
+    report = pull_manifest(manifest, config)
+    assert [(r.id, r.files, r.error is None) for r in report] == [("set-bad", 0, False), ("set-ok", 1, True)]

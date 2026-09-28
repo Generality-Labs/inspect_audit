@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from .adapters import ProducerError, run_command
 from .producers import ProducerConfig
 
@@ -107,3 +109,71 @@ def download_eval_set(eval_set_id: str, cache_dir: Path, producers: ProducerConf
     if result.returncode != 0:
         raise ProducerError(f"hawk download {eval_set_id} failed (exit {result.returncode}): {(result.stderr or result.stdout)[-1500:]}")
     return sorted(target.rglob("*.eval"))
+
+
+# --- pulling a declared set of artefacts -------------------------------------------------------
+
+
+class ManifestEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1)
+    note: str = ""
+
+
+class Manifest(BaseModel):
+    """What to pull: eval-set logs and investigator artifact bundles, into one gitignored directory."""
+
+    model_config = ConfigDict(extra="forbid")
+    dest: Path
+    logs: list[ManifestEntry] = Field(default_factory=list)
+    artifacts: list[ManifestEntry] = Field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PullResult:
+    kind: str  # logs | artifacts
+    id: str
+    files: int
+    error: str | None = None
+
+
+def load_manifest(path: Path) -> Manifest:
+    import yaml
+
+    loaded = yaml.safe_load(path.read_text())
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{path} must be a mapping with dest, logs and artifacts")
+    try:
+        return Manifest.model_validate(loaded)
+    except ValueError as ex:
+        raise ValueError(f"{path}: {ex}") from ex
+
+
+def download_artifacts(eval_set_id: str, dest_dir: Path, producers: ProducerConfig) -> list[Path]:
+    """`hawk download-artifacts <set> -o <dest>/<set>`, then every file now under it."""
+    target = dest_dir / eval_set_id
+    target.mkdir(parents=True, exist_ok=True)
+    argv = [*producers.hawk, "download-artifacts", eval_set_id, "-o", str(target)]
+    result = run_command(argv, timeout=producers.timeout_s)
+    if result.returncode != 0:
+        hint = " (the 3.5.0 CLI extra omits aiofiles; try INSPECT_AUDIT_HAWK_CMD='uv run --with aiofiles hawk')" if "aiofiles" in (result.stderr or "") else ""
+        raise ProducerError(f"hawk download-artifacts {eval_set_id} failed (exit {result.returncode}){hint}: {(result.stderr or result.stdout)[-1500:]}")
+    return sorted(p for p in target.rglob("*") if p.is_file())
+
+
+def pull_manifest(manifest: Manifest, producers: ProducerConfig) -> list[PullResult]:
+    """Fetch everything the manifest names. A failed entry is recorded and the rest still run."""
+    results: list[PullResult] = []
+    for entry in manifest.logs:
+        try:
+            files = download_eval_set(entry.id, manifest.dest / "logs", producers)
+            results.append(PullResult("logs", entry.id, len(files)))
+        except ProducerError as ex:
+            results.append(PullResult("logs", entry.id, 0, str(ex)))
+    for entry in manifest.artifacts:
+        try:
+            files = download_artifacts(entry.id, manifest.dest / "artifacts", producers)
+            results.append(PullResult("artifacts", entry.id, len(files)))
+        except ProducerError as ex:
+            results.append(PullResult("artifacts", entry.id, 0, str(ex)))
+    return results

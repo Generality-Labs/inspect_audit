@@ -1010,16 +1010,16 @@ wheels = [
 
 [[package]]
 name = "hawk"
-version = "3.5.0"
+version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "packaging" },
     { name = "pydantic" },
     { name = "ruamel-yaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/41/23/36b4dd904539bcf3fcf4c79c58da6eebf6e2321ac63f64af0659a48042d3/hawk-3.5.0.tar.gz", hash = "sha256:edef6a91cbaaa294c1aa8f722435095041387e0d317f4889fd5200246aed982c", size = 4087553, upload-time = "2026-09-21T08:55:50.801Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/ae/ad0fef0d73c9a7e653c69c02217b471490d82085b17039efa87836fa646a/hawk-3.4.0.tar.gz", hash = "sha256:13779521b78a87a67c3e124d53c80473db2772cf3c32b6c110655d5e61b40127", size = 3915385, upload-time = "2026-09-15T22:36:14.902Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e9/af/8a12542ded079745b723180d236017ee6b266dddbe5a2de347d81557d9a8/hawk-3.5.0-py3-none-any.whl", hash = "sha256:f5e8a63da27765f13658993816aa2e2443ae16feca070ac80376e0e299a12b3c", size = 1006793, upload-time = "2026-09-21T08:55:48.793Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/25/96a5e79965cbba77cec0ec12f7cd3ce4077594e9b7a266217fdde142bbb3/hawk-3.4.0-py3-none-any.whl", hash = "sha256:57b4a613c210d5d56f7109f9770bf83a39c005082ff9168e2b86876970e632cd", size = 933925, upload-time = "2026-09-15T22:36:12.836Z" },
 ]
 
 [package.optional-dependencies]
@@ -1342,11 +1342,13 @@ dependencies = [
 
 [package.optional-dependencies]
 remote = [
+    { name = "aiofiles", marker = "python_full_version >= '3.13'" },
     { name = "hawk", extra = ["cli"], marker = "python_full_version >= '3.13'" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "aiofiles", marker = "python_full_version >= '3.13'" },
     { name = "basedpyright" },
     { name = "hawk", extra = ["cli"], marker = "python_full_version >= '3.13'" },
     { name = "pandas-stubs" },
@@ -1359,6 +1361,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiofiles", marker = "python_full_version >= '3.13' and extra == 'remote'" },
     { name = "hawk", extras = ["cli"], marker = "python_full_version >= '3.13' and extra == 'remote'", specifier = ">=3.4,<4" },
     { name = "inspect-ai", specifier = ">=0.3.259" },
     { name = "openai", specifier = ">=1.0" },
@@ -1371,6 +1374,7 @@ provides-extras = ["remote"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aiofiles", marker = "python_full_version >= '3.13'" },
     { name = "basedpyright", specifier = ">=1.39" },
     { name = "hawk", extras = ["cli"], marker = "python_full_version >= '3.13'", specifier = ">=3.4,<4" },
     { name = "pandas-stubs" },

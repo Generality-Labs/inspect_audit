@@ -32,7 +32,7 @@ src/inspect_audit/findings/
     dataset.py      inspect-dataset scan output -> Run
     header.py       .eval headers -> Run
   featured.py       the 35 Featured eval ids, copied from inspect_evals docs/_templates/evals.ejs
-  hawk.py           find_eval_sets(task) via the hawk client; download_eval_set(id, cache) via the hawk CLI
+  hawk.py           find_eval_sets(task) via the hawk client; download_eval_set / download_artifacts / pull_manifest via the hawk CLI
   render.py         render_eval_summary(runs) and render_sweep_summary(runs) -> markdown
   cli.py            inspect-audit-findings
   schema/
@@ -171,6 +171,7 @@ inspect-audit-findings summary <out dir>
 
 - `TARGET` is a registry name. `--featured` appends the 35 ids from `featured.py` as `inspect_evals/<id>`. At least one target is required.
 - `--logs` accepts, repeatedly, a directory, a `.eval` file, or a `hawk:<eval-set-id>` address. Local sources are listed with `list_eval_logs(recursive=True)`. `hawk:` sources are pulled with `hawk download` into `--hawk-cache` (default `~/.cache/inspect_audit/hawk/<set>`), where the CLI skips files already present. `--hawk-task <task>` resolves to every eval set whose `task_names` include the task, refusing above `--hawk-limit` (default 20) so a task with hundreds of sets is not pulled by accident; `hawk-sets <task>` lists them without pulling. Logs are then partitioned by target on the header's task name, so one corpus can serve a whole sweep.
+- `hawk-pull [--manifest scripts/hawk-artefacts.yaml] [--dest DIR]` fetches a declared working set instead of a per-run cache: the manifest names eval sets under `logs:` and investigator bundles under `artifacts:` (each `id` plus a free-text `note`), and they land in `<dest>/logs/<set>/` and `<dest>/artifacts/<set>/`. The default dest `artefacts/hawk` is gitignored, so anyone with `hawk login` can reproduce the same local inputs without anything private entering the repo. A failed entry is reported and the rest still pull; exit 1 if any failed. `hawk download-artifacts` needs `aiofiles`, which the 3.5.0 `hawk[cli]` extra omits, so the `remote` and `dev` extras add it.
 - `--producers` selects external producers, default `lint,dataset`. The header producer runs whenever `--logs` was supplied; without logs it is not requested, so a lint-and-dataset sweep can exit 0.
 - For each target, in order: header, then the selected producers. Each writes `<out>/<slug>/<producer>.run.json` and appends to in-memory lists. After the sweep, `findings.parquet`, `runs.parquet`, `<out>/SUMMARY.md` and each `<out>/<slug>/SUMMARY.md` are written.
 - Exit code 0 if every producer ran; 1 if any run was a skip; 2 on a usage error. Findings do not affect the exit code.

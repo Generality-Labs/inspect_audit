@@ -12,6 +12,17 @@ if log := os.environ.get("STUB_HAWK_LOG"):
     with open(log, "a") as handle:
         handle.write(" ".join(sys.argv[1:]) + "\n")
 
+if len(sys.argv) > 2 and sys.argv[2] == os.environ.get("STUB_FAIL_ID"):
+    sys.stderr.write(f"stub hawk: simulated failure for {sys.argv[2]}\n")
+    sys.exit(1)
+
+if sys.argv[1:2] == ["download-artifacts"]:
+    out = Path(sys.argv[sys.argv.index("-o") + 1])
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "bundle.txt").write_text("artifact")
+    print("Downloaded 1 artifact file(s)")
+    sys.exit(int(os.environ.get("STUB_EXIT", "0")))
+
 if sys.argv[1:2] == ["download"]:
     out = Path(sys.argv[sys.argv.index("-o") + 1])
     out.mkdir(parents=True, exist_ok=True)

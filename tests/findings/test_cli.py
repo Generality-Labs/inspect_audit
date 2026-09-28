@@ -154,3 +154,18 @@ def test_hawk_sets_subcommand_lists_matches(tmp_path: Path, monkeypatch: pytest.
     assert main(["hawk-sets", "inspect_evals/scicode"]) == 0
     out = capsys.readouterr().out
     assert "scicode-a" in out and "9" in out
+
+
+def test_hawk_pull_uses_the_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from test_hawk import STUB as HAWK_STUB
+
+    src = _log(tmp_path / "src")
+    monkeypatch.setenv("STUB_EVAL_SRC", str(src))
+    monkeypatch.setenv("INSPECT_AUDIT_HAWK_CMD", f"{sys.executable} {HAWK_STUB}")
+    manifest = tmp_path / "m.yaml"
+    manifest.write_text(f"dest: {tmp_path / 'dest'}\nlogs:\n  - id: set-a\nartifacts:\n  - id: inv-1\n")
+    assert main(["hawk-pull", "--manifest", str(manifest)]) == 0
+    out = capsys.readouterr().out
+    assert "set-a" in out and "inv-1" in out
+    assert (tmp_path / "dest" / "logs" / "set-a" / src.name).is_file()
+    assert (tmp_path / "dest" / "artifacts" / "inv-1" / "bundle.txt").is_file()

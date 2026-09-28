@@ -30,7 +30,11 @@ inspect_audit = "inspect_audit._registry"
 inspect-audit-findings = "inspect_audit.findings.cli:main"
 
 [project.optional-dependencies]
-remote = ["hawk[cli]>=3.4,<4; python_version >= '3.13'"]
+remote = [
+    "hawk[cli]>=3.4,<4; python_version >= '3.13'",
+    # hawk download-artifacts needs it; the CLI extra omits it
+    "aiofiles; python_version >= '3.13'",
+]
 
 [dependency-groups]
 dev = [
@@ -42,6 +46,7 @@ dev = [
     "pandas-stubs",
     "types-PyYAML",
     "hawk[cli]>=3.4,<4; python_version >= '3.13'",
+    "aiofiles; python_version >= '3.13'",
 ]
 
 [tool.hatch.version]

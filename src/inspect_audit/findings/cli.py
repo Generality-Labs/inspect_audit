@@ -103,7 +103,26 @@ def _parser() -> argparse.ArgumentParser:
     sum_p.add_argument("out", type=Path)
     sets_p = sub.add_parser("hawk-sets", help="list the Hawk eval sets that ran a task")
     sets_p.add_argument("task", help="registry name, e.g. inspect_evals/scicode")
+    pull_p = sub.add_parser("hawk-pull", help="fetch the logs and artifact bundles a manifest names into its gitignored dest")
+    pull_p.add_argument("--manifest", type=Path, default=Path("scripts/hawk-artefacts.yaml"))
+    pull_p.add_argument("--dest", type=Path, default=None, help="override the manifest's dest")
     return parser
+
+
+def _hawk_pull(manifest_path: Path, dest: Path | None) -> int:
+    try:
+        manifest = hawk.load_manifest(manifest_path)
+    except (OSError, ValueError) as ex:
+        print(str(ex), file=sys.stderr)
+        return 2
+    if dest is not None:
+        manifest = manifest.model_copy(update={"dest": dest})
+    results = hawk.pull_manifest(manifest, ProducerConfig.from_env())
+    for result in results:
+        status = f"{result.files} file(s)" if result.error is None else f"FAILED: {result.error.splitlines()[0][:160]}"
+        print(f"{result.kind:9s} {result.id:45s} {status}")
+    print(f"into {manifest.dest.resolve()}")
+    return 1 if any(r.error for r in results) else 0
 
 
 def _hawk_sets(task: str) -> int:
@@ -127,6 +146,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _summaries_from_disk(args.out)
     if args.command == "hawk-sets":
         return _hawk_sets(args.task)
+    if args.command == "hawk-pull":
+        return _hawk_pull(args.manifest, args.dest)
 
     targets = list(args.targets) + ([f"inspect_evals/{name}" for name in FEATURED] if args.featured else [])
     if not targets:

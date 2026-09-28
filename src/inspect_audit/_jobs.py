@@ -349,10 +349,21 @@ class Hawk:
             await client.stop_eval_set(eval_set_id)
 
     async def log_entries(
-        self, eval_set_id: str, lines: int = 120, from_start: bool = False
+        self,
+        eval_set_id: str,
+        lines: int = 120,
+        from_start: bool = False,
+        oldest_first: bool = False,
     ) -> list[Any]:
+        from hawk.core.types.monitoring import SortOrder
+
         async with self._client() as client:
-            entries = await client.fetch_logs(eval_set_id, limit=lines, from_start=from_start)
+            entries = await client.fetch_logs(
+                eval_set_id,
+                limit=lines,
+                from_start=from_start,
+                sort=SortOrder.ASC if oldest_first else SortOrder.DESC,
+            )
         return sorted(entries, key=lambda e: e.timestamp)
 
     async def logs(self, eval_set_id: str, lines: int = 120) -> str:
@@ -363,7 +374,10 @@ class Hawk:
 
     async def first_error(self, eval_set_id: str) -> str | None:
         """The runner log's first error line: why a job that never ran failed."""
-        entries = await self.log_entries(eval_set_id, lines=2000, from_start=True)
+        # oldest first: the endpoint returns the newest entries unless asked otherwise
+        entries = await self.log_entries(
+            eval_set_id, lines=2000, from_start=True, oldest_first=True
+        )
         for entry in entries:
             message = str(entry.message)
             if (
@@ -487,6 +501,8 @@ def http_status(ex: BaseException) -> int | None:
 
 
 JOB_TERMINAL = {"complete", "failed", "deleted"}
+# inspect_ai eval_set(retry_attempts=None) retries a failed task this many times
+INSPECT_DEFAULT_RETRIES = 10
 
 
 @dataclass(frozen=True)
@@ -893,7 +909,12 @@ def worst_case_usd(parsed: Any, policy: Policy) -> float | None:
     # allowance per declared role per evaluated model; this is a planning
     # buffer, not an enforced ceiling on arbitrary scorer code.
     models *= 1 + len(parsed.model_roles or {})
-    attempts = 1 + max(0, parsed.retry_attempts or 0)
+    # unset, Hawk leaves eval_set's own default in force, which re-runs a failed task
+    # up to 10 times; validate_config refuses that, but never price it as zero
+    retries = (
+        parsed.retry_attempts if parsed.retry_attempts is not None else INSPECT_DEFAULT_RETRIES
+    )
+    attempts = 1 + max(0, retries)
     samples = 0
     for task in parsed.tasks:
         for item in task.items:
@@ -1039,6 +1060,12 @@ def validate_config(
             continue
         if not isinstance(value, int) or isinstance(value, bool) or not (0 <= value <= cap):
             problems.append(f"{key} {value!r} must be a whole number up to {cap}")
+    if config.get("retry_attempts") is None:
+        problems.append(
+            "retry_attempts is required: unset, Inspect's eval_set default re-runs a failed "
+            f"task up to {INSPECT_DEFAULT_RETRIES} times, and every retry spends again. Use 0 "
+            "unless a retry is worth its cost"
+        )
     if parsed.cost_limit is None:
         problems.append(
             f"cost_limit is required: dollars per sample, up to {policy.max_cost_limit_usd}. "

@@ -119,7 +119,6 @@ DEFAULT_WORKERS = [
     "openai/gpt-5-mini",
     "openai/gpt-5.6-sol",
     "openai/gpt-5.6-terra",
-    "anthropic/claude-sonnet-5",
     "openai/gpt-6-astra",
 ]
 
@@ -1257,12 +1256,15 @@ async def settle_failed_start(remote: Remote, label: str, job: Job, status: str 
         reason = await remote.hawk.first_error(job.eval_set_id)
     except Exception as ex:  # the reason is a courtesy; the settlement is not
         reason = f"(runner log unavailable: {type(ex).__name__})"
+    stopped = job.status == "stopped"
     remote.settle(
         label,
-        status="failed_at_start",
+        status="stopped" if stopped else "failed_at_start",
         actual_usd=0.0,
-        cost_note=f"job {status} before writing a log",
+        cost_note=f"job {'stopped' if stopped else status} before writing a log",
     )
+    if stopped:
+        return f"{label} ({job.eval_set_id}) was stopped before writing a log; ${job.reserved_usd:.2f} released"
     reason = reason or "no error line in the runner log; see jobs(action='logs')"
     return (
         f"{label} ({job.eval_set_id}) {status} at startup without writing a log: "
@@ -1413,26 +1415,17 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     return await settle_failed_start(remote, label, job, status)
             elif action == "stop":
                 await remote.hawk.stop(job.eval_set_id)
-                if not await remote.hawk.evals(job.eval_set_id):
-                    # nothing ran, so nothing was spent: a stopped job with no evals can
-                    # never be collected, and its reservation must not outlive it
-                    remote.settle(
-                        label,
-                        status="stopped",
-                        actual_usd=0.0,
-                        cost_note="stopped before any eval ran",
-                    )
-                    return f"stopped {label} ({job.eval_set_id}) before any eval ran; ${job.reserved_usd:.2f} released"
+                # settled by collect once the job has finished, never here: a stopped
+                # runner still scores and writes what it has, and eval rows reach the
+                # warehouse minutes after the log does, so "no rows yet" is not "no spend"
                 remote.settle(label, status="stopped")
-                return f"stop requested for {label} ({job.eval_set_id}); collect it once its evals settle"
+                return (
+                    f"stop requested for {label} ({job.eval_set_id}); its ${job.reserved_usd:.2f} "
+                    "stays held until jobs(action='collect') settles what it actually spent"
+                )
             elif action == "collect":
                 status = await remote.hawk.job_status(job.eval_set_id)
                 rows = await remote.hawk.evals(job.eval_set_id)
-                if status in ("failed", "deleted") and not rows:
-                    return await settle_failed_start(remote, label, job, status)
-                if job.status == "stopped" and not rows:
-                    remote.settle(label, actual_usd=0.0, cost_note="stopped before any eval ran")
-                    return f"{label} was stopped before any eval ran; nothing to collect, ${job.reserved_usd:.2f} released"
                 # the job's own status decides: eval rows look finished between an
                 # eval's error and its retry, while the retry is still spending
                 if status not in JOB_TERMINAL:
@@ -1444,6 +1437,8 @@ def jobs(remote: Remote, root: Path) -> Tool:
                         f"{label} is {status or 'unknown to Hawk'}, not finished ({listed}). "
                         f"No files downloaded. Use jobs(action='wait', label='{label}') before collecting."
                     )
+                # the job's own log files, read from its folder: unlike warehouse rows
+                # they exist as soon as the runner writes them
                 files = await remote.hawk.download(
                     job.eval_set_id, root / "jobs" / "downloads" / label
                 )
@@ -1567,7 +1562,7 @@ def check_evidence_access(remote: Remote | None, root: Path, sources: list[str])
                     )
                 await remote.hawk.transcript(
                     str(rows[0]["uuid"]),
-                    root / "inputs" / "index" / _alias(address) / "transcripts",
+                    root / "inputs" / "index" / source_alias(address) / "transcripts",
                 )
                 check["paths"]["transcript"] = "readable"
                 files = await remote.hawk.log_files(eval_set)
@@ -1660,7 +1655,7 @@ def reconcile_jobs(remote: Remote) -> Solver:
     return solve
 
 
-def _alias(source: str) -> str:
+def source_alias(source: str) -> str:
     """A short, filesystem-safe, unique name for a log source the agent can type.
 
     Truncating an address to thirty characters made two runs of the same benchmark the
@@ -1702,7 +1697,7 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
             limit: How many samples to read for "samples"; null means the complete population. Pass
                 null for every argument an action does not use.
         """
-        known = {_alias(s): s for s in sources}
+        known = {source_alias(s): s for s in sources}
         if action == "list":
             if not known:
                 return "no supplied log sources; the logs given to you are files under /inputs/logs"

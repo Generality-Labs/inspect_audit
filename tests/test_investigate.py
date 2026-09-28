@@ -476,6 +476,93 @@ def test_the_same_input_cited_twice_publishes_once(tmp_path: Path) -> None:
     assert (destination / "_inputs/paper.pdf").read_bytes() == b"%PDF"
 
 
+def test_cited_logs_are_published_as_addresses_never_as_copies(tmp_path: Path) -> None:
+    """2026-09-28: the sol6 chess bundle carried three cited .eval logs, uploaded under
+    Hawk's evals/ prefix, and Hawk re-pointed their shared warehouse records at them.
+
+    A log cited from any of the three places logs arrive under /inputs is published as
+    its address plus a checksum; a derived file cited alongside is still copied.
+    """
+    import hashlib
+
+    from inspect_audit._investigate import source_alias
+
+    report = tmp_path / "work/report"
+    inputs = tmp_path / "inputs"
+    report.mkdir(parents=True)
+    supplied = "hawk:imported-epoch-chess-sour-0pexj5yimxsum0r9"
+    fetched = inputs / "index" / source_alias(supplied) / "logs" / "gemini.eval"
+    collected = inputs / "jobs" / "pilot" / "2026-09-28T10-00-00_audit.eval"
+    staged = inputs / "logs" / "0" / "local.eval"
+    table = inputs / "index" / source_alias(supplied) / "samples.csv"
+    for path, body in ((fetched, b"a"), (collected, b"b"), (staged, b"c"), (table, b"id,score\n")):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+    (inputs / "seed.json").write_text(
+        json.dumps(
+            {
+                "logs": [
+                    {"source": supplied, "staged": None, "remote": supplied},
+                    {
+                        "source": "/Users/op/runs/local.eval",
+                        "staged": "/inputs/logs/0/local.eval",
+                        "remote": None,
+                    },
+                ]
+            }
+        )
+    )
+    (tmp_path / "jobs.json").write_text(
+        json.dumps([{"label": "pilot", "eval_set_id": "inv-pilot-1234abcd"}])
+    )
+    (report / "report.tex").write_text("Report")
+    for name in ("Findings.tex", "metadata.tex", "assessments.tex"):
+        (report / name).write_text("Fixture")
+    (report / "report.pdf").write_text("pdf")
+    cited = [fetched, collected, staged, table]
+    (report / "findings.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "F1",
+                    "section": "grading",
+                    "claim": "A",
+                    "status": "supported",
+                    "origin": "historical",
+                    "reproduce": "read",
+                    "limitations": "",
+                    "evidence": [
+                        {"path": "/" + str(p.relative_to(tmp_path)), "location": "x"} for p in cited
+                    ],
+                }
+            ]
+        )
+    )
+
+    destination = save_publication(tmp_path)
+    assert not list(destination.rglob("*.eval"))
+    paths = [
+        e["path"] for e in json.loads((destination / "findings.json").read_text())[0]["evidence"]
+    ]
+    assert paths == [
+        f"{supplied}/gemini.eval",
+        "hawk:inv-pilot-1234abcd/2026-09-28T10-00-00_audit.eval",
+        "/Users/op/runs/local.eval",
+        f"_inputs/index/{source_alias(supplied)}/samples.csv",
+    ]
+    assert (destination / paths[3]).read_bytes() == b"id,score\n"
+    references = json.loads((destination / "_inputs/log-references.json").read_text())
+    assert [r["sha256"] for r in references] == [
+        hashlib.sha256(b).hexdigest() for b in (b"a", b"b", b"c")
+    ]
+
+    # an eval log placed in the report itself is refused, with the way out
+    (report / "evidence").mkdir()
+    (report / "evidence" / "copy.eval").write_bytes(b"a")
+    with pytest.raises(ValueError, match="cite the log where it lives"):
+        save_publication(tmp_path)
+
+
 def test_mounted_skills_are_wellformed_and_adapted() -> None:
     """Every mounted skill parses, is named after its directory, and says where it is.
 

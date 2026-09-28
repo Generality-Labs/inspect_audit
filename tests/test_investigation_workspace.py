@@ -385,3 +385,67 @@ def test_publication_fetches_only_the_inputs_it_cites(monkeypatch, tmp_path):
     asyncio.run(workspace.fetch_inputs_files(root, _report.cited_inputs(root)))
     assert read == ["/inputs/jobs/pilot/missing.eval"]
     assert (root / "inputs/jobs/pilot/missing.eval").read_bytes() == b"restored"
+
+
+@pytest.mark.parametrize(
+    ("key", "acted_on"),
+    [
+        # hawk 3.6.0 job_status_updated processors: what Hawk acts on when it appears
+        ("evals/chess-audit-sol6-20260925/artifacts/s/published/p/_inputs/logs/gemini.eval", True),
+        ("evals/run/artifacts/s/state/jobs/downloads/pilot/run.eval", True),
+        ("evals/run/.models.json", True),
+        ("evals/run/eval-set.json", True),
+        ("evals/run/2026-09-28_task.fast.eval", False),
+        ("evals/run/artifacts/s/published/p/report.pdf", False),
+        ("evals/run/artifacts/s/state/jobs.json", False),
+        ("scans/run/scanner/_summary.json", True),
+        ("scans/run/scanner/results.parquet", True),
+        ("scans/run/scanner/notes.md", False),
+        ("audit-inputs/anything.eval", False),
+    ],
+)
+def test_the_upload_guard_matches_what_hawk_acts_on(key, acted_on):
+    assert (workspace.hawk_would_process(key) is not None) == acted_on
+
+
+def test_an_upload_hawk_would_act_on_writes_nothing(tmp_path, monkeypatch):
+    log = tmp_path / "copy.eval"
+    log.write_bytes(b"x")
+    report = tmp_path / "report.pdf"
+    report.write_bytes(b"%PDF")
+    written = []
+    import fsspec
+
+    class Recorder:
+        def makedirs(self, *args, **kwargs):
+            pass
+
+        def put_file(self, source, target):
+            written.append(target)
+
+    monkeypatch.setattr(
+        fsspec.core, "url_to_fs", lambda url: (Recorder(), url.removeprefix("s3://"))
+    )
+    with pytest.raises(ValueError, match=r"imports every \.eval"):
+        workspace._upload(
+            {"report.pdf": report, "_inputs/logs/copy.eval": log},
+            "s3://bucket/evals/run/artifacts/sample-epoch1/published/p",
+        )
+    assert written == []  # checked before the first object, not after
+
+
+def test_state_saves_never_carry_collected_logs(tmp_path):
+    import fsspec
+
+    root = _remote_root(tmp_path, "memory://audit-nologs/artifacts")
+    (root / "jobs.json").write_text("[]")
+    downloads = root / "jobs" / "downloads" / "pilot"
+    downloads.mkdir(parents=True)
+    (downloads / "run.eval").write_bytes(b"x")
+    (root / "jobs" / "pilot.eval-set.yaml").write_text("name: pilot\n")
+    (root / "work/report").mkdir(parents=True)
+    (root / "work/report/stray.eval").write_bytes(b"x")
+    asyncio.run(workspace.save_state(root))
+    saved = list(fsspec.filesystem("memory").find("/audit-nologs"))
+    assert any(p.endswith("jobs/pilot.eval-set.yaml") for p in saved)
+    assert not [p for p in saved if p.endswith(".eval") or "/downloads/" in p]

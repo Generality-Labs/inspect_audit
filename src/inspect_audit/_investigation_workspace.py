@@ -261,12 +261,59 @@ def sample_key(state: TaskState) -> str:
     return f"{state.sample_id}-epoch{state.epoch}"
 
 
+def hawk_would_process(key: str) -> str | None:
+    """Why Hawk would act on an object created at this bucket key, else None.
+
+    Hawk runs a processor on every object created under `evals/` and `scans/`
+    (hawk 3.6.0: job_status_updated/index.py routes by prefix). Under `evals/`, any
+    key ending `.eval` (bar `.fast.eval`) is imported into the shared warehouse,
+    upserted by the eval id in its own header, so a copy of someone's log takes over
+    their record (processors/eval.py process_object); a file directly in
+    `evals/<eval set>/` is read as that eval set's own metadata, e.g. `.models.json`
+    access groups. Under `scans/`, `_summary.json` and `.parquet` are imported as scan
+    results (processors/scan.py). Only Hawk's own writers may create these.
+    """
+    if key.startswith("evals/"):
+        # the same order as Hawk's own routing: .keep, then .eval (bar .fast.eval), then
+        # live buffers, then files at the eval set's root
+        if key.endswith("/.keep"):
+            return None
+        if key.endswith(".eval"):
+            if key.endswith(".fast.eval"):
+                return None
+            return "Hawk imports every .eval under evals/ into the shared warehouse"
+        if "/.buffer/" in key:
+            return None
+        eval_set, _, rest = key.removeprefix("evals/").partition("/")
+        if eval_set and rest and "/" not in rest:
+            return "Hawk reads a file directly in evals/<eval set>/ as that set's metadata"
+    if key.startswith("scans/") and key.endswith(("/_summary.json", ".parquet")):
+        return "Hawk imports scan summaries and parquet files under scans/"
+    return None
+
+
 def _upload(files: dict[str, Path], destination: str) -> None:
+    """Every upload this package makes goes through here, and none may trigger Hawk.
+
+    2026-09-28: a published report carried copies of the logs it cited as evidence;
+    they landed under evals/<run>/artifacts/ and Hawk re-pointed three shared
+    warehouse records at them. The check is on the final object key, so no caller can
+    route around it.
+    """
     import fsspec  # type: ignore[import-untyped]
 
     fs, base = fsspec.core.url_to_fs(destination)
+    targets = {relative: f"{base}/{relative}" for relative in files}
+    if destination.startswith("s3://"):
+        refused = [
+            f"{relative}: {reason}"
+            for relative, target in targets.items()
+            if (reason := hawk_would_process(target.split("/", 1)[1]))
+        ]
+        if refused:
+            raise ValueError("refusing to upload objects Hawk would act on: " + "; ".join(refused))
     for relative, file in files.items():
-        target = f"{base}/{relative}"
+        target = targets[relative]
         fs.makedirs(target.rsplit("/", 1)[0], exist_ok=True)
         fs.put_file(str(file), target)
 
@@ -305,6 +352,10 @@ async def save_state(root: Path) -> None:
     for base in (root / "jobs", root / "work"):
         if base.is_dir():
             for file in base.rglob("*"):
+                # collected child logs stay on Hawk, where their job wrote them: the
+                # ledger names the eval set, and a copy here would be imported
+                if file.suffix == ".eval" or "downloads" in file.relative_to(base).parts:
+                    continue
                 if file.is_file() and not file.is_symlink():
                     candidates[file.relative_to(root).as_posix()] = file
     current = {k: [f.stat().st_size, f.stat().st_mtime_ns] for k, f in candidates.items()}

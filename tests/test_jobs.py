@@ -55,7 +55,11 @@ class FakeHawk:
         return f"https://s3.example/{log_path}?signed"
 
     async def log_entries(
-        self, eval_set_id: str, lines: int = 120, from_start: bool = False
+        self,
+        eval_set_id: str,
+        lines: int = 120,
+        from_start: bool = False,
+        oldest_first: bool = False,
     ) -> list[object]:
         return []
 
@@ -926,33 +930,82 @@ def test_a_job_that_fails_at_startup_says_why_and_costs_nothing(
     assert JobLedger(tmp_path).reserved_usd() == 0
 
 
-def test_stopping_a_job_that_never_ran_releases_its_reservation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from inspect_audit import _investigate
-
-    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
-    r = remote(tmp_path)
+def _submitted_job(r, tmp_path: Path, label: str) -> None:
     (tmp_path / "inputs").mkdir(exist_ok=True)
     run(
         hawk_submit(r, tmp_path)(
             config=_write(
-                tmp_path, "s.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-s")
+                tmp_path,
+                f"{label}.eval-set.yaml",
+                filled_example("benchmark.eval-set.yaml", name=f"inv-{label}"),
             ),
             estimated_usd=0.2,
             note=None,
         )
     )
 
-    async def no_rows(eval_set_id: str) -> list[dict[str, str]]:
+
+def test_a_job_stopped_mid_run_is_charged_what_it_spent_not_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eval rows reach the warehouse minutes after the log is written.
+
+    Stopping used to settle $0 whenever no rows were listed yet, so a job stopped
+    mid-run lost its spend from the allowance. The hold now stays until collect,
+    which reads the job's own log files.
+    """
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    monkeypatch.setattr(_investigate, "usage_cost", lambda files: (0.37, {}, False))
+    r = remote(tmp_path)
+    _submitted_job(r, tmp_path, "s")
+
+    async def not_imported_yet(eval_set_id: str) -> list[dict[str, str]]:
         return []
 
-    monkeypatch.setattr(r.hawk, "evals", no_rows)
+    monkeypatch.setattr(r.hawk, "evals", not_imported_yet)
     out = run(
         jobs(r, tmp_path)(action="stop", label="s", sample=None, wait_minutes=None, limit=None)
     )
-    assert "before any eval ran" in out and "$1.00 released" in out
     ledger = JobLedger(tmp_path)
+    assert ledger.get("s").status == "stopped" and ledger.get("s").actual_usd is None  # type: ignore[union-attr]
+    assert ledger.reserved_usd() == 1.0 and "stays held" in out
+
+    r.hawk.job_state = "complete"  # type: ignore[attr-defined]
+    out = run(
+        jobs(r, tmp_path)(action="collect", label="s", sample=None, wait_minutes=None, limit=None)
+    )
+    ledger = JobLedger(tmp_path)
+    assert ledger.get("s").actual_usd == 0.37 and ledger.reserved_usd() == 0  # type: ignore[union-attr]
+
+
+def test_a_job_stopped_before_writing_a_log_is_released_once_it_has_finished(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    r = remote(tmp_path)
+    _submitted_job(r, tmp_path, "s")
+
+    async def nothing_written(eval_set_id: str, out_dir: Path) -> list[Path]:
+        return []
+
+    monkeypatch.setattr(r.hawk, "download", nothing_written)
+    run(jobs(r, tmp_path)(action="stop", label="s", sample=None, wait_minutes=None, limit=None))
+    r.hawk.job_state = "running"  # type: ignore[attr-defined]  # still winding down
+    out = run(
+        jobs(r, tmp_path)(action="collect", label="s", sample=None, wait_minutes=None, limit=None)
+    )
+    assert "not finished" in out and JobLedger(tmp_path).reserved_usd() == 1.0
+
+    r.hawk.job_state = "complete"  # type: ignore[attr-defined]
+    out = run(
+        jobs(r, tmp_path)(action="collect", label="s", sample=None, wait_minutes=None, limit=None)
+    )
+    ledger = JobLedger(tmp_path)
+    assert "stopped before writing a log" in out
     assert ledger.get("s").status == "stopped" and ledger.get("s").actual_usd == 0.0  # type: ignore[union-attr]
     assert ledger.reserved_usd() == 0
 
@@ -1467,9 +1520,9 @@ def test_reading_a_parked_log_source_stays_inside_the_investigation(
     address = "hawk:audit-epoch-example-p2/inputs/epoch-example-logs"
     tool = supplied_logs(r, tmp_path, [address])
 
-    from inspect_audit._investigate import _alias
+    from inspect_audit._investigate import source_alias
 
-    alias = _alias(address)
+    alias = source_alias(address)
     listing = run(tool(action="list", source=None, sample=None, limit=None))
     assert alias in listing and address in listing
 
@@ -1607,25 +1660,25 @@ def test_a_name_is_free_again_when_its_submission_never_reached_hawk(
 
 def test_two_log_sources_cannot_share_a_name(tmp_path: Path) -> None:
     """Truncated aliases collided and the second source vanished from the mapping."""
-    from inspect_audit._investigate import _alias, supplied_logs
+    from inspect_audit._investigate import source_alias, supplied_logs
 
     a = "hawk:example-benchmark-sweep-2026-05-luna-abcdefgh/inputs/logs"
     b = "hawk:example-benchmark-sweep-2026-05-terra-ijklmnop/inputs/logs"
-    assert _alias(a) != _alias(b)
-    assert len(_alias(a)) <= 31
+    assert source_alias(a) != source_alias(b)
+    assert len(source_alias(a)) <= 31
 
     (tmp_path / "work").mkdir()
     tool = supplied_logs(None, tmp_path, [a, b])
     listing = run(tool(action="list", source=None, sample=None, limit=None))
     assert a in listing and b in listing
-    assert _alias(a) in listing and _alias(b) in listing
+    assert source_alias(a) in listing and source_alias(b) in listing
 
 
 def test_reading_a_subdirectory_says_it_covers_the_whole_eval_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The warehouse indexes by eval set, so a narrower address is not a narrower read."""
-    from inspect_audit._investigate import _alias, supplied_logs
+    from inspect_audit._investigate import source_alias, supplied_logs
 
     (tmp_path / "work").mkdir()
     (tmp_path / "inputs").mkdir()
@@ -1633,7 +1686,7 @@ def test_reading_a_subdirectory_says_it_covers_the_whole_eval_set(
     address = "hawk:audit-epoch-example-p2/inputs/epoch-example-logs"
     out = run(
         supplied_logs(r, tmp_path, [address])(
-            action="samples", source=_alias(address), sample=None, limit=None
+            action="samples", source=source_alias(address), sample=None, limit=None
         )
     )
     assert "covers the whole set" in out and "epoch-example-logs" in out
@@ -2064,3 +2117,18 @@ def test_the_operator_key_is_never_read_from_a_runners_openrouter_variable(
     env = tmp_path / ".env"
     env.write_text(f"{OPERATOR_KEY_VAR}=sk-or-file\n")
     assert operator_key(str(env)) == "sk-or-file"
+
+
+def test_every_job_config_must_state_its_retries(tmp_path: Path) -> None:
+    """Unset, Inspect's eval_set re-runs a failed task up to 10 times (evalset.py:470),
+    and the reservation priced that as no retries at all."""
+    from inspect_audit._jobs import INSPECT_DEFAULT_RETRIES, parse_config, worst_case_usd
+
+    policy = remote(tmp_path).policy
+    config = filled_example("benchmark.eval-set.yaml", name="inv-r")
+    config.pop("retry_attempts", None)
+    once = worst_case_usd(parse_config({**config, "retry_attempts": 0})[0], policy)
+    assert once and worst_case_usd(parse_config(config)[0], policy) == once * (
+        1 + INSPECT_DEFAULT_RETRIES
+    )
+    assert any("retry_attempts is required" in p for p in validate_config(config, policy, set()))

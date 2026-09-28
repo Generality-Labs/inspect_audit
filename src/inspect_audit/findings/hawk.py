@@ -36,9 +36,19 @@ def _tail(name: str) -> str:
 
 
 def matches_task(task_names: Sequence[str], task: str) -> bool:
-    """Whether any recorded task name is `task`, comparing unqualified names."""
+    """Whether any recorded task name is `task`.
+
+    Two qualified names must match exactly: `audit/inspect_evals/scicode` is the sample
+    auditor run over scicode, not scicode. A bare name (a task run from a file, or a
+    registry name recorded without its package) matches on the unqualified tail.
+    """
     wanted = _tail(task)
-    return any(_tail(name) == wanted for name in task_names)
+    for name in task_names:
+        if name == task:
+            return True
+        if ("/" not in name or "/" not in task) and _tail(name) == wanted:
+            return True
+    return False
 
 
 async def _fetch_page_via_client(page: int, limit: int) -> dict[str, Any]:

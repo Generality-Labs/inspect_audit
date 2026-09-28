@@ -41,6 +41,10 @@ def test_matches_task_on_the_unqualified_name() -> None:
     assert matches_task(["inspect_evals/scicode"], "scicode")
     assert not matches_task(["inspect_evals/scicode_replay"], "inspect_evals/scicode")
     assert not matches_task([], "inspect_evals/scicode")
+    # the sample auditor's task is audit/<pkg>/<task>: same tail, different task. Only a bare
+    # name (no slash) may match on the tail; two qualified names must match exactly.
+    assert not matches_task(["audit/inspect_evals/scicode"], "inspect_evals/scicode")
+    assert not matches_task(["inspect_evals/scicode"], "audit/inspect_evals/scicode")
 
 
 def test_find_eval_sets_pages_and_filters() -> None:

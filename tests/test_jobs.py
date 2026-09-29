@@ -10,6 +10,7 @@ from test_investigate import git_repo
 
 from inspect_audit import _jobs
 from inspect_audit._investigate import Remote, hawk_submit, jobs
+from inspect_audit._investigate import _probe_worker as real_probe_worker
 from inspect_audit._jobs import (
     Job,
     JobLedger,
@@ -31,10 +32,41 @@ class FakeHawk:
     def __init__(self) -> None:
         self.submitted: list[Path] = []
         self.eval_status = "running"
+        # the job's own lifecycle; None derives it from eval_status as Hawk would
+        self.job_state: str | None = None
         self.stopped: list[str] = []
+        self.startup_error: str | None = None
 
-    async def submit(self, config_path: Path) -> str:
+    async def job_status(self, eval_set_id: str) -> str | None:
+        if not any(
+            str(yaml.safe_load(c.read_text())["eval_set_id"]) == eval_set_id for c in self.submitted
+        ):
+            return None
+        if self.job_state is not None:
+            return self.job_state
+        return {"success": "complete", "error": "failed"}.get(self.eval_status, "running")
+
+    async def first_error(self, eval_set_id: str) -> str | None:
+        return self.startup_error
+
+    async def log_files(self, eval_set_id: str) -> list[str]:
+        return [f"{eval_set_id}/run.eval"]
+
+    async def download_url(self, log_path: str) -> str:
+        return f"https://s3.example/{log_path}?signed"
+
+    async def log_entries(
+        self,
+        eval_set_id: str,
+        lines: int = 120,
+        from_start: bool = False,
+        oldest_first: bool = False,
+    ) -> list[object]:
+        return []
+
+    async def submit(self, config_path: Path, secrets: dict[str, str] | None = None) -> str:
         self.submitted.append(config_path)
+        self.secrets = secrets
         # real Hawk honours a pinned eval_set_id and echoes it back
         return str(yaml.safe_load(config_path.read_text())["eval_set_id"])
 
@@ -114,6 +146,10 @@ class FakeHawk:
 
 def remote(tmp_path: Path, allowance: float = 10.0) -> Remote:
     (tmp_path / "work").mkdir(exist_ok=True)
+    # a real run registers every worker's price at prep; without this a test would
+    # depend on another test in the same process having registered it
+    _price("openrouter/openai/gpt-5.6-luna")
+    _price("openrouter/openai/gpt-5-mini", input=0.25, output=2.0)
     r = Remote(
         tmp_path,
         HAWK,
@@ -181,6 +217,30 @@ def test_the_example_configs_pass_the_policy_once_filled_in() -> None:
     assert (
         validate_config(filled_example("audit.eval-set.yaml"), policy(), {"inv-staged-abc"}) == []
     )
+
+
+def test_an_audit_job_our_task_would_refuse_is_refused_at_submission() -> None:
+    """09-28 Luna smoke: the child installed for ten minutes, then died loading the
+    audit task on reasoning_effort without model; Hawk cannot know our task's rules."""
+    config = filled_example("audit.eval-set.yaml")
+    args = config["tasks"][0]["items"][0]["args"]
+    args["reasoning_effort"] = "medium"
+    problems = validate_config(config, policy(), {"inv-staged-abc"})
+    assert len(problems) == 1
+    assert "reasoning_effort needs an explicit model" in problems[0]
+    assert "models[].items[].args.config.reasoning_effort" in problems[0]
+
+    # the ways it runs: with the model it binds to, or on the model item (the example)
+    args["model"] = "openrouter/openai/gpt-5.6-luna"
+    assert validate_config(config, policy(), {"inv-staged-abc"}) == []
+
+    del args["model"], args["reasoning_effort"]
+    args["item"] = ["gold-answer"]  # misspelt
+    args["items"] = ["gold-answr"]
+    problems = validate_config(config, policy(), {"inv-staged-abc"})
+    assert any("unexpected keyword argument 'item'" in p for p in problems)
+    del args["item"]
+    assert any("gold-answr" in p for p in validate_config(config, policy(), {"inv-staged-abc"}))
 
 
 def test_hawk_public_route_keeps_its_prefix_in_configs_and_cost_keys() -> None:
@@ -526,8 +586,11 @@ def test_local_logs_remain_local_when_remote_work_is_enabled(
     assert (root / "inputs/logs/0/a.eval").read_bytes() == b"x"
     assert not (root / "staged.json").exists()
     assert "operator-imported Hawk source" in seed["remote"]["note"]
-    # nothing is staged anywhere: the only setup step carries spend across retries
-    assert [s.__qualname__ for s in target.setup] == ["carry_spend.<locals>.solve"]  # type: ignore[union-attr]
+    # nothing is staged: setup carries spend across retries and, direct, checks the workers
+    assert [s.__qualname__ for s in target.setup] == [  # type: ignore[union-attr]
+        "carry_spend.<locals>.solve",
+        "check_workers.<locals>.solve",
+    ]
 
 
 def test_jobs_status_wait_collect_release_reservation(
@@ -651,48 +714,6 @@ async def _returns(value):
     return value
 
 
-def test_hawk_cli_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
-    h = _jobs.Hawk("https://h", None)
-
-    def returning(text: str):
-        async def _run(*args: str, **kwargs: object) -> str:
-            return text
-
-        return _run
-
-    monkeypatch.setattr(
-        h,
-        "_metadata_page",
-        lambda *a: _returns(
-            [
-                {
-                    "task_name": "audit/bench/Example Questions",
-                    "model": "gpt-5.6-terra",
-                    "status": "success",
-                    "completed_samples": 10,
-                    "total_samples": 10,
-                }
-            ]
-        ),
-    )
-    assert run(h.evals("x")) == [
-        {
-            "task": "audit/bench/Example Questions",
-            "model": "gpt-5.6-terra",
-            "status": "success",
-            "samples": "10/10",
-        }
-    ]
-    monkeypatch.setattr(
-        h, "_run", returning("Eval set ID: inv-abc-123\nSee your eval set log: https://...")
-    )
-    assert run(h.submit(Path("/tmp/c.yaml"))) == "inv-abc-123"
-    # samples pages through the API rather than the CLI: the CLI cannot ask for page 2
-    pages = [[{"id": "1", "status": "success"}], []]
-    monkeypatch.setattr(h, "_samples_page", lambda *a, **k: _returns(pages.pop(0)))
-    assert run(h.samples("x")) == [{"id": "1", "status": "success"}]
-
-
 RESERVE_SCRIPT = """
 import json, sys, time
 from pathlib import Path
@@ -784,7 +805,9 @@ def test_a_lost_submission_response_is_reconciled_not_resubmitted(
     (tmp_path / "inputs").mkdir(exist_ok=True)
     landed: list[str] = []
 
-    async def submit_then_lose_the_answer(config_path: Path) -> str:
+    async def submit_then_lose_the_answer(
+        config_path: Path, secrets: dict[str, str] | None = None
+    ) -> str:
         landed.append(str(yaml.safe_load(config_path.read_text())["eval_set_id"]))
         raise TimeoutError("connection reset while waiting for hawk")
 
@@ -874,44 +897,43 @@ def test_collect_charges_an_unpriced_job_at_its_reservation(
     assert ledger.reserved_usd() == 0 and ledger.actual_usd() == 1.0
 
 
-def test_collect_waits_for_every_eval_row_hawk_will_create(
+def test_collect_waits_for_the_job_not_for_eval_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Hawk adds rows as logs land; one terminal row out of two is not a finished job."""
+    """Rows look finished between an eval's error and its retry: the job's status decides."""
     from inspect_audit import _investigate
 
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
     monkeypatch.setattr(_investigate, "usage_cost", lambda files: (0.1, {}, False))
     r = remote(tmp_path)
     (tmp_path / "inputs").mkdir(exist_ok=True)
-    config = filled_example("benchmark.eval-set.yaml", name="inv-two")
-    item = config["models"][0]["items"][0]
-    config["models"][0]["items"] = [item, {**item, "name": r.worker_models[-1]}]
     run(
         hawk_submit(r, tmp_path)(
-            config=_write(tmp_path, "two.eval-set.yaml", config), estimated_usd=0.2, note=None
+            config=_write(
+                tmp_path,
+                "two.eval-set.yaml",
+                filled_example("benchmark.eval-set.yaml", name="inv-two"),
+            ),
+            estimated_usd=0.2,
+            note=None,
         )
     )
-    assert JobLedger(tmp_path).get("two").expected_evals == 2  # type: ignore[union-attr]
     r.hawk.eval_status = "success"  # type: ignore[attr-defined]
+    r.hawk.job_state = "running"  # type: ignore[attr-defined]
     tool = jobs(r, tmp_path)
     out = run(tool(action="collect", label="two", sample=None, wait_minutes=None, limit=None))
-    assert "not finished (1 of 2 evals listed" in out
-    row = {"task": "t", "model": "m", "status": "success", "samples": "2/2"}
-
-    async def two_rows(eval_set_id: str) -> list[dict[str, str]]:
-        return [row, {**row, "model": "m2"}]
-
-    monkeypatch.setattr(r.hawk, "evals", two_rows)
+    assert "is running, not finished" in out
+    r.hawk.job_state = "complete"  # type: ignore[attr-defined]
     assert "collected" in run(
         tool(action="collect", label="two", sample=None, wait_minutes=None, limit=None)
     )
     assert JobLedger(tmp_path).reserved_usd() == 0
 
 
-def test_stopping_a_job_that_never_ran_releases_its_reservation(
+def test_a_job_that_fails_at_startup_says_why_and_costs_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The sol6 pilot: no eval rows ever, the reservation held, the agent left guessing."""
     from inspect_audit import _investigate
 
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
@@ -920,22 +942,102 @@ def test_stopping_a_job_that_never_ran_releases_its_reservation(
     run(
         hawk_submit(r, tmp_path)(
             config=_write(
-                tmp_path, "s.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-s")
+                tmp_path, "p.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-p")
+            ),
+            estimated_usd=0.2,
+            note=None,
+        )
+    )
+    r.hawk.job_state = "failed"  # type: ignore[attr-defined]
+    r.hawk.startup_error = "[ERROR] ValueError(\"Model 'openrouter/x' not found.\")"  # type: ignore[attr-defined]
+
+    async def no_rows(eval_set_id: str) -> list[dict[str, str]]:
+        return []
+
+    monkeypatch.setattr(r.hawk, "evals", no_rows)
+    out = run(jobs(r, tmp_path)(action="wait", label="p", sample=None, wait_minutes=1, limit=None))
+    assert "failed at startup" in out and "Model 'openrouter/x' not found" in out
+    job = JobLedger(tmp_path).get("p")
+    assert job is not None and job.status == "failed_at_start" and job.actual_usd == 0.0
+    assert JobLedger(tmp_path).reserved_usd() == 0
+
+
+def _submitted_job(r, tmp_path: Path, label: str) -> None:
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+    run(
+        hawk_submit(r, tmp_path)(
+            config=_write(
+                tmp_path,
+                f"{label}.eval-set.yaml",
+                filled_example("benchmark.eval-set.yaml", name=f"inv-{label}"),
             ),
             estimated_usd=0.2,
             note=None,
         )
     )
 
-    async def no_rows(eval_set_id: str) -> list[dict[str, str]]:
+
+def test_a_job_stopped_mid_run_is_charged_what_it_spent_not_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eval rows reach the warehouse minutes after the log is written.
+
+    Stopping used to settle $0 whenever no rows were listed yet, so a job stopped
+    mid-run lost its spend from the allowance. The hold now stays until collect,
+    which reads the job's own log files.
+    """
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    monkeypatch.setattr(_investigate, "usage_cost", lambda files: (0.37, {}, False))
+    r = remote(tmp_path)
+    _submitted_job(r, tmp_path, "s")
+
+    async def not_imported_yet(eval_set_id: str) -> list[dict[str, str]]:
         return []
 
-    monkeypatch.setattr(r.hawk, "evals", no_rows)
+    monkeypatch.setattr(r.hawk, "evals", not_imported_yet)
     out = run(
         jobs(r, tmp_path)(action="stop", label="s", sample=None, wait_minutes=None, limit=None)
     )
-    assert "before any eval ran" in out and "$1.00 released" in out
     ledger = JobLedger(tmp_path)
+    assert ledger.get("s").status == "stopped" and ledger.get("s").actual_usd is None  # type: ignore[union-attr]
+    assert ledger.reserved_usd() == 1.0 and "stays held" in out
+
+    r.hawk.job_state = "complete"  # type: ignore[attr-defined]
+    out = run(
+        jobs(r, tmp_path)(action="collect", label="s", sample=None, wait_minutes=None, limit=None)
+    )
+    ledger = JobLedger(tmp_path)
+    assert ledger.get("s").actual_usd == 0.37 and ledger.reserved_usd() == 0  # type: ignore[union-attr]
+
+
+def test_a_job_stopped_before_writing_a_log_is_released_once_it_has_finished(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    r = remote(tmp_path)
+    _submitted_job(r, tmp_path, "s")
+
+    async def nothing_written(eval_set_id: str, out_dir: Path) -> list[Path]:
+        return []
+
+    monkeypatch.setattr(r.hawk, "download", nothing_written)
+    run(jobs(r, tmp_path)(action="stop", label="s", sample=None, wait_minutes=None, limit=None))
+    r.hawk.job_state = "running"  # type: ignore[attr-defined]  # still winding down
+    out = run(
+        jobs(r, tmp_path)(action="collect", label="s", sample=None, wait_minutes=None, limit=None)
+    )
+    assert "not finished" in out and JobLedger(tmp_path).reserved_usd() == 1.0
+
+    r.hawk.job_state = "complete"  # type: ignore[attr-defined]
+    out = run(
+        jobs(r, tmp_path)(action="collect", label="s", sample=None, wait_minutes=None, limit=None)
+    )
+    ledger = JobLedger(tmp_path)
+    assert "stopped before writing a log" in out
     assert ledger.get("s").status == "stopped" and ledger.get("s").actual_usd == 0.0  # type: ignore[union-attr]
     assert ledger.reserved_usd() == 0
 
@@ -999,7 +1101,7 @@ def test_submission_is_refused_when_a_named_model_has_no_registered_price(
     (tmp_path / "inputs").mkdir(exist_ok=True)
     config = filled_example("benchmark.eval-set.yaml", name="inv-unpriced")
     config["models"][0]["items"][0]["name"] = unpriced
-    with pytest.raises(ToolError, match=f"no registered price for openrouter/{unpriced}"):
+    with pytest.raises(ToolError, match=f"no valid registered price for openrouter/{unpriced}"):
         run(
             hawk_submit(r, tmp_path)(
                 config=_write(tmp_path, "unpriced.eval-set.yaml", config),
@@ -1198,11 +1300,45 @@ def test_ordinary_task_arguments_still_pass() -> None:
         "subset": "hard",
         "samples": ["q1", "q2"],
         "dataset_path": "/inputs/source/data.csv",
-        "grader_model": "openai/gpt-5-mini",
+        "grader_model": "openrouter/openai/gpt-5-mini",
         "auditor_image": IMAGE,
         "max_items": 3,
     }
     assert validate_config(config, policy(), set()) == []
+
+
+def test_worker_spellings_are_rewritten_not_refused() -> None:
+    """sol6 09-25 wrote its grader under the wrong spelling and was refused."""
+    from inspect_audit._jobs import Worker, canonicalise, named_models
+
+    workers = [Worker("openrouter/openai/gpt-6-sol"), Worker("openai/gpt-5-mini")]
+    config = filled_example("benchmark.eval-set.yaml")
+    config["models"][0]["items"][0]["name"] = "openrouter/openrouter/openai/gpt-6-sol"
+    config["model_roles"] = {
+        "grader": {
+            "package": "openai",
+            "name": "openrouter",
+            "items": [{"name": "openrouter/openai/gpt-5-mini"}],
+        }
+    }
+    config["tasks"][0]["items"][0]["args"] = {"judge_model": "openai/gpt-5-mini"}
+    rewrites = canonicalise(config, workers)
+    assert config["models"][0]["items"][0]["name"] == "openrouter/openai/gpt-6-sol"
+    assert config["model_roles"]["grader"]["items"][0]["name"] == "openai/gpt-5-mini"
+    # a bare openai/... in a task argument is Inspect's direct provider: unmetered
+    assert config["tasks"][0]["items"][0]["args"]["judge_model"] == "openrouter/openai/gpt-5-mini"
+    assert len(rewrites) == 3
+    assert named_models(config, workers) == {
+        "openrouter/openrouter/openai/gpt-6-sol",
+        "openrouter/openai/gpt-5-mini",
+    }
+
+
+def test_a_direct_provider_model_in_task_args_is_refused() -> None:
+    config = filled_example("benchmark.eval-set.yaml")
+    config["tasks"][0]["items"][0]["args"] = {"grader_model": "openai/gpt-5-mini"}
+    problems = validate_config(config, policy(), set())
+    assert any("name a worker by its Inspect name" in p for p in problems), problems
 
 
 def test_policy_rules_that_had_no_test(tmp_path: Path) -> None:
@@ -1247,28 +1383,6 @@ def test_usage_cost_reads_real_logs_and_says_when_it_cannot_price_them(tmp_path:
     assert recomputed, "the log recorded no cost, so this total is an estimate"
 
 
-def test_eval_set_exists_parses_the_cli_and_does_not_match_a_different_id() -> None:
-    """The oracle the whole recovery path rests on, exercised against real CLI output."""
-    from inspect_audit._jobs import Hawk
-
-    h = Hawk("https://hawk.example", None)
-    table = (
-        "Eval Sets\n"
-        "ID                          Created              Creator\n"
-        "inv-smoke-1234abcd          2026-09-09 18:00     james\n"
-    )
-    calls: list[tuple[str, ...]] = []
-
-    async def fake_run(*args: str, timeout: int = 600) -> str:
-        calls.append(args)
-        return table
-
-    h._run = fake_run  # type: ignore[method-assign]
-    assert run(h.eval_set_exists("inv-smoke-1234abcd")) is True
-    assert calls[0][:3] == ("list", "eval-sets", "--search")
-    assert run(h.eval_set_exists("inv-other-9999zzzz")) is False
-
-
 def test_the_fake_hawk_matches_the_real_one() -> None:
     """Tests are only worth their fake: every method must exist with the same signature."""
     import inspect as inspect_module
@@ -1309,33 +1423,6 @@ def test_submit_passes_the_flags_the_run_needs_and_no_provider_key() -> None:
     assert args[:2] == ("eval-set", "run") and "/tmp/c.yaml" in args
     assert "--skip-confirm" in args and "--log-dir-allow-dirty" in args
     assert "--secrets-file" not in args
-
-
-def test_hawk_runs_through_inspects_subprocess_with_the_api_url_it_was_given() -> None:
-    """Inspect's subprocess keeps the event loop free and counts against max_subprocesses."""
-    from inspect_audit import _jobs
-
-    captured: dict[str, object] = {}
-
-    class Result:
-        success = True
-        stdout = "ok"
-        stderr = ""
-
-    async def fake_subprocess(args, text=True, env=None, timeout=None, **kwargs):
-        captured["args"], captured["env"], captured["timeout"] = args, env, timeout
-        return Result()
-
-    monkey = pytest.MonkeyPatch()
-    monkey.setattr(_jobs, "subprocess", fake_subprocess)
-    try:
-        run(_jobs.Hawk("https://hawk.example").logs("inv-x"))
-    finally:
-        monkey.undo()
-    env = captured["env"]
-    assert isinstance(env, dict) and env["HAWK_API_URL"] == "https://hawk.example"
-    assert Path(captured["args"][0]).name == "hawk" and captured["args"][1] == "logs"  # type: ignore[index]
-    assert captured["timeout"] == 120
 
 
 def test_a_cost_the_runner_recorded_is_used_as_measured(tmp_path: Path) -> None:
@@ -1465,9 +1552,9 @@ def test_reading_a_parked_log_source_stays_inside_the_investigation(
     address = "hawk:audit-epoch-example-p2/inputs/epoch-example-logs"
     tool = supplied_logs(r, tmp_path, [address])
 
-    from inspect_audit._investigate import _alias
+    from inspect_audit._investigate import source_alias
 
-    alias = _alias(address)
+    alias = source_alias(address)
     listing = run(tool(action="list", source=None, sample=None, limit=None))
     assert alias in listing and address in listing
 
@@ -1605,25 +1692,25 @@ def test_a_name_is_free_again_when_its_submission_never_reached_hawk(
 
 def test_two_log_sources_cannot_share_a_name(tmp_path: Path) -> None:
     """Truncated aliases collided and the second source vanished from the mapping."""
-    from inspect_audit._investigate import _alias, supplied_logs
+    from inspect_audit._investigate import source_alias, supplied_logs
 
     a = "hawk:example-benchmark-sweep-2026-05-luna-abcdefgh/inputs/logs"
     b = "hawk:example-benchmark-sweep-2026-05-terra-ijklmnop/inputs/logs"
-    assert _alias(a) != _alias(b)
-    assert len(_alias(a)) <= 31
+    assert source_alias(a) != source_alias(b)
+    assert len(source_alias(a)) <= 31
 
     (tmp_path / "work").mkdir()
     tool = supplied_logs(None, tmp_path, [a, b])
     listing = run(tool(action="list", source=None, sample=None, limit=None))
     assert a in listing and b in listing
-    assert _alias(a) in listing and _alias(b) in listing
+    assert source_alias(a) in listing and source_alias(b) in listing
 
 
 def test_reading_a_subdirectory_says_it_covers_the_whole_eval_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The warehouse indexes by eval set, so a narrower address is not a narrower read."""
-    from inspect_audit._investigate import _alias, supplied_logs
+    from inspect_audit._investigate import source_alias, supplied_logs
 
     (tmp_path / "work").mkdir()
     (tmp_path / "inputs").mkdir()
@@ -1631,7 +1718,7 @@ def test_reading_a_subdirectory_says_it_covers_the_whole_eval_set(
     address = "hawk:audit-epoch-example-p2/inputs/epoch-example-logs"
     out = run(
         supplied_logs(r, tmp_path, [address])(
-            action="samples", source=_alias(address), sample=None, limit=None
+            action="samples", source=source_alias(address), sample=None, limit=None
         )
     )
     assert "covers the whole set" in out and "epoch-example-logs" in out
@@ -1655,44 +1742,6 @@ def test_a_mode_name_is_not_a_model(tmp_path: Path) -> None:
     assert any("not an allowed model" in p for p in validate_config(config, policy(), set()))
 
 
-def test_sample_pagination_keeps_page_size_fixed(monkeypatch: pytest.MonkeyPatch) -> None:
-    h = _jobs.Hawk(HAWK, None)
-    calls = []
-
-    async def page(eval_set_id, number, size):
-        calls.append((number, size))
-        return [{"id": i} for i in range((number - 1) * size, number * size)]
-
-    monkeypatch.setattr(h, "_samples_page", page)
-    rows = run(h.samples("set", 300))
-    assert [r["id"] for r in rows] == list(range(300))
-    assert calls == [(1, 250), (2, 250)]
-
-
-def test_api_token_refreshes_once_on_401(monkeypatch: pytest.MonkeyPatch) -> None:
-    import io
-    import urllib.error
-    import urllib.request
-
-    h = _jobs.Hawk(HAWK, None)
-    h._token = "expired"
-    tokens = []
-
-    async def fresh(*args, **kwargs):
-        return "fresh"
-
-    def response(request, timeout):
-        tokens.append(request.get_header("Authorization"))
-        if len(tokens) == 1:
-            raise urllib.error.HTTPError(request.full_url, 401, "Expired", {}, None)
-        return io.BytesIO(b'{"items": [{"uuid": "s"}]}')
-
-    monkeypatch.setattr(h, "_run", fresh)
-    monkeypatch.setattr(urllib.request, "urlopen", response)
-    assert run(h._samples_page("set", 1, 250)) == [{"uuid": "s"}]
-    assert tokens == ["Bearer expired", "Bearer fresh"]
-
-
 def test_remote_evidence_is_checked_before_investigation(tmp_path: Path) -> None:
     from inspect_audit._investigate import check_evidence_access
 
@@ -1703,7 +1752,183 @@ def test_remote_evidence_is_checked_before_investigation(tmp_path: Path) -> None
     run(check_evidence_access(r, tmp_path, ["hawk:valid", "s3://unsupported"])(None, None))
     checks = json.loads(seed.read_text())["evidence_access"]
     assert [c["status"] for c in checks] == ["readable", "unavailable"]
+    assert checks[0]["paths"] == {
+        "index": "readable",
+        "transcript": "readable",
+        "download": "readable",
+    }
     assert list((tmp_path / "inputs/index").rglob("*.md"))
+
+
+def test_a_broken_harness_stops_the_run_before_the_first_model_call(tmp_path: Path) -> None:
+    """Luna 09-25: the same keyring ImportError on all five sources, and the run went on."""
+    from inspect_audit._investigate import check_evidence_access
+
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir()
+    (tmp_path / "inputs/seed.json").write_text("{}")
+
+    async def broken(sample_uuid: str, out_dir: Path) -> Path:
+        raise ModuleNotFoundError("No module named 'keyring'")
+
+    r.hawk.transcript = broken  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="keyring"):
+        run(check_evidence_access(r, tmp_path, ["hawk:valid"])(None, None))
+
+
+def test_a_source_the_child_cannot_download_is_a_note_not_a_stop(tmp_path: Path) -> None:
+    """Another user's set: listable through /meta, 403 on the presigned download."""
+    from hawk.client import HawkAPIError
+
+    from inspect_audit._investigate import check_evidence_access
+
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir()
+    seed = tmp_path / "inputs/seed.json"
+    seed.write_text("{}")
+
+    async def forbidden(log_path: str) -> str:
+        if "theirs" in log_path:
+            raise HawkAPIError(403, "Forbidden")
+        return "https://s3.example/signed"
+
+    r.hawk.download_url = forbidden  # type: ignore[method-assign]
+    run(check_evidence_access(r, tmp_path, ["hawk:mine", "hawk:theirs"])(None, None))
+    checks = json.loads(seed.read_text())["evidence_access"]
+    assert [c["status"] for c in checks] == ["readable", "unavailable"]
+    assert "403" in checks[1]["reason"] or "Forbidden" in checks[1]["reason"]
+    assert checks[1]["paths"] == {"index": "readable", "transcript": "readable"}
+
+
+def test_one_source_with_a_broken_warehouse_record_is_a_note_not_a_stop(tmp_path: Path) -> None:
+    """09-28: two sets' warehouse rows pointed at a stray copy, so their transcripts
+    failed with a non-HTTP error; the preflight took that for a broken harness and
+    stopped a run whose other sources were fine."""
+    from inspect_audit._investigate import check_evidence_access
+
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir()
+    seed = tmp_path / "inputs/seed.json"
+    seed.write_text("{}")
+
+    async def transcript(sample_uuid: str, out_dir: Path) -> Path:
+        if "polluted" in sample_uuid:
+            raise Exception("imported-x/s3://bucket/evals/run/artifacts/_inputs/index: HTTP 404")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "t.md").write_text("ok")
+        return out_dir / "t.md"
+
+    r.hawk.transcript = transcript  # type: ignore[method-assign]
+    run(check_evidence_access(r, tmp_path, ["hawk:clean", "hawk:polluted"])(None, None))
+    checks = json.loads(seed.read_text())["evidence_access"]
+    assert [c["status"] for c in checks] == ["readable", "unavailable"]
+    assert "HTTP 404" in checks[1]["reason"]
+
+    # the same failure on every source is still a broken harness
+    with pytest.raises(RuntimeError, match="broken"):
+        run(check_evidence_access(r, tmp_path, ["hawk:polluted-a", "hawk:polluted-b"])(None, None))
+
+
+def test_a_middleman_spelling_is_refused_as_a_direct_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """09-28 luna run: worker 'openrouter/openai/gpt-6-luna' reached OpenRouter as the
+    model id and the pilot child got HTTP 400; it must fail at start, naming the fix."""
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "OPENROUTER_IDS", {"openai/gpt-6-luna", "openai/gpt-5-mini"})
+    args = (tmp_path, HAWK, TASK_PKG, AUDIT_PKG, IMAGE)
+    with pytest.raises(ValueError, match="OpenRouter lists 'openai/gpt-6-luna'"):
+        Remote(*args, ["openrouter/openai/gpt-6-luna"], 10.0, "openrouter-direct", "key")
+    Remote(*args, ["openai/gpt-6-luna", "openai/gpt-5-mini"], 10.0, "openrouter-direct", "key")
+    # through Middleman the route name is the right one
+    Remote(*args, ["openrouter/openai/gpt-6-luna"], 10.0, "middleman")
+
+
+def openrouter(monkeypatch: pytest.MonkeyPatch, reply) -> list[dict]:
+    """Serve OpenRouter's chat endpoint from `reply(model) -> httpx.Response`."""
+    import httpx
+
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_probe_worker", real_probe_worker)
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        sent.append({"model": body["model"], "auth": request.headers["authorization"]})
+        return reply(body["model"])
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw)
+    )
+
+    async def no_wait(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(_investigate.asyncio, "sleep", no_wait)
+    return sent
+
+
+def test_a_worker_openrouter_refuses_stops_the_run_before_the_lead_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    from inspect_audit._investigate import check_workers
+
+    invalid = {"error": {"message": "openai/gpt-5.6-luna is not a valid model ID", "code": 400}}
+    sent = openrouter(
+        monkeypatch,
+        lambda model: (
+            httpx.Response(400, json=invalid)
+            if "luna" in model
+            else httpx.Response(200, json={"choices": [{"message": {"content": "OK"}}]})
+        ),
+    )
+    r = remote(tmp_path)
+    r.provider_key = "sk-operator"
+    (tmp_path / "inputs").mkdir()
+    seed = tmp_path / "inputs/seed.json"
+    seed.write_text("{}")
+    with pytest.raises(RuntimeError, match="not a valid model ID"):
+        run(check_workers(r, tmp_path)(None, None))
+    # the request a direct child makes: the item as the model id, the operator's key
+    assert sent == [
+        {"model": "openai/gpt-5.6-luna", "auth": "Bearer sk-operator"},
+        {"model": "openai/gpt-5-mini", "auth": "Bearer sk-operator"},
+    ]
+    checks = json.loads(seed.read_text())["worker_access"]
+    assert [c["status"] for c in checks] == ["refused", "ok"]
+
+
+def test_a_worker_outage_is_recorded_not_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 503, or OpenRouter's 200 carrying an upstream error, may clear: note it, go on."""
+    import httpx
+
+    from inspect_audit._investigate import check_workers
+
+    sent = openrouter(
+        monkeypatch,
+        lambda model: (
+            httpx.Response(503, text="no provider available")
+            if "luna" in model
+            else httpx.Response(200, json={"error": {"message": "upstream timeout", "code": 502}})
+        ),
+    )
+    r = remote(tmp_path)
+    r.provider_key = "sk-operator"
+    (tmp_path / "inputs").mkdir()
+    seed = tmp_path / "inputs/seed.json"
+    seed.write_text("{}")
+    run(check_workers(r, tmp_path)(None, None))
+    checks = json.loads(seed.read_text())["worker_access"]
+    assert [c["status"] for c in checks] == ["unavailable", "unavailable"]
+    assert "503" in checks[0]["reason"] and "upstream timeout" in checks[1]["reason"]
+    assert len(sent) == 4  # each retried once
 
 
 @pytest.mark.parametrize(
@@ -1752,31 +1977,6 @@ def test_role_reservation_is_per_evaluated_model() -> None:
     assert _jobs.worst_case_usd(parsed, policy()) == baseline * 4
 
 
-def test_eval_pagination_sees_unfinished_tail(monkeypatch) -> None:
-    h = _jobs.Hawk("https://hawk.example", None)
-    row = {
-        "task_name": "t",
-        "model": "m",
-        "status": "success",
-        "completed_samples": 1,
-        "total_samples": 1,
-    }
-    pages = [[dict(row, id=str(i)) for i in range(h.PAGE)], [dict(row, status="running")]]
-    monkeypatch.setattr(h, "_metadata_page", lambda *args: _returns(pages.pop(0)))
-    result = run(h.evals("set"))
-    assert len(result) == h.PAGE + 1
-    assert result[-1]["status"] == "running"
-
-
-def test_repeated_sample_page_is_not_an_infinite_population(monkeypatch) -> None:
-    h = _jobs.Hawk("https://hawk.example", None)
-    monkeypatch.setattr(
-        h, "_samples_page", lambda *args: _returns([{"uuid": str(i)} for i in range(h.PAGE)])
-    )
-    with pytest.raises(RuntimeError, match="repeated"):
-        run(h.samples("set"))
-
-
 def test_failed_ledger_transaction_restores_memory(tmp_path: Path) -> None:
     ledger = JobLedger(tmp_path)
     # The raise inside the block is the failure under test.
@@ -1797,3 +1997,301 @@ def test_explicit_judge_arguments_accept_qualified_openrouter_names() -> None:
     assert validate_config(config, policy(), set()) == []
     args["semantic_judge"] = "openrouter/anthropic/not-allowed"
     assert any("not an allowed model" in p for p in validate_config(config, policy(), set()))
+
+
+class StubClient:
+    """Hawk's Python client, as far as the investigator uses it."""
+
+    def __init__(self) -> None:
+        self.eval_pages: list[list[dict[str, object]]] = []
+        self.sample_pages: list[list[dict[str, object]]] = []
+        self.sample_calls: list[tuple[int, int, str | None]] = []
+        self.status: object | None = None
+        self.stopped: list[str] = []
+        self.entries: list[object] = []
+
+    async def __aenter__(self) -> "StubClient":
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        pass
+
+    async def get_job_status(self, job_id: str) -> object | None:
+        if isinstance(self.status, Exception):
+            raise self.status
+        return self.status
+
+    async def get_evals(
+        self, eval_set_id: str, *, page: int = 1, limit: int = 100
+    ) -> list[dict[str, object]]:
+        return self.eval_pages[page - 1] if page <= len(self.eval_pages) else []
+
+    async def get_samples(
+        self, eval_set_id: str, *, search: str | None = None, page: int = 1, limit: int = 50
+    ) -> list[dict[str, object]]:
+        self.sample_calls.append((page, limit, search))
+        if search is not None:
+            return [
+                r for page_rows in self.sample_pages for r in page_rows if r.get("uuid") == search
+            ]
+        return self.sample_pages[page - 1] if page <= len(self.sample_pages) else []
+
+    async def stop_eval_set(self, eval_set_id: str) -> None:
+        self.stopped.append(eval_set_id)
+
+    async def fetch_logs(
+        self, job_id: str, *, limit: int | None = 100, from_start: bool = False, **kwargs: object
+    ) -> list[object]:
+        return list(self.entries)
+
+
+@pytest.fixture
+def stub(monkeypatch: pytest.MonkeyPatch) -> tuple["_jobs.Hawk", StubClient]:
+    import hawk.client
+
+    client = StubClient()
+    monkeypatch.setattr(hawk.client, "HawkClient", lambda **kwargs: client)
+    h = _jobs.Hawk(HAWK)
+
+    async def token() -> str:
+        return "t"
+
+    monkeypatch.setattr(h, "access_token", token)
+    return h, client
+
+
+def test_job_status_is_the_existence_oracle(stub) -> None:
+    """The warehouse lists a set only once an eval is imported; the job registry at once."""
+    from types import SimpleNamespace
+
+    from hawk.client import HawkAPIError
+
+    h, client = stub
+    client.status = None
+    assert run(h.eval_set_exists("inv-x")) is False
+    client.status = SimpleNamespace(status="pending")
+    assert run(h.job_status("inv-x")) == "pending" and run(h.eval_set_exists("inv-x")) is True
+    # a failed check is not evidence: it propagates so reconcile leaves the job pending
+    client.status = HawkAPIError(503, "unavailable")
+    with pytest.raises(HawkAPIError):
+        run(h.eval_set_exists("inv-x"))
+    assert _jobs.http_status(HawkAPIError(403, "forbidden")) == 403
+    assert _jobs.http_status(RuntimeError("status 404 in some message")) is None
+
+
+def test_evals_page_through_and_see_an_unfinished_tail(stub) -> None:
+    h, client = stub
+    row = {
+        "task_name": "t",
+        "model": "m",
+        "status": "success",
+        "completed_samples": 1,
+        "total_samples": 1,
+    }
+    client.eval_pages = [[dict(row) for _ in range(h.PAGE)], [dict(row, status="started")]]
+    result = run(h.evals("set"))
+    assert len(result) == h.PAGE + 1 and result[-1]["status"] == "started"
+    assert result[0] == {"task": "t", "model": "m", "status": "success", "samples": "1/1"}
+
+
+def test_sample_pagination_keeps_page_size_fixed(stub) -> None:
+    h, client = stub
+    client.sample_pages = [
+        [{"id": i} for i in range(n * h.PAGE, (n + 1) * h.PAGE)] for n in range(3)
+    ]
+    rows = run(h.samples("set", 300))
+    assert [r["id"] for r in rows] == list(range(300))
+    assert [(page, size) for page, size, _ in client.sample_calls] == [(1, 250), (2, 250)]
+
+
+def test_repeated_sample_page_is_not_an_infinite_population(stub) -> None:
+    h, client = stub
+    same = [{"uuid": str(i)} for i in range(h.PAGE)]
+    client.sample_pages = [same, same]
+    with pytest.raises(RuntimeError, match="repeated"):
+        run(h.samples("set"))
+
+
+def test_a_warehouse_pk_resolves_to_its_sample(stub) -> None:
+    """The server's search never matches a pk; the samples table shows one beside the uuid."""
+    h, client = stub
+    client.sample_pages = [[{"uuid": "SvJXduyVoiMoo", "pk": "fbab6554-9a07", "id": "100"}]]
+    assert run(h.sample_uuid("set", "SvJXduyVoiMoo")) == "SvJXduyVoiMoo"
+    assert run(h.sample_uuid("set", "fbab6554-9a07")) == "SvJXduyVoiMoo"
+    assert run(h.sample_uuid("set", "nope")) is None
+
+
+def test_first_error_reads_the_runner_log(stub) -> None:
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    h, client = stub
+    t = datetime(2026, 9, 25, tzinfo=UTC)
+    client.entries = [
+        SimpleNamespace(timestamp=t, message="Installing dependencies...", level="info"),
+        SimpleNamespace(
+            timestamp=t, message="[ERROR] ValueError(\"Model 'x' not found.\")", level=None
+        ),
+    ]
+    assert run(h.first_error("set")) == "[ERROR] ValueError(\"Model 'x' not found.\")"
+    assert "Installing dependencies" in run(h.logs("set"))
+
+
+def test_the_laptop_token_comes_from_the_hawk_login() -> None:
+    """Inspect's subprocess keeps the event loop free and counts against max_subprocesses."""
+    from inspect_audit import _jobs
+
+    captured: dict[str, object] = {}
+
+    class Result:
+        success = True
+        stdout = "tok\n"
+        stderr = ""
+
+    async def fake_subprocess(args, text=True, env=None, timeout=None, **kwargs):
+        captured["args"], captured["env"] = args, env
+        return Result()
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(_jobs, "subprocess", fake_subprocess)
+    monkey.delenv("HAWK_JOB_ID", raising=False)
+    try:
+        assert run(_jobs.Hawk("https://hawk.example").access_token()) == "tok"
+    finally:
+        monkey.undo()
+    assert captured["args"][1:] == ["auth", "access-token"]  # type: ignore[index]
+    assert captured["env"]["HAWK_API_URL"] == "https://hawk.example"  # type: ignore[index]
+
+
+def test_prices_are_the_jobs_own_and_travel_with_its_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hawk's set_model_cost refused gpt-6-sol in every child, benchmark and audit alike."""
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    _price("openrouter/openai/gpt-5.6-luna")
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+    out = run(
+        hawk_submit(r, tmp_path)(
+            config=_write(
+                tmp_path, "b.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-b")
+            ),
+            estimated_usd=0.2,
+            note=None,
+        )
+    )
+    assert "Submitted" in out
+    submitted = yaml.safe_load(r.hawk.submitted[-1].read_text())  # type: ignore[attr-defined]
+    named = {g["items"][0]["name"] for g in submitted["models"]}
+    # only the models this job names are priced
+    assert set(submitted["model_cost_config"]) == {f"openrouter/{n}" for n in named}
+    # a benchmark task runs through the wrapper, which registers the prices itself
+    task = submitted["tasks"][0]
+    assert task["name"] == "inspect_audit" and task["items"][0]["name"] == "benchmark"
+    assert task["items"][0]["args"]["model_prices"] == submitted["model_cost_config"]
+    assert "/" in task["items"][0]["args"]["task"]
+    assert r.audit_package in submitted["packages"]
+
+
+def test_openrouter_direct_ships_the_operators_key_and_routes_past_the_proxy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit import _investigate
+    from inspect_audit._investigate import OPENROUTER_BASE_URL, Remote
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    _price("openrouter/openai/gpt-5.6-luna")
+    with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
+        Remote(
+            tmp_path, HAWK, "pkg", "pkg", IMAGE, ["openai/gpt-5.6-luna"], 10.0, "openrouter-direct"
+        )
+    r = remote(tmp_path)
+    r.provider, r.provider_key = "openrouter-direct", "sk-or-test"
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+    run(
+        hawk_submit(r, tmp_path)(
+            config=_write(
+                tmp_path, "d.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-d")
+            ),
+            estimated_usd=0.2,
+            note=None,
+        )
+    )
+    submitted = yaml.safe_load(r.hawk.submitted[-1].read_text())  # type: ignore[attr-defined]
+    assert submitted["runner"]["environment"]["OPENROUTER_BASE_URL"] == OPENROUTER_BASE_URL
+    # Hawk's model-key hook would swap the key for Hawk's token; the child switches it off
+    assert submitted["runner"]["environment"]["HAWK_RUNNER_REFRESH_URL"] == ""
+    assert all(
+        i["args"]["base_url"] == OPENROUTER_BASE_URL
+        for g in submitted["models"]
+        for i in g["items"]
+    )
+    assert r.hawk.secrets == {"OPENROUTER_API_KEY": "sk-or-test"}  # type: ignore[attr-defined]
+    assert "sk-or-test" not in r.hawk.submitted[-1].read_text()  # type: ignore[attr-defined]
+
+
+def test_an_agent_cannot_set_its_own_prices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    r = remote(tmp_path)
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+    config = filled_example("benchmark.eval-set.yaml", name="inv-p")
+    config["tasks"][0]["items"][0]["args"] = {"model_prices": {"x": {"input": 0, "output": 0}}}
+    with pytest.raises(ToolError, match="model_prices is set at submission"):
+        run(
+            hawk_submit(r, tmp_path)(
+                config=_write(tmp_path, "p.eval-set.yaml", config), estimated_usd=0.2, note=None
+            )
+        )
+
+
+def test_invalid_prices_are_not_prices() -> None:
+    from inspect_audit._prices import valid_price
+
+    assert valid_price({"input": 2, "output": 10})
+    assert not valid_price({"input": -1, "output": 10})  # a router's "depends"
+    assert not valid_price({"input": 0, "output": 0})
+    assert not valid_price(None)
+
+
+def test_the_operator_key_is_never_read_from_a_runners_openrouter_variable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On a runner OPENROUTER_API_KEY is Hawk's token after the hook runs, not a key."""
+    from inspect_audit._investigate import OPERATOR_KEY_VAR, operator_key
+
+    monkeypatch.delenv(OPERATOR_KEY_VAR, raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "hawk-access-token")
+    monkeypatch.setenv("HAWK_JOB_ID", "inv-parent")
+    assert operator_key(None) is None
+    monkeypatch.setenv(OPERATOR_KEY_VAR, "sk-or-operator")
+    assert operator_key(None) == "sk-or-operator"
+    monkeypatch.delenv(OPERATOR_KEY_VAR)
+    monkeypatch.delenv("HAWK_JOB_ID")
+    assert operator_key(None) == "hawk-access-token"  # a laptop's own key is fine
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    env = tmp_path / ".env"
+    env.write_text(f"{OPERATOR_KEY_VAR}=sk-or-file\n")
+    assert operator_key(str(env)) == "sk-or-file"
+
+
+def test_every_job_config_must_state_its_retries(tmp_path: Path) -> None:
+    """Unset, Inspect's eval_set re-runs a failed task up to 10 times (evalset.py:470),
+    and the reservation priced that as no retries at all."""
+    from inspect_audit._jobs import INSPECT_DEFAULT_RETRIES, parse_config, worst_case_usd
+
+    policy = remote(tmp_path).policy
+    config = filled_example("benchmark.eval-set.yaml", name="inv-r")
+    config.pop("retry_attempts", None)
+    once = worst_case_usd(parse_config({**config, "retry_attempts": 0})[0], policy)
+    assert once and worst_case_usd(parse_config(config)[0], policy) == once * (
+        1 + INSPECT_DEFAULT_RETRIES
+    )
+    assert any("retry_attempts is required" in p for p in validate_config(config, policy, set()))

@@ -1,10 +1,10 @@
 """The grader judges the benchmark's world, never the audit's.
 
-Regression suite for the state handed to the benchmark's scorers: before
-`benchmark_task_state`, `grade` copied the *auditor's* TaskState, so a scorer
-reading `input` got the audit prompt as the question, one reading `messages`
-got the auditor's react transcript, `choices` came up empty, and `store` was
-the audit's. Every test here fails against that construction.
+Regression suite for what the benchmark's scorers are handed. `grade` builds the
+benchmark's own sample (`benchmark_sample`) and lets Inspect's `score_async`
+rebuild the TaskState from it, as `inspect score` does. Earlier constructions
+handed scorers the audit prompt as the question, the auditor's transcript, no
+choices, the audit's store, and graded every multiple-choice answer wrong.
 """
 
 import json
@@ -23,7 +23,7 @@ from inspect_audit._audit import ITEM_PROMPT
 from inspect_audit._state import (
     BenchmarkState,
     append_message,
-    benchmark_task_state,
+    benchmark_sample,
     complete_attempt,
     seed_new,
 )
@@ -55,17 +55,17 @@ def make_session() -> BenchmarkState:
 
 
 def test_the_grader_sees_the_benchmark_question_not_the_audit_prompt() -> None:
-    graded = benchmark_task_state(audit_state({}), make_session(), "1066")
+    graded = benchmark_sample(audit_state({}), make_session(), "1066")
 
-    assert graded.input_text == QUESTION
-    assert ITEM_PROMPT not in graded.input_text
+    assert graded.input == QUESTION
+    assert ITEM_PROMPT not in str(graded.input)
 
 
 def test_the_grader_sees_the_benchmark_choices() -> None:
     current = audit_state({"benchmark_choices": ["1056", "1066", "1076"]})
-    graded = benchmark_task_state(current, make_session(), "1066")
+    graded = benchmark_sample(current, make_session(), "1066")
 
-    assert [choice.value for choice in graded.choices] == ["1056", "1066", "1076"]
+    assert graded.choices == ["1056", "1066", "1076"]
 
 
 def test_the_grader_sees_the_session_not_the_audit_transcript() -> None:
@@ -73,13 +73,13 @@ def test_the_grader_sees_the_session_not_the_audit_transcript() -> None:
     seed_new(session, QUESTION, prompt=None)
     append_message(session, "assistant", "It was 1066.")
 
-    graded = benchmark_task_state(audit_state({}), session, "1066")
+    graded = benchmark_sample(audit_state({}), session, "1066")
 
     assert [m.text for m in graded.messages] == [QUESTION, "It was 1066."]
 
 
 def test_the_grader_sees_benchmark_metadata_only() -> None:
-    graded = benchmark_task_state(audit_state({}), make_session(), "")
+    graded = benchmark_sample(audit_state({}), make_session(), "")
 
     assert graded.metadata == {"category": "maths"}
     assert "audit_item" not in graded.metadata
@@ -87,16 +87,42 @@ def test_the_grader_sees_benchmark_metadata_only() -> None:
 
 def test_the_answer_is_the_completion_and_bare_grade_is_empty() -> None:
     current = audit_state({})
-    assert benchmark_task_state(current, make_session(), "1066").output.completion == "1066"
-    assert benchmark_task_state(current, make_session(), "").output.completion == ""
+    assert benchmark_sample(current, make_session(), "1066").output.completion == "1066"
+    assert benchmark_sample(current, make_session(), "").output.completion == ""
 
 
 def test_the_grader_sees_the_attempt_store() -> None:
     session = make_session()
     session.attempt_store = {"scaffold_answer": "1066"}
-    graded = benchmark_task_state(audit_state({}), session, "")
+    graded = benchmark_sample(audit_state({}), session, "")
 
     assert graded.store.get("scaffold_answer") == "1066"
+
+
+def test_a_loaded_attempt_is_graded_as_recorded_not_as_resolved_today() -> None:
+    """An unseeded choice shuffle means today's dataset is not the recorded sample."""
+    from inspect_ai.log import EvalSample
+    from inspect_ai.model import ModelOutput
+
+    from inspect_audit._state import seed_from_sample
+
+    recorded = EvalSample(
+        id=42,
+        epoch=2,
+        input=QUESTION,
+        target="B",
+        choices=["1066", "1056"],
+        metadata={"shuffled": True},
+        output=ModelOutput.from_content("m", "ANSWER: B"),
+    )
+    session = make_session()
+    seed_from_sample(session, recorded, source="run.eval#epoch=2", log="run.eval")
+    current = audit_state({"benchmark_choices": ["1056", "1066"]})
+    graded = benchmark_sample(current, session, None)
+
+    assert graded.choices == ["1066", "1056"] and graded.target == "B"
+    assert graded.epoch == 2 and graded.metadata == {"shuffled": True}
+    assert graded.output.completion == "ANSWER: B"
 
 
 @scorer(metrics=[])
@@ -213,3 +239,78 @@ def test_a_grader_that_cannot_run_is_a_tool_error_not_a_sample_error(
     assert logs[0].status == "success"
     assert "grader failed to run" in str(seen["error"])
     assert "No endpoints found" in str(seen["error"])
+
+
+def run_auditor(target: Task, probe: Solver) -> None:
+    audit = audit_task(target, sandbox="local", solver=probe)
+    for audit_sample in audit.dataset:
+        audit_sample.files = None
+    logs = eval(audit, model="mockllm/model", display="none")
+    assert logs[0].status == "success", logs[0].error
+
+
+def test_a_correct_multiple_choice_answer_grades_correct() -> None:
+    """A log keeps choices as strings; without replaying the parse, choice() said I."""
+    from inspect_ai.scorer import choice
+
+    seen: dict[str, object] = {}
+
+    @solver
+    def probing_auditor() -> Solver:
+        async def solve(state: TaskState, generate: Generate) -> TaskState:
+            session = store_as(BenchmarkState)
+            seed_new(session, QUESTION, prompt=None)
+            complete_attempt(session, "ANSWER: B")
+            seen.update(json.loads(await grade_benchmark([choice()])(answer="")))
+            return state
+
+        return solve
+
+    run_auditor(
+        Task(
+            name="fixture_task",
+            dataset=MemoryDataset(
+                [Sample(id=42, input=QUESTION, choices=["1056", "1066"], target="B")]
+            ),
+            scorer=choice(),
+        ),
+        probing_auditor(),
+    )
+    assert seen["scores"]["value"] == "C"  # type: ignore[index]
+
+
+def test_the_scorers_store_is_the_benchmarks_and_the_audits_is_untouched() -> None:
+    from inspect_ai.util import store
+
+    @scorer(metrics=[])
+    def reads_store() -> Scorer:
+        async def score(state: TaskState, target: Target) -> Score:
+            return Score(value="C" if store().get("success") else "I")
+
+        return score
+
+    seen: dict[str, object] = {}
+
+    @solver
+    def probing_auditor() -> Solver:
+        async def solve(state: TaskState, generate: Generate) -> TaskState:
+            store().set("success", "AUDIT")
+            session = store_as(BenchmarkState)
+            seed_new(session, QUESTION, prompt=None)
+            session.attempt_store = {"success": True}
+            seen.update(json.loads(await grade_benchmark([reads_store()])(answer="x")))
+            seen["audit_after"] = store().get("success")
+            return state
+
+        return solve
+
+    run_auditor(
+        Task(
+            name="fixture_task",
+            dataset=MemoryDataset([Sample(id=42, input=QUESTION, target="1066")]),
+            scorer=match(),
+        ),
+        probing_auditor(),
+    )
+    assert seen["scores"]["value"] == "C"  # type: ignore[index]
+    assert seen["audit_after"] == "AUDIT"

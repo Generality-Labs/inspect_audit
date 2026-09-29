@@ -476,6 +476,93 @@ def test_the_same_input_cited_twice_publishes_once(tmp_path: Path) -> None:
     assert (destination / "_inputs/paper.pdf").read_bytes() == b"%PDF"
 
 
+def test_cited_logs_are_published_as_addresses_never_as_copies(tmp_path: Path) -> None:
+    """2026-09-28: the sol6 chess bundle carried three cited .eval logs, uploaded under
+    Hawk's evals/ prefix, and Hawk re-pointed their shared warehouse records at them.
+
+    A log cited from any of the three places logs arrive under /inputs is published as
+    its address plus a checksum; a derived file cited alongside is still copied.
+    """
+    import hashlib
+
+    from inspect_audit._investigate import source_alias
+
+    report = tmp_path / "work/report"
+    inputs = tmp_path / "inputs"
+    report.mkdir(parents=True)
+    supplied = "hawk:imported-epoch-chess-sour-0pexj5yimxsum0r9"
+    fetched = inputs / "index" / source_alias(supplied) / "logs" / "gemini.eval"
+    collected = inputs / "jobs" / "pilot" / "2026-09-28T10-00-00_audit.eval"
+    staged = inputs / "logs" / "0" / "local.eval"
+    table = inputs / "index" / source_alias(supplied) / "samples.csv"
+    for path, body in ((fetched, b"a"), (collected, b"b"), (staged, b"c"), (table, b"id,score\n")):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+    (inputs / "seed.json").write_text(
+        json.dumps(
+            {
+                "logs": [
+                    {"source": supplied, "staged": None, "remote": supplied},
+                    {
+                        "source": "/Users/op/runs/local.eval",
+                        "staged": "/inputs/logs/0/local.eval",
+                        "remote": None,
+                    },
+                ]
+            }
+        )
+    )
+    (tmp_path / "jobs.json").write_text(
+        json.dumps([{"label": "pilot", "eval_set_id": "inv-pilot-1234abcd"}])
+    )
+    (report / "report.tex").write_text("Report")
+    for name in ("Findings.tex", "metadata.tex", "assessments.tex"):
+        (report / name).write_text("Fixture")
+    (report / "report.pdf").write_text("pdf")
+    cited = [fetched, collected, staged, table]
+    (report / "findings.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "F1",
+                    "section": "grading",
+                    "claim": "A",
+                    "status": "supported",
+                    "origin": "historical",
+                    "reproduce": "read",
+                    "limitations": "",
+                    "evidence": [
+                        {"path": "/" + str(p.relative_to(tmp_path)), "location": "x"} for p in cited
+                    ],
+                }
+            ]
+        )
+    )
+
+    destination = save_publication(tmp_path)
+    assert not list(destination.rglob("*.eval"))
+    paths = [
+        e["path"] for e in json.loads((destination / "findings.json").read_text())[0]["evidence"]
+    ]
+    assert paths == [
+        f"{supplied}/gemini.eval",
+        "hawk:inv-pilot-1234abcd/2026-09-28T10-00-00_audit.eval",
+        "/Users/op/runs/local.eval",
+        f"_inputs/index/{source_alias(supplied)}/samples.csv",
+    ]
+    assert (destination / paths[3]).read_bytes() == b"id,score\n"
+    references = json.loads((destination / "_inputs/log-references.json").read_text())
+    assert [r["sha256"] for r in references] == [
+        hashlib.sha256(b).hexdigest() for b in (b"a", b"b", b"c")
+    ]
+
+    # an eval log placed in the report itself is refused, with the way out
+    (report / "evidence").mkdir()
+    (report / "evidence" / "copy.eval").write_bytes(b"a")
+    with pytest.raises(ValueError, match="cite the log where it lives"):
+        save_publication(tmp_path)
+
+
 def test_mounted_skills_are_wellformed_and_adapted() -> None:
     """Every mounted skill parses, is named after its directory, and says where it is.
 
@@ -1072,3 +1159,126 @@ def test_a_retried_sample_carries_the_first_attempts_spend(
     r.fold_prior_spend()  # idempotent
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (1.0, []))
     assert r.local_usd() == 5.0
+
+
+def test_a_run_short_of_its_required_coverage_is_recorded_incomplete(tmp_path: Path) -> None:
+    """Luna and sol6 on 09-25: 0/100 assessed, published, recorded as success."""
+    from inspect_audit._report import record_outcome
+
+    def coverage(not_assessed: int) -> None:
+        (tmp_path / "coverage.json").write_text(
+            json.dumps(
+                {
+                    "denominator": 100,
+                    "counts": {"NO_ISSUE_FOUND": 100 - not_assessed, "NOT_ASSESSED": not_assessed},
+                }
+            )
+        )
+
+    assert record_outcome(tmp_path, None)[0] == "published_complete"
+    assert record_outcome(tmp_path, 1.0) == (
+        "published_incomplete",
+        ["100% question coverage was required and the report has no coverage.json"],
+    )
+    coverage(100)
+    outcome, reasons = record_outcome(tmp_path, 1.0)
+    assert outcome == "published_incomplete" and reasons == [
+        "0/100 questions assessed; 100% was required"
+    ]
+    coverage(5)
+    assert record_outcome(tmp_path, 0.9) == ("published_complete", ["95/100 questions assessed"])
+
+
+def test_a_blocked_investigation_ends_and_scores_as_blocked() -> None:
+    from inspect_ai.util._store import Store, init_subtask_store
+
+    from inspect_audit import _investigate
+    from inspect_audit._report import InvestigationState, investigation_outcome, report_blocker
+
+    store = Store()
+    init_subtask_store(store)
+    out = asyncio.run(report_blocker()(reason="every child job dies at load: Model not found"))
+    assert "blocked" in out.lower()
+
+    class _State:
+        output = None
+
+    assert asyncio.run(_investigate._continue(_State(), interactive=True)) is False  # type: ignore[arg-type]
+
+    class _Task:
+        def store_as(self, cls: type) -> object:
+            return store_as_(cls)
+
+    from inspect_ai.util import store_as as store_as_
+
+    scored = asyncio.run(investigation_outcome()(_Task(), None))  # type: ignore[arg-type]
+    assert scored.value == "blocked" and "Model not found" in (scored.explanation or "")
+    assert store_as_(InvestigationState).outcome == "blocked"
+
+
+def test_a_checkpoint_resume_restores_the_ledger_without_counting_spend_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inspect restores its cost counter on resume; prior spend must not be re-added."""
+    from inspect_ai.util._store import Store, init_subtask_store
+
+    from inspect_audit import _investigate
+    from inspect_audit._investigate import Remote
+    from inspect_audit._jobs import Job
+
+    first, fresh = tmp_path / "first", tmp_path / "fresh"
+    for root in (first, fresh):
+        (root / "work").mkdir(parents=True)
+    store = Store()
+    init_subtask_store(store)
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (3.0, []))
+
+    r = Remote(
+        first, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0, provider="middleman"
+    )
+    r.fold_prior_spend()  # the first attempt starts: nothing prior
+    r.snapshot_record()
+    with r.ledger.transaction() as ledger:
+        ledger.add(
+            Job(
+                label="pilot",
+                kind="eval-set",
+                eval_set_id="inv-pilot-1",
+                config_path="x",
+                submitted_at="now",
+                estimated_usd=1.0,
+                reserved_usd=2.0,
+                status="submitted",
+            )
+        )
+    r.known_sources.add("hawk:imported-x")
+    r.record_local_spend()  # spent 3 so far
+    r.snapshot_record()  # what the checkpoint captures
+
+    # an in-run requeue on the same host: setup folds the file again (0 + 3 = 3 prior)
+    r.fold_prior_spend()
+    assert r.local_usd() == 6.0  # the double count this guards against
+    # hydrate restores the Store, then on_resume rebuilds from it
+    r.restore_record()
+    assert r.local_usd() == 3.0
+
+    # a resume on a fresh runner: no files, only the restored Store
+    r2 = Remote(
+        fresh, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0, provider="middleman"
+    )
+    assert r2.ledger.get("pilot") is None
+    r2.restore_record()
+    assert r2.ledger.get("pilot") is not None
+    assert "hawk:imported-x" in r2.known_sources
+    assert r2.local_usd() == 3.0
+
+
+def test_the_hosted_investigator_checkpoints_its_workspace_and_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit import _investigate
+
+    args = _investigate._checkpointing(True, None)
+    config = args["checkpoint"]
+    assert config.sandbox_paths == {"default": ["/workspace", "/inputs"]}
+    assert _investigate._checkpointing(False, None) == {}

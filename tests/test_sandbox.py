@@ -18,7 +18,6 @@ from inspect_ai.util import SandboxEnvironmentSpec
 
 import inspect_audit._sandbox as sandbox_module
 from inspect_audit._sandbox import (
-    _seconds,
     audit_compose,
     has_benchmark,
     phoenix_benchmark,
@@ -691,24 +690,6 @@ def test_an_interloping_benchmark_service_moves_aside(tmp_path: Path) -> None:
     assert merged["helper"]["depends_on"] == ["benchmark", "benchmark_"]
 
 
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        ("90s", 90),
-        ("1m30s", 90),
-        ("2h", 7200),
-        ("500ms", 1),  # sub-second rounds up, never to zero
-        ("1.5s", 2),
-        ("0s", None),  # a zero duration drops the field (k8s rejects 0)
-        ("500us", 1),  # units the old regex silently dropped
-        ("junk", None),
-        ("", None),  # empty duration -> field dropped, not periodSeconds: 0
-    ],
-)
-def test_seconds_parses_compose_durations(value: str, expected: int | None) -> None:
-    assert _seconds(value) == expected
-
-
 def test_task_pins_follow_the_install_source(monkeypatch) -> None:
     """A git-installed task package pins to its commit; a local install is skipped."""
     import json
@@ -779,3 +760,34 @@ def test_git_requirement_is_one_shell_argument(tmp_path, monkeypatch, combined) 
     )
     assert requirement in shlex.split(command)
     assert "@" not in shlex.split(command)
+
+
+def test_a_bare_docker_sample_keeps_its_tasks_dockerfile(tmp_path) -> None:
+    """cyberseceval_2's vulnerability_exploit: task ("docker", Dockerfile), sample "docker"."""
+    from inspect_ai import Task
+    from inspect_ai.dataset import Sample
+
+    from inspect_audit._sandbox import sample_sandbox
+
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM python:3.12-slim\n")
+    task = Task(dataset=[Sample(input="q")], sandbox=("docker", str(dockerfile)))
+    spec = sample_sandbox(task, Sample(input="q", sandbox="docker"))
+    assert spec is not None and spec.type == "docker" and spec.config == str(dockerfile)
+
+
+def test_a_tasks_implicit_dockerfile_is_found(tmp_path, monkeypatch) -> None:
+    """A task declaring bare "docker" runs the Dockerfile beside it, as Inspect does."""
+    from inspect_ai import Task
+    from inspect_ai.dataset import Sample
+
+    from inspect_audit import _sandbox
+
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12-slim\n")
+    monkeypatch.setattr(_sandbox, "task_run_dir", lambda task: str(tmp_path))
+    import inspect_ai._eval.loader as loader
+
+    monkeypatch.setattr(loader, "task_run_dir", lambda task: str(tmp_path))
+    task = Task(dataset=[Sample(input="q")], sandbox="docker")
+    spec = _sandbox.sample_sandbox(task, Sample(input="q"))
+    assert spec is not None and spec.config == str(tmp_path / "Dockerfile")

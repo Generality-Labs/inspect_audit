@@ -120,7 +120,8 @@ def test_synchronized_tool_preserves_schema_and_pushes_after_failure(monkeypatch
     assert ToolDef(wrapped).parameters == ToolDef(original).parameters
     with pytest.raises(RuntimeError, match="failed"):
         asyncio.run(wrapped(config="job.yaml"))
-    assert calls == ["pull", "push", "save_state"]
+    # no workspace pull per call: the host tools read nothing the agent wrote
+    assert calls == ["push", "save_state"]
 
 
 def test_sync_failure_is_reported_beside_a_successful_result(monkeypatch, tmp_path):
@@ -130,8 +131,7 @@ def test_sync_failure_is_reported_beside_a_successful_result(monkeypatch, tmp_pa
     result = asyncio.run(workspace.synchronized(operation(), tmp_path)(config="job.yaml"))
     assert result.startswith("submitted job.yaml")
     assert "push after this call failed: tar timed out" in result
-    assert "env/bin/python" in result
-    assert calls == ["pull", "push", "save_state"]
+    assert calls == ["push", "save_state"]
 
 
 def _remote_root(tmp_path, base="memory://audit-test/artifacts"):
@@ -244,6 +244,7 @@ def test_child_submission_uses_rotated_runner_credentials(monkeypatch, tmp_path)
     config = tmp_path / "child.yaml"
     config.write_text("name: child\n")
     assert asyncio.run(_jobs.Hawk("https://hawk.example").submit(config)) == "child-job"
+    received.pop("secrets", None)
     assert received == {
         "token": "current-access",
         "api_url": "https://hawk.example",
@@ -262,9 +263,21 @@ def test_hawk_cli_is_the_venvs_own_not_paths(monkeypatch, tmp_path):
     (fake / "python").write_text("")
     (fake / "hawk").write_text("")
     monkeypatch.setattr(sys, "executable", str(fake / "python"))
+    monkeypatch.setenv("HAWK_JOB_ID", "runner")
     assert _jobs.Hawk("https://hawk.example").binary == str(fake / "hawk")
     (fake / "hawk").unlink()
     assert _jobs.Hawk("https://hawk.example").binary == "hawk"
+    # on a laptop the login lives in the operator's own install on PATH, found past
+    # the venv's copy that `uv run` puts first
+    (fake / "hawk").write_text("")
+    (fake / "hawk").chmod(0o755)
+    own = tmp_path / "tools"
+    own.mkdir()
+    (own / "hawk").write_text("")
+    (own / "hawk").chmod(0o755)
+    monkeypatch.delenv("HAWK_JOB_ID")
+    monkeypatch.setenv("PATH", f"{fake}:{own}")
+    assert _jobs.Hawk("https://hawk.example").binary == str(own / "hawk")
 
 
 def test_an_audit_job_on_hawk_registers_prices_before_hawk_applies_them(monkeypatch):
@@ -281,3 +294,158 @@ def test_an_audit_job_on_hawk_registers_prices_before_hawk_applies_them(monkeypa
     monkeypatch.setenv("HAWK_JOB_ID", "inv-child")
     with pytest.raises(RegisteredError):
         _registry.audit.__wrapped__(task="bench/Chess Puzzles")  # type: ignore[attr-defined]
+
+
+def test_children_default_to_the_operators_key_and_say_so_when_it_is_missing(monkeypatch, tmp_path):
+    from inspect_audit import _investigate
+
+    monkeypatch.setenv("HAWK_JOB_ID", "test-investigation")
+    monkeypatch.delenv("INSPECT_AUDIT_OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(_investigate, "register_openrouter_costs", lambda: None)
+    monkeypatch.setattr(_investigate.tempfile, "gettempdir", lambda: str(tmp_path))
+    args = {
+        "repo": "https://example.org/benchmark.git",
+        "revision": "abc123",
+        "audit_package": "git+https://example.org/auditor.git@abc123",
+        "hawk_api_url": "https://hawk.example",
+        "artifact_dir": "s3://bucket/test-investigation/artifacts",
+        "enforce_cost_limit": False,
+    }
+    with pytest.raises(ValueError, match="provider='middleman'"):
+        investigate(**args)
+    seed = json.loads(
+        (
+            Path(investigate(**args, provider="middleman").metadata["investigation_dir"])
+            / "inputs/seed.json"
+        ).read_text()
+    )
+    assert seed["remote"]["provider"] == "middleman"
+
+
+def test_synchronized_keeps_the_tools_output_limit_and_viewer(monkeypatch, tmp_path):
+    from inspect_ai.tool import ToolDef
+
+    calls = []
+    _sync_recorder(monkeypatch, calls)
+    original = ToolDef(operation(), max_output=1234).as_tool()
+    wrapped = workspace.synchronized(original, tmp_path)
+    assert ToolDef(wrapped).max_output == 1234
+
+
+def test_the_pull_guard_follows_the_sandboxs_own_read_limit(monkeypatch):
+    """Hawk raises the read limit to 1 GiB; Inspect applies it when an eval starts."""
+    from inspect_ai.util._sandbox.limits import reset_sandbox_limits, set_sandbox_limits
+
+    assert workspace.max_pull_bytes() < 100 * 1024**2
+    monkeypatch.setenv("INSPECT_SANDBOX_MAX_READ_FILE_SIZE", str(1024**3))
+    tokens = set_sandbox_limits()
+    try:
+        assert workspace.max_pull_bytes() > 900 * 1024**2
+    finally:
+        reset_sandbox_limits(tokens)
+
+
+def test_state_is_keyed_by_sample_and_epoch_so_a_resume_finds_it(tmp_path):
+    """Inspect gives a resumed sample a new uuid; the saved state must not move."""
+    root = _remote_root(tmp_path)
+    settings = json.loads((root / "remote-workspace.json").read_text())
+    settings["sample_key"] = "investigation-epoch1"
+    (root / "remote-workspace.json").write_text(json.dumps(settings))
+    assert workspace._destination(root, "state").endswith("/investigation-epoch1/state")
+
+
+def test_publication_fetches_only_the_inputs_it_cites(monkeypatch, tmp_path):
+    """A resumed run's collected logs are in the box, not on the fresh host."""
+    from inspect_audit import _report
+
+    root = _remote_root(tmp_path)
+    (root / "inputs/jobs/pilot").mkdir(parents=True)
+    (root / "inputs/jobs/pilot/have.eval").write_text("x")
+    report = root / "work/report"
+    report.mkdir(parents=True)
+    evidence = [
+        {"path": "/inputs/jobs/pilot/have.eval", "location": "s1"},
+        {"path": "/inputs/jobs/pilot/missing.eval", "location": "s2"},
+        {"path": "figure.png", "location": "fig"},
+    ]
+    (report / "findings.json").write_text(json.dumps([{"id": "F1", "evidence": evidence}]))
+    assert _report.cited_inputs(root) == [
+        "/inputs/jobs/pilot/have.eval",
+        "/inputs/jobs/pilot/missing.eval",
+    ]
+
+    read: list[str] = []
+
+    class Box:
+        async def read_file(self, path, text=True):
+            read.append(path)
+            return b"restored"
+
+    monkeypatch.setattr(workspace, "sandbox", Box)
+    asyncio.run(workspace.fetch_inputs_files(root, _report.cited_inputs(root)))
+    assert read == ["/inputs/jobs/pilot/missing.eval"]
+    assert (root / "inputs/jobs/pilot/missing.eval").read_bytes() == b"restored"
+
+
+@pytest.mark.parametrize(
+    ("key", "acted_on"),
+    [
+        # hawk 3.6.0 job_status_updated processors: what Hawk acts on when it appears
+        ("evals/chess-audit-sol6-20260925/artifacts/s/published/p/_inputs/logs/gemini.eval", True),
+        ("evals/run/artifacts/s/state/jobs/downloads/pilot/run.eval", True),
+        ("evals/run/.models.json", True),
+        ("evals/run/eval-set.json", True),
+        ("evals/run/2026-09-28_task.fast.eval", False),
+        ("evals/run/artifacts/s/published/p/report.pdf", False),
+        ("evals/run/artifacts/s/state/jobs.json", False),
+        ("scans/run/scanner/_summary.json", True),
+        ("scans/run/scanner/results.parquet", True),
+        ("scans/run/scanner/notes.md", False),
+        ("audit-inputs/anything.eval", False),
+    ],
+)
+def test_the_upload_guard_matches_what_hawk_acts_on(key, acted_on):
+    assert (workspace.hawk_would_process(key) is not None) == acted_on
+
+
+def test_an_upload_hawk_would_act_on_writes_nothing(tmp_path, monkeypatch):
+    log = tmp_path / "copy.eval"
+    log.write_bytes(b"x")
+    report = tmp_path / "report.pdf"
+    report.write_bytes(b"%PDF")
+    written = []
+    import fsspec
+
+    class Recorder:
+        def makedirs(self, *args, **kwargs):
+            pass
+
+        def put_file(self, source, target):
+            written.append(target)
+
+    monkeypatch.setattr(
+        fsspec.core, "url_to_fs", lambda url: (Recorder(), url.removeprefix("s3://"))
+    )
+    with pytest.raises(ValueError, match=r"imports every \.eval"):
+        workspace._upload(
+            {"report.pdf": report, "_inputs/logs/copy.eval": log},
+            "s3://bucket/evals/run/artifacts/sample-epoch1/published/p",
+        )
+    assert written == []  # checked before the first object, not after
+
+
+def test_state_saves_never_carry_collected_logs(tmp_path):
+    import fsspec
+
+    root = _remote_root(tmp_path, "memory://audit-nologs/artifacts")
+    (root / "jobs.json").write_text("[]")
+    downloads = root / "jobs" / "downloads" / "pilot"
+    downloads.mkdir(parents=True)
+    (downloads / "run.eval").write_bytes(b"x")
+    (root / "jobs" / "pilot.eval-set.yaml").write_text("name: pilot\n")
+    (root / "work/report").mkdir(parents=True)
+    (root / "work/report/stray.eval").write_bytes(b"x")
+    asyncio.run(workspace.save_state(root))
+    saved = list(fsspec.filesystem("memory").find("/audit-nologs"))
+    assert any(p.endswith("jobs/pilot.eval-set.yaml") for p in saved)
+    assert not [p for p in saved if p.endswith(".eval") or "/downloads/" in p]

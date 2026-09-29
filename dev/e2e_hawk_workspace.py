@@ -97,6 +97,8 @@ def main() -> int:
         artifact_dir="s3://placeholder/e2e/artifacts",
         output_dir=str(scratch / "runs"),
         enforce_cost_limit=False,
+        # no child job is really launched, so no provider key is needed
+        provider="middleman",
     )
     root = Path(task.metadata["investigation_dir"])
     (root / "remote-workspace.json").write_text(json.dumps({"artifact_dir": f"file://{artifacts}"}))
@@ -141,17 +143,19 @@ def main() -> int:
         if "/state/" in path or "preflight" in path or "published" in path:
             print("  ", path)
     journal = list(artifacts.rglob("journal.md"))
-    notes = " ".join(str(m.text) for m in (sample.messages if sample else []) if m.role == "tool")
+    # links in report/ are skipped when the report is pulled (at publish and cleanup);
+    # the saved state must hold the hardlinked file under both names and no link
+    saved = {p.name for p in artifacts.rglob("*") if p.is_file()}
     ok = (
-        "evil-link" in notes
-        and "report/plain.txt" not in notes
+        "evil-link" not in saved
+        and {"plain.txt", "hard-link.txt"} <= saved
         and sample is not None
         and sample.error is None
         and journal
         and "second entry" in journal[0].read_text()
     )
     print("PASS" if ok else "FAIL", "| scratch:", scratch)
-    if ok:
+    if ok and not os.environ.get("E2E_KEEP"):
         shutil.rmtree(scratch, ignore_errors=True)
     return 0 if ok else 1
 

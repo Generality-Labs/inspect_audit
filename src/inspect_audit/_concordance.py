@@ -7,6 +7,7 @@ reconstruction fault (they do not). The verdict is stored on the sample: `grade`
 refuses while it is `blocked`, and every item score carries it.
 """
 
+import math
 import re
 from contextlib import nullcontext
 from importlib.metadata import PackageNotFoundError, version
@@ -14,24 +15,29 @@ from logging import getLogger
 from typing import Any
 
 from inspect_ai import score_async
-from inspect_ai.event import ModelEvent, SpanBeginEvent, SpanEndEvent
+from inspect_ai.event import EventTreeNode, EventTreeSpan, ModelEvent, event_tree
 from inspect_ai.log import EvalSample, EvalSpec, read_eval_log, transcript
 from inspect_ai.model import get_model, model_roles
 from inspect_ai.scorer import (
+    CORRECT,
+    INCORRECT,
+    NOANSWER,
+    PARTIAL,
     Score,
     Scorer,
     Target,
     Value,
     frequency,
     scorer,
-    value_to_float,
 )
+from inspect_ai.scorer._scorer import unique_scorer_name
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.util import StoreModel, sandbox, sandbox_default
+from inspect_ai.util import StoreModel, registry_info, sandbox, sandbox_default
 from pydantic import Field
 
 from ._item import AUDIT_ROOT
 from ._sandbox import BENCHMARK_SERVICE, has_benchmark_box
+from ._state import replay_choices
 
 logger = getLogger(__name__)
 
@@ -41,17 +47,62 @@ NOISY = "NOISY_DISAGREEMENT"
 RESAMPLES = 3
 NAME = "concordance"
 
-_to_float = value_to_float()
+UNSCORED = "UNSCORED"
+# inspect's own categorical values compare the way its metrics read them; anything
+# else a scorer returns is a label, and two different labels are two different grades
+_STANDARD = {CORRECT: 1.0, INCORRECT: 0.0, PARTIAL: 0.5, NOANSWER: 0.0}
 
 
-def _grade(value: Value) -> Any:
-    """A grade as inspect's metrics see it, so 1, 1.0, True and "C" compare equal."""
+def _grade(value: Value | None) -> Any:
+    """A grade in comparable form: 1, 1.0, True and "C" are one grade; "A" and "B" are two.
+
+    `value_to_float` maps every string it does not know to 0.0, which made "A" and
+    "B", or "correct" and "incorrect", compare equal. Unscored (None or NaN) is its
+    own grade: NaN never equals itself, so it would otherwise read as noise.
+    """
+    if value is None:
+        return UNSCORED
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return UNSCORED if math.isnan(value) else float(value)
+    if isinstance(value, str):
+        return _STANDARD.get(value, value)
     if isinstance(value, dict):
-        # Mapping values may be None; value_to_float logs that and returns 0.0.
-        return {str(k): _grade(v) for k, v in sorted(value.items())}  # pyright: ignore[reportArgumentType]
-    if isinstance(value, list):
-        return [_grade(v) for v in value]
-    return _to_float(value)
+        return {str(k): _grade(v) for k, v in sorted(value.items())}
+    return [_grade(v) for v in value]
+
+
+def scorer_name(scorer: Scorer) -> str | None:
+    """The name a log records this scorer's score under, when it has a registry name."""
+    try:
+        return registry_info(scorer).name.split("/")[-1]
+    except Exception:  # an unregistered callable has no name to pair on
+        return None
+
+
+def paired(
+    recorded: dict[str, Score], fresh: list[Score | None], names: list[str | None]
+) -> list[tuple[int, Score, Score]]:
+    """Recorded and fresh scores for the same scorer.
+
+    By name: a log's score keys are the scorers' unqualified registry names
+    (repeats numbered as inspect's unique_scorer_name does). Positionally only when
+    a benchmark scorer has no name to pair on.
+    """
+    if all(names):
+        seen: list[str] = []
+        pairs = []
+        for i, (name, score) in enumerate(zip(names, fresh, strict=True)):
+            key = unique_scorer_name(str(name), seen)
+            seen.append(key)
+            if score is not None and key in recorded:
+                pairs.append((i, recorded[key], score))
+        return pairs
+    ordered = list(recorded.values())
+    return [
+        (i, r, f) for i, (r, f) in enumerate(zip(ordered, fresh, strict=False)) if f is not None
+    ]
 
 
 class Concordance(StoreModel):
@@ -83,6 +134,9 @@ def drift(header: EvalSpec, task_args: dict[str, Any]) -> dict[str, Any]:
         if installed != recorded:
             packages[package] = {"logged": recorded, "resolved": installed}
     recorded_args = header.task_args or {}
+    if header.task_registry_name == "inspect_audit/benchmark":
+        # a job the investigator ran: the wrapper's own arguments carry the benchmark's
+        recorded_args = dict(recorded_args.get("task_args") or {})
     args = {
         key: {"logged": recorded_args.get(key), "resolved": task_args.get(key)}
         for key in sorted(set(recorded_args) | set(task_args))
@@ -98,18 +152,17 @@ def _family(model: str) -> str:
 
 def scorer_models(sample: EvalSample) -> set[str]:
     """Models the recorded scorers called for this sample (an LLM extractor or judge)."""
-    models: set[str] = set()
-    scoring: list[str] = []
-    for event in sample.events or []:
-        if isinstance(event, SpanBeginEvent):
-            if event.type in ("scorers", "scorer") or scoring:
-                scoring.append(event.id)
-        elif isinstance(event, SpanEndEvent):
-            if scoring and event.id == scoring[-1]:
-                scoring.pop()
-        elif isinstance(event, ModelEvent) and scoring:
-            models.add(event.model)
-    return models
+
+    def under_scoring(nodes: list[EventTreeNode], inside: bool) -> set[str]:
+        found: set[str] = set()
+        for node in nodes:
+            if isinstance(node, EventTreeSpan):
+                found |= under_scoring(node.children, inside or node.type in ("scorers", "scorer"))
+            elif inside and isinstance(node, ModelEvent):
+                found.add(node.model)
+        return found
+
+    return under_scoring(event_tree(sample.events or []), False)
 
 
 def grader_drift(logged: set[str], resolved: set[str]) -> dict[str, list[str]] | None:
@@ -124,23 +177,23 @@ def concordance_scorer(benchmark: list[Scorer]) -> Scorer:
     """AGREE when the benchmark's scorers reproduce this attempt's recorded grades.
 
     Runs under `score_async(action="append")`, where `state.scores` holds the
-    recorded grades in the order the log wrote them; they are paired with the
-    benchmark's scorers positionally.
+    recorded grades keyed by scorer name; they are paired with the benchmark's
+    scorers by that name.
     """
+    names = [scorer_name(s) for s in benchmark]
 
     async def regrade(state: TaskState, target: Target) -> list[Score | None]:
+        # a log keeps choices as strings: restore which one the answer picked, or
+        # choice() grades every recorded multiple-choice answer wrong
+        replay_choices(state)
         redirect = sandbox_default(BENCHMARK_SERVICE) if has_benchmark_box() else nullcontext()
         with redirect:
             return [await s(state, target) for s in benchmark]
 
     async def score(state: TaskState, target: Target) -> Score | None:
-        recorded = list((state.scores or {}).values())[: len(benchmark)]
+        recorded = dict(state.scores or {})
         fresh = await regrade(state, target)
-        pairs = [
-            (i, r, f)
-            for i, (r, f) in enumerate(zip(recorded, fresh, strict=False))
-            if f is not None
-        ]
+        pairs = paired(recorded, fresh, names)
         if not pairs:
             return None
         mismatch = len(recorded) != len(benchmark)

@@ -1,7 +1,7 @@
 """Finding validation, report publication and shared ACP turn-taking."""
 
+import hashlib
 import json
-import os
 import shutil
 from pathlib import Path
 from typing import Literal
@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from acp.schema import ElicitationSchema, ElicitationStringPropertySchema
 from inspect_ai.agent import AgentState
+from inspect_ai.scorer import Score, Scorer, Target, frequency, scorer
+from inspect_ai.solver import TaskState
 from inspect_ai.tool import Tool, ToolError, tool
 from inspect_ai.util import (
     StoreModel,
@@ -48,6 +50,38 @@ class InvestigationState(StoreModel):
     # set when the agent has been told the shared allowance is gone; the next turn
     # ends the sample rather than asking again
     allowance_notified: bool = False
+    # how the investigation ended, for the outcome scorer: published_complete,
+    # published_incomplete (short of the operator's required coverage), blocked
+    outcome: str | None = None
+    outcome_reasons: list[str] = Field(default_factory=list)
+
+
+def assessed_fraction(coverage_path: Path) -> tuple[float, str] | None:
+    """The share of the question population with a label, and a readable count."""
+    if not coverage_path.is_file():
+        return None
+    coverage = json.loads(coverage_path.read_text())
+    denominator = int(coverage.get("denominator") or 0)
+    if not denominator:
+        return 0.0, "0 questions"
+    counts = coverage.get("counts") or {}
+    assessed = denominator - int(counts.get("NOT_ASSESSED", denominator))
+    return assessed / denominator, f"{assessed}/{denominator} questions assessed"
+
+
+def record_outcome(report: Path, required_coverage: float | None) -> tuple[str, list[str]]:
+    """Whether a publication delivered what the operator asked for."""
+    if required_coverage is None:
+        return "published_complete", ["no coverage requirement was set"]
+    measured = assessed_fraction(report / "coverage.json")
+    if measured is None:
+        return "published_incomplete", [
+            f"{required_coverage:.0%} question coverage was required and the report has no coverage.json"
+        ]
+    fraction, count = measured
+    if fraction + 1e-9 < required_coverage:
+        return "published_incomplete", [f"{count}; {required_coverage:.0%} was required"]
+    return "published_complete", [count]
 
 
 class EvidenceRef(BaseModel):
@@ -113,11 +147,36 @@ def validate_findings(root: Path) -> list[Finding]:
     return findings
 
 
+def cited_inputs(root: Path) -> list[str]:
+    """The /inputs paths the current findings cite, for fetching before validation."""
+    path = root / "work/report/findings.json"
+    try:
+        records = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return []
+    return sorted(
+        {
+            str(evidence.get("path"))
+            for finding in records
+            if isinstance(finding, dict)
+            for evidence in finding.get("evidence") or []
+            if isinstance(evidence, dict) and str(evidence.get("path", "")).startswith("/inputs/")
+        }
+    )
+
+
 def save_publication(root: Path) -> Path:
     """Copy a self-contained rendered report outside the agent's writable mount."""
     report = root / "work" / "report"
     if report.is_symlink() or any(p.is_symlink() for p in report.rglob("*")):
         raise ValueError("Report bundles must contain real files, not symlinks")
+    logs = [str(p.relative_to(report)) for p in report.rglob("*.eval")]
+    if logs:
+        raise ValueError(
+            "Report bundles must not contain eval logs "
+            f"({', '.join(logs[:5])}): cite the log where it lives under /inputs and "
+            "publication records its address and checksum"
+        )
     for name in (
         "report.tex",
         "Findings.tex",
@@ -155,30 +214,92 @@ def save_publication(root: Path) -> Path:
             "preview",
         ),
     )
-    # Keep the agent's single register; rewrite only the published snapshot's
-    # input addresses so its evidence survives independently of this workspace.
+    # Keep the agent's single register; rewrite only the published snapshot's input
+    # addresses so its evidence survives independently of this workspace. A cited
+    # eval log is never copied: it already lives where its eval set wrote it, and a
+    # copy uploaded under Hawk's evals/ prefix is imported over the original's
+    # warehouse record. The snapshot names it by address and checksum instead;
+    # everything else cited under /inputs is small and derived, and is copied.
+    references: list[dict[str, object]] = []
     for finding in findings:
         for evidence in finding.evidence:
             path = Path(evidence.path)
-            if path.is_absolute():
-                relative = path.relative_to("/inputs")
-                dest = destination / "_inputs" / relative
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                source = (root / "inputs" / relative).resolve()
-                evidence.path = str(dest.relative_to(destination))
-                if dest.exists():  # the same input cited by several findings
-                    continue
-                # hardlink, not copy: a cited .eval log is tens of MB and a
-                # bundle citing every log would otherwise duplicate the inputs
-                # per published version. inputs are immutable, so sharing is safe
-                try:
-                    os.link(source, dest)
-                except OSError:
-                    shutil.copyfile(source, dest)
+            if not path.is_absolute():
+                continue
+            relative = path.relative_to("/inputs")
+            source = (root / "inputs" / relative).resolve()
+            if _is_log(relative):
+                address = log_address(root, relative)
+                references.append(
+                    {
+                        "cited": str(path),
+                        "address": address,
+                        "sha256": _sha256(source),
+                        "bytes": source.stat().st_size,
+                    }
+                )
+                evidence.path = address
+                continue
+            dest = destination / "_inputs" / relative
+            evidence.path = str(dest.relative_to(destination))
+            if dest.exists():  # the same input cited by several findings
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, dest)
+    if references:
+        (destination / "_inputs").mkdir(exist_ok=True)
+        (destination / "_inputs" / "log-references.json").write_text(
+            json.dumps(references, indent=2)
+        )
     (destination / "findings.json").write_text(
         json.dumps([f.model_dump() for f in findings], indent=2)
     )
     return destination
+
+
+def _is_log(relative: Path) -> bool:
+    """An Inspect eval log: what the evidence names, not what it is copied as."""
+    return relative.suffix == ".eval" or "logs" in relative.parts[:-1]
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def log_address(root: Path, relative: Path) -> str:
+    """Where a log under /inputs came from: a hawk: address or the operator's path.
+
+    Three places put logs there: `logs(action="fetch")` into index/<alias>/logs/,
+    `jobs(action="collect")` into jobs/<label>/, and preparation into logs/<n>/.
+    """
+    parts = list(relative.parts)
+    if not parts:
+        return "/inputs"
+    seed_path = root / "inputs" / "seed.json"
+    seed = json.loads(seed_path.read_text()) if seed_path.is_file() else {}
+    if parts[0] == "index" and len(parts) >= 3:
+        from ._investigate import source_alias
+
+        remote = [str(e["remote"]) for e in seed.get("logs") or [] if e.get("remote")]
+        for address in remote:
+            if source_alias(address) == parts[1]:
+                return f"{address.rstrip('/')}/{parts[-1]}"
+    if parts[0] == "jobs" and len(parts) >= 3:
+        ledger_path = root / "jobs.json"
+        ledger = json.loads(ledger_path.read_text()) if ledger_path.is_file() else []
+        for job in ledger:
+            if job.get("label") == parts[1]:
+                return f"hawk:{job['eval_set_id']}/{parts[-1]}"
+    if parts[0] == "logs":
+        staged = f"/inputs/{relative.as_posix()}"
+        for entry in seed.get("logs") or []:
+            if entry.get("staged") == staged:
+                return str(entry["source"])
+    return f"/inputs/{relative.as_posix()}"
 
 
 def _prepare_report(root: str) -> None:
@@ -213,12 +334,13 @@ def check_report(root: str) -> Tool:
 
 
 @tool
-def publish_report(root: str) -> Tool:
+def publish_report(root: str, required_coverage: float | None = None) -> Tool:
     """Render and persist a report before entering discussion mode."""
 
     async def execute() -> str:
         """Compile the GL LaTeX report, save an immutable PDF/source bundle, and open discussion."""
         from ._investigation_workspace import (
+            fetch_inputs_files,
             persist,
             pull,
             push_assessments,
@@ -247,15 +369,78 @@ def publish_report(root: str) -> Tool:
         if not result.success:
             raise ToolError(f"Report rendering failed:\n{result.stderr}\n{result.stdout}")
         await pull(Path(root))
+        # cited /inputs evidence the host lacks (a resumed run's collected logs are in
+        # the restored box, not in the fresh runner's scratch directory)
+        await fetch_inputs_files(Path(root), cited_inputs(Path(root)))
         try:
             destination = save_publication(Path(root))
         except (ValueError, OSError) as ex:
             raise ToolError(str(ex)) from ex
+        investigation = store_as(InvestigationState)
+        investigation.outcome, investigation.outcome_reasons = record_outcome(
+            destination, required_coverage
+        )
+        shortfall = (
+            f" Recorded as INCOMPLETE: {'; '.join(investigation.outcome_reasons)}. Say so plainly "
+            "in the summary; publishing again after more coverage replaces this outcome."
+            if investigation.outcome == "published_incomplete"
+            else ""
+        )
         if remote_workspace(Path(root)):
             durable = await persist(Path(root), destination, f"published/{destination.name}")
-            store_as(InvestigationState).published = durable
-            return f"Published {durable}/report.pdf. Give the operator a concise summary and the report path."
-        store_as(InvestigationState).published = str(destination)
-        return f"Published {destination / 'report.pdf'}. Give the operator a concise summary and the report path."
+            investigation.published = durable
+            return f"Published {durable}/report.pdf.{shortfall} Give the operator a concise summary and the report path."
+        investigation.published = str(destination)
+        return f"Published {destination / 'report.pdf'}.{shortfall} Give the operator a concise summary and the report path."
 
     return execute
+
+
+@tool
+def report_blocker() -> Tool:
+    """End the investigation as blocked, when our own setup stops the operator's ask."""
+
+    async def execute(reason: str) -> str:
+        """Stop the investigation because something outside the benchmark prevents the work.
+
+        Use this when a deterministic failure in the audit setup (not in the benchmark)
+        makes the operator's primary request impossible: child jobs cannot start, the
+        evidence cannot be read, a required tool is missing. Publishing a polished
+        report around that gap would record a failed run as a success. The run ends
+        immediately and is scored as blocked, with your reason.
+
+        Args:
+            reason: What is broken, the evidence for it, and what would unblock it.
+        """
+        if not reason.strip():
+            raise ToolError("say what is blocking the investigation and what would unblock it")
+        investigation = store_as(InvestigationState)
+        investigation.outcome = "blocked"
+        investigation.outcome_reasons = [reason.strip()]
+        return "Recorded as blocked. The investigation ends now; the operator sees your reason."
+
+    return execute
+
+
+OUTCOMES = ["published_complete", "published_incomplete", "blocked", "unpublished"]
+
+
+@scorer(metrics=[frequency(categories=OUTCOMES)])
+def investigation_outcome() -> Scorer:
+    """How the investigation ended, so a run that delivered nothing does not read as success."""
+
+    async def score(state: TaskState, target: Target) -> Score:
+        investigation = state.store_as(InvestigationState)
+        outcome = investigation.outcome or (
+            "published_complete" if investigation.published else "unpublished"
+        )
+        return Score(
+            value=outcome,
+            explanation="; ".join(investigation.outcome_reasons) or None,
+            metadata={
+                "published": investigation.published,
+                "reasons": investigation.outcome_reasons,
+            },
+        )
+
+    return score

@@ -1,3 +1,4 @@
+import inspect as inspect_module
 import json
 import os
 import shutil
@@ -5,15 +6,17 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from inspect_ai import Task, task
+from inspect_ai import Task, task, task_with
 from inspect_ai.log import list_eval_logs
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox
 
+from ._agent import audit_items, effort_problem
 from ._audit import audit_task
 from ._concordance import Concordance
 from ._investigate import investigate as investigate
-from ._resolve import resolve_task_from_log
+from ._prices import register_prices
+from ._resolve import resolve_task, resolve_task_from_log
 from ._sandbox import (
     BENCHMARK_SERVICE,
     has_benchmark_box,
@@ -38,6 +41,7 @@ def audit(
     benchmark_image: str | None = None,
     assessment_ids: dict[str, list[str]] | None = None,
     concordance_limit: int = 15,
+    model_prices: dict[str, dict[str, float]] | None = None,
 ) -> Task:
     """Audit a benchmark task from its logs.
 
@@ -63,12 +67,14 @@ def audit(
             Defaults to one unit per sample. Supply every selected sample; IDs
             must be nonempty and globally unique.
         concordance_limit: Maximum recorded attempts to regrade at setup.
+        model_prices: Per-million prices by Inspect model name, set by the investigator
+            at submission. Registered before Hawk applies the job's model_cost_config
+            with set_model_cost, which refuses a model the runner's Inspect does not know.
     """
-    if os.environ.get("HAWK_JOB_ID"):
-        # Hawk applies the job's model_cost_config with set_model_cost once tasks are
-        # built, and that refuses a model Inspect has no entry for (any recent
-        # OpenRouter model, e.g. openrouter/openrouter/openai/gpt-6-sol): register
-        # the entries first, as the investigator does for itself
+    if model_prices:
+        register_prices(model_prices)
+    elif os.environ.get("HAWK_JOB_ID"):
+        # a job submitted without its price table: fetch OpenRouter's, best effort
         from ._investigate import register_openrouter_costs
 
         register_openrouter_costs()
@@ -105,6 +111,31 @@ def audit(
         assessment_ids=assessment_ids,
         concordance_limit=concordance_limit,
     )
+
+
+@task
+def benchmark(
+    task: str,
+    task_args: dict[str, object] | None = None,
+    model_prices: dict[str, dict[str, float]] | None = None,
+) -> Task:
+    """A benchmark task, run with the prices its job was submitted with.
+
+    Hawk applies a job's model_cost_config with set_model_cost, which refuses a model
+    the runner's Inspect has no entry for; a benchmark runs none of our code, so the
+    investigator submits its tasks through this one. It registers the prices and
+    returns the benchmark's own task under the benchmark's own name, so its log reads
+    as the benchmark's (the registry entry records this wrapper and its arguments).
+
+    Args:
+        task: The benchmark task, e.g. `inspect_evals/simpleqa`.
+        task_args: The benchmark task's own arguments.
+        model_prices: Per-million prices by Inspect model name.
+    """
+    if model_prices:
+        register_prices(model_prices)
+    target = resolve_task(task, dict(task_args or {}))
+    return task_with(target, name=target.name)
 
 
 @solver
@@ -281,3 +312,33 @@ def _hawk_token() -> str:
             "Fetching hawk: logs needs HAWK_ACCESS_TOKEN or the runner's token refresh environment."
         )
     return token
+
+
+def task_arg_problems(name: str, args: dict[str, Any]) -> list[str]:
+    """What this package's task `name` would refuse in `args` before it touches anything.
+
+    A child job installs for minutes before its task loads; the 09-28 Luna smoke
+    child died there on reasoning_effort without model, and Hawk had accepted the
+    config because the rule is ours. The checks that need the audited benchmark
+    still run only in the runner.
+    """
+    tasks = {"audit": audit, "benchmark": benchmark, "investigate": investigate}
+    if name not in tasks:
+        return [f"inspect_audit has no task {name!r}; it has {', '.join(sorted(tasks))}"]
+    try:
+        inspect_module.signature(tasks[name]).bind(**args)
+    except TypeError as ex:
+        return [f"{name}: {ex}"]
+    if name != "audit":
+        return []
+    problems: list[str] = []
+    if problem := effort_problem(args.get("model"), args.get("reasoning_effort")):
+        problems.append(
+            f"audit: {problem}. On Hawk, set the auditor's effort on its model item "
+            "instead: models[].items[].args.config.reasoning_effort"
+        )
+    try:
+        audit_items(args.get("items"))
+    except ValueError as ex:
+        problems.append(f"audit: {ex}")
+    return problems

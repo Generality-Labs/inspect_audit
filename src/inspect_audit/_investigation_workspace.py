@@ -26,8 +26,20 @@ logger = logging.getLogger(__name__)
 # (clones, venvs, downloads) stays in the box, so its links and sizes cannot break
 # the sync. Job configs are fetched one file at a time by hawk_submit.
 MIRRORED = ("report", "journal.md")
-# Kubernetes read_file refuses more than 100 MiB; say what is large before it does.
-MAX_PULL_BYTES = 90 * 1024 * 1024
+
+
+def max_pull_bytes() -> int:
+    """What the sandbox will read back in one go, with headroom for the archive.
+
+    Inspect's own read limit (`SandboxEnvironmentLimits`), which Hawk raises to 1 GiB
+    through INSPECT_SANDBOX_MAX_READ_FILE_SIZE; a fixed number refused pulls there that
+    would have transferred fine.
+    """
+    from inspect_ai.util import SandboxEnvironmentLimits
+
+    return int(SandboxEnvironmentLimits.MAX_READ_FILE_SIZE * 0.9)
+
+
 # Host-side records that must outlive the runner pod.
 STATE_FILES = ("jobs.json", "local_spend.json", "log_sources.json")
 
@@ -135,12 +147,12 @@ async def pull(root: Path) -> list[str]:
         raise ToolError(f"Could not inspect the workspace: {listing.stderr}")
     lines = listing.stdout.split()
     present, size = lines[:-1], int(lines[-1]) if lines else 0
-    if size > MAX_PULL_BYTES:
+    if size > (limit := max_pull_bytes()):
         biggest = await sandbox().exec(
             ["sh", "-c", "cd /workspace && du -ab report | sort -rn | head -8"], timeout=120
         )
         raise ToolError(
-            f"/workspace/report is {size // 2**20} MiB, over the {MAX_PULL_BYTES // 2**20} MiB "
+            f"/workspace/report is {size // 2**20} MiB, over the {limit // 2**20} MiB "
             f"the host can read back. Move large files out of /workspace/report "
             f"(cite /inputs paths instead of copying logs):\n{biggest.stdout}"
         )
@@ -206,6 +218,30 @@ async def fetch_workspace_file(root: Path, path: str) -> Path:
     return resolved
 
 
+async def fetch_inputs_files(root: Path, paths: list[str]) -> None:
+    """Copy /inputs files the host does not have back from the box, on demand.
+
+    A run resumed on a fresh runner has its collected job logs in the restored box but
+    not in the host's scratch directory; publication validates cited evidence on the
+    host, so it asks for exactly the files it cites.
+    """
+    if not remote_workspace(root):
+        return
+    for path in paths:
+        normal = posixpath.normpath(path)
+        if not normal.startswith("/inputs/"):
+            continue
+        host = root / "inputs" / Path(normal).relative_to("/inputs")
+        if host.exists():
+            continue
+        try:
+            content = await sandbox().read_file(normal, text=False)
+        except FileNotFoundError:
+            continue  # validation reports it as missing, with the path
+        host.parent.mkdir(parents=True, exist_ok=True)
+        host.write_bytes(content)
+
+
 async def push_assessments(root: Path) -> None:
     if remote_workspace(root):
         path = root / "work/report/assessments.tex"
@@ -215,15 +251,69 @@ async def push_assessments(root: Path) -> None:
 
 def _destination(root: Path, name: str) -> str:
     settings = json.loads((root / "remote-workspace.json").read_text())
-    return f"{settings['artifact_dir'].rstrip('/')}/{settings['sample_uuid']}/{name}"
+    # keyed by sample and epoch, not by uuid: Inspect gives a resumed sample a new
+    # uuid, and a resume must find (and add to) what the interrupted run saved
+    key = settings.get("sample_key") or settings["sample_uuid"]
+    return f"{settings['artifact_dir'].rstrip('/')}/{key}/{name}"
+
+
+def sample_key(state: TaskState) -> str:
+    return f"{state.sample_id}-epoch{state.epoch}"
+
+
+def hawk_would_process(key: str) -> str | None:
+    """Why Hawk would act on an object created at this bucket key, else None.
+
+    Hawk runs a processor on every object created under `evals/` and `scans/`
+    (hawk 3.6.0: job_status_updated/index.py routes by prefix). Under `evals/`, any
+    key ending `.eval` (bar `.fast.eval`) is imported into the shared warehouse,
+    upserted by the eval id in its own header, so a copy of someone's log takes over
+    their record (processors/eval.py process_object); a file directly in
+    `evals/<eval set>/` is read as that eval set's own metadata, e.g. `.models.json`
+    access groups. Under `scans/`, `_summary.json` and `.parquet` are imported as scan
+    results (processors/scan.py). Only Hawk's own writers may create these.
+    """
+    if key.startswith("evals/"):
+        # the same order as Hawk's own routing: .keep, then .eval (bar .fast.eval), then
+        # live buffers, then files at the eval set's root
+        if key.endswith("/.keep"):
+            return None
+        if key.endswith(".eval"):
+            if key.endswith(".fast.eval"):
+                return None
+            return "Hawk imports every .eval under evals/ into the shared warehouse"
+        if "/.buffer/" in key:
+            return None
+        eval_set, _, rest = key.removeprefix("evals/").partition("/")
+        if eval_set and rest and "/" not in rest:
+            return "Hawk reads a file directly in evals/<eval set>/ as that set's metadata"
+    if key.startswith("scans/") and key.endswith(("/_summary.json", ".parquet")):
+        return "Hawk imports scan summaries and parquet files under scans/"
+    return None
 
 
 def _upload(files: dict[str, Path], destination: str) -> None:
+    """Every upload this package makes goes through here, and none may trigger Hawk.
+
+    2026-09-28: a published report carried copies of the logs it cited as evidence;
+    they landed under evals/<run>/artifacts/ and Hawk re-pointed three shared
+    warehouse records at them. The check is on the final object key, so no caller can
+    route around it.
+    """
     import fsspec  # type: ignore[import-untyped]
 
     fs, base = fsspec.core.url_to_fs(destination)
+    targets = {relative: f"{base}/{relative}" for relative in files}
+    if destination.startswith("s3://"):
+        refused = [
+            f"{relative}: {reason}"
+            for relative, target in targets.items()
+            if (reason := hawk_would_process(target.split("/", 1)[1]))
+        ]
+        if refused:
+            raise ValueError("refusing to upload objects Hawk would act on: " + "; ".join(refused))
     for relative, file in files.items():
-        target = f"{base}/{relative}"
+        target = targets[relative]
         fs.makedirs(target.rsplit("/", 1)[0], exist_ok=True)
         fs.put_file(str(file), target)
 
@@ -262,6 +352,10 @@ async def save_state(root: Path) -> None:
     for base in (root / "jobs", root / "work"):
         if base.is_dir():
             for file in base.rglob("*"):
+                # collected child logs stay on Hawk, where their job wrote them: the
+                # ledger names the eval set, and a copy here would be imported
+                if file.suffix == ".eval" or "downloads" in file.relative_to(base).parts:
+                    continue
                 if file.is_file() and not file.is_symlink():
                     candidates[file.relative_to(root).as_posix()] = file
     current = {k: [f.stat().st_size, f.stat().st_mtime_ns] for k, f in candidates.items()}
@@ -278,6 +372,7 @@ def stage_workspace(root: Path) -> Solver:
         path = root / "remote-workspace.json"
         settings = json.loads(path.read_text())
         settings["sample_uuid"] = state.uuid
+        settings["sample_key"] = sample_key(state)
         path.write_text(json.dumps(settings))
         # a retried sample gets a fresh pod: everything must be sent again
         for name in ("transferred-inputs.json", "saved-state.json"):
@@ -319,7 +414,7 @@ def cleanup(root: Path) -> Any:
 
 
 def synchronized(tool: Tool, root: Path) -> Tool:
-    """Keep trusted host tools independent of the sandbox provider.
+    """Deliver what a trusted host tool wrote to the box, and save the records.
 
     Sync problems are reported alongside the tool's own result, never instead of
     it: a submission that went through must not look like one that failed.
@@ -327,11 +422,10 @@ def synchronized(tool: Tool, root: Path) -> Tool:
     definition = ToolDef(tool)
 
     async def execute(**kwargs: Any) -> Any:
+        # no pull first: these tools read nothing the agent wrote except a job config,
+        # which hawk_submit fetches itself. What they write (collected logs, indexes,
+        # transcripts) goes into the box afterwards, and the records are saved.
         notes: list[str] = []
-        try:
-            notes += await pull(root)
-        except Exception as ex:
-            notes.append(f"workspace sync before this call failed: {ex}")
         try:
             result = await tool(**kwargs)
         finally:
@@ -351,4 +445,7 @@ def synchronized(tool: Tool, root: Path) -> Tool:
         description=definition.description,
         parameters=definition.parameters,
         parallel=False,
+        viewer=definition.viewer,
+        model_input=definition.model_input,
+        max_output=definition.max_output,
     ).as_tool()

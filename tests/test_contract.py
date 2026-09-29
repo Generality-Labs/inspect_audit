@@ -152,3 +152,39 @@ def test_incomplete_contract_does_not_accuse_the_logs() -> None:
     assert doc is not None
     assert "observed but not declared" in doc
     assert "never reached the model" not in doc
+
+
+def test_the_log_plan_is_the_contract_when_the_eval_overrode_the_solver(tmp_path) -> None:
+    """Hawk agent configs replace the task solver; the declared tools are what ran."""
+    from inspect_ai import Task, eval
+    from inspect_ai.dataset import Sample
+    from inspect_ai.solver import generate, use_tools
+    from inspect_ai.tool import tool
+
+    from inspect_audit._contract import log_contract, task_contract
+
+    @tool
+    def calculator():
+        async def execute(x: int) -> str:
+            """Add one.
+
+            Args:
+                x: number
+            """
+            return str(x + 1)
+
+        return execute
+
+    task = Task(dataset=[Sample(input="hi")], solver=generate())
+    [plain] = eval(task, model="mockllm/model", display="none", log_dir=str(tmp_path))
+    assert log_contract(plain) is None
+    [overridden] = eval(
+        task,
+        solver=[use_tools(calculator()), generate()],
+        model="mockllm/model",
+        display="none",
+        log_dir=str(tmp_path),
+    )
+    assert task_contract(task).tool_names() == set()
+    planned = log_contract(overridden)
+    assert planned is not None and planned.tool_names() == {"calculator"}

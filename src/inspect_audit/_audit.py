@@ -11,13 +11,13 @@ from inspect_ai import Task
 from inspect_ai.agent import as_solver
 from inspect_ai.analysis import EvalModel, EvalTask, SampleSummary, samples_df
 from inspect_ai.dataset import MemoryDataset, Sample
-from inspect_ai.log import EvalLog
+from inspect_ai.log import EvalLog, read_eval_log
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import SandboxEnvironmentType
 
 from ._agent import audit_agent, audit_items, item_scorer
 from ._concordance import concordance_gate
-from ._contract import task_contract
+from ._contract import log_contract, task_contract
 from ._item import AUDIT_ROOT, AttemptRef, AuditItem, item_sample
 from ._resolve import resolve_task
 from ._sandbox import (
@@ -259,6 +259,13 @@ def audit_task(
                     sample_id=sample_id,
                 )
             )
+        # when the eval ran a solver in place of the task's, the declared tools are
+        # the ones that ran; the first log stands for the set (one eval, one solver)
+        logged = sorted({str(f) for f in frame["log"]}) if not frame.empty else []
+        if logged:
+            planned = log_contract(read_eval_log(logged[0], header_only=True))
+            if planned is not None:
+                contract = planned
         if not by_sample and in_scope:
             raise ValueError(
                 f"No attempts at any selected sample of '{target.name}' were found in "

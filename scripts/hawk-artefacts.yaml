@@ -1,0 +1,31 @@
+# What `inspect-audit-findings hawk-pull` fetches from the Generality Hawk deployment.
+# Destination is gitignored; run the command after `hawk login` to populate it.
+dest: artefacts/hawk
+
+logs:
+  # James's SciCode sample audits behind the v1.2 report (2026-09-22): gpt-5.6-sol at max effort,
+  # nine audit items per sample, historical attempts from hawk:union-scicode-64g-20260917.
+  - id: inv-scicode-gl-pilot-20260922-f17aa6c3
+    note: SciCode GL sample audits, pilot (2 samples)
+  - id: inv-scicode-gl-full-b1-20260922-a202a35d
+    note: SciCode GL sample audits, batch 1 (16 samples)
+  - id: inv-scicode-gl-full-b2-20260922-07b51890
+    note: SciCode GL sample audits, batch 2 (16 samples)
+  - id: inv-scicode-gl-full-b3-20260922-0ecdc9ca
+    note: SciCode GL sample audits, batch 3 (16 samples)
+  - id: inv-scicode-gl-full-b4-20260922-42ded69d
+    note: SciCode GL sample audits, batch 4 (16 samples)
+  - id: inv-scicode-gl-followup-20260922-22f297d0
+    note: SciCode GL sample audits, follow-up (13 samples)
+  # Historical SciCode attempts the audits were run over.
+  - id: union-scicode-64g-20260917
+    note: SciCode attempts, union corpus (2026-09-17)
+  # Small Featured-eval corpora for the findings prototype.
+  - id: hle-physics-sol-high-20260917
+    note: HLE physics, gpt-6-sol high (2026-09-17)
+
+artifacts:
+  # A complete published investigator bundle: findings.json, assessments.json, coverage.json,
+  # report.pdf, evidence/.
+  - id: chess-audit-sol6-20260925
+    note: Epoch Chess Puzzles investigation, gpt-6-sol (2026-09-25)

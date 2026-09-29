@@ -26,8 +26,15 @@ dependencies = [
 [project.entry-points.inspect_ai]
 inspect_audit = "inspect_audit._registry"
 
+[project.scripts]
+inspect-audit-findings = "inspect_audit.findings.cli:main"
+
 [project.optional-dependencies]
-remote = ["hawk[cli]>=3.4,<4; python_version >= '3.13'"]
+remote = [
+    "hawk[cli]>=3.4,<4; python_version >= '3.13'",
+    # hawk download-artifacts needs it; the CLI extra omits it
+    "aiofiles; python_version >= '3.13'",
+]
 k8s = [
     "inspect-k8s-sandbox>=0.13",
 ]
@@ -43,6 +50,7 @@ dev = [
     "types-PyYAML",
     "hawk[cli]>=3.4,<4; python_version >= '3.13'",
     "inspect-k8s-sandbox>=0.13",
+    "aiofiles; python_version >= '3.13'",
 ]
 
 [tool.hatch.version]

@@ -1354,11 +1354,13 @@ k8s = [
     { name = "inspect-k8s-sandbox" },
 ]
 remote = [
+    { name = "aiofiles", marker = "python_full_version >= '3.13'" },
     { name = "hawk", extra = ["cli"], marker = "python_full_version >= '3.13'" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "aiofiles", marker = "python_full_version >= '3.13'" },
     { name = "basedpyright" },
     { name = "hawk", extra = ["cli"], marker = "python_full_version >= '3.13'" },
     { name = "inspect-k8s-sandbox" },
@@ -1372,6 +1374,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiofiles", marker = "python_full_version >= '3.13' and extra == 'remote'" },
     { name = "hawk", extras = ["cli"], marker = "python_full_version >= '3.13' and extra == 'remote'", specifier = ">=3.4,<4" },
     { name = "inspect-ai", specifier = ">=0.3.259" },
     { name = "inspect-k8s-sandbox", marker = "extra == 'k8s'", specifier = ">=0.13" },
@@ -1385,6 +1388,7 @@ provides-extras = ["k8s", "remote"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aiofiles", marker = "python_full_version >= '3.13'" },
     { name = "basedpyright", specifier = ">=1.39" },
     { name = "hawk", extras = ["cli"], marker = "python_full_version >= '3.13'", specifier = ">=3.4,<4" },
     { name = "inspect-k8s-sandbox", specifier = ">=0.13" },

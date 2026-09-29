@@ -146,6 +146,10 @@ class FakeHawk:
 
 def remote(tmp_path: Path, allowance: float = 10.0) -> Remote:
     (tmp_path / "work").mkdir(exist_ok=True)
+    # a real run registers every worker's price at prep; without this a test would
+    # depend on another test in the same process having registered it
+    _price("openrouter/openai/gpt-5.6-luna")
+    _price("openrouter/openai/gpt-5-mini", input=0.25, output=2.0)
     r = Remote(
         tmp_path,
         HAWK,

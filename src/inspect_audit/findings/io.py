@@ -18,8 +18,15 @@ FINDING_COLUMNS: tuple[str, ...] = (
     "subject_eval",
     "subject_revision_commit",
     "subject_revision_package_version",
+    "subject_revision_dirty",
     "subject_task_version_full",
+    "subject_task_version_comparability",
+    "subject_task_version_interface",
     "subject_dataset_path",
+    "subject_dataset_config",
+    "subject_dataset_split",
+    "subject_dataset_revision",
+    "subject_task_args",
     "taxonomy",
     "dimension",
     "check",
@@ -34,7 +41,16 @@ FINDING_COLUMNS: tuple[str, ...] = (
     "source_format",
     "source",
     "locations",
+    "aliases",
+    "suppressions",
+    "suppressed",
+    "history",
+    "introduced",
+    "fixed",
+    "effect",
 )
+
+CURRENT_FILE = "current.json"
 
 RUN_COLUMNS: tuple[str, ...] = (
     "run_id",
@@ -63,8 +79,42 @@ def read_run(path: Path) -> Run:
 
 
 def read_runs(root: Path) -> list[Run]:
-    """Every `*.run.json` under `root`, sorted by path."""
+    """Every `*.run.json` under `root`, sorted by path: the whole history, not just the current view."""
     return [read_run(path) for path in sorted(root.rglob("*.run.json"))]
+
+
+def update_current(eval_dir: Path, runs: Sequence[Run]) -> dict[str, str]:
+    """Point `current.json` at these runs' files, leaving producers that did not run where they were.
+
+    Run files are immutable and named by run id; this manifest is the only thing a sweep rewrites,
+    so a partial sweep never silently mixes stale and fresh results and history is never lost.
+    """
+    manifest_path = eval_dir / CURRENT_FILE
+    current: dict[str, str] = (
+        json.loads(manifest_path.read_text()) if manifest_path.is_file() else {}
+    )
+    for run in runs:
+        current[run.producer] = f"runs/{run.id}.run.json"
+    eval_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(dict(sorted(current.items())), indent=1) + "\n")
+    return current
+
+
+def read_current(root: Path) -> list[Run]:
+    """The runs every `current.json` under `root` selects."""
+    runs: list[Run] = []
+    for manifest_path in sorted(root.rglob(CURRENT_FILE)):
+        current: dict[str, str] = json.loads(manifest_path.read_text())
+        runs += [read_run(manifest_path.parent / rel) for rel in current.values()]
+    return runs
+
+
+def _json_or_none(value: Any) -> str | None:
+    if value is None or value == []:
+        return None
+    if hasattr(value, "model_dump"):
+        return json.dumps(value.model_dump(mode="json"))
+    return json.dumps([v.model_dump(mode="json") if hasattr(v, "model_dump") else v for v in value])
 
 
 def _finding_records(runs: Sequence[Run]) -> list[dict[str, Any]]:
@@ -72,6 +122,8 @@ def _finding_records(runs: Sequence[Run]) -> list[dict[str, Any]]:
     for run in runs:
         for finding in run.findings:
             primary = finding.primary_location
+            task_version = finding.subject.task_version
+            dataset = finding.subject.dataset
             records.append(
                 {
                     "fingerprint": finding.fingerprint,
@@ -80,11 +132,20 @@ def _finding_records(runs: Sequence[Run]) -> list[dict[str, Any]]:
                     "subject_eval": finding.subject.eval,
                     "subject_revision_commit": finding.subject.revision.commit,
                     "subject_revision_package_version": finding.subject.revision.package_version,
-                    "subject_task_version_full": finding.subject.task_version.full
-                    if finding.subject.task_version
+                    "subject_revision_dirty": finding.subject.revision.dirty,
+                    "subject_task_version_full": task_version.full if task_version else None,
+                    "subject_task_version_comparability": task_version.comparability
+                    if task_version
                     else None,
-                    "subject_dataset_path": finding.subject.dataset.path
-                    if finding.subject.dataset
+                    "subject_task_version_interface": task_version.interface
+                    if task_version
+                    else None,
+                    "subject_dataset_path": dataset.path if dataset else None,
+                    "subject_dataset_config": dataset.config if dataset else None,
+                    "subject_dataset_split": dataset.split if dataset else None,
+                    "subject_dataset_revision": dataset.revision if dataset else None,
+                    "subject_task_args": json.dumps(finding.subject.task_args)
+                    if finding.subject.task_args
                     else None,
                     "taxonomy": finding.taxonomy,
                     "dimension": finding.dimension,
@@ -102,6 +163,13 @@ def _finding_records(runs: Sequence[Run]) -> list[dict[str, Any]]:
                     "locations": json.dumps(
                         [location.model_dump(mode="json") for location in finding.locations]
                     ),
+                    "aliases": json.dumps(finding.aliases) if finding.aliases else None,
+                    "suppressions": _json_or_none(finding.suppressions),
+                    "suppressed": bool(finding.suppressions),
+                    "history": _json_or_none(finding.history),
+                    "introduced": _json_or_none(finding.introduced),
+                    "fixed": _json_or_none(finding.fixed),
+                    "effect": _json_or_none(finding.effect),
                 }
             )
     return records

@@ -15,7 +15,7 @@ from .adapters import dataset as dataset_adapter
 from .adapters import header as header_adapter
 from .adapters import lint as lint_adapter
 from .featured import FEATURED
-from .io import findings_df, read_runs, runs_df, write_parquet, write_run
+from .io import findings_df, read_current, runs_df, update_current, write_parquet, write_run
 from .models import Run
 from .producers import ProducerConfig
 from .render import render_eval_summary, render_sweep_summary
@@ -63,22 +63,39 @@ def sweep(
     return runs_by_eval
 
 
-_FILE_NAMES = {
-    header_adapter.PRODUCER: "header",
-    lint_adapter.PRODUCER: "lint",
-    dataset_adapter.PRODUCER: "dataset",
-}
+def _run_path(directory: Path, run: Run) -> Path:
+    """`runs/<run id>.run.json`, never reusing a name: two sweeps in one second get distinct files."""
+    path = directory / "runs" / f"{run.id}.run.json"
+    counter = 2
+    while path.exists():
+        path = directory / "runs" / f"{run.id}-{counter}.run.json"
+        counter += 1
+    return path
 
 
 def write_outputs(out: Path, runs_by_eval: Mapping[str, Sequence[Run]]) -> None:
-    all_runs: list[Run] = []
+    """Append the new runs, move each eval's `current.json`, then render everything from the current view."""
     for target, runs in runs_by_eval.items():
         directory = out / slug(target)
+        written: list[Run] = []
         for run in runs:
-            write_run(
-                run, directory / f"{_FILE_NAMES.get(run.producer, slug(run.producer))}.run.json"
-            )
-        (directory / "SUMMARY.md").write_text(render_eval_summary(runs))
+            path = _run_path(directory, run)
+            file_id = path.name.removesuffix(".run.json")
+            stored = run if file_id == run.id else run.model_copy(update={"id": file_id})
+            write_run(stored, path)
+            written.append(stored)
+        update_current(directory, written)
+    render_current(out)
+
+
+def render_current(out: Path) -> None:
+    """Parquet and summaries from the runs every `current.json` selects."""
+    runs_by_eval: dict[str, list[Run]] = {}
+    for run in read_current(out):
+        runs_by_eval.setdefault(run.subject.eval, []).append(run)
+    all_runs: list[Run] = []
+    for target, runs in runs_by_eval.items():
+        (out / slug(target) / "SUMMARY.md").write_text(render_eval_summary(runs))
         all_runs += runs
     write_parquet(findings_df(all_runs), out / "findings.parquet")
     write_parquet(runs_df(all_runs), out / "runs.parquet")
@@ -86,13 +103,10 @@ def write_outputs(out: Path, runs_by_eval: Mapping[str, Sequence[Run]]) -> None:
 
 
 def _summaries_from_disk(out: Path) -> int:
-    runs_by_eval: dict[str, list[Run]] = {}
-    for run in read_runs(out):
-        runs_by_eval.setdefault(run.subject.eval, []).append(run)
-    if not runs_by_eval:
-        print(f"no *.run.json under {out}", file=sys.stderr)
+    if not read_current(out):
+        print(f"no current.json under {out}", file=sys.stderr)
         return 2
-    write_outputs(out, runs_by_eval)
+    render_current(out)
     return 0
 
 

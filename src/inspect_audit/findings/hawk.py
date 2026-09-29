@@ -63,7 +63,7 @@ async def _fetch_page_via_client(page: int, limit: int) -> dict[str, Any]:
     async with hawk.client.HawkClient() as client:
         # the public get_eval_sets() has no page argument and the server caps a page at 500,
         # so walk the endpoint directly; it is the same request the client makes
-        data = await client._request_json(
+        data = await client._request_json(  # pyright: ignore[reportPrivateUsage]
             "GET", "/meta/eval-sets", params=[("page", str(page)), ("limit", str(limit))]
         )
     if not isinstance(data, dict):

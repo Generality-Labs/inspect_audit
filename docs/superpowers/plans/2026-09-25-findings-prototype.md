@@ -32,11 +32,12 @@
 4. A producer stub that prints valid JSON but exits non-zero must yield a skip run, not a parsed run; the exit code is authoritative. Test added to Task 5.
 5. A `Finding` deserialised from JSON with an unknown `kind` in `locations` must fail validation with a clear error rather than silently becoming a base location. Test added to Task 1.
 
----
+______________________________________________________________________
 
 ### Task 1: Models, fingerprint, schema files
 
 **Files:**
+
 - Create: `src/inspect_audit/findings/__init__.py`
 - Create: `src/inspect_audit/findings/models.py`
 - Create: `src/inspect_audit/findings/fingerprint.py`
@@ -49,6 +50,7 @@
 - Modify: `docs/superpowers/specs/2026-09-25-findings-prototype-design.md` (add `producer` and `rule` to `Finding`)
 
 **Interfaces:**
+
 - Produces: every model name below, `AnyLocation`, `Dimension`, `Severity`, `Status`, `fingerprint(producer: str, rule: str, eval: str, primary: Location) -> str`, `FINGERPRINT_VERSION: int`, `TaskVersion.parse(text: str) -> TaskVersion`, `utcnow() -> datetime`.
 
 - [ ] **Step 1: Amend the spec**
@@ -285,8 +287,7 @@ def test_related_fields_do_not_change_the_value() -> None:
 
 - [ ] **Step 3: Run the tests to see them fail**
 
-Run: `uv run pytest tests/findings -q`
-Expected: collection errors, `ModuleNotFoundError: No module named 'inspect_audit.findings'`.
+Run: `uv run pytest tests/findings -q` Expected: collection errors, `ModuleNotFoundError: No module named 'inspect_audit.findings'`.
 
 - [ ] **Step 4: Write the models**
 
@@ -679,16 +680,13 @@ def fingerprint(producer: str, rule: str, eval: str, primary: Location) -> str:
 
 - [ ] **Step 5: Generate the schema files and run the tests**
 
-Run: `mkdir -p src/inspect_audit/findings/schema && INSPECT_AUDIT_UPDATE_SCHEMA=1 uv run pytest tests/findings/test_models.py::test_schema_files_are_current -q`
-Expected: PASS, and two new files under `schema/`.
+Run: `mkdir -p src/inspect_audit/findings/schema && INSPECT_AUDIT_UPDATE_SCHEMA=1 uv run pytest tests/findings/test_models.py::test_schema_files_are_current -q` Expected: PASS, and two new files under `schema/`.
 
-Run: `uv run pytest tests/findings -q`
-Expected: all PASS. If `test_dimension_matches_the_framework` fails, the `Dimension` literal is wrong, not the framework; fix the literal to match the parsed set.
+Run: `uv run pytest tests/findings -q` Expected: all PASS. If `test_dimension_matches_the_framework` fails, the `Dimension` literal is wrong, not the framework; fix the literal to match the parsed set.
 
 - [ ] **Step 6: Lint and type-check**
 
-Run: `make check`
-Expected: `All checks passed!` and `Success: no issues found`. If mypy complains about `computed_field` with `@property`, keep the `# type: ignore[prop-decorator]` shown.
+Run: `make check` Expected: `All checks passed!` and `Success: no issues found`. If mypy complains about `computed_field` with `@property`, keep the `# type: ignore[prop-decorator]` shown.
 
 - [ ] **Step 7: Commit**
 
@@ -706,17 +704,20 @@ EOF
 )"
 ```
 
----
+______________________________________________________________________
 
 ### Task 2: IO
 
 **Files:**
+
 - Create: `src/inspect_audit/findings/io.py`
 - Create: `tests/findings/test_io.py`
 - Modify: `src/inspect_audit/findings/__init__.py` (export the IO functions)
 
 **Interfaces:**
+
 - Consumes: `Run`, `Finding` from Task 1.
+
 - Produces: `write_run(run: Run, path: Path) -> Path`, `read_run(path: Path) -> Run`, `read_runs(root: Path) -> list[Run]`, `findings_df(runs: Sequence[Run]) -> pd.DataFrame`, `runs_df(runs: Sequence[Run]) -> pd.DataFrame`, `write_parquet(frame: pd.DataFrame, path: Path) -> Path`, `FINDING_COLUMNS: tuple[str, ...]`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -801,8 +802,7 @@ def test_parquet_round_trip(tmp_path: Path, run: Run) -> None:
 
 - [ ] **Step 2: Run the tests to see them fail**
 
-Run: `uv run pytest tests/findings/test_io.py -q`
-Expected: `ModuleNotFoundError: No module named 'inspect_audit.findings.io'`.
+Run: `uv run pytest tests/findings/test_io.py -q` Expected: `ModuleNotFoundError: No module named 'inspect_audit.findings.io'`.
 
 - [ ] **Step 3: Write the IO module**
 
@@ -946,8 +946,7 @@ Add to `__init__.py` imports and `__all__`: `FINDING_COLUMNS, RUN_COLUMNS, findi
 
 - [ ] **Step 4: Run the tests and the gate**
 
-Run: `uv run pytest tests/findings -q && make check`
-Expected: all PASS, checks clean. If pandas-stubs complains about `from_records` typing, annotate `records` as `list[dict[str, Any]]` (already done).
+Run: `uv run pytest tests/findings -q && make check` Expected: all PASS, checks clean. If pandas-stubs complains about `from_records` typing, annotate `records` as `list[dict[str, Any]]` (already done).
 
 - [ ] **Step 5: Commit**
 
@@ -961,17 +960,20 @@ EOF
 )"
 ```
 
----
+______________________________________________________________________
 
 ### Task 3: Render
 
 **Files:**
+
 - Create: `src/inspect_audit/findings/render.py`
 - Create: `tests/findings/test_render.py`
 - Modify: `src/inspect_audit/findings/__init__.py`
 
 **Interfaces:**
+
 - Consumes: `Run`, `Finding`, `Outcome`.
+
 - Produces: `render_eval_summary(runs: Sequence[Run]) -> str`, `render_sweep_summary(runs_by_eval: Mapping[str, Sequence[Run]]) -> str`, `NOISE_THRESHOLD: int = 100`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1046,8 +1048,7 @@ def test_rendering_is_deterministic(run: Run) -> None:
 
 - [ ] **Step 2: Run the tests to see them fail**
 
-Run: `uv run pytest tests/findings/test_render.py -q`
-Expected: `ModuleNotFoundError`.
+Run: `uv run pytest tests/findings/test_render.py -q` Expected: `ModuleNotFoundError`.
 
 - [ ] **Step 3: Write the renderer**
 
@@ -1161,8 +1162,7 @@ Export `render_eval_summary`, `render_sweep_summary`, `NOISE_THRESHOLD` from `__
 
 - [ ] **Step 4: Run the tests and the gate**
 
-Run: `uv run pytest tests/findings -q && make check`
-Expected: PASS and clean.
+Run: `uv run pytest tests/findings -q && make check` Expected: PASS and clean.
 
 - [ ] **Step 5: Commit**
 
@@ -1176,11 +1176,12 @@ EOF
 )"
 ```
 
----
+______________________________________________________________________
 
 ### Task 4: Producer configuration and shared adapter helpers
 
 **Files:**
+
 - Create: `src/inspect_audit/findings/producers.py`
 - Create: `src/inspect_audit/findings/adapters/__init__.py`
 - Create: `tests/findings/test_adapters_common.py`
@@ -1189,7 +1190,9 @@ EOF
 - Create: `tests/findings/stubs/fail.py`
 
 **Interfaces:**
+
 - Consumes: models from Task 1.
+
 - Produces: `ProducerConfig` with `lint: tuple[str, ...]`, `dataset: tuple[str, ...]`, `timeout_s: float`, `ProducerConfig.from_env(env: Mapping[str, str] | None = None) -> ProducerConfig`; `LINT_SPEC`, `DATASET_SPEC`; in `adapters/__init__.py`: `Context` dataclass (`ie_root: Path`, `logs: list[Path]`, `out_dir: Path`, `producers: ProducerConfig`, `resolve: bool = False`), `ProducerError(Exception)`, `CommandResult` (`returncode: int`, `stdout: str`, `stderr: str`), `run_command(argv: Sequence[str], *, timeout: float, cwd: Path | None = None) -> CommandResult`, `package_of(target: str) -> str`, `eval_yaml(ie_root: Path, target: str) -> dict[str, Any]`, `repo_revision(ie_root: Path) -> Revision`, `task_version_from_yaml(data: Mapping[str, Any]) -> TaskVersion | None`, `subject_for(target: str, ctx: Context) -> Subject`, `new_run_id(producer: str, target: str, timestamp: datetime) -> str`, `skip_run(producer: str, target: str, ctx: Context, message: str, *, timestamp: datetime | None = None) -> Run`, `slug(text: str) -> str`.
 
 - [ ] **Step 1: Write the stubs and the failing tests**
@@ -1360,8 +1363,7 @@ Note `run_command` takes an optional `env` mapping that is merged over `os.envir
 
 - [ ] **Step 2: Run the tests to see them fail**
 
-Run: `uv run pytest tests/findings/test_adapters_common.py -q`
-Expected: `ModuleNotFoundError`.
+Run: `uv run pytest tests/findings/test_adapters_common.py -q` Expected: `ModuleNotFoundError`.
 
 - [ ] **Step 3: Write producers.py and adapters/__init__.py**
 
@@ -1545,8 +1547,7 @@ def skip_run(
 
 - [ ] **Step 4: Run the tests and the gate**
 
-Run: `uv run pytest tests/findings -q && make check`
-Expected: PASS and clean. If mypy flags `yaml` as untyped, `types-PyYAML` is already in the dev group; run `uv sync --python 3.13 --extra dev` again.
+Run: `uv run pytest tests/findings -q && make check` Expected: PASS and clean. If mypy flags `yaml` as untyped, `types-PyYAML` is already in the dev group; run `uv sync --python 3.13 --extra dev` again.
 
 - [ ] **Step 5: Commit**
 
@@ -1564,18 +1565,21 @@ EOF
 )"
 ```
 
----
+______________________________________________________________________
 
 ### Task 5: Lint adapter
 
 **Files:**
+
 - Create: `src/inspect_audit/findings/adapters/lint.py`
 - Create: `tests/findings/fixtures/lint.json` (copy of `agent_artefacts/deterministic_pass/stereoset/lint.json`)
 - Create: `tests/findings/fixtures/lint_two_packages.json`
 - Create: `tests/findings/test_lint_adapter.py`
 
 **Interfaces:**
+
 - Consumes: Task 4 helpers, Task 1 models, `fingerprint`.
+
 - Produces: `PRODUCER = "inspect_evals_lint"`, `LINT_RULES: dict[str, tuple[Dimension, Severity]]`, `parse(data: Mapping[str, Any], target: str, subject: Subject, *, timestamp: datetime, duration_s: float | None = None) -> Run`, `run(target: str, ctx: Context) -> Run`.
 
 - [ ] **Step 1: Copy the fixture and write a two-package variant**
@@ -1714,8 +1718,7 @@ def test_run_with_exit_code_one_and_valid_json_parses(tmp_path: Path, monkeypatc
 
 - [ ] **Step 3: Run the tests to see them fail**
 
-Run: `uv run pytest tests/findings/test_lint_adapter.py -q`
-Expected: `ModuleNotFoundError: No module named 'inspect_audit.findings.adapters.lint'`.
+Run: `uv run pytest tests/findings/test_lint_adapter.py -q` Expected: `ModuleNotFoundError: No module named 'inspect_audit.findings.adapters.lint'`.
 
 - [ ] **Step 4: Write the adapter**
 
@@ -1842,8 +1845,7 @@ def run(target: str, ctx: Context) -> Run:
 
 - [ ] **Step 5: Run the tests and the gate**
 
-Run: `uv run pytest tests/findings -q && make check`
-Expected: PASS and clean.
+Run: `uv run pytest tests/findings -q && make check` Expected: PASS and clean.
 
 - [ ] **Step 6: Commit**
 
@@ -1860,17 +1862,20 @@ EOF
 )"
 ```
 
----
+______________________________________________________________________
 
 ### Task 6: Dataset adapter
 
 **Files:**
+
 - Create: `src/inspect_audit/findings/adapters/dataset.py`
 - Create: `tests/findings/fixtures/dataset/scan_summary.json`, `duplicate_questions.json`, `inconsistent_format.json` (copies; not `answer_length.json`)
 - Create: `tests/findings/test_dataset_adapter.py`
 
 **Interfaces:**
+
 - Consumes: Task 4 helpers, Task 1 models.
+
 - Produces: `PRODUCER = "inspect_dataset"`, `DATASET_OVERRIDES: dict[str, dict[str, str]]`, `SEVERITY: dict[str, Severity]`, `hf_asset(data: Mapping[str, Any]) -> str | None`, `parse(scan_dir: Path, target: str, subject: Subject, *, timestamp: datetime, duration_s: float | None = None, inputs: Mapping[str, Any] | None = None) -> Run`, `run(target: str, ctx: Context) -> Run`.
 
 - [ ] **Step 1: Copy the fixtures**
@@ -1972,8 +1977,7 @@ def test_run_with_a_failing_scan_is_a_skip(tmp_path: Path) -> None:
 
 - [ ] **Step 3: Run the tests to see them fail**
 
-Run: `uv run pytest tests/findings/test_dataset_adapter.py -q`
-Expected: `ModuleNotFoundError`.
+Run: `uv run pytest tests/findings/test_dataset_adapter.py -q` Expected: `ModuleNotFoundError`.
 
 - [ ] **Step 4: Write the adapter**
 
@@ -2107,8 +2111,7 @@ def run(target: str, ctx: Context) -> Run:
 
 - [ ] **Step 5: Run the tests and the gate**
 
-Run: `uv run pytest tests/findings -q && make check`
-Expected: PASS and clean.
+Run: `uv run pytest tests/findings -q && make check` Expected: PASS and clean.
 
 - [ ] **Step 6: Commit**
 
@@ -2125,16 +2128,19 @@ EOF
 )"
 ```
 
----
+______________________________________________________________________
 
 ### Task 7: Header adapter
 
 **Files:**
+
 - Create: `src/inspect_audit/findings/adapters/header.py`
 - Create: `tests/findings/test_header_adapter.py`
 
 **Interfaces:**
+
 - Consumes: Task 4 helpers, Task 1 models, `inspect_ai.log.read_eval_log`, `test_helpers.logs.fixture_task`.
+
 - Produces: `PRODUCER = "inspect_audit_header"`, `matching_headers(logs: Sequence[Path], target: str) -> list[tuple[Path, EvalLog]]`, `parse(headers: Sequence[tuple[Path, EvalLog]], target: str, subject: Subject, yaml_data: Mapping[str, Any], *, timestamp: datetime, resolved_ids: set[str] | None = None) -> Run`, `run(target: str, ctx: Context) -> Run`, `eval_spec_dict(log: EvalLog) -> dict[str, JsonValue]`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -2272,8 +2278,7 @@ def test_scorer_location_for_unscored(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run the tests to see them fail**
 
-Run: `uv run pytest tests/findings/test_header_adapter.py -q`
-Expected: `ModuleNotFoundError`.
+Run: `uv run pytest tests/findings/test_header_adapter.py -q` Expected: `ModuleNotFoundError`.
 
 - [ ] **Step 3: Write the adapter**
 
@@ -2502,8 +2507,7 @@ def run(target: str, ctx: Context) -> Run:
 
 - [ ] **Step 4: Run the tests and the gate**
 
-Run: `uv run pytest tests/findings -q && make check`
-Expected: PASS and clean. The `eval()` calls under `mockllm` take a second or two each.
+Run: `uv run pytest tests/findings -q && make check` Expected: PASS and clean. The `eval()` calls under `mockllm` take a second or two each.
 
 - [ ] **Step 5: Commit**
 
@@ -2521,18 +2525,21 @@ EOF
 )"
 ```
 
----
+______________________________________________________________________
 
 ### Task 8: Featured list, CLI and console script
 
 **Files:**
+
 - Create: `src/inspect_audit/findings/featured.py`
 - Create: `src/inspect_audit/findings/cli.py`
 - Create: `tests/findings/test_cli.py`
 - Modify: `pyproject.toml` (add `[project.scripts]`)
 
 **Interfaces:**
+
 - Consumes: everything above; `inspect_audit._registry.fetch_logs(logs: str | list[str]) -> str`; `inspect_ai.log.list_eval_logs`.
+
 - Produces: `FEATURED: tuple[str, ...]`, `main(argv: Sequence[str] | None = None) -> int`, `collect_logs(sources: Sequence[str]) -> list[Path]`, `sweep(targets, ctx, producers: set[str]) -> dict[str, list[Run]]`, `write_outputs(out: Path, runs_by_eval: Mapping[str, Sequence[Run]]) -> None`.
 
 - [ ] **Step 1: Write the featured list**
@@ -2664,8 +2671,7 @@ def test_featured_flag_expands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
 - [ ] **Step 3: Run the tests to see them fail**
 
-Run: `uv run pytest tests/findings/test_cli.py -q`
-Expected: `ModuleNotFoundError`.
+Run: `uv run pytest tests/findings/test_cli.py -q` Expected: `ModuleNotFoundError`.
 
 - [ ] **Step 4: Write the CLI**
 
@@ -2820,8 +2826,7 @@ Then `uv sync --python 3.13 --extra dev` so the script is installed, and check `
 
 - [ ] **Step 6: Run the tests and the gate**
 
-Run: `uv run pytest tests/findings -q && make check && uv run pytest -m "not docker" -q`
-Expected: all PASS, checks clean, the whole suite still green.
+Run: `uv run pytest tests/findings -q && make check && uv run pytest -m "not docker" -q` Expected: all PASS, checks clean, the whole suite still green.
 
 - [ ] **Step 7: Commit**
 
@@ -2839,15 +2844,17 @@ EOF
 )"
 ```
 
----
+______________________________________________________________________
 
 ### Task 9: Acceptance run
 
 **Files:**
+
 - Create: `agent_artefacts/findings_prototype/ACCEPTANCE.md` (the `agent_artefacts/` directory is gitignored: audit outputs and internal planning stay in the private `~/Developer/inspect_ai/audit-artefacts` copy, not in this public repository)
 - Create: `agent_artefacts/findings_prototype/out/` (the run outputs, committed except `*.parquet` larger than 5 MB)
 
 **Interfaces:**
+
 - Consumes: the installed CLI.
 
 - [ ] **Step 1: Run the sweep from the inspect_evals environment**

@@ -60,15 +60,15 @@ All pydantic v2, `extra="forbid"` on envelope models.
 
 **Location.** A discriminated union on `kind`, each subclass `extra="allow"` and each implementing `key() -> str`:
 
-| kind | required fields | key |
-| --- | --- | --- |
-| `code` | `file`; optional `line`, `end_line`, `column` | `code:{file}:{line or 0}` |
-| `sample` | `dataset`, `sample_id`; optional `field` | `sample:{dataset}:{sample_id}` |
+| kind         | required fields                                                                     | key                                                                   |
+| ------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `code`       | `file`; optional `line`, `end_line`, `column`                                       | `code:{file}:{line or 0}`                                             |
+| `sample`     | `dataset`, `sample_id`; optional `field`                                            | `sample:{dataset}:{sample_id}`                                        |
 | `transcript` | `eval_id`, `sample_uuid`; optional `message_id`, `event_uuid`, `sample_id`, `epoch` | `transcript:{eval_id}:{sample_uuid}:{message_id or event_uuid or ""}` |
-| `log` | `eval_id`, `path`; optional `location_hint` | `log:{eval_id}:{path}` |
-| `scorer` | `eval_id`, `scorer` | `scorer:{eval_id}:{scorer}` |
-| `artifact` | `path`; optional `location` | `artifact:{path}:{location or ""}` |
-| `url` | `url` | `url:{url}` |
+| `log`        | `eval_id`, `path`; optional `location_hint`                                         | `log:{eval_id}:{path}`                                                |
+| `scorer`     | `eval_id`, `scorer`                                                                 | `scorer:{eval_id}:{scorer}`                                           |
+| `artifact`   | `path`; optional `location`                                                         | `artifact:{path}:{location or ""}`                                    |
+| `url`        | `url`                                                                               | `url:{url}`                                                           |
 
 Every location has `role: Literal["primary", "related"]` default `related` and `quote: str | None`. `Finding` validates that exactly one location has `role == "primary"`.
 
@@ -105,10 +105,10 @@ Adapters call it once at write time and store the result with `fingerprint_versi
 
 `ProducerConfig` holds, per external producer, a command prefix as a list of strings and a pinned spec. Defaults:
 
-| producer | default prefix | override |
-| --- | --- | --- |
-| lint | `["uvx", "--from", "inspect-evals-lint==0.7.0", "inspect-evals-lint"]` | `INSPECT_AUDIT_LINT_CMD` |
-| dataset | `["uvx", "--from", "git+https://github.com/Generality-Labs/inspect_dataset@afbc94c0b509", "inspect-dataset"]` (origin/main on 2026-09-25; the package is not on PyPI) | `INSPECT_AUDIT_DATASET_CMD` |
+| producer | default prefix                                                                                                                                                        | override                    |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| lint     | `["uvx", "--from", "inspect-evals-lint==0.7.0", "inspect-evals-lint"]`                                                                                                | `INSPECT_AUDIT_LINT_CMD`    |
+| dataset  | `["uvx", "--from", "git+https://github.com/Generality-Labs/inspect_dataset@afbc94c0b509", "inspect-dataset"]` (origin/main on 2026-09-25; the package is not on PyPI) | `INSPECT_AUDIT_DATASET_CMD` |
 
 An override is a shell-split string. Each adapter exposes two functions: `parse(...) -> Run` which is pure and tested against fixtures, and `run(target, ctx) -> Run` which invokes the subprocess with a timeout, then calls `parse`. Any failure in `run` (non-zero exit, timeout, missing binary, unparseable output) returns a `Run` with a single `Outcome(rule="<producer>", status="skip", message=<error tail>)` and no findings. Nothing raises past the adapter.
 
@@ -147,13 +147,13 @@ Pure Python over `.eval` files in `ctx.logs`, reading headers only. Always runs.
 
 Checks, each producing an `Outcome` and, when it fires, one `Finding` with `source.eval_spec` set to the header's `eval` dump minus `dataset.sample_ids`:
 
-| rule | condition | primary location | dimension, severity |
-| --- | --- | --- | --- |
-| `header.dataset_samples` | `eval.dataset.samples` differs from `eval.yaml`'s `tasks[].dataset_samples` for the matching task, and `eval.config.limit` is null or `eval.dataset.samples` is the pre-limit size | `log` at `eval.dataset.samples` | `dataset`, `minor` |
-| `header.version_drift` | across the matched logs, more than one distinct `task_version` or `packages.inspect_evals` | `log` at `eval.task_version` on the newest log | `informativeness`, `minor`; one finding per log set, related locations on every other log |
-| `header.unscored_samples` | any `results.scores[].unscored_samples > 0` | `scorer` for that scorer | `grading`, `minor` |
-| `header.dirty_revision` | `eval.revision.dirty` is true | `log` at `eval.revision.dirty` | `informativeness`, `none` |
-| `header.unknown_sample_ids` | `--resolve` only: any sample id in `eval.dataset.sample_ids` absent from the resolved task's dataset | `log` at `eval.dataset.sample_ids` | `dataset`, `major` |
+| rule                        | condition                                                                                                                                                                          | primary location                               | dimension, severity                                                                       |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `header.dataset_samples`    | `eval.dataset.samples` differs from `eval.yaml`'s `tasks[].dataset_samples` for the matching task, and `eval.config.limit` is null or `eval.dataset.samples` is the pre-limit size | `log` at `eval.dataset.samples`                | `dataset`, `minor`                                                                        |
+| `header.version_drift`      | across the matched logs, more than one distinct `task_version` or `packages.inspect_evals`                                                                                         | `log` at `eval.task_version` on the newest log | `informativeness`, `minor`; one finding per log set, related locations on every other log |
+| `header.unscored_samples`   | any `results.scores[].unscored_samples > 0`                                                                                                                                        | `scorer` for that scorer                       | `grading`, `minor`                                                                        |
+| `header.dirty_revision`     | `eval.revision.dirty` is true                                                                                                                                                      | `log` at `eval.revision.dirty`                 | `informativeness`, `none`                                                                 |
+| `header.unknown_sample_ids` | `--resolve` only: any sample id in `eval.dataset.sample_ids` absent from the resolved task's dataset                                                                               | `log` at `eval.dataset.sample_ids`             | `dataset`, `major`                                                                        |
 
 `header.unknown_sample_ids` resolves the task with `inspect_audit._resolve.resolve_task` and is the one place the header adapter imports from inspect_audit. It is behind `--resolve` because it needs inspect_evals importable and may download a dataset. Its severity is `major` because it means recorded attempts cannot be joined to the current dataset.
 

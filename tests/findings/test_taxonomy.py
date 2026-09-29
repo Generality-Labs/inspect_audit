@@ -71,19 +71,19 @@ def test_unknown_taxonomy_ref_is_an_error() -> None:
 
 
 def _finding(**overrides: object) -> Finding:
-    data: dict[str, object] = dict(
-        fingerprint="sha256:0",
-        producer="p",
-        rule="r",
-        subject={"eval": "inspect_evals/x", "revision": {"commit": "abc"}},
-        dimension="dataset",
-        severity="minor",
-        status="supported",
-        summary="s",
-        locations=[CodeLocation(role="primary", file="f.py")],
-        run_id="run",
-        source=Source(format="f", record=None),
-    )
+    data: dict[str, object] = {
+        "fingerprint": "sha256:0",
+        "producer": "p",
+        "rule": "r",
+        "subject": {"eval": "inspect_evals/x", "revision": {"commit": "abc"}},
+        "dimension": "dataset",
+        "severity": "minor",
+        "status": "supported",
+        "summary": "s",
+        "locations": [CodeLocation(role="primary", file="f.py")],
+        "run_id": "run",
+        "source": Source(format="f", record=None),
+    }
     data.update(overrides)
     return Finding.model_validate(data)
 

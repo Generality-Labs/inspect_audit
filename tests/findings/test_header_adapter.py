@@ -208,3 +208,24 @@ def test_scorer_location_for_unscored(tmp_path: Path) -> None:
     finding = next(f for f in result.findings if f.rule == "header.unscored_samples")
     assert isinstance(finding.primary_location, ScorerLocation)
     assert finding.primary_location.scorer == "match"
+
+
+def test_findings_carry_the_logs_revision_and_the_run_records_the_comparison(
+    tmp_path: Path,
+) -> None:
+    root = make_root(tmp_path)  # eval.yaml says version 3-A
+    log = _log(tmp_path / "logs", version=2, samples=3)
+    header = read_eval_log(str(log), header_only=True)
+    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log]))
+    finding = next(f for f in result.findings if f.rule == "header.dataset_samples")
+    # the finding is about the code that produced the log, not the checkout being compared against
+    assert finding.subject.task_version is not None and finding.subject.task_version.full == "2"
+    assert finding.subject.revision.commit == (
+        header.eval.revision.commit if header.eval.revision else None
+    )
+    assert finding.subject.task_args == dict(header.eval.task_args or {})
+    # the run says what it compared against
+    assert result.subject.task_version is not None and result.subject.task_version.full == "3-A"
+    comparison = result.inputs["comparison"]
+    assert isinstance(comparison, dict) and comparison["task_version"] == "3-A"
+    assert comparison["commit"] == result.subject.revision.commit

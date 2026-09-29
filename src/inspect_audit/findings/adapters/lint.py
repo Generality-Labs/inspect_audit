@@ -72,9 +72,20 @@ def parse(
     if not packages:
         found = ", ".join(str(p.get("name")) for p in data.get("packages", [])) or "(none)"
         return Run(
-            id=run_id, timestamp=timestamp, producer=PRODUCER, producer_version=version, subject=subject,
-            duration_s=duration_s, inputs=dict(inputs or {}),
-            outcomes=[Outcome(rule=PRODUCER, status="skip", message=f"lint output has no package {package!r}; found {found}")],
+            id=run_id,
+            timestamp=timestamp,
+            producer=PRODUCER,
+            producer_version=version,
+            subject=subject,
+            duration_s=duration_s,
+            inputs=dict(inputs or {}),
+            outcomes=[
+                Outcome(
+                    rule=PRODUCER,
+                    status="skip",
+                    message=f"lint output has no package {package!r}; found {found}",
+                )
+            ],
         )
     entry = packages[0]
     outcomes = [
@@ -90,7 +101,11 @@ def parse(
         code = str(row.get("code") or row.get("rule"))
         dimension, severity = LINT_RULES.get(code, _DEFAULT)
         primary = CodeLocation(
-            role="primary", file=str(row.get("file")), line=row.get("line"), end_line=row.get("end_line"), column=row.get("column")
+            role="primary",
+            file=str(row.get("file")),
+            line=row.get("line"),
+            end_line=row.get("end_line"),
+            column=row.get("column"),
         )
         findings.append(
             Finding(
@@ -109,15 +124,29 @@ def parse(
             )
         )
     return Run(
-        id=run_id, timestamp=timestamp, producer=PRODUCER, producer_version=version, subject=subject,
-        duration_s=duration_s, inputs=dict(inputs or {}), outcomes=outcomes, findings=findings,
+        id=run_id,
+        timestamp=timestamp,
+        producer=PRODUCER,
+        producer_version=version,
+        subject=subject,
+        duration_s=duration_s,
+        inputs=dict(inputs or {}),
+        outcomes=outcomes,
+        findings=findings,
     )
 
 
 def run(target: str, ctx: Context) -> Run:
     """Invoke lint for `target`'s package and parse it. Exit 1 means findings; anything else is a skip."""
     timestamp = utcnow()
-    argv = [*ctx.producers.lint, "--root", str(ctx.ie_root), package_of(target), "--output-format", "json"]
+    argv = [
+        *ctx.producers.lint,
+        "--root",
+        str(ctx.ie_root),
+        package_of(target),
+        "--output-format",
+        "json",
+    ]
     started = time.monotonic()
     try:
         result = run_command(argv, timeout=ctx.producers.timeout_s)
@@ -125,14 +154,39 @@ def run(target: str, ctx: Context) -> Run:
         return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp)
     duration = time.monotonic() - started
     if result.returncode not in (0, 1):
-        return skip_run(PRODUCER, target, ctx, f"lint exit {result.returncode}: {(result.stderr or result.stdout)[-1500:]}", timestamp=timestamp)
+        return skip_run(
+            PRODUCER,
+            target,
+            ctx,
+            f"lint exit {result.returncode}: {(result.stderr or result.stdout)[-1500:]}",
+            timestamp=timestamp,
+        )
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError as ex:
-        return skip_run(PRODUCER, target, ctx, f"lint output is not JSON: {ex}; stderr: {result.stderr[-500:]}", timestamp=timestamp)
+        return skip_run(
+            PRODUCER,
+            target,
+            ctx,
+            f"lint output is not JSON: {ex}; stderr: {result.stderr[-500:]}",
+            timestamp=timestamp,
+        )
     try:
         return parse(
-            data, target, subject_for(target, ctx), timestamp=timestamp, duration_s=duration, inputs={"argv": argv}
+            data,
+            target,
+            subject_for(target, ctx),
+            timestamp=timestamp,
+            duration_s=duration,
+            inputs={"argv": argv},
         )
-    except Exception as ex:  # a producer whose output we cannot read is a skipped producer, not a dead sweep
-        return skip_run(PRODUCER, target, ctx, f"could not parse {PRODUCER} output: {type(ex).__name__}: {ex}", timestamp=timestamp)
+    except (
+        Exception
+    ) as ex:  # a producer whose output we cannot read is a skipped producer, not a dead sweep
+        return skip_run(
+            PRODUCER,
+            target,
+            ctx,
+            f"could not parse {PRODUCER} output: {type(ex).__name__}: {ex}",
+            timestamp=timestamp,
+        )

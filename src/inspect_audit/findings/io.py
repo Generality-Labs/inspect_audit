@@ -80,8 +80,12 @@ def _finding_records(runs: Sequence[Run]) -> list[dict[str, Any]]:
                     "subject_eval": finding.subject.eval,
                     "subject_revision_commit": finding.subject.revision.commit,
                     "subject_revision_package_version": finding.subject.revision.package_version,
-                    "subject_task_version_full": finding.subject.task_version.full if finding.subject.task_version else None,
-                    "subject_dataset_path": finding.subject.dataset.path if finding.subject.dataset else None,
+                    "subject_task_version_full": finding.subject.task_version.full
+                    if finding.subject.task_version
+                    else None,
+                    "subject_dataset_path": finding.subject.dataset.path
+                    if finding.subject.dataset
+                    else None,
                     "taxonomy": finding.taxonomy,
                     "dimension": finding.dimension,
                     "check": finding.check,
@@ -95,7 +99,9 @@ def _finding_records(runs: Sequence[Run]) -> list[dict[str, Any]]:
                     "rule": finding.rule,
                     "source_format": finding.source.format,
                     "source": finding.source.model_dump_json(),
-                    "locations": json.dumps([location.model_dump(mode="json") for location in finding.locations]),
+                    "locations": json.dumps(
+                        [location.model_dump(mode="json") for location in finding.locations]
+                    ),
                 }
             )
     return records

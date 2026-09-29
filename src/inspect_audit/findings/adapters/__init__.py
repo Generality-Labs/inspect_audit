@@ -51,7 +51,13 @@ def run_command(
     merged = {**os.environ, **(env or {})}
     try:
         completed = subprocess.run(
-            list(argv), capture_output=True, text=True, timeout=timeout, cwd=cwd, env=merged, check=False
+            list(argv),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=cwd,
+            env=merged,
+            check=False,
         )
     except FileNotFoundError as ex:
         raise ProducerError(f"producer binary not found: {argv[0]}") from ex
@@ -87,7 +93,11 @@ def task_version_from_yaml(data: Mapping[str, Any]) -> TaskVersion | None:
 def _git(ie_root: Path, *args: str) -> str | None:
     try:
         completed = subprocess.run(
-            ["git", "-C", str(ie_root), *args], capture_output=True, text=True, timeout=30, check=False
+            ["git", "-C", str(ie_root), *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -104,7 +114,11 @@ def repo_revision(ie_root: Path) -> Revision:
         package_version = None
     if commit is None and package_version is None:
         package_version = "unknown"
-    return Revision(commit=commit, package_version=package_version, dirty=None if status is None else bool(status))
+    return Revision(
+        commit=commit,
+        package_version=package_version,
+        dirty=None if status is None else bool(status),
+    )
 
 
 def subject_for(target: str, ctx: Context) -> Subject:

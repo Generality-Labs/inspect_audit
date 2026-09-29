@@ -20,7 +20,9 @@ def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
 
 
 def _sorted_findings(findings: Sequence[Finding]) -> list[Finding]:
-    return sorted(findings, key=lambda f: (_SEVERITY_ORDER[f.severity], f.rule, f.primary_location.key()))
+    return sorted(
+        findings, key=lambda f: (_SEVERITY_ORDER[f.severity], f.rule, f.primary_location.key())
+    )
 
 
 def _finding_line(finding: Finding) -> str:
@@ -44,7 +46,11 @@ def render_eval_summary(runs: Sequence[Run]) -> str:
     subject_rows = [
         ["Revision", subject.revision.commit or "", subject.revision.package_version or ""],
         ["Task version", subject.task_version.full if subject.task_version else "", ""],
-        ["Dataset", (dataset.path if dataset and dataset.path else ""), (dataset.revision if dataset and dataset.revision else "")],
+        [
+            "Dataset",
+            (dataset.path if dataset and dataset.path else ""),
+            (dataset.revision if dataset and dataset.revision else ""),
+        ],
     ]
     parts += [_table(["Subject", "", ""], subject_rows), ""]
 
@@ -67,21 +73,40 @@ def render_eval_summary(runs: Sequence[Run]) -> str:
     parts += [
         "## Findings by producer",
         "",
-        _table(["Producer", "Findings"], [[producer, str(n)] for producer, n in sorted(by_producer.items())]),
+        _table(
+            ["Producer", "Findings"],
+            [[producer, str(n)] for producer, n in sorted(by_producer.items())],
+        ),
         "",
     ]
-    by_dimension = Counter((finding.dimension, finding.severity) for run in runs for finding in run.findings)
+    by_dimension = Counter(
+        (finding.dimension, finding.severity) for run in runs for finding in run.findings
+    )
     dimension_rows = [
         [dimension, severity, str(n)]
-        for (dimension, severity), n in sorted(by_dimension.items(), key=lambda kv: (kv[0][0], _SEVERITY_ORDER[kv[0][1]]))
+        for (dimension, severity), n in sorted(
+            by_dimension.items(), key=lambda kv: (kv[0][0], _SEVERITY_ORDER[kv[0][1]])
+        )
     ]
-    parts += ["## Findings by dimension and severity", "", _table(["Dimension", "Severity", "Findings"], dimension_rows), ""]
+    parts += [
+        "## Findings by dimension and severity",
+        "",
+        _table(["Dimension", "Severity", "Findings"], dimension_rows),
+        "",
+    ]
 
     by_rule = Counter((finding.producer, finding.rule) for run in runs for finding in run.findings)
-    noisy = [(producer, rule, n) for (producer, rule), n in sorted(by_rule.items()) if n > NOISE_THRESHOLD]
+    noisy = [
+        (producer, rule, n)
+        for (producer, rule), n in sorted(by_rule.items())
+        if n > NOISE_THRESHOLD
+    ]
     if noisy:
         parts += ["## Noise", ""]
-        parts += [f"- {producer}: {rule} produced {n} findings; likely a rule that does not fit this eval." for producer, rule, n in noisy]
+        parts += [
+            f"- {producer}: {rule} produced {n} findings; likely a rule that does not fit this eval."
+            for producer, rule, n in noisy
+        ]
         parts.append("")
 
     parts += ["## Findings", ""]

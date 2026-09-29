@@ -19,7 +19,9 @@ from inspect_audit.findings.models import (
 def subject() -> Subject:
     return Subject(
         eval="inspect_evals/stereoset",
-        revision=Revision(commit="5687c5cdf", package_version="0.21.1.dev24+g5687c5cdf", dirty=False),
+        revision=Revision(
+            commit="5687c5cdf", package_version="0.21.1.dev24+g5687c5cdf", dirty=False
+        ),
         task_version=TaskVersion.parse("3-A"),
     )
 
@@ -36,7 +38,9 @@ def finding(subject: Subject) -> Finding:
         status="supported",
         summary="filter_duplicate_ids() without max_duplicates= or reason=",
         locations=[
-            CodeLocation(role="primary", file="src/inspect_evals/stereoset/stereoset.py", line=64, column=15)
+            CodeLocation(
+                role="primary", file="src/inspect_evals/stereoset/stereoset.py", line=64, column=15
+            )
         ],
         run_id="lint-1",
         source=Source(format="inspect_evals_lint.Diagnostic@0.7.0", record={"code": "IEBP008"}),

@@ -77,20 +77,31 @@ def parse(
     summary = json.loads((scan_dir / "scan_summary.json").read_text())
     version = str(summary.get("version") or "unknown")
     dataset = DatasetRef(
-        path=summary.get("dataset_name"), config=summary.get("config"), split=summary.get("split"), revision=summary.get("revision")
+        path=summary.get("dataset_name"),
+        config=summary.get("config"),
+        split=summary.get("split"),
+        revision=summary.get("revision"),
     )
     subject = subject.model_copy(update={"dataset": dataset})
     outcomes: list[Outcome] = []
     findings: list[Finding] = []
     for scanner, counts in sorted((summary.get("by_scanner") or {}).items()):
         total = int((counts or {}).get("total", 0))
-        outcomes.append(Outcome(rule=scanner, status="fail" if total else "pass", message=f"{total} finding(s)"))
+        outcomes.append(
+            Outcome(rule=scanner, status="fail" if total else "pass", message=f"{total} finding(s)")
+        )
         path = scan_dir / f"{scanner}.json"
         if not path.is_file():
             continue
         for row in _rows(path):
-            sample_id = str(row.get("sample_id") if row.get("sample_id") is not None else row.get("sample_index"))
-            primary = SampleLocation(role="primary", dataset=dataset.path or "", sample_id=sample_id)
+            sample_id = str(
+                row.get("sample_id")
+                if row.get("sample_id") is not None
+                else row.get("sample_index")
+            )
+            primary = SampleLocation(
+                role="primary", dataset=dataset.path or "", sample_id=sample_id
+            )
             explanation = str(row.get("explanation") or scanner)
             findings.append(
                 Finding(
@@ -109,8 +120,15 @@ def parse(
                 )
             )
     return Run(
-        id=run_id, timestamp=timestamp, producer=PRODUCER, producer_version=version, subject=subject,
-        duration_s=duration_s, inputs=dict(inputs or {}), outcomes=outcomes, findings=findings,
+        id=run_id,
+        timestamp=timestamp,
+        producer=PRODUCER,
+        producer_version=version,
+        subject=subject,
+        duration_s=duration_s,
+        inputs=dict(inputs or {}),
+        outcomes=outcomes,
+        findings=findings,
     )
 
 
@@ -119,7 +137,13 @@ def run(target: str, ctx: Context) -> Run:
     timestamp = utcnow()
     source = hf_asset(eval_yaml(ctx.ie_root, target))
     if source is None:
-        return skip_run(PRODUCER, target, ctx, "no huggingface asset in eval.yaml external_assets", timestamp=timestamp)
+        return skip_run(
+            PRODUCER,
+            target,
+            ctx,
+            "no huggingface asset in eval.yaml external_assets",
+            timestamp=timestamp,
+        )
     overrides = DATASET_OVERRIDES.get(target, {})
     ctx.out_dir.mkdir(parents=True, exist_ok=True)
     scan_dir = Path(tempfile.mkdtemp(prefix="inspect_dataset_", dir=ctx.out_dir))
@@ -135,13 +159,28 @@ def run(target: str, ctx: Context) -> Run:
     duration = time.monotonic() - started
     if result.returncode != 0 or not (scan_dir / "scan_summary.json").is_file():
         return skip_run(
-            PRODUCER, target, ctx,
-            f"inspect-dataset exit {result.returncode}: {(result.stderr or result.stdout)[-1500:]}", timestamp=timestamp,
+            PRODUCER,
+            target,
+            ctx,
+            f"inspect-dataset exit {result.returncode}: {(result.stderr or result.stdout)[-1500:]}",
+            timestamp=timestamp,
         )
     try:
         return parse(
-            scan_dir, target, subject_for(target, ctx), timestamp=timestamp, duration_s=duration,
+            scan_dir,
+            target,
+            subject_for(target, ctx),
+            timestamp=timestamp,
+            duration_s=duration,
             inputs={"argv": argv, "scan_dir": str(scan_dir)},
         )
-    except Exception as ex:  # a producer whose output we cannot read is a skipped producer, not a dead sweep
-        return skip_run(PRODUCER, target, ctx, f"could not parse {PRODUCER} output: {type(ex).__name__}: {ex}", timestamp=timestamp)
+    except (
+        Exception
+    ) as ex:  # a producer whose output we cannot read is a skipped producer, not a dead sweep
+        return skip_run(
+            PRODUCER,
+            target,
+            ctx,
+            f"could not parse {PRODUCER} output: {type(ex).__name__}: {ex}",
+            timestamp=timestamp,
+        )

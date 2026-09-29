@@ -23,14 +23,22 @@ from inspect_audit.findings.models import LogLocation, ScorerLocation
 STAMP = datetime(2026, 9, 25, 4, 20, 50, tzinfo=UTC)
 
 
-def _log(log_dir: Path, *, name: str = "stereoset", version: int | str = 3, samples: int = 3) -> Path:
+def _log(
+    log_dir: Path, *, name: str = "stereoset", version: int | str = 3, samples: int = 3
+) -> Path:
     task = Task(
         name=name,
-        dataset=MemoryDataset([Sample(id=i, input=f"q{i}", target="ANSWER") for i in range(1, samples + 1)]),
+        dataset=MemoryDataset(
+            [Sample(id=i, input=f"q{i}", target="ANSWER") for i in range(1, samples + 1)]
+        ),
         scorer=match(),
         version=version,
     )
-    return Path(eval(task, model="mockllm/model", log_dir=str(log_dir), display="none")[0].location.removeprefix("file://"))
+    return Path(
+        eval(task, model="mockllm/model", log_dir=str(log_dir), display="none")[
+            0
+        ].location.removeprefix("file://")
+    )
 
 
 def test_matching_on_registry_name_or_task(tmp_path: Path) -> None:
@@ -38,7 +46,10 @@ def test_matching_on_registry_name_or_task(tmp_path: Path) -> None:
     matched = matching_headers(logs, "inspect_evals/stereoset")
     assert [path.name for path, _ in matched] == [logs[0].name]
     # an inline Task has no registry name, so this match came from eval.task
-    assert read_eval_log(str(logs[0]), header_only=True).eval.task_registry_name in (None, "stereoset")
+    assert read_eval_log(str(logs[0]), header_only=True).eval.task_registry_name in (
+        None,
+        "stereoset",
+    )
 
 
 def test_dataset_samples_mismatch_fires(tmp_path: Path) -> None:
@@ -63,7 +74,7 @@ def test_dataset_samples_uses_the_matching_task_entry(tmp_path: Path) -> None:
     # silent; only matching on the log's own task name (stereoset: 2123) makes the check fire
     root = make_root(tmp_path)
     (root / "src" / "inspect_evals" / "stereoset" / "eval.yaml").write_text(
-        "title: StereoSet\nversion: \"3-A\"\ntasks:\n  - name: other_task\n    dataset_samples: 3\n"
+        'title: StereoSet\nversion: "3-A"\ntasks:\n  - name: other_task\n    dataset_samples: 3\n'
         "  - name: stereoset\n    dataset_samples: 2123\n"
     )
     log = _log(tmp_path / "logs", samples=3)
@@ -77,7 +88,7 @@ def test_multi_task_package_matches_logs_by_yaml_task_names(tmp_path: Path) -> N
     package = root / "src" / "inspect_evals" / "lab_bench"
     package.mkdir(parents=True)
     (package / "eval.yaml").write_text(
-        "title: LAB-Bench\nversion: \"1-A\"\ntasks:\n  - name: lab_bench_litqa\n    dataset_samples: 199\n"
+        'title: LAB-Bench\nversion: "1-A"\ntasks:\n  - name: lab_bench_litqa\n    dataset_samples: 199\n'
         "  - name: lab_bench_suppqa\n    dataset_samples: 82\n"
     )
     log = _log(tmp_path / "logs", name="lab_bench_litqa", samples=3)
@@ -87,7 +98,9 @@ def test_multi_task_package_matches_logs_by_yaml_task_names(tmp_path: Path) -> N
     assert "199" in finding.summary
 
 
-def test_resolve_skips_when_the_resolved_dataset_has_no_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_skips_when_the_resolved_dataset_has_no_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import inspect_audit._resolve as resolve_module
 
     root = make_root(tmp_path)
@@ -100,7 +113,9 @@ def test_resolve_skips_when_the_resolved_dataset_has_no_ids(tmp_path: Path, monk
     assert skip.status == "skip" and "no ids" in (skip.message or "")
 
 
-def test_resolve_compares_logged_ids_against_the_resolved_dataset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_compares_logged_ids_against_the_resolved_dataset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import inspect_audit._resolve as resolve_module
 
     root = make_root(tmp_path)
@@ -133,7 +148,9 @@ def test_no_drift_with_one_version(tmp_path: Path) -> None:
 
 def test_no_logs_is_a_skip(tmp_path: Path) -> None:
     root = make_root(tmp_path)
-    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[_log(tmp_path / "x", name="hle")]))
+    result = run(
+        "inspect_evals/stereoset", Context(ie_root=root, logs=[_log(tmp_path / "x", name="hle")])
+    )
     assert [o.status for o in result.outcomes] == ["skip"]
     assert "no logs" in (result.outcomes[0].message or "")
 
@@ -143,7 +160,12 @@ def test_unscored_and_dirty_checks_exist(tmp_path: Path) -> None:
     log = _log(tmp_path / "logs")
     result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log]))
     rules = {o.rule for o in result.outcomes}
-    assert {"header.dataset_samples", "header.version_drift", "header.unscored_samples", "header.dirty_revision"} <= rules
+    assert {
+        "header.dataset_samples",
+        "header.version_drift",
+        "header.unscored_samples",
+        "header.dirty_revision",
+    } <= rules
     assert "header.unknown_sample_ids" not in rules  # --resolve off
 
 
@@ -152,7 +174,14 @@ def test_unknown_sample_ids_with_resolved_ids(tmp_path: Path) -> None:
     log = _log(tmp_path / "logs", samples=3)
     header = read_eval_log(str(log), header_only=True)
     subject = subject_for("inspect_evals/stereoset", Context(ie_root=root))
-    result = parse([(log, header)], "inspect_evals/stereoset", subject, {}, timestamp=STAMP, resolved_ids={"1", "2"})
+    result = parse(
+        [(log, header)],
+        "inspect_evals/stereoset",
+        subject,
+        {},
+        timestamp=STAMP,
+        resolved_ids={"1", "2"},
+    )
     finding = next(f for f in result.findings if f.rule == "header.unknown_sample_ids")
     assert finding.severity == "major"
     assert "1 of 3" in finding.summary

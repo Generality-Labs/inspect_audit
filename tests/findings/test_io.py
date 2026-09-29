@@ -54,7 +54,11 @@ def test_findings_df_is_empty_but_typed_without_findings(run: Run) -> None:
 def test_runs_df_counts_outcomes(run: Run) -> None:
     run = run.model_copy(
         update={
-            "outcomes": [Outcome(rule="a", status="pass"), Outcome(rule="b", status="fail"), Outcome(rule="c", status="skip")],
+            "outcomes": [
+                Outcome(rule="a", status="pass"),
+                Outcome(rule="b", status="fail"),
+                Outcome(rule="c", status="skip"),
+            ],
             "duration_s": 1.5,
         }
     )

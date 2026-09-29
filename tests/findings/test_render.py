@@ -23,11 +23,15 @@ def _noisy(run: Run, count: int) -> Run:
         )
         for i in range(count)
     ]
-    return run.model_copy(update={"id": "dataset-1", "producer": "inspect_dataset", "findings": noisy})
+    return run.model_copy(
+        update={"id": "dataset-1", "producer": "inspect_dataset", "findings": noisy}
+    )
 
 
 def test_eval_summary_has_subject_outcomes_and_findings(run: Run) -> None:
-    run = run.model_copy(update={"outcomes": [Outcome(rule="IEBP008", status="fail", message="dup filter")]})
+    run = run.model_copy(
+        update={"outcomes": [Outcome(rule="IEBP008", status="fail", message="dup filter")]}
+    )
     text = render_eval_summary([run])
     assert text.startswith("# inspect_evals/stereoset\n")
     assert "| Revision | 5687c5cdf" in text
@@ -35,7 +39,10 @@ def test_eval_summary_has_subject_outcomes_and_findings(run: Run) -> None:
     assert "| inspect_evals_lint | IEBP008 | fail | dup filter |" in text
     assert "| inspect_evals_lint | 1 |" in text
     assert "| dataset | minor | 1 |" in text
-    assert "- minor · dataset · IEBP008 · `code:src/inspect_evals/stereoset/stereoset.py:64` · filter_duplicate_ids() without max_duplicates= or reason=" in text
+    assert (
+        "- minor · dataset · IEBP008 · `code:src/inspect_evals/stereoset/stereoset.py:64` · filter_duplicate_ids() without max_duplicates= or reason="
+        in text
+    )
 
 
 def test_eval_summary_flags_noisy_rules(run: Run) -> None:
@@ -46,8 +53,14 @@ def test_eval_summary_flags_noisy_rules(run: Run) -> None:
 
 def test_eval_summary_marks_a_skipped_producer(run: Run) -> None:
     skipped = run.model_copy(
-        update={"id": "dataset-1", "producer": "inspect_dataset", "findings": [],
-                "outcomes": [Outcome(rule="inspect_dataset", status="skip", message="no huggingface asset")]}
+        update={
+            "id": "dataset-1",
+            "producer": "inspect_dataset",
+            "findings": [],
+            "outcomes": [
+                Outcome(rule="inspect_dataset", status="skip", message="no huggingface asset")
+            ],
+        }
     )
     text = render_eval_summary([run, skipped])
     assert "| inspect_dataset | inspect_dataset | skip | no huggingface asset |" in text
@@ -55,7 +68,13 @@ def test_eval_summary_marks_a_skipped_producer(run: Run) -> None:
 
 
 def test_sweep_summary_one_row_per_eval(run: Run) -> None:
-    other = run.model_copy(update={"id": "lint-2", "subject": run.subject.model_copy(update={"eval": "inspect_evals/hle"}), "findings": []})
+    other = run.model_copy(
+        update={
+            "id": "lint-2",
+            "subject": run.subject.model_copy(update={"eval": "inspect_evals/hle"}),
+            "findings": [],
+        }
+    )
     text = render_sweep_summary({"inspect_evals/hle": [other], "inspect_evals/stereoset": [run]})
     lines = [line for line in text.splitlines() if line.startswith("| inspect_evals/")]
     assert lines[0].startswith("| inspect_evals/hle |")

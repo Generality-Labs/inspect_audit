@@ -29,11 +29,17 @@ def test_parse_summary_outcomes_and_findings(tmp_path: Path) -> None:
     result = parse(FIXTURE, "inspect_evals/stereoset", subject, timestamp=STAMP)
     assert result.producer == PRODUCER
     assert result.subject.dataset is not None
-    assert (result.subject.dataset.path, result.subject.dataset.config, result.subject.dataset.split) == (
-        "McGill-NLP/stereoset", "intersentence", "validation")
+    assert (
+        result.subject.dataset.path,
+        result.subject.dataset.config,
+        result.subject.dataset.split,
+    ) == ("McGill-NLP/stereoset", "intersentence", "validation")
     assert result.subject.dataset.revision is None
     assert sorted((o.rule, o.status) for o in result.outcomes) == [
-        ("answer_length", "fail"), ("duplicate_questions", "fail"), ("inconsistent_format", "fail")]
+        ("answer_length", "fail"),
+        ("duplicate_questions", "fail"),
+        ("inconsistent_format", "fail"),
+    ]
     # answer_length.json is absent from the fixture on size grounds; its 2,123 rows are counted in the
     # outcome but produce no findings here
     assert len(result.findings) == 18 + 28
@@ -59,8 +65,12 @@ def test_hf_asset_reads_eval_yaml() -> None:
 
 def test_overrides_include_stereoset() -> None:
     assert DATASET_OVERRIDES["inspect_evals/stereoset"] == {
-        "config": "intersentence", "split": "validation",
-        "question_field": "context", "answer_field": "sentences", "id_field": "id"}
+        "config": "intersentence",
+        "split": "validation",
+        "question_field": "context",
+        "answer_field": "sentences",
+        "id_field": "id",
+    }
 
 
 def test_run_without_an_asset_is_a_skip(tmp_path: Path) -> None:
@@ -73,7 +83,11 @@ def test_run_without_an_asset_is_a_skip(tmp_path: Path) -> None:
 def test_run_with_a_stubbed_scan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = make_root(tmp_path, extra=ASSET)
     monkeypatch.setenv("STUB_OUTPUT_DIR", str(FIXTURE))
-    ctx = Context(ie_root=root, out_dir=tmp_path / "out", producers=ProducerConfig(dataset=(sys.executable, str(STUBS / "echo_file.py"))))
+    ctx = Context(
+        ie_root=root,
+        out_dir=tmp_path / "out",
+        producers=ProducerConfig(dataset=(sys.executable, str(STUBS / "echo_file.py"))),
+    )
     result = run("inspect_evals/stereoset", ctx)
     assert len(result.findings) == 46
     argv = result.inputs["argv"]
@@ -83,7 +97,11 @@ def test_run_with_a_stubbed_scan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
 def test_run_with_a_failing_scan_is_a_skip(tmp_path: Path) -> None:
     root = make_root(tmp_path, extra=ASSET)
-    ctx = Context(ie_root=root, out_dir=tmp_path / "out", producers=ProducerConfig(dataset=(sys.executable, str(STUBS / "fail.py"))))
+    ctx = Context(
+        ie_root=root,
+        out_dir=tmp_path / "out",
+        producers=ProducerConfig(dataset=(sys.executable, str(STUBS / "fail.py"))),
+    )
     result = run("inspect_evals/stereoset", ctx)
     assert result.outcomes[0].status == "skip"
     assert "boom" in (result.outcomes[0].message or "")
@@ -95,7 +113,11 @@ def test_run_with_malformed_scan_is_a_skip(tmp_path: Path, monkeypatch: pytest.M
     bad.mkdir()
     (bad / "scan_summary.json").write_text("[]")  # valid JSON, wrong shape
     monkeypatch.setenv("STUB_OUTPUT_DIR", str(bad))
-    ctx = Context(ie_root=root, out_dir=tmp_path / "out", producers=ProducerConfig(dataset=(sys.executable, str(STUBS / "echo_file.py"))))
+    ctx = Context(
+        ie_root=root,
+        out_dir=tmp_path / "out",
+        producers=ProducerConfig(dataset=(sys.executable, str(STUBS / "echo_file.py"))),
+    )
     result = run("inspect_evals/stereoset", ctx)
     assert result.findings == []
     assert result.outcomes[0].status == "skip"

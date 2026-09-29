@@ -64,7 +64,9 @@ def _header_task(header: EvalLog) -> str | None:
     return _tail(header.eval.task_registry_name) or _tail(header.eval.task)
 
 
-def matching_headers(logs: Sequence[Path], target: str, names: set[str] | None = None) -> list[tuple[Path, EvalLog]]:
+def matching_headers(
+    logs: Sequence[Path], target: str, names: set[str] | None = None
+) -> list[tuple[Path, EvalLog]]:
     """Headers whose registry name or task name is one of `names` (default: the target's package name).
 
     Multi-task packages such as lab_bench have no task named after the package, so callers pass the
@@ -86,7 +88,11 @@ def _declared_samples(yaml_data: Mapping[str, Any], task_name: str | None) -> in
     """`dataset_samples` for the eval.yaml task entry named `task_name`."""
     tasks = yaml_data.get("tasks")
     for entry in tasks if isinstance(tasks, list) else []:
-        if isinstance(entry, dict) and entry.get("name") == task_name and isinstance(entry.get("dataset_samples"), int):
+        if (
+            isinstance(entry, dict)
+            and entry.get("name") == task_name
+            and isinstance(entry.get("dataset_samples"), int)
+        ):
             return int(entry["dataset_samples"])
     return None
 
@@ -98,9 +104,13 @@ class _Builder:
         self.findings: list[Finding] = []
 
     def outcome(self, rule: str, fired: bool, message: str | None = None) -> None:
-        self.outcomes.append(Outcome(rule=rule, status="fail" if fired else "pass", message=message))
+        self.outcomes.append(
+            Outcome(rule=rule, status="fail" if fired else "pass", message=message)
+        )
 
-    def finding(self, rule: str, summary: str, locations: list[AnyLocation], header: EvalLog) -> None:
+    def finding(
+        self, rule: str, summary: str, locations: list[AnyLocation], header: EvalLog
+    ) -> None:
         dimension, severity = _RULES[rule]
         primary = next(location for location in locations if location.role == "primary")
         self.findings.append(
@@ -116,7 +126,9 @@ class _Builder:
                 summary=summary,
                 locations=locations,
                 run_id=self.run_id,
-                source=Source(format="inspect_ai.log.EvalSpec", record=None, eval_spec=eval_spec_dict(header)),
+                source=Source(
+                    format="inspect_ai.log.EvalSpec", record=None, eval_spec=eval_spec_dict(header)
+                ),
             )
         )
 
@@ -145,12 +157,26 @@ def parse(
             build.finding(
                 "header.dataset_samples",
                 f"log records {actual} dataset samples; eval.yaml declares {declared}",
-                [LogLocation(role="primary", eval_id=header.eval.eval_id, path="eval.dataset.samples", location_hint=str(path), quote=str(actual))],
+                [
+                    LogLocation(
+                        role="primary",
+                        eval_id=header.eval.eval_id,
+                        path="eval.dataset.samples",
+                        location_hint=str(path),
+                        quote=str(actual),
+                    )
+                ],
                 header,
             )
-    build.outcome("header.dataset_samples", fired, None if any_declared else "eval.yaml declares no dataset_samples for these tasks")
+    build.outcome(
+        "header.dataset_samples",
+        fired,
+        None if any_declared else "eval.yaml declares no dataset_samples for these tasks",
+    )
 
-    versions = {(str(h.eval.task_version), (h.eval.packages or {}).get("inspect_evals")) for _, h in headers}
+    versions = {
+        (str(h.eval.task_version), (h.eval.packages or {}).get("inspect_evals")) for _, h in headers
+    }
     if len(versions) > 1:
         newest = max(headers, key=lambda pair: str(pair[1].eval.created))
         locations: list[AnyLocation] = [
@@ -180,7 +206,14 @@ def parse(
                 build.finding(
                     "header.unscored_samples",
                     f"scorer {score.name} left {score.unscored_samples} of {total if total is not None else '?'} samples unscored",
-                    [ScorerLocation(role="primary", eval_id=header.eval.eval_id, scorer=score.name, quote=str(score.unscored_samples))],
+                    [
+                        ScorerLocation(
+                            role="primary",
+                            eval_id=header.eval.eval_id,
+                            scorer=score.name,
+                            quote=str(score.unscored_samples),
+                        )
+                    ],
                     header,
                 )
     build.outcome("header.unscored_samples", unscored_fired)
@@ -192,7 +225,15 @@ def parse(
             build.finding(
                 "header.dirty_revision",
                 f"log was produced from a dirty checkout of {header.eval.revision.origin} at {header.eval.revision.commit}",
-                [LogLocation(role="primary", eval_id=header.eval.eval_id, path="eval.revision.dirty", location_hint=str(path), quote="true")],
+                [
+                    LogLocation(
+                        role="primary",
+                        eval_id=header.eval.eval_id,
+                        path="eval.revision.dirty",
+                        location_hint=str(path),
+                        quote="true",
+                    )
+                ],
                 header,
             )
     build.outcome("header.dirty_revision", dirty_fired)
@@ -207,18 +248,32 @@ def parse(
                 build.finding(
                     "header.unknown_sample_ids",
                     f"{len(missing)} of {len(logged)} logged sample ids are not in the resolved dataset (e.g. {missing[0]})",
-                    [LogLocation(role="primary", eval_id=header.eval.eval_id, path="eval.dataset.sample_ids", location_hint=str(path))],
+                    [
+                        LogLocation(
+                            role="primary",
+                            eval_id=header.eval.eval_id,
+                            path="eval.dataset.sample_ids",
+                            location_hint=str(path),
+                        )
+                    ],
                     header,
                 )
         build.outcome("header.unknown_sample_ids", unknown_fired)
 
     return Run(
-        id=run_id, timestamp=timestamp, producer=PRODUCER, subject=subject,
-        inputs={"logs": [str(path) for path, _ in headers]}, outcomes=build.outcomes, findings=build.findings,
+        id=run_id,
+        timestamp=timestamp,
+        producer=PRODUCER,
+        subject=subject,
+        inputs={"logs": [str(path) for path, _ in headers]},
+        outcomes=build.outcomes,
+        findings=build.findings,
     )
 
 
-def _resolved_ids(target: str, headers: Sequence[tuple[Path, EvalLog]]) -> tuple[set[str] | None, str | None]:
+def _resolved_ids(
+    target: str, headers: Sequence[tuple[Path, EvalLog]]
+) -> tuple[set[str] | None, str | None]:
     """The resolved dataset's sample ids, or None with the reason they cannot be compared."""
     from inspect_audit._resolve import resolve_task
 
@@ -229,7 +284,10 @@ def _resolved_ids(target: str, headers: Sequence[tuple[Path, EvalLog]]) -> tuple
     except Exception as ex:
         return None, f"could not resolve the task to compare sample ids: {type(ex).__name__}: {ex}"
     if any(i is None for i in ids):
-        return None, "the resolved dataset has samples with no ids; Inspect assigns them at run time, so logged ids cannot be compared"
+        return (
+            None,
+            "the resolved dataset has samples with no ids; Inspect assigns them at run time, so logged ids cannot be compared",
+        )
     return {str(i) for i in ids}, None
 
 
@@ -239,9 +297,24 @@ def run(target: str, ctx: Context) -> Run:
     yaml_data = eval_yaml(ctx.ie_root, target)
     headers = matching_headers(ctx.logs, target, task_names(yaml_data, target))
     if not headers:
-        return skip_run(PRODUCER, target, ctx, f"no logs for target {target} among {len(ctx.logs)} file(s)", timestamp=timestamp)
+        return skip_run(
+            PRODUCER,
+            target,
+            ctx,
+            f"no logs for target {target} among {len(ctx.logs)} file(s)",
+            timestamp=timestamp,
+        )
     resolved, reason = _resolved_ids(target, headers) if ctx.resolve else (None, None)
-    result = parse(headers, target, subject_for(target, ctx), yaml_data, timestamp=timestamp, resolved_ids=resolved)
+    result = parse(
+        headers,
+        target,
+        subject_for(target, ctx),
+        yaml_data,
+        timestamp=timestamp,
+        resolved_ids=resolved,
+    )
     if ctx.resolve and resolved is None:
-        result.outcomes.append(Outcome(rule="header.unknown_sample_ids", status="skip", message=reason))
+        result.outcomes.append(
+            Outcome(rule="header.unknown_sample_ids", status="skip", message=reason)
+        )
     return result

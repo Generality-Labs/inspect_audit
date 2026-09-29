@@ -57,11 +57,13 @@ async def _fetch_page_via_client(page: int, limit: int) -> dict[str, Any]:
     try:
         import hawk.client
     except ImportError as ex:  # pragma: no cover - install-time problem
-        raise ProducerError("finding Hawk eval sets needs the hawk package: pip install 'inspect_audit[remote]'") from ex
+        raise ProducerError(
+            "finding Hawk eval sets needs the hawk package: pip install 'inspect_audit[remote]'"
+        ) from ex
     async with hawk.client.HawkClient() as client:
         # the public get_eval_sets() has no page argument and the server caps a page at 500,
         # so walk the endpoint directly; it is the same request the client makes
-        data = await client._request_json(  # noqa: SLF001 - no public paging API
+        data = await client._request_json(
             "GET", "/meta/eval-sets", params=[("page", str(page)), ("limit", str(limit))]
         )
     if not isinstance(data, dict):
@@ -107,7 +109,9 @@ def download_eval_set(eval_set_id: str, cache_dir: Path, producers: ProducerConf
     argv = [*producers.hawk, "download", eval_set_id, "-o", str(target)]
     result = run_command(argv, timeout=producers.timeout_s)
     if result.returncode != 0:
-        raise ProducerError(f"hawk download {eval_set_id} failed (exit {result.returncode}): {(result.stderr or result.stdout)[-1500:]}")
+        raise ProducerError(
+            f"hawk download {eval_set_id} failed (exit {result.returncode}): {(result.stderr or result.stdout)[-1500:]}"
+        )
     return sorted(target.rglob("*.eval"))
 
 
@@ -156,8 +160,14 @@ def download_artifacts(eval_set_id: str, dest_dir: Path, producers: ProducerConf
     argv = [*producers.hawk, "download-artifacts", eval_set_id, "-o", str(target)]
     result = run_command(argv, timeout=producers.timeout_s)
     if result.returncode != 0:
-        hint = " (the 3.5.0 CLI extra omits aiofiles; try INSPECT_AUDIT_HAWK_CMD='uv run --with aiofiles hawk')" if "aiofiles" in (result.stderr or "") else ""
-        raise ProducerError(f"hawk download-artifacts {eval_set_id} failed (exit {result.returncode}){hint}: {(result.stderr or result.stdout)[-1500:]}")
+        hint = (
+            " (the 3.5.0 CLI extra omits aiofiles; try INSPECT_AUDIT_HAWK_CMD='uv run --with aiofiles hawk')"
+            if "aiofiles" in (result.stderr or "")
+            else ""
+        )
+        raise ProducerError(
+            f"hawk download-artifacts {eval_set_id} failed (exit {result.returncode}){hint}: {(result.stderr or result.stdout)[-1500:]}"
+        )
     return sorted(p for p in target.rglob("*") if p.is_file())
 
 

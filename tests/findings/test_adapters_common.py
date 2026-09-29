@@ -30,11 +30,29 @@ def make_root(tmp_path: Path, *, version: str = "3-A", extra: str = "") -> Path:
     package = root / "src" / "inspect_evals" / "stereoset"
     package.mkdir(parents=True)
     (package / "eval.yaml").write_text(
-        f"title: StereoSet\nversion: \"{version}\"\ntasks:\n  - name: stereoset\n    dataset_samples: 2123\n{extra}"
+        f'title: StereoSet\nversion: "{version}"\ntasks:\n  - name: stereoset\n    dataset_samples: 2123\n{extra}'
     )
     subprocess.run(["git", "init", "-q", str(root)], check=True)
-    subprocess.run(["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t", "add", "."], check=True)
-    subprocess.run(["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t", "add", "."],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        ],
+        check=True,
+    )
     return root
 
 
@@ -84,7 +102,9 @@ def test_repo_revision_reads_git(tmp_path: Path) -> None:
 def test_repo_revision_without_git_uses_package_version(tmp_path: Path) -> None:
     revision = repo_revision(tmp_path)
     assert revision.commit is None
-    assert revision.package_version is not None  # inspect_evals is not installed here; the fallback is "unknown"
+    assert (
+        revision.package_version is not None
+    )  # inspect_evals is not installed here; the fallback is "unknown"
 
 
 def test_subject_for(tmp_path: Path) -> None:
@@ -96,20 +116,34 @@ def test_subject_for(tmp_path: Path) -> None:
 
 def test_run_id_is_unique_per_producer_target_time() -> None:
     stamp = datetime(2026, 9, 25, 4, 20, 50, tzinfo=UTC)
-    assert new_run_id("inspect_evals_lint", "inspect_evals/stereoset", stamp) == "inspect_evals_lint-20260925T042050Z-inspect-evals-stereoset"
+    assert (
+        new_run_id("inspect_evals_lint", "inspect_evals/stereoset", stamp)
+        == "inspect_evals_lint-20260925T042050Z-inspect-evals-stereoset"
+    )
 
 
 def test_skip_run(tmp_path: Path) -> None:
     root = make_root(tmp_path)
-    run = skip_run("inspect_dataset", "inspect_evals/stereoset", make_ctx(root, tmp_path), "no huggingface asset")
+    run = skip_run(
+        "inspect_dataset",
+        "inspect_evals/stereoset",
+        make_ctx(root, tmp_path),
+        "no huggingface asset",
+    )
     assert run.findings == []
-    assert [(o.rule, o.status, o.message) for o in run.outcomes] == [("inspect_dataset", "skip", "no huggingface asset")]
+    assert [(o.rule, o.status, o.message) for o in run.outcomes] == [
+        ("inspect_dataset", "skip", "no huggingface asset")
+    ]
 
 
 def test_run_command_captures_output(tmp_path: Path) -> None:
     payload = tmp_path / "payload.txt"
     payload.write_text("hello")
-    result = run_command([sys.executable, str(STUBS / "echo_file.py")], timeout=30, env={"STUB_OUTPUT_FILE": str(payload)})
+    result = run_command(
+        [sys.executable, str(STUBS / "echo_file.py")],
+        timeout=30,
+        env={"STUB_OUTPUT_FILE": str(payload)},
+    )
     assert (result.returncode, result.stdout) == (0, "hello")
 
 

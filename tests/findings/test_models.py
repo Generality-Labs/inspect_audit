@@ -27,19 +27,33 @@ SCHEMA_DIR = Path(models.__file__).parent / "schema"
 def test_run_round_trips_through_json(run: Run) -> None:
     again = Run.model_validate_json(run.model_dump_json())
     assert again == run
-    assert again.findings[0].primary_location.key() == "code:src/inspect_evals/stereoset/stereoset.py:64"
+    assert (
+        again.findings[0].primary_location.key()
+        == "code:src/inspect_evals/stereoset/stereoset.py:64"
+    )
 
 
 def test_location_union_discriminates_on_kind() -> None:
     data = {
-        "kind": "transcript", "role": "primary", "eval_id": "E", "sample_uuid": "U", "message_id": "M",
+        "kind": "transcript",
+        "role": "primary",
+        "eval_id": "E",
+        "sample_uuid": "U",
+        "message_id": "M",
     }
     location = Finding.model_validate(
         {
-            "fingerprint": "sha256:0", "producer": "p", "rule": "r",
+            "fingerprint": "sha256:0",
+            "producer": "p",
+            "rule": "r",
             "subject": {"eval": "inspect_evals/x", "revision": {"commit": "abc"}},
-            "dimension": "grading", "severity": "none", "status": "hypothesis", "summary": "s",
-            "locations": [data], "run_id": "run", "source": {"format": "f", "record": None},
+            "dimension": "grading",
+            "severity": "none",
+            "status": "hypothesis",
+            "summary": "s",
+            "locations": [data],
+            "run_id": "run",
+            "source": {"format": "f", "record": None},
         }
     ).locations[0]
     assert isinstance(location, TranscriptLocation)
@@ -85,7 +99,9 @@ def test_task_version_parse(text: str, comparability: int | None, interface: str
 
 def test_location_keys() -> None:
     assert SampleLocation(dataset="d", sample_id="s").key() == "sample:d:s"
-    assert LogLocation(eval_id="E", path="eval.dataset.samples").key() == "log:E:eval.dataset.samples"
+    assert (
+        LogLocation(eval_id="E", path="eval.dataset.samples").key() == "log:E:eval.dataset.samples"
+    )
     assert CodeLocation(file="f.py").key() == "code:f.py:0"
 
 
@@ -94,13 +110,17 @@ def test_locations_allow_extra_keys() -> None:
     assert location.model_dump()["snippet"] == "x = 1"
 
 
-@pytest.mark.parametrize(("name", "model"), [("finding.schema.json", Finding), ("run.schema.json", Run)])
+@pytest.mark.parametrize(
+    ("name", "model"), [("finding.schema.json", Finding), ("run.schema.json", Run)]
+)
 def test_schema_files_are_current(name: str, model: type[Finding] | type[Run]) -> None:
     expected = json.dumps(model.model_json_schema(), indent=2, sort_keys=True) + "\n"
     path = SCHEMA_DIR / name
     if os.environ.get("INSPECT_AUDIT_UPDATE_SCHEMA"):
         path.write_text(expected)
-    assert path.read_text() == expected, f"run INSPECT_AUDIT_UPDATE_SCHEMA=1 pytest {__file__} to regenerate {name}"
+    assert path.read_text() == expected, (
+        f"run INSPECT_AUDIT_UPDATE_SCHEMA=1 pytest {__file__} to regenerate {name}"
+    )
 
 
 def test_source_keeps_record_verbatim() -> None:

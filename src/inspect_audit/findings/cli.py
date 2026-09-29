@@ -43,11 +43,16 @@ def collect_logs(
         if path.is_file():
             paths.append(path)
         else:
-            paths += [Path(info.name.removeprefix("file://")) for info in list_eval_logs(str(path), recursive=True)]
+            paths += [
+                Path(info.name.removeprefix("file://"))
+                for info in list_eval_logs(str(path), recursive=True)
+            ]
     return sorted(set(paths))
 
 
-def sweep(targets: Sequence[str], ctx: Context, producers: set[str], *, header: bool = True) -> dict[str, list[Run]]:
+def sweep(
+    targets: Sequence[str], ctx: Context, producers: set[str], *, header: bool = True
+) -> dict[str, list[Run]]:
     """Header first (when logs were supplied), then the selected external producers, for every target. Nothing raises."""
     runs_by_eval: dict[str, list[Run]] = {}
     for target in targets:
@@ -58,7 +63,11 @@ def sweep(targets: Sequence[str], ctx: Context, producers: set[str], *, header: 
     return runs_by_eval
 
 
-_FILE_NAMES = {header_adapter.PRODUCER: "header", lint_adapter.PRODUCER: "lint", dataset_adapter.PRODUCER: "dataset"}
+_FILE_NAMES = {
+    header_adapter.PRODUCER: "header",
+    lint_adapter.PRODUCER: "lint",
+    dataset_adapter.PRODUCER: "dataset",
+}
 
 
 def write_outputs(out: Path, runs_by_eval: Mapping[str, Sequence[Run]]) -> None:
@@ -66,7 +75,9 @@ def write_outputs(out: Path, runs_by_eval: Mapping[str, Sequence[Run]]) -> None:
     for target, runs in runs_by_eval.items():
         directory = out / slug(target)
         for run in runs:
-            write_run(run, directory / f"{_FILE_NAMES.get(run.producer, slug(run.producer))}.run.json")
+            write_run(
+                run, directory / f"{_FILE_NAMES.get(run.producer, slug(run.producer))}.run.json"
+            )
         (directory / "SUMMARY.md").write_text(render_eval_summary(runs))
         all_runs += runs
     write_parquet(findings_df(all_runs), out / "findings.parquet")
@@ -90,20 +101,51 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     run_p = sub.add_parser("run", help="run the producers over evals")
     run_p.add_argument("--root", required=True, type=Path, help="inspect_evals checkout")
-    run_p.add_argument("--logs", action="append", default=[], help="log dir, .eval file, or hawk:<eval-set-id>; repeatable")
-    run_p.add_argument("--hawk-task", action="append", default=[], help="pull every Hawk eval set that ran this task (unqualified name matches); repeatable")
-    run_p.add_argument("--hawk-limit", type=int, default=20, help="refuse when --hawk-task resolves to more eval sets than this")
-    run_p.add_argument("--hawk-cache", type=Path, default=hawk.DEFAULT_CACHE, help="where Hawk downloads are kept between runs")
+    run_p.add_argument(
+        "--logs",
+        action="append",
+        default=[],
+        help="log dir, .eval file, or hawk:<eval-set-id>; repeatable",
+    )
+    run_p.add_argument(
+        "--hawk-task",
+        action="append",
+        default=[],
+        help="pull every Hawk eval set that ran this task (unqualified name matches); repeatable",
+    )
+    run_p.add_argument(
+        "--hawk-limit",
+        type=int,
+        default=20,
+        help="refuse when --hawk-task resolves to more eval sets than this",
+    )
+    run_p.add_argument(
+        "--hawk-cache",
+        type=Path,
+        default=hawk.DEFAULT_CACHE,
+        help="where Hawk downloads are kept between runs",
+    )
     run_p.add_argument("--out", required=True, type=Path)
-    run_p.add_argument("--producers", default="lint,dataset", help="external producers to run; the header producer runs whenever --logs is given")
-    run_p.add_argument("--resolve", action="store_true", help="resolve the task to compare logged sample ids (needs inspect_evals importable)")
+    run_p.add_argument(
+        "--producers",
+        default="lint,dataset",
+        help="external producers to run; the header producer runs whenever --logs is given",
+    )
+    run_p.add_argument(
+        "--resolve",
+        action="store_true",
+        help="resolve the task to compare logged sample ids (needs inspect_evals importable)",
+    )
     run_p.add_argument("--featured", action="store_true", help="add the 35 Featured evals")
     run_p.add_argument("targets", nargs="*", help="registry names, e.g. inspect_evals/stereoset")
     sum_p = sub.add_parser("summary", help="re-render summaries from existing run files")
     sum_p.add_argument("out", type=Path)
     sets_p = sub.add_parser("hawk-sets", help="list the Hawk eval sets that ran a task")
     sets_p.add_argument("task", help="registry name, e.g. inspect_evals/scicode")
-    pull_p = sub.add_parser("hawk-pull", help="fetch the logs and artifact bundles a manifest names into its gitignored dest")
+    pull_p = sub.add_parser(
+        "hawk-pull",
+        help="fetch the logs and artifact bundles a manifest names into its gitignored dest",
+    )
     pull_p.add_argument("--manifest", type=Path, default=Path("scripts/hawk-artefacts.yaml"))
     pull_p.add_argument("--dest", type=Path, default=None, help="override the manifest's dest")
     return parser
@@ -119,7 +161,11 @@ def _hawk_pull(manifest_path: Path, dest: Path | None) -> int:
         manifest = manifest.model_copy(update={"dest": dest})
     results = hawk.pull_manifest(manifest, ProducerConfig.from_env())
     for result in results:
-        status = f"{result.files} file(s)" if result.error is None else f"FAILED: {result.error.splitlines()[0][:160]}"
+        status = (
+            f"{result.files} file(s)"
+            if result.error is None
+            else f"FAILED: {result.error.splitlines()[0][:160]}"
+        )
         print(f"{result.kind:9s} {result.id:45s} {status}")
     print(f"into {manifest.dest.resolve()}")
     return 1 if any(r.error for r in results) else 0
@@ -136,7 +182,9 @@ def _hawk_sets(task: str) -> int:
         return 0
     print(f"{'Eval set':45s} {'Created':21s} {'Evals':>5s}  Tasks")
     for entry in found:
-        print(f"{entry.eval_set_id:45s} {entry.created_at:21s} {entry.eval_count:5d}  {', '.join(entry.task_names)}")
+        print(
+            f"{entry.eval_set_id:45s} {entry.created_at:21s} {entry.eval_count:5d}  {', '.join(entry.task_names)}"
+        )
     return 0
 
 
@@ -149,14 +197,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "hawk-pull":
         return _hawk_pull(args.manifest, args.dest)
 
-    targets = list(args.targets) + ([f"inspect_evals/{name}" for name in FEATURED] if args.featured else [])
+    targets = list(args.targets) + (
+        [f"inspect_evals/{name}" for name in FEATURED] if args.featured else []
+    )
     if not targets:
         print("at least one target or --featured is required", file=sys.stderr)
         return 2
     producers = {name for name in str(args.producers).split(",") if name}
     unknown = producers - set(EXTERNAL_PRODUCERS)
     if unknown:
-        print(f"unknown producers: {', '.join(sorted(unknown))}; known: {', '.join(EXTERNAL_PRODUCERS)}", file=sys.stderr)
+        print(
+            f"unknown producers: {', '.join(sorted(unknown))}; known: {', '.join(EXTERNAL_PRODUCERS)}",
+            file=sys.stderr,
+        )
         return 2
     sources = list(args.logs)
     for task in args.hawk_task:

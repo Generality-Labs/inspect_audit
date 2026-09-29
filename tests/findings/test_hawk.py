@@ -18,16 +18,41 @@ from inspect_audit.findings.producers import ProducerConfig
 STUB = Path(__file__).parent / "stubs" / "hawk_stub.py"
 
 PAGES = [
-    {"items": [
-        {"eval_set_id": "scicode-a", "created_at": "2026-09-24T08:46:40Z", "created_by": "u1",
-         "eval_count": 9, "task_names": ["inspect_evals/scicode"]},
-        {"eval_set_id": "chess-1", "created_at": "2026-09-25T15:40:58Z", "created_by": "u2",
-         "eval_count": 1, "task_names": ["inspect_audit/investigate"]},
-    ], "total": 3, "page": 1, "limit": 2},
-    {"items": [
-        {"eval_set_id": "imported-scicode", "created_at": "2026-09-04T02:38:06Z", "created_by": "u3",
-         "eval_count": 3, "task_names": ["scicode", "exploitbench/exploit_bench"]},
-    ], "total": 3, "page": 2, "limit": 2},
+    {
+        "items": [
+            {
+                "eval_set_id": "scicode-a",
+                "created_at": "2026-09-24T08:46:40Z",
+                "created_by": "u1",
+                "eval_count": 9,
+                "task_names": ["inspect_evals/scicode"],
+            },
+            {
+                "eval_set_id": "chess-1",
+                "created_at": "2026-09-25T15:40:58Z",
+                "created_by": "u2",
+                "eval_count": 1,
+                "task_names": ["inspect_audit/investigate"],
+            },
+        ],
+        "total": 3,
+        "page": 1,
+        "limit": 2,
+    },
+    {
+        "items": [
+            {
+                "eval_set_id": "imported-scicode",
+                "created_at": "2026-09-04T02:38:06Z",
+                "created_by": "u3",
+                "eval_count": 3,
+                "task_names": ["scicode", "exploitbench/exploit_bench"],
+            },
+        ],
+        "total": 3,
+        "page": 2,
+        "limit": 2,
+    },
 ]
 
 
@@ -58,7 +83,9 @@ def test_find_eval_sets_with_no_match_is_empty() -> None:
     assert find_eval_sets("inspect_evals/hle", fetch_page=_fake_pages, page_size=2) == []
 
 
-def test_download_eval_set_uses_the_cli_and_returns_cached_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_download_eval_set_uses_the_cli_and_returns_cached_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     src = _log(tmp_path / "src")
     monkeypatch.setenv("STUB_EVAL_SRC", str(src))
     monkeypatch.setenv("STUB_HAWK_LOG", str(tmp_path / "calls.log"))
@@ -73,7 +100,9 @@ def test_download_eval_set_uses_the_cli_and_returns_cached_files(tmp_path: Path,
     assert download_eval_set("scicode-a", cache, config) == files
 
 
-def test_download_eval_set_failure_raises_producer_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_download_eval_set_failure_raises_producer_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     src = _log(tmp_path / "src")
     monkeypatch.setenv("STUB_EVAL_SRC", str(src))
     monkeypatch.setenv("STUB_EXIT", "1")
@@ -113,30 +142,48 @@ def test_manifest_rejects_unknown_keys_and_missing_ids(tmp_path: Path) -> None:
         load_manifest(bad)
 
 
-def test_pull_manifest_fetches_logs_and_artifacts_into_dest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pull_manifest_fetches_logs_and_artifacts_into_dest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from inspect_audit.findings.hawk import Manifest, ManifestEntry, pull_manifest
 
     src = _log(tmp_path / "src")
     monkeypatch.setenv("STUB_EVAL_SRC", str(src))
     monkeypatch.setenv("STUB_HAWK_LOG", str(tmp_path / "calls.log"))
     config = ProducerConfig(hawk=(sys.executable, str(STUB)))
-    manifest = Manifest(dest=tmp_path / "dest", logs=[ManifestEntry(id="set-a", note="")], artifacts=[ManifestEntry(id="inv-1", note="")])
+    manifest = Manifest(
+        dest=tmp_path / "dest",
+        logs=[ManifestEntry(id="set-a", note="")],
+        artifacts=[ManifestEntry(id="inv-1", note="")],
+    )
     report = pull_manifest(manifest, config)
     assert (tmp_path / "dest" / "logs" / "set-a" / src.name).is_file()
     assert (tmp_path / "dest" / "artifacts" / "inv-1" / "bundle.txt").is_file()
     calls = (tmp_path / "calls.log").read_text().splitlines()
     assert calls[0].startswith("download set-a -o ")
     assert calls[1].startswith("download-artifacts inv-1 -o ")
-    assert [(r.kind, r.id, r.files) for r in report] == [("logs", "set-a", 1), ("artifacts", "inv-1", 1)]
+    assert [(r.kind, r.id, r.files) for r in report] == [
+        ("logs", "set-a", 1),
+        ("artifacts", "inv-1", 1),
+    ]
 
 
-def test_pull_manifest_records_failures_and_continues(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pull_manifest_records_failures_and_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from inspect_audit.findings.hawk import Manifest, ManifestEntry, pull_manifest
 
     src = _log(tmp_path / "src")
     monkeypatch.setenv("STUB_EVAL_SRC", str(src))
     monkeypatch.setenv("STUB_FAIL_ID", "set-bad")
     config = ProducerConfig(hawk=(sys.executable, str(STUB)))
-    manifest = Manifest(dest=tmp_path / "dest", logs=[ManifestEntry(id="set-bad", note=""), ManifestEntry(id="set-ok", note="")], artifacts=[])
+    manifest = Manifest(
+        dest=tmp_path / "dest",
+        logs=[ManifestEntry(id="set-bad", note=""), ManifestEntry(id="set-ok", note="")],
+        artifacts=[],
+    )
     report = pull_manifest(manifest, config)
-    assert [(r.id, r.files, r.error is None) for r in report] == [("set-bad", 0, False), ("set-ok", 1, True)]
+    assert [(r.id, r.files, r.error is None) for r in report] == [
+        ("set-bad", 0, False),
+        ("set-ok", 1, True),
+    ]

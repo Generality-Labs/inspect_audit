@@ -65,7 +65,11 @@ class Taxonomy(BaseModel):
         return {dimension.id for dimension in self.dimensions}
 
     def check_ids(self) -> set[str]:
-        return {contribution.id for dimension in self.dimensions for contribution in dimension.contributions}
+        return {
+            contribution.id
+            for dimension in self.dimensions
+            for contribution in dimension.contributions
+        }
 
 
 class TaxonomyMapping(BaseModel):
@@ -97,7 +101,9 @@ def load_mapping(source: str, target: str) -> TaxonomyMapping:
         raise ValueError(f"no mapping from {source} to {target}")
     mapping = TaxonomyMapping.model_validate_json((TAXONOMY_DIR / name).read_text())
     if (mapping.source, mapping.target) != (source, target):
-        raise ValueError(f"{name} maps {mapping.source} to {mapping.target}, not {source} to {target}")
+        raise ValueError(
+            f"{name} maps {mapping.source} to {mapping.target}, not {source} to {target}"
+        )
     return mapping
 
 

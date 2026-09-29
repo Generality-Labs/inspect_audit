@@ -31,6 +31,8 @@ class ProducerConfig:
         defaults = cls()
         return cls(
             lint=tuple(shlex.split(source[LINT_ENV])) if source.get(LINT_ENV) else defaults.lint,
-            dataset=tuple(shlex.split(source[DATASET_ENV])) if source.get(DATASET_ENV) else defaults.dataset,
+            dataset=tuple(shlex.split(source[DATASET_ENV]))
+            if source.get(DATASET_ENV)
+            else defaults.dataset,
             hawk=tuple(shlex.split(source[HAWK_ENV])) if source.get(HAWK_ENV) else defaults.hawk,
         )

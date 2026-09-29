@@ -34,12 +34,22 @@ def test_v2_is_the_strategy_taxonomy_and_still_a_draft() -> None:
     tax = load_taxonomy("gl-audit@2")
     assert tax.status == "draft"
     assert [d.id for d in tax.dimensions] == [
-        "implementation", "sensitivity", "informativeness", "comparability",
-        "practical_reproducibility", "construct_validity", "content_validity",
+        "implementation",
+        "sensitivity",
+        "informativeness",
+        "comparability",
+        "practical_reproducibility",
+        "construct_validity",
+        "content_validity",
     ]
     implementation = next(d for d in tax.dimensions if d.id == "implementation")
     assert [c.id.split(".")[1] for c in implementation.contributions] == [
-        "task_specification", "environment", "scaffolding", "harness", "grading"]
+        "task_specification",
+        "environment",
+        "scaffolding",
+        "harness",
+        "grading",
+    ]
     assert "incorrect_reference_answer" in implementation.contributions[0].items
 
 
@@ -62,10 +72,16 @@ def test_unknown_taxonomy_ref_is_an_error() -> None:
 
 def _finding(**overrides: object) -> Finding:
     data: dict[str, object] = dict(
-        fingerprint="sha256:0", producer="p", rule="r",
+        fingerprint="sha256:0",
+        producer="p",
+        rule="r",
         subject={"eval": "inspect_evals/x", "revision": {"commit": "abc"}},
-        dimension="dataset", severity="minor", status="supported", summary="s",
-        locations=[CodeLocation(role="primary", file="f.py")], run_id="run",
+        dimension="dataset",
+        severity="minor",
+        status="supported",
+        summary="s",
+        locations=[CodeLocation(role="primary", file="f.py")],
+        run_id="run",
         source=Source(format="f", record=None),
     )
     data.update(overrides)
@@ -82,7 +98,9 @@ def test_finding_defaults_to_v1_and_validates_dimension_against_it() -> None:
 
 
 def test_finding_can_use_v2_ids() -> None:
-    finding = _finding(taxonomy="gl-audit@2", dimension="implementation", check="implementation.grading")
+    finding = _finding(
+        taxonomy="gl-audit@2", dimension="implementation", check="implementation.grading"
+    )
     assert finding.check == "implementation.grading"
     with pytest.raises(ValidationError, match="not a dimension of gl-audit@2"):
         _finding(taxonomy="gl-audit@2", dimension="dataset")

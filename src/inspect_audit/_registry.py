@@ -233,6 +233,9 @@ def _hawk_fetch(eval_sets: str) -> str:
 
     Talks to the Hawk API directly with the runner's own credentials -- the hawk
     CLI stores tokens in an OS keyring, which headless runner pods do not have.
+    Not `_jobs.Hawk`: that takes its token from Hawk's model-key hook, which direct
+    children switch off (HAWK_RUNNER_REFRESH_URL=''), and it is async while task
+    construction is not. The HAWK_TOKEN_REFRESH_* variables survive either way.
     Requires HAWK_API_URL, plus either HAWK_ACCESS_TOKEN or the runner's token
     refresh environment (HAWK_TOKEN_REFRESH_URL, HAWK_TOKEN_REFRESH_CLIENT_ID,
     HAWK_REFRESH_TOKEN).

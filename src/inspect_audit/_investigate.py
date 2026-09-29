@@ -661,6 +661,8 @@ class InvestigationRecord(StoreModel):
     jobs: list[dict[str, Any]] = Field(default_factory=list)
     known_sources: list[str] = Field(default_factory=list)
     prior_usd: float = 0.0
+    # models whose calls `prior_usd` could not price: it is then a lower bound
+    prior_unpriced: list[str] = Field(default_factory=list)
 
 
 class Remote:
@@ -712,12 +714,9 @@ class Remote:
             hawk_api_url=hawk_api_url,
         )
         self._spend_path = root / "local_spend.json"
-        spent = json.loads(self._spend_path.read_text()) if self._spend_path.is_file() else {}
         # a resumed run starts Inspect's usage accounting from zero; what earlier runs
         # of this investigation spent is carried forward from disk
-        self.prior_local_usd = float(spent.get("prior_usd", 0.0)) + float(
-            spent.get("this_run_usd", 0.0)
-        )
+        self.prior_local_usd, self.prior_unpriced = self._saved_spend()
         self._sources_path = root / "log_sources.json"
         self.known_sources: set[str] = set(
             json.loads(self._sources_path.read_text()) if self._sources_path.is_file() else []
@@ -781,12 +780,25 @@ class Remote:
         at zero, so without this a retry would forget the first attempt's spend.
         Idempotent: it recomputes from the file rather than adding to memory.
         """
+        self.prior_local_usd, self.prior_unpriced = self._saved_spend()
+        self._write_spend(0.0, [])
+
+    def _saved_spend(self) -> tuple[float, list[str]]:
+        """Everything earlier attempts spent, and the models that left it a lower bound."""
         spent = json.loads(self._spend_path.read_text()) if self._spend_path.is_file() else {}
-        self.prior_local_usd = float(spent.get("prior_usd", 0.0)) + float(
-            spent.get("this_run_usd", 0.0)
-        )
+        usd = float(spent.get("prior_usd", 0.0)) + float(spent.get("this_run_usd", 0.0))
+        return usd, sorted(set(spent.get("prior_unpriced", [])) | set(spent.get("unpriced", [])))
+
+    def _write_spend(self, this_run_usd: float, unpriced: list[str]) -> None:
         self._spend_path.write_text(
-            json.dumps({"prior_usd": self.prior_local_usd, "this_run_usd": 0.0})
+            json.dumps(
+                {
+                    "prior_usd": self.prior_local_usd,
+                    "prior_unpriced": self.prior_unpriced,
+                    "this_run_usd": this_run_usd,
+                    "unpriced": unpriced,
+                }
+            )
         )
 
     def snapshot_record(self) -> None:
@@ -796,6 +808,7 @@ class Remote:
         record.jobs = [asdict(j) for j in self.ledger.jobs]
         record.known_sources = sorted(self.known_sources)
         record.prior_usd = self.prior_local_usd
+        record.prior_unpriced = self.prior_unpriced
 
     def restore_record(self) -> str:
         """Rebuild the host files from a restored Store, after a checkpoint resume.
@@ -809,6 +822,7 @@ class Remote:
         self.known_sources = set(record.known_sources) | {j.eval_set_id for j in self.ledger.jobs}
         self.save_sources()
         self.prior_local_usd = record.prior_usd
+        self.prior_unpriced = record.prior_unpriced
         self.record_local_spend()
         return (
             f"restored {len(record.jobs)} job(s) and {len(record.known_sources)} log "
@@ -816,18 +830,20 @@ class Remote:
         )
 
     def record_local_spend(self) -> None:
-        """Keep this run's own spend on disk, so a resumed investigation inherits it."""
-        local = _local_spend()[0]
-        if local is None:
-            local = sample_limits().cost.usage
-        self._spend_path.write_text(
-            json.dumps({"prior_usd": self.prior_local_usd, "this_run_usd": local})
-        )
+        """Keep this run's own spend on disk, so a resumed investigation inherits it.
+
+        With an unpriced model the priced part is written with the models that make it
+        a lower bound, so a later attempt knows its prior spend is not the whole cost.
+        """
+        self._write_spend(*_local_spend())
+
+    def unpriced(self) -> list[str]:
+        """Models, in this attempt or an earlier one, whose calls could not be priced."""
+        return sorted(set(_local_spend()[1]) | set(self.prior_unpriced))
 
     def local_usd(self) -> float:
-        """Every dollar this investigation has spent on its own model calls."""
-        local, _ = _local_spend()
-        return self.prior_local_usd + (local if local is not None else sample_limits().cost.usage)
+        """What this investigation's own calls cost, a lower bound when unpriced()."""
+        return self.prior_local_usd + _local_spend()[0]
 
     def committed_usd(self) -> float:
         """Spent locally, plus collected remote costs, plus live reservations."""
@@ -835,8 +851,7 @@ class Remote:
 
     def over_allowance(self) -> str | None:
         """The message to give the agent when the shared allowance is gone, else None."""
-        _, unpriced = _local_spend()
-        if unpriced:
+        if unpriced := self.unpriced():
             return "Cannot enforce the shared allowance: missing prices for " + ", ".join(unpriced)
         committed = self.committed_usd()
         if committed < self.allowance_usd:
@@ -855,7 +870,7 @@ class Remote:
         inside it, so two submissions in flight cannot both take the last of the money.
         The job is written as `pending` before anything is sent to Hawk.
         """
-        if _local_spend()[1]:
+        if self.unpriced():
             raise ToolError("Cannot reserve more work while local model costs are unknown")
         with self.ledger.transaction() as ledger:
             existing = ledger.get(job.label)
@@ -1002,17 +1017,16 @@ def qualified_model_name(model: str) -> str:
     return f"openrouter/{model}"
 
 
-def _local_spend() -> tuple[float | None, list[str]]:
-    """What this investigator has spent on its own calls, and what it could not price.
+def _local_spend() -> tuple[float, list[str]]:
+    """What this investigator's own calls have cost, and the models it could not price.
 
     The total is Inspect's own: `sample_limits().cost.usage` is the same number the
-    cost limit is enforced against, so the tools and the limit cannot disagree. The
-    per-model breakdown has no public equivalent, and it is only used to name the
-    models whose price is missing, which is why an unpriced model makes the total
-    unknown rather than merely smaller.
+    cost limit is enforced against, so the tools and the limit cannot disagree. With
+    an unpriced model it is only the priced part: a lower bound, never the cost, so
+    every caller that compares it with the allowance checks the list first.
     """
     unpriced = [name for name, value in sample_model_usage().items() if value.total_cost is None]
-    return (None if unpriced else sample_limits().cost.usage), unpriced
+    return sample_limits().cost.usage, unpriced
 
 
 @tool(name="budget")
@@ -1041,6 +1055,8 @@ def investigation_budget(
                 f" (reasoning {value.reasoning_tokens or 0:,}) | "
                 + (f"${cost:.2f}" if cost is not None else "cost unknown")
             )
+        if remote is not None:  # an earlier attempt's unpriced calls are in the prior
+            unpriced = sorted(set(unpriced) | set(remote.prior_unpriced))
         if unpriced:
             lines.append(
                 f"Spent: at least ${total:.2f}; {', '.join(unpriced)} unpriced, so the "

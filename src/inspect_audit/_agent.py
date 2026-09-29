@@ -35,6 +35,7 @@ from inspect_ai.tool._tools._execute import code_viewer
 from inspect_ai.util import (
     LimitExceededError,
     StoreModel,
+    sample_limits,
     sandbox,
     sandbox_default,
     store_as,
@@ -211,6 +212,20 @@ class Verdicts(StoreModel):
 
     verdicts: dict[str, Verdict] = Field(default_factory=dict)
     debrief: dict[str, list[Evidence]] = Field(default_factory=dict)
+    # why record_verdict refused each item, so a missing verdict can say why
+    rejected: dict[str, list[str]] = Field(default_factory=dict)
+
+
+def _details_help(skill: AuditItemSkill, sent: object) -> str:
+    """What record_verdict needs in `details`, said so a model can correct itself."""
+    fields = "; ".join(f"{key}: {description}" for key, description in skill.details.items())
+    shape = json.dumps(dict.fromkeys(skill.details, "..."))
+    began = str(sent)[:60].replace("\n", " ")
+    return (
+        f"details must be a JSON object as text, starting with '{{', but it began "
+        f"{began!r}. Put your summary in remarks. For {skill.name} the object needs "
+        f"{fields or 'no fields: send {}'}. Shape: {shape if skill.details else '{}'}"
+    )
 
 
 @tool
@@ -245,14 +260,17 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
         skill = lookup.get(item)
         if skill is None:
             raise ToolError(f"Unknown item {item!r}. Expected one of {', '.join(lookup)}.")
+        # a string in the schema, not an object: OpenAI's validator (Azure, via
+        # OpenRouter) refuses an object property without a type, and the fields
+        # items declare are lists, strings and booleans. Python callers pass a dict
         try:
-            # Accept dictionaries from existing Python callers, while the model-facing
-            # schema uses a string: arbitrary objects cannot use OpenAI strict schemas.
             recorded_details = json.loads(details) if isinstance(details, str) else details
-        except ValueError as ex:
-            raise ToolError("details must encode a valid JSON object") from ex
+        except ValueError:
+            recorded_details = None
         if not isinstance(recorded_details, dict):
-            raise ToolError("details must encode a JSON object")
+            # 09-29 chess run: an auditor wrote prose summaries here 54 times against
+            # a bare "must encode a valid JSON object" and never recovered
+            raise ToolError(_details_help(skill, details))
         if grade not in skill.grades:
             raise ToolError(f"Grade for {item} must be one of {', '.join(skill.grades)}.")
         if not evidence and grade not in skill.unevidenced:
@@ -308,14 +326,31 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
         }
         return json.dumps({"item": item, "grade": grade})
 
-    definition = ToolDef(execute, name="record_verdict")
+    async def recording(
+        item: str,
+        evidence: list[Evidence],
+        approaches: str,
+        tried: str,
+        remarks: str,
+        grade: str,
+        details: str,
+    ) -> str:
+        try:
+            return await execute(item, evidence, approaches, tried, remarks, grade, details)
+        except ToolError as ex:
+            store_as(Verdicts).rejected.setdefault(item, []).append(str(ex))
+            raise
+
+    recording.__doc__ = execute.__doc__
+    definition = ToolDef(recording, name="record_verdict")
     fields: dict[str, list[str]] = {}
     for item in items:
         for key, description in item.details.items():
             fields.setdefault(key, []).append(f"{item.name}: {description}")
     definition.parameters.properties["details"] = ToolParam(
         type="string",
-        description="JSON-encoded object. Required fields by item:\n"
+        description="A JSON object as text, starting with '{' (not prose: your summary "
+        "goes in remarks). Required fields by item:\n"
         + "\n".join(f"{item.name}: {', '.join(item.details) or '(none)'}" for item in items),
     )
     # Keep arbitrary nested skill data inside the JSON string and validate it above.
@@ -830,6 +865,31 @@ def audit_agent(
     )
 
 
+def _no_verdict_reason(rejected: list[str]) -> str:
+    """Why an item has no verdict, from its refusals and the sample's limits.
+
+    09-29: two items came back NO_VERDICT with nothing but concordance metadata, and
+    the investigator blamed the wrong thing.
+    """
+    reasons = [
+        f"record_verdict refused it {len(rejected)} time(s); last: {rejected[-1]}"
+        if rejected
+        else "the auditor never called record_verdict for this item"
+    ]
+    try:
+        limits = sample_limits()
+    except RuntimeError:  # scored outside a running sample
+        limits = None
+    if limits is not None:
+        for name in ("cost", "token", "time", "working", "message", "turn"):
+            limit = getattr(limits, name)
+            if limit.limit is not None and limit.usage >= limit.limit:
+                reasons.append(
+                    f"the sample hit its {name} limit ({limit.usage:g} of {limit.limit:g})"
+                )
+    return "; ".join(reasons)
+
+
 def item_scorer(item: AuditItemSkill) -> Scorer:
     """A scorer surfacing the auditor's verdict on one audit item."""
     # inspect's own categorical metric, with the skill's grades declared so a
@@ -846,7 +906,12 @@ def item_scorer(item: AuditItemSkill) -> Scorer:
             gate = state.store_as(Concordance)
             concordance = {"verdict": gate.verdict, "reasons": gate.reasons}
             if verdict is None:
-                return Score(value="NO_VERDICT", metadata={"concordance": concordance})
+                rejected = state.store_as(Verdicts).rejected.get(item.name, [])
+                return Score(
+                    value="NO_VERDICT",
+                    explanation=_no_verdict_reason(rejected),
+                    metadata={"concordance": concordance, "rejections": len(rejected)},
+                )
             return Score(
                 value=verdict.grade,
                 answer=verdict.grade,

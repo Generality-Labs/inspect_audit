@@ -187,7 +187,7 @@ def test_resumed_budget_displays_shared_remaining_allowance(monkeypatch):
         reserved_usd=lambda: 20.0,
         unpriced=list,
     )
-    remote = SimpleNamespace(ledger=ledger, prior_local_usd=7.0)
+    remote = SimpleNamespace(ledger=ledger, prior_local_usd=7.0, prior_unpriced=[])
     text = asyncio.run(_investigate.investigation_budget(100, True, remote)())
     assert "Committed in total: $40.00 of $100.00" in text
     assert "Shared remaining allowance: $60.00" in text
@@ -1282,3 +1282,29 @@ def test_the_hosted_investigator_checkpoints_its_workspace_and_inputs(
     config = args["checkpoint"]
     assert config.sandbox_paths == {"default": ["/workspace", "/inputs"]}
     assert _investigate._checkpointing(False, None) == {}
+
+
+def test_unpriced_spend_stays_unknown_across_a_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An attempt with an unpriced model wrote its priced part to disk as if it were the
+    whole cost; the retry then took that as exact prior spend and let reservations
+    through. The unpriced models now travel with the figure."""
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit import _investigate
+    from inspect_audit._investigate import Remote
+
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (2.0, ["openrouter/mystery"]))
+    first = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
+    first.record_local_spend()
+
+    # the retry's own calls are all priced
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (1.0, []))
+    retry = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
+    retry.fold_prior_spend()
+    assert "missing prices for openrouter/mystery" in (retry.over_allowance() or "")
+    with pytest.raises(ToolError, match="costs are unknown"):
+        retry.reserve_and_record(_investigate.Job("j", "eval-set", "inv-j", "", "", 1.0))
+    assert retry.local_usd() == 3.0  # a lower bound, and known to be one

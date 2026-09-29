@@ -216,6 +216,44 @@ The inspect-dataset and header adapters emit sibling records with their own fing
 
 Recommendation: this one. The first document remains useful as the derivation notes for the envelope and as the description of what a merged, rendered finding looks like.
 
+## Records beside Finding
+
+A finding is one observation of one problem. Two other things an audit produces are not findings and should not be forced into the shape. Both are provisional: one producer writes them and no consumer reads them yet. Review at the end of the maintainer pilot (roadmap milestone 1).
+
+**Assessment.** One check, one level, one result sentence, the finding fingerprints it rests on, and who made the call (the investigator, or a person, with `Provenance`). This is the synthesis `_assessment.CheckAssessment` already keeps separate from finding severity. Clean, not-assessed and not-applicable checks are assessments, never findings. A level is written by an agent or a person and is never computed from findings.
+
+**Coverage.** The examined population for one audit: the unit ids, each unit's label state (`NO_ISSUE_FOUND`, `DEFECT`, `UNRESOLVED`, `NOT_ASSESSED`), the checks it bore on, and any reconciliation decision between raw worker labels and the investigator's result. `_coverage.QuestionAssessment` is the source. Defect labels also become findings with a `sample` location; the population and its denominators stay here so a consumer does not have to reconstruct them.
+
+## Observations and issues
+
+The fingerprint identifies an observation: this producer, this rule, this eval, this primary location. Code locations include a line, log locations include an eval id, so a moved line or a new run yields a new fingerprint for the same underlying problem. That is acceptable for an observation and wrong for an issue, and the two should not share an identity.
+
+An issue is created when a person accepts a candidate. It gets a durable id, a title, an optional GitHub URL, and a list of the observation fingerprints linked to it. New observations are linked by grouping (producer and rule, then location) and confirmed by a person; automatic cross-producer matching, alias migration and inferred `introduced` and `fixed` versions wait until a consumer needs them.
+
+Both review files live in git beside the runs, not inside them, so a producer rerun cannot lose a decision:
+
+```yaml
+# suppressions.yaml
+- rule: inspect_dataset.answer_length
+  subject: inspect_evals/stereoset
+  applies_when: {answer_type: struct}     # optional; omitted means every observation of the rule on the subject
+  kind: false_positive
+  author: matt
+  reason: struct-typed answers have no meaningful length
+  since: 2026-09-29
+
+# issues.yaml
+- id: ISS-0001
+  title: strong_reject records 313 samples where eval.yaml declares 324
+  subject: inspect_evals/strong_reject
+  github: https://github.com/UKGovernmentBEIS/inspect_evals/issues/0000
+  observations: [sha256:..., sha256:...]
+  opened: 2026-09-29
+  author: matt
+```
+
+The compaction step applies suppressions before rendering and joins issues to observations, so every consumer sees the same reviewed view.
+
 ## Open questions
 
 - Where the package lives. A tiny standalone package with a pydantic dependency only, or a module inside inspect_audit that lint and inspect-dataset never import because the adapters read files. The second is cheaper today; the first is what the modularity goal implies.

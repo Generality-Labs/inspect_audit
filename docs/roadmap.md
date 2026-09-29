@@ -1,119 +1,99 @@
 # Inspect Auditor roadmap, Q4 2026
 
-Owner: Matt Fisher. Last revised 2026-09-28. This is the working plan for Outcome 3 of the GL Q4 plan: moving Inspect Evals maintenance onto Inspect Auditor. Prose reports, scorecards and the exhaustive audits (Outcomes 1 and 2) stay with James and Laurence; this doc covers only where their outputs meet ours.
+Owner: Matt Fisher. Last revised 2026-09-29, after the [prototype review](findings-prototype-review.md) narrowed the first release. This is the working plan for Outcome 3 of the GL Q4 plan: moving Inspect Evals maintenance onto Inspect Auditor. Prose reports, scorecards and the exhaustive audits (Outcomes 1 and 2) stay with James and Laurence; this doc covers only where their outputs meet ours.
 
-Revise this doc when a milestone lands or a decision below is made. Implementation detail belongs in `docs/superpowers/specs/` and `docs/superpowers/plans/`, not here.
+Revise this doc when a milestone lands or a decision below is made. Implementation detail belongs in the [design spec](superpowers/specs/2026-09-25-findings-prototype-design.md) and the [schema doc](finding-schema-envelope.md), not here.
 
 ## Goal
 
 Every eval in Inspect Evals has a current, hosted set of findings that a maintainer can act on and a user can consult before trusting a number. Contributors are pointed at those findings instead of at the issue tracker. Findings come from deterministic producers everywhere and from bounded agentic investigation on the Featured evals, with exhaustive audits on request.
 
+The first release is smaller than that: a short, reproducible list of maintenance issues for a handful of pilot evals that maintainers actually use. Everything else expands from it once its usefulness and cost are measured.
+
 ## Principles
 
 - Auditor uses inspect-evals-lint and inspect-dataset as producers. The codebases are not merged.
-- Findings are records in one envelope schema with the producer's own output kept verbatim. See `docs/finding-schema-envelope.md`.
-- The taxonomy is versioned data, not code. Old reports stay valid under `gl-audit@1`; new work targets `gl-audit@2`.
-- The hosted index shows findings and dimension assessments. Grades are written by people and are never computed.
-- Inspect Auditor is an installable Inspect package with registered tasks whose behaviour lives in skills. It has no GUI and should not grow one. The hosted site is a separate static thing that reads the findings.
-- One owner for the finding schema. James (v1 report), Laurence (summary MVP) and Matt (issues view) are all touching report format. Matt owns the schema; the report formats read from it.
-- A finding carries its evidence locators and can be re-run before and after a fix. Individual verdicts flipped about one time in ten on test-retest in James's logs, so aggregates are the signal, and nothing closes a contributor issue without a human looking.
+- Findings are records in one envelope schema with the producer's own output kept verbatim. Assessments and coverage are separate records, not findings.
+- A fingerprint identifies an observation. An issue gets its own durable id when a person accepts it, and observations link to it. Review decisions (suppressions, issue links) live in files beside the runs, never inside them.
+- Run files are immutable. A sweep appends runs and moves a per-eval `current.json`; every view renders from that manifest.
+- Unsupported inputs, failed producers and unassessed checks are shown beside findings. A missing finding can mean a defect class we do not cover, and a page must say so.
+- The taxonomy is versioned data, not code. Old reports stay valid under `gl-audit@1`; the pilot renders original identifiers and does not wait on `gl-audit@2` being confirmed.
+- Grades are written by people and are never computed. Nothing changes the state of a contributor issue without a human looking.
+- Inspect Auditor is an installable Inspect package whose behaviour lives in skills. It has no GUI. The hosted site is a separate static thing that reads the findings.
+- One owner for the finding schema: Matt. Report formats read from it.
 - Rollout is tiered by cost. SciCode-depth audits do not scale to 130 evals and do not need to.
 - Audit outputs and agent working notes are private until published. Nothing under `agent_artefacts/` or `artefacts/` enters this repo.
 
 ## Where we are
 
-Done on `findings-prototype` (PR #4 against `dev/integrated-audits`):
+Done on `findings-prototype` (PR #4 against `dev/integrated-audits`), rebased onto the dev tip on 2026-09-29:
 
-- Envelope schema, fingerprinting, parquet and run files.
-- Adapters for inspect-evals-lint, inspect-dataset and `.eval` log headers.
-- Versioned taxonomies `gl-audit@1` (the nine A to I dimensions) and a draft `gl-audit@2` (the strategy doc's seven), with a v1 to v2 mapping.
-- Hawk access: `hawk:` log sources, `--hawk-task`, `hawk-sets`, and `hawk-pull` over `scripts/hawk-artefacts.yaml`.
-- A deterministic pass over StereoSet and an acceptance sweep over six evals. The acceptance notes list what the aggregator needs first: a corpus filter on model and task args, grouping by rule, suppressions with reasons, dataset arguments taken from the eval's own `hf_dataset` call, and one-line skip messages.
+- Envelope schema, fingerprinting, immutable run files with `current.json`, parquet carrying every envelope field.
+- Adapters for inspect-evals-lint, inspect-dataset and `.eval` log headers. Header findings carry the log's own revision; the run records the checkout it compared against.
+- Versioned taxonomies `gl-audit@1` and draft `gl-audit@2` with a mapping.
+- Hawk access: `hawk:` log sources, `--hawk-task`, `hawk-sets`, `hawk-pull` over `scripts/hawk-artefacts.yaml`. The chess investigation bundle is on disk.
+- An acceptance sweep over six evals. Its lesson: without input selection, three of five header checks are dominated by mock and variant runs, and five of six dataset scans skipped.
 
-Known from the acceptance sweep and worth a person's time now: strong_reject records 313 samples where the eval declares 324.
+Known and worth a person's time now: strong_reject records 313 samples where the eval declares 324.
 
-## The pipeline, cheapest first
+## Milestones
 
-All stages write the same finding schema.
+Four, replacing the earlier six. Dates follow once the pilot evals and acceptance criteria are agreed with Tania.
 
-1. Deterministic pass, no model spend: inspect-evals-lint over source, inspect-dataset over the HuggingFace dataset, header checks over any logs we hold. Built.
-2. Sample audits over existing logs. Most Inspect Evals evals have no logs we hold. The Featured evals with evaluation reports do, which is why they are the pilot set. Where logs are missing the investigator has to commission a Hawk run first, and that is where cost lands.
-3. One bounded investigation per eval producing the registers. The expensive step; M3 prices it.
-4. Aggregate and host. One dataset across every register, a static page per eval, a +1 backed by a small Worker and a D1 table copied from the Cloudflare worker template and the telemetry worker.
-5. Feedback loop. Votes feed prioritisation. Defects Auditor missed are raised on this repo with logs, per the Q4 plan's contributor process.
+### 1. A usable local pilot
 
-## Milestones, in order
+Make the deterministic pass trustworthy on a few pilot evals and import the first investigation.
 
-Each milestone has a test that says when it is done. Dates are targets, not commitments.
+- Input selection. Dataset scans take path, config, split, revision and field mapping from a declared per-eval configuration where inference is unreliable, and record what they examined. Header checks partition logs by task and task arguments, distinguish benchmark attempts from mock runs and sample-audit runs, and name the comparison revision. Skips and unsupported inputs render beside findings.
+- Import the chess bundle: `findings.json` into the envelope, `assessments.json` and `coverage.json` kept as their own records and rendered together. Add the reconciled SciCode registers as a second fixture when James hands them over; raw worker labels stay distinguishable from reconciled results.
+- Group observations by producer and rule with a count and an example. Apply reviewed suppressions from `suppressions.yaml`. Accepted candidates get an issue id in `issues.yaml`.
 
-### M1. Audit adapter over real investigation output (October, weeks 1 to 2)
+Done when maintainers can pick actionable candidates from the pilot output and see the inputs, revision, checks, skips and unassessed areas behind them, and re-rendering preserves the selected runs and every review decision.
 
-Turn the investigator's registers (`findings.json`, `assessments.json`, `coverage.json`, question labels) into envelope findings. A check assessment becomes dimension, check and severity. A question label becomes a sample location with the defect type as rule. Evidence links become artifact locations.
+### 2. Measure usefulness and cost
 
-Fixtures: the chess bundle already pulled by `hawk-pull`, and the SciCode registers once James hands them over. The SciCode investigation was not run on Hawk.
+- Historical defects, before and after. Each case from the 2026-09-09 scoring batch and the 2026-09-15 triage needs the defective revision, the fixed revision, the inputs required and the expected defect. The finding must appear before the fix and vanish after. Hold some cases out from rule development. Separate what deterministic producers can catch from what needs investigation.
+- Bounded investigations on two or three Featured evals: source and logs, no commissioned experiments. Record cost, wall time and findings beyond the deterministic pass. Cost any benchmark runs needed to supply logs separately.
+- For the maintainer pilot record accepted issues, review time, recall, false positives and cost per accepted new issue.
 
-Done when: the SciCode v1.2 report's assessments and 288 unit labels round-trip into findings under `gl-audit@1` with no hand edits, and the chess bundle does the same.
+Done when those numbers exist against criteria agreed with maintainers beforehand.
 
-### M2. Issues view for Inspect Evals maintainers (October, weeks 2 to 4)
+### 3. Publish the pilot
 
-A rendering over findings, not a new agent. Scope the first version to the Implementation dimension and its five contributions: task specification, environment, scaffolding, harness, grading. Group by defect type and check. Each candidate issue carries unit ids, source locators and evidence links, and reads like a GitHub issue a maintainer could file.
+- A publication export selecting reviewed records and approved evidence. Native producer records stay private; publication decides what is released.
+- Static pages per eval and an index: findings grouped, coverage, evidence links, examined revisions, last successful check date, review status, issue drafts.
+- Voting through reactions on the promoted GitHub issues. No custom voting service yet.
+- Before it is public, re-read the security review that removed the frontend from the dev branch, and review the publication path.
 
-Also land the first aggregator items from the acceptance notes: corpus filter, grouping by rule, suppressions.
+Done when evidence links work, pages state what was examined and when, and a maintainer can promote an accepted candidate to an issue.
 
-Done when: the SciCode findings render as a short list of candidate issues that Justin and Tania agree they would file, and the Featured-eval deterministic sweep renders without noise rows dominating.
+### 4. Expand on a schedule
 
-### M2b. Recall against known Inspect Evals defects (October, week 4)
+Deterministic checks across the registry. Bounded investigations at the cadence milestone 2 says we can afford. Monitor coverage, staleness, failures and cost. Each eval page shows which checks apply and which have run.
 
-We already hold a labelled set of real defects: the 40 scoring PRs reviewed on 2026-09-09 and the 125-PR triage from 2026-09-15. Run the deterministic pass, and the M2 view, over the evals those PRs touch and count how many of the defects appear as findings. Recall against that set is the hill-climb metric for the Inspect Evals flavour, the way Epoch's reviews are for the prose reports. Build the measurement before scaling to 130 evals, not after.
+QA runs through every milestone. Recall against the gold-standard manual audits (FORTRESS, BixBench, SciCode) extends the milestone 2 test set as the matching investigation capability lands.
 
-Done when: recall is a number in a committed note, with the misses listed as candidate producer rules.
+## Report from the store: a separate track
 
-### M3. Cost the middle tier (November, weeks 1 to 2)
-
-Run a bounded investigation (source and logs, no commissioned experiments) on two or three Featured evals. Record cost, wall time and what it found against what the deterministic pass found.
-
-Done when: we have a per-eval cost figure and a written tier definition. That figure decides the shape of M5.
-
-### M4. Hosting with prioritisation (November)
-
-A static site over the findings parquet: one page per eval, one index, a +1 on evals and on issues. Links to scorecards where one exists. No grades.
-
-Open decision: GitHub-issue backlog of five to ten items with findings in a separate database (Justin's preference) versus GitHub Projects with a scored board (Aleksey's). Write a one-page decision doc before building. The current lean is Justin's split, because a thousand generated findings would drown a project board and Auditor can regenerate them. Either way the +1 and the promote-to-issue step must be designed so Aleksey's maintenance agent can consume them.
-
-Before the site goes public, re-read the security review that led to the frontend being deleted from the dev branch. Full rollout means Auditor runs arbitrary benchmark containers at scale, and the hosted surface is the part outsiders touch.
-
-The Q4 plan also wants links from a pop-up when users run an eval and from the eval logs. Both need Inspect Evals code changes that are not ours; they become requests to Tania or Aleksey once the URL exists.
-
-Done when: the Featured evals are live at a URL linked from the Inspect Evals docs, and a +1 is recorded somewhere we can read.
-
-### M5. Rollout across Inspect Evals (November to December)
-
-Deterministic producers on every eval, on a schedule. Middle tier on the Featured evals at the cadence M3 says we can afford. Exhaustive audits stay on request.
-
-Done when: every eval in the registry has a findings page less than a month old.
-
-### M6. QA and documentation (December, continuous from M2)
-
-Recall check against the gold-standard manual audits named in the strategy doc: FORTRESS, BixBench, SciCode, extending the M2b measurement from deterministic defects to agentic ones. Fix what Auditor misses where the fix is deterministic. Add a human QA step before any finding changes the state of a contributor issue. Update Auditor docs and the Inspect Evals contributing docs to point contributors at the findings.
-
-Done when: recall against the three gold audits is measured and written down, and CONTRIBUTING.md in Inspect Evals links to the hosted findings.
+Rendering the GL LaTeX report from the findings store, with lint and dataset findings alongside the investigator's, is proposed to James and Laurence separately. It needs the Assessment and Coverage records above, and a taxonomy data file the `.sty` is generated from. It does not block the pilot and does not start until the pilot has consumed real records. The investigator keeps its own authoring format throughout; conversion happens at publish.
 
 ## Decisions still open
 
-- Land `dev/integrated-audits` on `main`, or keep working from it. Needs a conversation with James. Everything above is built on the dev branch.
-- Backlog shape: GitHub issues plus findings database, or GitHub Projects. See M4.
-- Whether the Inspect Evals view files issues automatically or only drafts them. Start with drafts. Auto-closing contributor issues needs a confidence field on findings and a QA step; neither exists yet.
-- Total cost of rollout. Nothing in the Q4 plan estimates it. Investigations ran at about ten dollars local budget plus Hawk jobs, and evals without logs need benchmark runs on top. M3 turns this into a number for Justin.
-- Whether `gl-audit@2` is final. Laurence's doc is a proposal; confirm the seven dimensions and the five Implementation contributions before M2 renders against them.
+- Pilot evals and acceptance criteria, agreed with Tania. First.
+- Land `dev/integrated-audits` on `main`, or keep working from it. James's `core/changes` is heading into dev; both our PRs target dev.
+- Backlog shape (GitHub issues plus findings database, or GitHub Projects) and any custom voting. Deferred until the pilot has run with issue reactions.
+- Whether the view files issues automatically or only drafts them. Drafts. Auto-closing needs a confidence field and a QA step; neither exists.
+- Total cost of rollout. Milestone 2 turns it into a number for Justin.
+- Whether `gl-audit@2` is final. Confirm with Laurence separately; the pilot does not depend on it.
 
 ## Dependencies on other people
 
-- James: the SciCode investigation directory (`work/report/` registers and `published/`), and the branch decision.
-- Laurence: confirmation of the taxonomy v2 dimensions and contributions.
-- Justin and Tania: review of the M2 issues view. They are its users. Tania or Aleksey for the Inspect Evals side of the run-time pop-up and log links.
-- Aleksey: the interface his maintenance agent expects from the findings and the +1 signal.
-- Hawk operators: nothing beyond `hawk login`. The 3.5.0 CLI extra omits `aiofiles`; the `remote` extra here adds it and an upstream issue should be raised.
+- James: the SciCode investigation directory, the branch decision, and a view on rendering the report from the store.
+- Laurence: the v2 dimensions and contributions, when convenient.
+- Tania: pilot evals, acceptance criteria, review of the pilot output. Tania or Aleksey for the Inspect Evals side of run-time links to findings, once a URL exists.
+- Aleksey: what his maintenance agent expects from findings and issues.
+- Hawk: nothing beyond `hawk login`. The server is on 3.6.0; the 3.5.0 CLI extra omits `aiofiles`, which the `remote` extra here adds.
 
 ## Adjacent work not in this plan
 
-Matt's other Q4 items sit in Inspect Evals, not here: patching security problems and merging the HLE updates to main. The template adoption PR #5 fixes the red CI on this repo and lands independently of PR #4.
+Matt's other Q4 items sit in Inspect Evals, not here: patching security problems and merging the HLE updates to main. Contributor-policy changes in the Q4 plan are Justin's decision and should follow measured coverage and maintainer workload, not precede them.

@@ -44,7 +44,7 @@ tests/findings/
   test_lint_adapter.py test_dataset_adapter.py test_header_adapter.py test_cli.py
 ```
 
-`findings/` imports nothing from the rest of inspect_audit except `adapters/header.py`, which imports `inspect_audit._resolve.resolve_task` behind `--resolve`. `hawk:` log sources are handled by `findings/hawk.py` (added 2026-09-28): discovery through the optional `hawk` Python client, which resolves the operator's `hawk login` token from the keyring, and download by shelling out to the `hawk` CLI into a cache under `~/.cache/inspect_audit/hawk/`. The earlier plan to reuse `_registry.fetch_logs` was dropped because it needs runner-style token environment variables and re-downloads into a temp directory every run. Nothing else in inspect_audit imports `findings`.
+`findings/` imports nothing from the rest of inspect_audit except `adapters/header.py`, which imports `inspect_audit._resolve.resolve_task` behind `--resolve`. Header findings take their subject from the log header itself (`eval.revision`, `eval.packages`, `eval.task_version`, `eval.task_args`) rather than from the checkout, and the header run's `inputs.comparison` names the checkout whose `eval.yaml` was compared against (changed 2026-09-29). `hawk:` log sources are handled by `findings/hawk.py` (added 2026-09-28): discovery through the optional `hawk` Python client, which resolves the operator's `hawk login` token from the keyring, and download by shelling out to the `hawk` CLI into a cache under `~/.cache/inspect_audit/hawk/`. The earlier plan to reuse `_registry.fetch_logs` was dropped because it needs runner-style token environment variables and re-downloads into a temp directory every run. Nothing else in inspect_audit imports `findings`.
 
 ## Models
 
@@ -173,24 +173,25 @@ inspect-audit-findings summary <out dir>
 - `--logs` accepts, repeatedly, a directory, a `.eval` file, or a `hawk:<eval-set-id>` address. Local sources are listed with `list_eval_logs(recursive=True)`. `hawk:` sources are pulled with `hawk download` into `--hawk-cache` (default `~/.cache/inspect_audit/hawk/<set>`), where the CLI skips files already present. `--hawk-task <task>` resolves to every eval set whose `task_names` include the task, refusing above `--hawk-limit` (default 20) so a task with hundreds of sets is not pulled by accident; `hawk-sets <task>` lists them without pulling. Logs are then partitioned by target on the header's task name, so one corpus can serve a whole sweep.
 - `hawk-pull [--manifest scripts/hawk-artefacts.yaml] [--dest DIR]` fetches a declared working set instead of a per-run cache: the manifest names eval sets under `logs:` and investigator bundles under `artifacts:` (each `id` plus a free-text `note`), and they land in `<dest>/logs/<set>/` and `<dest>/artifacts/<set>/`. The default dest `artefacts/hawk` is gitignored, so anyone with `hawk login` can reproduce the same local inputs without anything private entering the repo. A failed entry is reported and the rest still pull; exit 1 if any failed. `hawk download-artifacts` needs `aiofiles`, which the 3.5.0 `hawk[cli]` extra omits, so the `remote` and `dev` extras add it.
 - `--producers` selects external producers, default `lint,dataset`. The header producer runs whenever `--logs` was supplied; without logs it is not requested, so a lint-and-dataset sweep can exit 0.
-- For each target, in order: header, then the selected producers. Each writes `<out>/<slug>/<producer>.run.json` and appends to in-memory lists. After the sweep, `findings.parquet`, `runs.parquet`, `<out>/SUMMARY.md` and each `<out>/<slug>/SUMMARY.md` are written.
+- For each target, in order: header, then the selected producers. Each run is written to `<out>/<slug>/runs/<run id>.run.json` and never overwritten (a name collision within one second gets a `-2` suffix). The sweep then rewrites `<out>/<slug>/current.json`, a manifest from producer name to the run file that producer's current view uses; producers that did not run keep their previous entry. `findings.parquet`, `runs.parquet`, `<out>/SUMMARY.md` and each `<out>/<slug>/SUMMARY.md` are rendered from the runs the manifests select, so a partial sweep never mixes fresh and stale results by accident and history is never lost (changed 2026-09-29 after the prototype review).
 - Exit code 0 if every producer ran; 1 if any run was a skip; 2 on a usage error. Findings do not affect the exit code.
-- `summary` re-renders every `SUMMARY.md` from the `*.run.json` files without re-running producers.
+- `summary` re-renders every `SUMMARY.md` and both parquet files from the runs `current.json` selects, without re-running producers. `read_runs` still walks every run file for history.
 
 ## Outputs
 
 ```text
 <out>/
-  <slug>/header.run.json  lint.run.json  dataset.run.json
+  <slug>/runs/<run id>.run.json   one per producer invocation, immutable
+  <slug>/current.json             producer -> runs/<run id>.run.json
   <slug>/SUMMARY.md
   findings.parquet
   runs.parquet
   SUMMARY.md
 ```
 
-`findings.parquet` has the envelope flattened to columns (`fingerprint`, `subject_eval`, `subject_revision_commit`, `subject_task_version_full`, `dimension`, `severity`, `status`, `summary`, `primary_kind`, `primary_key`, `run_id`, `producer`, `rule`) plus `source` and `locations` as JSON strings. `runs.parquet` has one row per run with outcome counts, duration and whether it was skipped.
+`findings.parquet` has the envelope flattened to columns: identity (`fingerprint`, `fingerprint_version`, `schema_version`), the whole subject (`subject_eval`, revision commit, package version and dirty flag, task version full, comparability and interface, dataset path, config, split and revision, `subject_task_args` as JSON), taxonomy position, severity, status, summary, primary location kind and key, run and producer, and the review fields (`aliases`, `suppressions`, `suppressed`, `history`, `introduced`, `fixed`, `effect`) as JSON strings or null, plus `source` and `locations` as JSON strings. A consumer reading only the parquet has everything the envelope holds. `runs.parquet` has one row per run with outcome counts, duration and whether it was skipped.
 
-`render.py` produces both summaries from `Run` models with plain string templating and no model calls, which is why `summary` can regenerate them from the `*.run.json` files. Per-eval `SUMMARY.md`: subject block (eval, revision, task version, dataset); one table of outcomes across producers (rule, status, message); counts of findings by producer and by dimension and severity; then every finding as a line with severity, dimension, rule, primary location key and summary, grouped by producer, with a note on any rule that produced more than 100 findings so noise is visible at a glance. Sweep `SUMMARY.md`: one row per eval with per-producer status and finding counts.
+`render.py` produces both summaries from `Run` models with plain string templating and no model calls, which is why `summary` can regenerate them from the selected run files. Per-eval `SUMMARY.md`: subject block (eval, revision, task version, dataset); one table of outcomes across producers (rule, status, message); counts of findings by producer and by dimension and severity; then every finding as a line with severity, dimension, rule, primary location key and summary, grouped by producer, with a note on any rule that produced more than 100 findings so noise is visible at a glance. Sweep `SUMMARY.md`: one row per eval with per-producer status and finding counts.
 
 ## Testing
 

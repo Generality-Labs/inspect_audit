@@ -1,5 +1,7 @@
 # Findings Prototype Implementation Plan
 
+**Historical.** Executed in full on `findings-prototype` (PR #4) by 2026-09-28. The current contract is the [design spec](../specs/2026-09-25-findings-prototype-design.md); the current plan is the [roadmap](../../roadmap.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A `findings` module in inspect_audit that turns the output of three deterministic producers (inspect-evals-lint, inspect-dataset, Inspect log headers) into one finding schema, with a CLI that runs them over named inspect_evals evals and writes JSON, parquet and markdown summaries.

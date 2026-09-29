@@ -26,6 +26,6 @@ logs:
 
 artifacts:
   # A complete published investigator bundle: findings.json, assessments.json, coverage.json,
-  # report.pdf, evidence/. The SciCode investigation was not run on Hawk; ask James for it.
+  # report.pdf, evidence/.
   - id: chess-audit-sol6-20260925
     note: Epoch Chess Puzzles investigation, gpt-6-sol (2026-09-25)

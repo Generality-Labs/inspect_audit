@@ -12,7 +12,10 @@ import pytest
 
 @pytest.mark.skipif(os.getenv("INSPECT_AUDIT_LIVE_TESTS") != "1", reason="opt-in provider call")
 @pytest.mark.parametrize("all_items", [False, True])
-def test_verdict_schema_at_provider(all_items: bool) -> None:
+@pytest.mark.parametrize(
+    "auditor", ["openrouter/openai/gpt-5-mini", "openrouter/openai/gpt-6-luna"]
+)
+def test_verdict_schema_at_provider(all_items: bool, auditor: str) -> None:
     from inspect_ai.model import GenerateConfig, get_model
     from inspect_ai.scorer import match
     from inspect_ai.tool import ToolDef, ToolFunction, bash, python, text_editor, think
@@ -35,7 +38,7 @@ def test_verdict_schema_at_provider(all_items: bool) -> None:
 
     async def run():
         model = get_model(
-            "openrouter/openai/gpt-5-mini",
+            auditor,
             config=GenerateConfig(max_tokens=2048, reasoning_effort="low", max_retries=0),
         )
         output = await model.generate(

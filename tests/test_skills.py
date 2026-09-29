@@ -276,8 +276,10 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
         }
         with pytest.raises(ToolError, match="examined"):
             await record(**args, details={})
-        with pytest.raises(ToolError, match="valid JSON object"):
-            await record(**args, details="invalid JSON")
+        # prose where the object belongs (09-29 chess run, 54 times): the refusal names
+        # the fields and where the prose goes, so the auditor can correct itself
+        with pytest.raises(ToolError, match=r"began 'Review table.*remarks.*examined: Exact log"):
+            await record(**args, details="Review table: see /audit/review.json")
         await record(**args, details='{"examined": ["run.eval#sample=1"]}')
         await record(**args, details={"examined": [quote.source]})
         await submit_audit([item])(
@@ -290,6 +292,7 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
 
     asyncio.run(run())
     saved = store_as(Verdicts)
+    assert len(saved.rejected[item.name]) == 2  # the missing field, then the prose
     assert saved.verdicts[item.name].details["examined"] == [quote.source]
     assert saved.debrief["environment_issues"][0].source == "tool-event-1"
     assert saved.debrief["unresolved"][0].observed == "Alternative judge not tested"
@@ -354,3 +357,28 @@ def test_verdict_schema_survives_openrouter_serialization() -> None:
 
     check(wire)
     assert wire["properties"]["details"]["type"] == "string"
+
+
+def test_a_missing_verdict_says_why() -> None:
+    """09-29 chess run: puzzles 40 and 75 came back NO_VERDICT with only concordance
+    metadata. 40 had hit its cost limit before any verdict, 75 had every
+    record_verdict refused; the investigator could see neither and blamed the wrong
+    thing. Real eval: a limit hit before the auditor records anything."""
+    from inspect_ai import Task, eval
+    from inspect_ai.dataset import Sample
+    from inspect_ai.solver import generate
+
+    from inspect_audit._agent import AuditItemSkill, item_scorer
+
+    item = AuditItemSkill(name="gold-answer", description="Check the key", grades=["CORRECT"])
+    task = Task(
+        dataset=[Sample(input="audit this")],
+        solver=generate(),
+        scorer=item_scorer(item),
+        message_limit=1,
+    )
+    log = eval(task, model="mockllm/model", display="none")[0]
+    score = log.samples[0].scores["gold-answer"]  # type: ignore[index]
+    assert score.value == "NO_VERDICT"
+    assert "never called record_verdict" in str(score.explanation)
+    assert "hit its message limit" in str(score.explanation)

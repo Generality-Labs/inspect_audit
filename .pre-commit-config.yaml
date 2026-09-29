@@ -2,9 +2,8 @@
 default_language_version:
   python: python3.12
 
-# Vendored skills stay byte-identical to upstream (src/inspect_audit/skills/VENDORED.md),
-# and dev/audit-logs holds recorded run metadata rather than source.
-exclude: ^(src/inspect_audit/skills/|dev/audit-logs/)
+# Vendored skills stay byte-identical to upstream (src/inspect_audit/skills/VENDORED.md).
+exclude: ^src/inspect_audit/skills/
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

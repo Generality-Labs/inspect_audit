@@ -21,7 +21,12 @@ from inspect_audit.findings.adapters import (
     task_version_from_yaml,
 )
 from inspect_audit.findings.config import Config, EvalConfig, LogFilter
-from inspect_audit.findings.producers import DATASET_SPEC, LINT_SPEC, ProducerConfig
+from inspect_audit.findings.producers import (
+    DATASET_SPEC,
+    DATASET_TASK_SPEC,
+    LINT_SPEC,
+    ProducerConfig,
+)
 
 STUBS = Path(__file__).parent / "stubs"
 
@@ -79,19 +84,39 @@ def test_env_overrides_are_shell_split() -> None:
     assert config.dataset == ProducerConfig().dataset
 
 
-def test_task_mode_dataset_command_runs_in_the_eval_project() -> None:
-    assert ProducerConfig().dataset_task == (
+def test_task_scans_dump_in_the_eval_project_and_scan_in_inspect_datasets_own_env() -> None:
+    config = ProducerConfig()
+    assert config.dataset_dump == (
         "uv",
         "run",
         "--project",
         "{ie_root}",
         "--frozen",
-        "--with",
-        DATASET_SPEC,
+        "{eval_deps}",
+        "python",
+    )
+    assert config.dataset_task == (
+        "uvx",
+        "--from",
+        DATASET_TASK_SPEC,
+        "{inspect_ai}",
         "inspect-dataset",
     )
-    config = ProducerConfig.from_env({"INSPECT_AUDIT_DATASET_TASK_CMD": "python stub.py {ie_root}"})
-    assert config.dataset_task == ("python", "stub.py", "{ie_root}")
+    assert f"inspect-dataset[inspect] @ {DATASET_SPEC}" == DATASET_TASK_SPEC
+    assert config.eval_env is None
+
+
+def test_task_scan_commands_and_environment_can_be_overridden() -> None:
+    config = ProducerConfig.from_env(
+        {
+            "INSPECT_AUDIT_DATASET_DUMP_CMD": "python dump.py {ie_root}",
+            "INSPECT_AUDIT_DATASET_TASK_CMD": "python scan.py",
+            "INSPECT_AUDIT_EVAL_ENV": "/tmp/env",
+        }
+    )
+    assert config.dataset_dump == ("python", "dump.py", "{ie_root}")
+    assert config.dataset_task == ("python", "scan.py")
+    assert config.eval_env == "/tmp/env"
 
 
 def test_package_of_and_slug() -> None:

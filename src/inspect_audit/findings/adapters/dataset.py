@@ -7,9 +7,12 @@ runs on. A pilot-config declaration with HuggingFace settings scans the HuggingF
 from __future__ import annotations
 
 import json
+import os
+import re
 import tempfile
 import time
-from collections.abc import Mapping
+import tomllib
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -30,12 +33,15 @@ from ..models import (
     utcnow,
 )
 from . import (
+    CommandResult,
     Context,
     ProducerError,
     eval_yaml,
     new_run_id,
+    package_of,
     run_command,
     skip_run,
+    slug,
     subject_for,
 )
 
@@ -208,44 +214,207 @@ def parse(
     )
 
 
+DUMP_SCRIPT = Path(__file__).with_name("_dump_task_samples.py")
+REPLAY_SCRIPT = Path(__file__).with_name("_replay_samples.py")
+# names the dumped samples for the replay task; _replay_samples.SAMPLES_ENV must match
+SAMPLES_ENV = "INSPECT_AUDIT_SAMPLES_FILE"
+
+
+def eval_dependency_args(ie_root: Path, package: str) -> list[str]:
+    """`--extra`/`--group` flags for the eval's own dependencies, where the checkout declares them."""
+    path = ie_root / "pyproject.toml"
+    if not path.is_file():
+        return []
+    data = tomllib.loads(path.read_text())
+    args: list[str] = []
+    if package in data.get("project", {}).get("optional-dependencies", {}):
+        args += ["--extra", package]
+    if package in data.get("dependency-groups", {}):
+        args += ["--group", package]
+    return args
+
+
+def eval_env_dir(ctx: Context) -> Path:
+    """The scratch environment task dumps run in: never the checkout's own `.venv`."""
+    if ctx.producers.eval_env:
+        return Path(ctx.producers.eval_env)
+    cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    return cache / "inspect_audit" / "eval-envs" / f"ie-{slug(str(ctx.ie_root.resolve()))}"
+
+
+def locked_version(ie_root: Path, package: str) -> str | None:
+    """The version of `package` in the checkout's uv.lock, or None without a readable entry."""
+    try:
+        lock = tomllib.loads((ie_root / "uv.lock").read_text())
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None
+    for entry in lock.get("package", []):
+        if isinstance(entry, dict) and entry.get("name") == package:
+            version = entry.get("version")
+            return str(version) if version else None
+    return None
+
+
+def _expand(prefix: Sequence[str], ie_root: Path, lists: Mapping[str, list[str]]) -> list[str]:
+    """The command with `{ie_root}` substituted and each list placeholder replaced by its items."""
+    argv: list[str] = []
+    for part in prefix:
+        if part in lists:
+            argv += lists[part]
+        else:
+            argv.append(part.replace("{ie_root}", str(ie_root)))
+    return argv
+
+
+def _is_local_path(value: str) -> bool:
+    """A filesystem path, which differs per machine, rather than a hub id or URL."""
+    return (
+        value.startswith(("/", "~", ".", "file:", "\\"))
+        or re.match(r"^[A-Za-z]:[\\/]", value) is not None
+    )
+
+
+def dataset_identity(meta: Mapping[str, Any], spec: str) -> str:
+    """The dataset a task scan's findings belong to: Inspect's location unless it is a local path.
+
+    A file-backed dataset's location is this machine's copy (for inspect_evals, a cache path) and
+    its name only the file's stem, so neither identifies it across machines; the task spec does.
+    """
+    location = meta.get("dataset_location")
+    if isinstance(location, str) and location and not _is_local_path(location):
+        return location
+    return spec
+
+
+def _output_tail(result: CommandResult) -> str:
+    return (result.stderr or result.stdout)[-1500:]
+
+
 def run(target: str, ctx: Context) -> Run:
-    """Scan the eval's dataset with static scanners into a temporary directory, then parse it."""
+    """Scan the eval's dataset with static scanners into a temporary directory, then parse it.
+
+    A task scan first dumps the task's samples in the eval's environment, then scans a replay of
+    them in inspect-dataset's, so neither sees the other's dependencies.
+    """
     timestamp = utcnow()
     declared = ctx.config.for_eval(target).dataset
     yaml_data = eval_yaml(ctx.ie_root, target)
     path, options, examined = scan_arguments(target, yaml_data, declared)
     if path is None:
+        reason = (
+            "HuggingFace settings are declared in the pilot config but there is no dataset path: declare `path`, or add a huggingface asset to eval.yaml external_assets"
+            if declared and declared.selects_hf
+            else "no dataset path: none declared in the pilot config, no huggingface asset in eval.yaml external_assets, and no tasks in eval.yaml"
+        )
+        return skip_run(PRODUCER, target, ctx, reason, timestamp=timestamp)
+    listed = yaml_tasks(yaml_data)
+    if declared and declared.task and listed and declared.task not in listed:
         return skip_run(
             PRODUCER,
             target,
             ctx,
-            "no dataset path: none declared in the pilot config, no huggingface asset in eval.yaml external_assets, and no tasks in eval.yaml",
+            f"declared task {declared.task!r} is not among eval.yaml's tasks ({', '.join(listed)})",
             timestamp=timestamp,
         )
-    if examined["mode"] == "task":
-        prefix = [
-            part.replace("{ie_root}", str(ctx.ie_root)) for part in ctx.producers.dataset_task
-        ]
-        dataset: DatasetRef | None = DatasetRef(path=hf_asset(yaml_data) or path)
-    else:
-        prefix = list(ctx.producers.dataset)
-        dataset = None
     ctx.out_dir.mkdir(parents=True, exist_ok=True)
-    scan_dir = Path(tempfile.mkdtemp(prefix="inspect_dataset_", dir=ctx.out_dir))
-    argv = [*prefix, "scan", path, *options, "-o", str(scan_dir)]
+    inputs: dict[str, JsonValue] = {"dataset": examined}
     started = time.monotonic()
-    try:
-        result = run_command(argv, timeout=ctx.producers.timeout_s)
-    except ProducerError as ex:
-        return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp)
+    with tempfile.TemporaryDirectory(prefix="inspect_dataset_samples_") as work:
+        if examined["mode"] == "task":
+            samples, meta_path = Path(work) / "samples.jsonl", Path(work) / "meta.json"
+            try:
+                eval_deps = eval_dependency_args(ctx.ie_root, package_of(target))
+            except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as ex:
+                return skip_run(
+                    PRODUCER,
+                    target,
+                    ctx,
+                    f"could not read {ctx.ie_root / 'pyproject.toml'} for the eval's dependencies: {ex}",
+                    timestamp=timestamp,
+                    inputs=inputs,
+                )
+            dump_argv = [
+                *_expand(ctx.producers.dataset_dump, ctx.ie_root, {"{eval_deps}": eval_deps}),
+                str(DUMP_SCRIPT),
+                path,
+                str(samples),
+                str(meta_path),
+            ]
+            inputs["dump_argv"] = list(dump_argv)
+            dump_env = {
+                "UV_PROJECT_ENVIRONMENT": str(eval_env_dir(ctx)),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+            try:
+                dumped = run_command(
+                    dump_argv, timeout=ctx.producers.timeout_s, cwd=ctx.ie_root, env=dump_env
+                )
+            except ProducerError as ex:
+                return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp, inputs=inputs)
+            if dumped.returncode != 0 or not meta_path.is_file():
+                return skip_run(
+                    PRODUCER,
+                    target,
+                    ctx,
+                    f"sample dump exit {dumped.returncode}: {_output_tail(dumped)}",
+                    timestamp=timestamp,
+                    inputs=inputs,
+                )
+            try:
+                meta = json.loads(meta_path.read_text())
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as ex:
+                return skip_run(
+                    PRODUCER,
+                    target,
+                    ctx,
+                    f"sample dump wrote unreadable meta: {ex}",
+                    timestamp=timestamp,
+                    inputs=inputs,
+                )
+            meta = meta if isinstance(meta, dict) else {}
+            # the dataset as Inspect records it for this task, not whichever asset eval.yaml lists first
+            dataset: DatasetRef | None = DatasetRef(path=dataset_identity(meta, path))
+            inspect_ai = locked_version(ctx.ie_root, "inspect-ai")
+            inputs["dataset"] = {
+                **examined,
+                "samples": meta.get("samples"),
+                "inspect_ai": inspect_ai,
+            }
+            pin = ["--with", f"inspect-ai=={inspect_ai}"] if inspect_ai else []
+            scan_dir = Path(tempfile.mkdtemp(prefix="inspect_dataset_", dir=ctx.out_dir))
+            argv = [
+                *_expand(ctx.producers.dataset_task, ctx.ie_root, {"{inspect_ai}": pin}),
+                "scan",
+                f"{REPLAY_SCRIPT}@replay_samples",
+                "-o",
+                str(scan_dir),
+            ]
+            scan_env: dict[str, str] | None = {SAMPLES_ENV: str(samples)}
+            # the replay needs nothing from the caller's directory, and must not pick up its .env
+            scan_cwd: Path | None = scan_dir
+        else:
+            scan_dir = Path(tempfile.mkdtemp(prefix="inspect_dataset_", dir=ctx.out_dir))
+            argv = [*ctx.producers.dataset, "scan", path, *options, "-o", str(scan_dir)]
+            dataset = None
+            scan_env = None
+            # inspect-dataset reads ./.env (an HF token for gated datasets, say) and resolves a
+            # relative dataset path from the caller's directory, as it did before task scans
+            scan_cwd = None
+        inputs["argv"] = list(argv)
+        inputs["scan_dir"] = str(scan_dir)
+        try:
+            result = run_command(argv, timeout=ctx.producers.timeout_s, cwd=scan_cwd, env=scan_env)
+        except ProducerError as ex:
+            return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp, inputs=inputs)
     duration = time.monotonic() - started
     if result.returncode != 0 or not (scan_dir / "scan_summary.json").is_file():
         return skip_run(
             PRODUCER,
             target,
             ctx,
-            f"inspect-dataset exit {result.returncode}: {(result.stderr or result.stdout)[-1500:]}",
+            f"inspect-dataset exit {result.returncode}: {_output_tail(result)}",
             timestamp=timestamp,
+            inputs=inputs,
         )
     try:
         return parse(
@@ -254,7 +423,7 @@ def run(target: str, ctx: Context) -> Run:
             subject_for(target, ctx),
             timestamp=timestamp,
             duration_s=duration,
-            inputs={"argv": argv, "scan_dir": str(scan_dir), "dataset": examined},
+            inputs=inputs,
             dataset=dataset,
         )
     except (

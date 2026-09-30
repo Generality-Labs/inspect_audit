@@ -21,6 +21,7 @@ from .io import findings_df, read_current, runs_df, update_current, write_parque
 from .models import Run
 from .producers import ProducerConfig
 from .render import render_eval_summary, render_sweep_summary
+from .review import Review, apply_review, load_review, unmatched_issue_findings
 
 EXTERNAL_PRODUCERS: dict[str, Callable[[str, Context], Run]] = {
     "lint": lint_adapter.run,
@@ -75,7 +76,23 @@ def _run_path(directory: Path, run: Run) -> Path:
     return path
 
 
-def write_outputs(out: Path, runs_by_eval: Mapping[str, Sequence[Run]]) -> None:
+def _renamed(run: Run, file_id: str) -> Run:
+    """The run under a new id, with its findings' record ids and run_id moved with it."""
+    findings = [
+        finding.model_copy(
+            update={
+                "run_id": file_id,
+                "id": f"{file_id}/{n}" if finding.id == f"{run.id}/{n}" else finding.id,
+            }
+        )
+        for n, finding in enumerate(run.findings, 1)
+    ]
+    return run.model_copy(update={"id": file_id, "findings": findings})
+
+
+def write_outputs(
+    out: Path, runs_by_eval: Mapping[str, Sequence[Run]], review: Review | None = None
+) -> None:
     """Append the new runs, move each eval's `current.json`, then render everything from the current view."""
     for target, runs in runs_by_eval.items():
         directory = out / slug(target)
@@ -83,32 +100,77 @@ def write_outputs(out: Path, runs_by_eval: Mapping[str, Sequence[Run]]) -> None:
         for run in runs:
             path = _run_path(directory, run)
             file_id = path.name.removesuffix(".run.json")
-            stored = run if file_id == run.id else run.model_copy(update={"id": file_id})
+            stored = run if file_id == run.id else _renamed(run, file_id)
             write_run(stored, path)
             written.append(stored)
         update_current(directory, written)
-    render_current(out)
+    render_current(out, review)
 
 
-def render_current(out: Path) -> None:
-    """Parquet and summaries from the runs every `current.json` selects."""
+def render_current(out: Path, review: Review | None = None) -> None:
+    """Parquet and summaries from the runs every `current.json` selects, with review decisions applied."""
+    review = review or Review()
     runs_by_eval: dict[str, list[Run]] = {}
-    for run in read_current(out):
+    for run in apply_review(read_current(out), review):
         runs_by_eval.setdefault(run.subject.eval, []).append(run)
     all_runs: list[Run] = []
     for target, runs in runs_by_eval.items():
-        (out / slug(target) / "SUMMARY.md").write_text(render_eval_summary(runs))
+        (out / slug(target) / "SUMMARY.md").write_text(
+            render_eval_summary(runs, issues=review.issues)
+        )
         all_runs += runs
     write_parquet(findings_df(all_runs), out / "findings.parquet")
     write_parquet(runs_df(all_runs), out / "runs.parquet")
     (out / "SUMMARY.md").write_text(render_sweep_summary(runs_by_eval))
+    for issue_id, fingerprints in sorted(unmatched_issue_findings(review, all_runs).items()):
+        print(
+            f"warning: issue {issue_id} lists {len(fingerprints)} fingerprint(s) with no current "
+            f"observation: {', '.join(fingerprints)}",
+            file=sys.stderr,
+        )
+    for issue in review.issues:
+        if issue.subject not in runs_by_eval:
+            print(
+                f"warning: issue {issue.id} names subject {issue.subject}, which has no runs in the "
+                "current view, so it appears in no summary",
+                file=sys.stderr,
+            )
+        elsewhere = sorted(
+            {
+                finding.subject.eval
+                for run in all_runs
+                for finding in run.findings
+                if finding.issue == issue.id and finding.subject.eval != issue.subject
+            }
+        )
+        if elsewhere:
+            print(
+                f"warning: issue {issue.id} ({issue.subject}) is linked to findings on "
+                f"{', '.join(elsewhere)}",
+                file=sys.stderr,
+            )
 
 
-def _summaries_from_disk(out: Path) -> int:
+def _load_review_or_exit(directory: Path, *, explicit: bool) -> Review | None:
+    """The review files under `directory`, or None after printing why they could not be loaded.
+
+    A directory the operator named must exist: a typo would otherwise silently apply nothing.
+    """
+    if explicit and not directory.is_dir():
+        print(f"--review {directory} is not a directory", file=sys.stderr)
+        return None
+    try:
+        return load_review(directory)
+    except (OSError, ValueError) as ex:
+        print(f"could not load review files under {directory}: {ex}", file=sys.stderr)
+        return None
+
+
+def _summaries_from_disk(out: Path, review: Review) -> int:
     if not read_current(out):
         print(f"no current.json under {out}", file=sys.stderr)
         return 2
-    render_current(out)
+    render_current(out, review)
     return 0
 
 
@@ -158,10 +220,22 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_CONFIG_PATH,
         help="per-eval declaration of what to scan and which logs count (default: the packaged pilot.yaml)",
     )
+    run_p.add_argument(
+        "--review",
+        type=Path,
+        default=None,
+        help="directory holding suppressions.yaml and issues.yaml (default: --out)",
+    )
     run_p.add_argument("--featured", action="store_true", help="add the 35 Featured evals")
     run_p.add_argument("targets", nargs="*", help="registry names, e.g. inspect_evals/stereoset")
     sum_p = sub.add_parser("summary", help="re-render summaries from existing run files")
     sum_p.add_argument("out", type=Path)
+    sum_p.add_argument(
+        "--review",
+        type=Path,
+        default=None,
+        help="directory holding suppressions.yaml and issues.yaml (default: the out dir)",
+    )
     sets_p = sub.add_parser("hawk-sets", help="list the Hawk eval sets that ran a task")
     sets_p.add_argument("task", help="registry name, e.g. inspect_evals/scicode")
     pull_p = sub.add_parser(
@@ -213,7 +287,10 @@ def _hawk_sets(task: str) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "summary":
-        return _summaries_from_disk(args.out)
+        review = _load_review_or_exit(args.review or args.out, explicit=args.review is not None)
+        if review is None:
+            return 2
+        return _summaries_from_disk(args.out, review)
     if args.command == "hawk-sets":
         return _hawk_sets(args.task)
     if args.command == "hawk-pull":
@@ -253,6 +330,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError, ValidationError) as ex:
         print(f"could not load {args.config}: {ex}", file=sys.stderr)
         return 2
+    review = _load_review_or_exit(args.review or args.out, explicit=args.review is not None)
+    if review is None:
+        return 2
     producers_config = ProducerConfig.from_env()
     try:
         logs = collect_logs(sources, hawk_cache=args.hawk_cache, producers=producers_config)
@@ -270,7 +350,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # the header producer needs logs; with no log sources it is not requested rather than skipped,
     # so a lint-and-dataset sweep exits 0 when its producers all ran
     runs_by_eval = sweep(targets, ctx, producers, header=bool(sources))
-    write_outputs(args.out, runs_by_eval)
+    write_outputs(args.out, runs_by_eval, review)
     skipped = any(
         run.outcomes and all(outcome.status == "skip" for outcome in run.outcomes)
         for runs in runs_by_eval.values()

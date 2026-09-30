@@ -152,3 +152,14 @@ def test_current_runs_follow_the_manifest(tmp_path: Path, run: Run) -> None:
     current = read_current(tmp_path)
     assert sorted(r.id for r in current) == ["dataset-1", "lint-2"]
     assert sorted(r.id for r in read_runs(tmp_path)) == ["dataset-1", "lint-1", "lint-2"]
+
+
+def test_findings_df_has_record_id_and_issue_columns(run: Run) -> None:
+    frame = findings_df([run])
+    assert frame.columns[0] == "id"
+    assert frame.iloc[0]["id"] == "lint-1/1"
+    assert "issue" in frame.columns and frame.iloc[0]["issue"] is None
+    linked = run.model_copy(
+        update={"findings": [run.findings[0].model_copy(update={"issue": "ISS-0001"})]}
+    )
+    assert findings_df([linked]).iloc[0]["issue"] == "ISS-0001"

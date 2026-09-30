@@ -44,7 +44,7 @@ Four, replacing the earlier six. Dates follow once the pilot evals and acceptanc
 
 Make the deterministic pass trustworthy on a few pilot evals and import the first investigation.
 
-- Input selection. Dataset scans take path, config, split, revision and field mapping from a declared per-eval configuration where inference is unreliable, and record what they examined. Header checks partition logs by task and task arguments, distinguish benchmark attempts from mock runs and sample-audit runs, and name the comparison revision. Skips and unsupported inputs render beside findings.
+- Input selection (done 2026-09-30, PR pending). Dataset scans take path, config, split, revision and field mapping from a declared per-eval configuration where inference is unreliable, and record what they examined. Header checks partition logs by task and task arguments, distinguish benchmark attempts from mock runs and sample-audit runs, and name the comparison revision. Skips and unsupported inputs render beside findings.
 - Import the chess bundle: `findings.json` into the envelope, `assessments.json` and `coverage.json` kept as their own records and rendered together. Add the reconciled SciCode registers as a second fixture when James hands them over; raw worker labels stay distinguishable from reconciled results.
 - Group observations by producer and rule with a count and an example. Apply reviewed suppressions from `suppressions.yaml`. Accepted candidates get an issue id in `issues.yaml`.
 

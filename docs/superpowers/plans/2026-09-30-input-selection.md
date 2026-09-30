@@ -28,11 +28,12 @@
 4. A log with non-default task arguments must not fire `header.dataset_samples` against the default `dataset_samples`, but must still take part in version drift. Test in Task 4.
 5. A `pilot.yaml` with a misspelled key must fail loudly at load time, not silently ignore the entry. Test in Task 1.
 
----
+______________________________________________________________________
 
 ### Task 1: Declared configuration model and loader
 
 **Files:**
+
 - Create: `src/inspect_audit/findings/config.py`
 - Create: `src/inspect_audit/findings/pilot.yaml`
 - Modify: `src/inspect_audit/findings/adapters/__init__.py` (Context gains `config`)
@@ -40,7 +41,9 @@
 - Test: `tests/findings/test_config.py`
 
 **Interfaces:**
+
 - Produces:
+
   - `DatasetConfig(path: str | None, config: str | None, split: str | None, revision: str | None, fields: dict[str, str])`
   - `LogFilter(task_args: dict[str, JsonValue] | None = None, include_mock: bool = False)`
   - `EvalConfig(dataset: DatasetConfig | None = None, logs: LogFilter = LogFilter())`
@@ -123,8 +126,7 @@ def test_packaged_default_declares_stereoset() -> None:
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/findings/test_config.py -q --no-cov`
-Expected: FAIL with `ModuleNotFoundError: No module named 'inspect_audit.findings.config'`
+Run: `uv run pytest tests/findings/test_config.py -q --no-cov` Expected: FAIL with `ModuleNotFoundError: No module named 'inspect_audit.findings.config'`
 
 - [ ] **Step 3: Write the config module**
 
@@ -234,13 +236,11 @@ and in `Context`:
 
 Check `pyproject.toml` `[tool.hatch.build.targets.wheel]`. It lists `packages = ["src/inspect_audit"]`, which includes non-Python files under the package, the same way `findings/taxonomies/*.json` already ship. Confirm with:
 
-Run: `uv build --wheel -o /tmp/wheelcheck 2>/dev/null && unzip -l /tmp/wheelcheck/*.whl | grep pilot.yaml`
-Expected: one line naming `inspect_audit/findings/pilot.yaml`. If absent, add `include = ["src/inspect_audit/findings/pilot.yaml"]` under that table.
+Run: `uv build --wheel -o /tmp/wheelcheck 2>/dev/null && unzip -l /tmp/wheelcheck/*.whl | grep pilot.yaml` Expected: one line naming `inspect_audit/findings/pilot.yaml`. If absent, add `include = ["src/inspect_audit/findings/pilot.yaml"]` under that table.
 
 - [ ] **Step 7: Run the tests to verify they pass**
 
-Run: `uv run pytest tests/findings/test_config.py -q --no-cov`
-Expected: 5 passed
+Run: `uv run pytest tests/findings/test_config.py -q --no-cov` Expected: 5 passed
 
 - [ ] **Step 8: Commit**
 
@@ -254,16 +254,19 @@ eval; an eval without an entry gets the defaults. Context carries it.
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
----
+______________________________________________________________________
 
 ### Task 2: Dataset adapter takes its arguments from the declaration and records what it examined
 
 **Files:**
+
 - Modify: `src/inspect_audit/findings/adapters/dataset.py`
 - Modify: `tests/findings/test_dataset_adapter.py`
 
 **Interfaces:**
+
 - Consumes: `Context.config`, `Config.for_eval`, `DatasetConfig` from Task 1.
+
 - Produces: `scan_arguments(target: str, yaml_data: Mapping[str, Any], declared: DatasetConfig | None) -> tuple[str | None, list[str], dict[str, JsonValue]]` returning the dataset path, the extra CLI options, and the `examined` record written to `Run.inputs["dataset"]`. `DATASET_OVERRIDES` is removed.
 
 - [ ] **Step 1: Write the failing tests**
@@ -360,8 +363,7 @@ Delete `test_overrides_include_stereoset` and the `DATASET_OVERRIDES` import.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/findings/test_dataset_adapter.py -q --no-cov`
-Expected: FAIL with `ImportError: cannot import name 'scan_arguments'`
+Run: `uv run pytest tests/findings/test_dataset_adapter.py -q --no-cov` Expected: FAIL with `ImportError: cannot import name 'scan_arguments'`
 
 - [ ] **Step 3: Implement `scan_arguments` and use it in `run`**
 
@@ -440,13 +442,11 @@ Delete the `overrides = DATASET_OVERRIDES.get(target, {})` block and its loop.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `uv run pytest tests/findings/test_dataset_adapter.py -q --no-cov`
-Expected: all pass (the fixture-based `test_parse_summary_outcomes_and_findings` is unchanged)
+Run: `uv run pytest tests/findings/test_dataset_adapter.py -q --no-cov` Expected: all pass (the fixture-based `test_parse_summary_outcomes_and_findings` is unchanged)
 
 - [ ] **Step 5: Run the whole findings suite; the CLI tests still pass because `--config` is not yet wired and `Context()` defaults to an empty `Config`, so the dataset scan falls back to the `ASSET` in eval.yaml with no options**
 
-Run: `uv run pytest tests/findings -q --no-cov`
-Expected: all pass. If `test_run_writes_the_layout` fails on finding counts, the stub ignores argv, so the count is unchanged; investigate before proceeding.
+Run: `uv run pytest tests/findings -q --no-cov` Expected: all pass. If `test_run_writes_the_layout` fails on finding counts, the stub ignores argv, so the count is unchanged; investigate before proceeding.
 
 - [ ] **Step 6: Commit**
 
@@ -462,15 +462,17 @@ was declared or inferred.
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
----
+______________________________________________________________________
 
 ### Task 3: Header matching respects qualified registry names
 
 **Files:**
+
 - Modify: `src/inspect_audit/findings/adapters/header.py` (`matching_headers`)
 - Modify: `tests/findings/test_header_adapter.py`
 
 **Interfaces:**
+
 - Produces: `matching_headers(logs, target, names=None)` unchanged in signature; a header whose `task_registry_name` contains `/` matches only when its package prefix equals the target's and its tail is in `names`. Bare task names still match on the tail.
 
 - [ ] **Step 1: Write the failing test**
@@ -510,8 +512,7 @@ def test_qualified_registry_names_match_only_their_own_package() -> None:
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `uv run pytest tests/findings/test_header_adapter.py::test_qualified_registry_names_match_only_their_own_package -q --no-cov`
-Expected: FAIL with `ImportError: cannot import name '_header_matches'`
+Run: `uv run pytest tests/findings/test_header_adapter.py::test_qualified_registry_names_match_only_their_own_package -q --no-cov` Expected: FAIL with `ImportError: cannot import name '_header_matches'`
 
 - [ ] **Step 3: Implement**
 
@@ -543,8 +544,7 @@ Keep the existing `_tail` helper.
 
 - [ ] **Step 4: Run the header tests to verify they pass**
 
-Run: `uv run pytest tests/findings/test_header_adapter.py -q --no-cov`
-Expected: all pass
+Run: `uv run pytest tests/findings/test_header_adapter.py -q --no-cov` Expected: all pass
 
 - [ ] **Step 5: Commit**
 
@@ -558,18 +558,22 @@ run of it; it no longer counts as a scicode log.
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
----
+______________________________________________________________________
 
 ### Task 4: Header adapter selects logs by the declared filter and records used and excluded
 
 **Files:**
+
 - Modify: `src/inspect_audit/findings/adapters/header.py`
 - Modify: `tests/findings/test_header_adapter.py`
 - Modify: `tests/findings/test_adapters_common.py` (shared `MOCK_OK` config for tests whose logs come from `mockllm/model`)
 
 **Interfaces:**
+
 - Consumes: `Context.config`, `LogFilter` from Task 1.
+
 - Produces:
+
   - `select_headers(headers: Sequence[tuple[Path, EvalLog]], log_filter: LogFilter) -> tuple[list[tuple[Path, EvalLog]], list[dict[str, str]]]` returning used headers and `[{"path": ..., "reason": ...}]` exclusions.
   - `parse(...)` gains keyword `log_filter: LogFilter = LogFilter()` and writes `Run.inputs["logs"] = {"used": [...], "excluded": [...], "count_excluded": [...]}`; `count_excluded` lists logs used for drift and scoring checks but left out of the `dataset_samples` comparison because they carry non-default task arguments.
   - `MOCK_OK = Config(defaults=EvalConfig(logs=LogFilter(include_mock=True)))` in `tests/findings/test_adapters_common.py`.
@@ -672,8 +676,7 @@ Then update every existing test in the file that calls `run(..., Context(ie_root
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/findings/test_header_adapter.py -q --no-cov`
-Expected: FAIL with `ImportError: cannot import name 'select_headers'`. If `_log` fails first with a registry error about the `@task` decorator inside a function, register with a unique name per call: `@task(name=f"{name}")` is fine because Inspect allows re-registration of the same name; if it complains, fall back to `Task(...)` for the no-args case and use the factory only when `task_args` is given.
+Run: `uv run pytest tests/findings/test_header_adapter.py -q --no-cov` Expected: FAIL with `ImportError: cannot import name 'select_headers'`. If `_log` fails first with a registry error about the `@task` decorator inside a function, register with a unique name per call: `@task(name=f"{name}")` is fine because Inspect allows re-registration of the same name; if it complains, fall back to `Task(...)` for the no-args case and use the factory only when `task_args` is given.
 
 - [ ] **Step 4: Implement `select_headers` and the recorded inputs**
 
@@ -809,13 +812,11 @@ The skip message for "1 matching log(s), all excluded: mock model mockllm/model"
 
 - [ ] **Step 5: Run the header tests to verify they pass**
 
-Run: `uv run pytest tests/findings/test_header_adapter.py -q --no-cov`
-Expected: all pass
+Run: `uv run pytest tests/findings/test_header_adapter.py -q --no-cov` Expected: all pass
 
 - [ ] **Step 6: Run the whole findings suite**
 
-Run: `uv run pytest tests/findings -q --no-cov`
-Expected: the CLI tests that supply mock logs now fail, because the default config excludes them and the header run becomes a skip (exit code 1 and different finding counts). That is Task 5's job; note the failing test names and continue.
+Run: `uv run pytest tests/findings -q --no-cov` Expected: the CLI tests that supply mock logs now fail, because the default config excludes them and the header run becomes a skip (exit code 1 and different finding counts). That is Task 5's job; note the failing test names and continue.
 
 - [ ] **Step 7: Commit**
 
@@ -833,17 +834,20 @@ says why.
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
----
+______________________________________________________________________
 
 ### Task 5: CLI loads the configuration
 
 **Files:**
+
 - Modify: `src/inspect_audit/findings/cli.py`
 - Create: `tests/findings/fixtures/pilot.yaml`
 - Modify: `tests/findings/test_cli.py`
 
 **Interfaces:**
+
 - Consumes: `load_config`, `DEFAULT_CONFIG_PATH`, `Config` from Task 1.
+
 - Produces: `run --config PATH` (default `DEFAULT_CONFIG_PATH`); `Context(config=...)` populated; a malformed config is a usage error (exit 2) naming the file.
 
 - [ ] **Step 1: Write the test fixture and the failing tests**
@@ -898,8 +902,7 @@ def test_malformed_config_is_a_usage_error(tmp_path: Path, capsys: pytest.Captur
 
 - [ ] **Step 2: Run the CLI tests to verify they fail**
 
-Run: `uv run pytest tests/findings/test_cli.py -q --no-cov`
-Expected: FAIL with `argparse` error `unrecognized arguments: --config`
+Run: `uv run pytest tests/findings/test_cli.py -q --no-cov` Expected: FAIL with `argparse` error `unrecognized arguments: --config`
 
 - [ ] **Step 3: Implement**
 
@@ -936,8 +939,7 @@ In `main`, before building `Context`:
 
 - [ ] **Step 4: Run the CLI tests and the whole findings suite**
 
-Run: `uv run pytest tests/findings -q --no-cov`
-Expected: all pass
+Run: `uv run pytest tests/findings -q --no-cov` Expected: all pass
 
 - [ ] **Step 5: Commit**
 
@@ -948,16 +950,19 @@ git commit -m "feat(findings): --config selects the per-eval declaration; the pa
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
----
+______________________________________________________________________
 
 ### Task 6: Summaries show what was examined and what was left out
 
 **Files:**
+
 - Modify: `src/inspect_audit/findings/render.py`
 - Modify: `tests/findings/test_render.py`
 
 **Interfaces:**
+
 - Consumes: `Run.inputs["dataset"]` (Task 2), `Run.inputs["logs"]` and `Run.inputs["comparison"]` (Task 4).
+
 - Produces: `render_eval_summary` emits an `## Inputs` section between the subject table and Outcomes; `render_sweep_summary` cells carry `(n logs, m excluded)` for header runs.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1032,8 +1037,7 @@ def test_sweep_summary_shows_log_counts(run: Run) -> None:
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/findings/test_render.py -q --no-cov`
-Expected: FAIL with `IndexError: list index out of range` on the `split("## Inputs")` (no such section yet)
+Run: `uv run pytest tests/findings/test_render.py -q --no-cov` Expected: FAIL with `IndexError: list index out of range` on the `split("## Inputs")` (no such section yet)
 
 - [ ] **Step 3: Implement**
 
@@ -1102,8 +1106,7 @@ In `render_sweep_summary`, change the non-skipped cell to:
 
 - [ ] **Step 4: Run the render tests and the whole findings suite**
 
-Run: `uv run pytest tests/findings -q --no-cov`
-Expected: all pass. `test_summary_regenerates_identical_files` in the CLI tests still passes because rendering stays deterministic.
+Run: `uv run pytest tests/findings -q --no-cov` Expected: all pass. `test_summary_regenerates_identical_files` in the CLI tests still passes because rendering stays deterministic.
 
 - [ ] **Step 5: Commit**
 
@@ -1118,13 +1121,16 @@ header checks compared against. The sweep table carries log counts.
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
----
+______________________________________________________________________
 
 ### Task 7: Docs and the gate
 
 **Files:**
+
 - Modify: `docs/findings-cli.md`
+
 - Modify: `docs/superpowers/specs/2026-09-25-findings-prototype-design.md` (Dataset, Header, CLI sections)
+
 - Modify: `docs/roadmap.md` (milestone 1 first bullet: mark input selection done)
 
 - [ ] **Step 1: Update the CLI doc**
@@ -1165,8 +1171,7 @@ In `docs/roadmap.md`, milestone 1, change the first bullet's opening to `- Input
 
 - [ ] **Step 4: Run the full gate**
 
-Run: `uv run pre-commit run --all-files && uv run basedpyright src && uv run pytest -q -p no:cacheprovider`
-Expected: pre-commit clean (run it twice if mdformat or end-of-file-fixer modify files, then stage the changes), basedpyright 0 errors, whole suite passes.
+Run: `uv run pre-commit run --all-files && uv run basedpyright src && uv run pytest -q -p no:cacheprovider` Expected: pre-commit clean (run it twice if mdformat or end-of-file-fixer modify files, then stage the changes), basedpyright 0 errors, whole suite passes.
 
 - [ ] **Step 5: Commit**
 
@@ -1189,7 +1194,7 @@ sed -n '1,40p' /tmp/pilot-out/inspect-evals-hle/SUMMARY.md
 
 Expected: the HLE Inputs section shows the physics log used (its model is not mock) and stereoset's dataset scan reports `declared in the pilot config`. If `artefacts/hawk` is not present in this worktree, run `uv run inspect-audit-findings hawk-pull` first (needs `hawk login`). Nothing from `/tmp/pilot-out` is committed.
 
----
+______________________________________________________________________
 
 ## Self-review notes
 

@@ -135,7 +135,9 @@ def test_subject_defaults(subject: Subject) -> None:
     assert subject.task_args == {}
 
 
-def test_run_assigns_record_ids_to_findings_that_lack_one(finding: Finding, subject: Subject) -> None:
+def test_run_assigns_record_ids_to_findings_that_lack_one(
+    finding: Finding, subject: Subject
+) -> None:
     second = finding.model_copy(update={"fingerprint": "sha256:1", "id": "kept/explicit"})
     run = Run(
         id="lint-9",

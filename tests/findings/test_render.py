@@ -263,7 +263,10 @@ def test_issues_section_lists_current_and_missing_observations(run: Run) -> None
     ]
     text = render_eval_summary([linked], issues=issues)
     section = text.split("## Issues", 1)[1]
-    assert "- ISS-0007 · dup filter · 1 current observation · https://github.com/x/y/issues/1" in section
+    assert (
+        "- ISS-0007 · dup filter · 1 current observation · https://github.com/x/y/issues/1"
+        in section
+    )
     assert "- ISS-0008 · gone · 0 current observations · no current observation" in section
     assert "ISS-0009" not in section
 

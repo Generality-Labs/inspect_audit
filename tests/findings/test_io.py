@@ -156,7 +156,7 @@ def test_current_runs_follow_the_manifest(tmp_path: Path, run: Run) -> None:
 
 def test_findings_df_has_record_id_and_issue_columns(run: Run) -> None:
     frame = findings_df([run])
-    assert list(frame.columns)[0] == "id"
+    assert frame.columns[0] == "id"
     assert frame.iloc[0]["id"] == "lint-1/1"
     assert "issue" in frame.columns and frame.iloc[0]["issue"] is None
     linked = run.model_copy(

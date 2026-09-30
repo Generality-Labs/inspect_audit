@@ -65,14 +65,14 @@ def test_unknown_keys_and_empty_issues_are_rejected_naming_the_file(tmp_path: Pa
     (tmp_path / "suppressions.yaml").write_text(
         "- rule: x\n  author: m\n  reason: r\n  since: 2026-09-30\n  becuase: typo\n"
     )
-    with pytest.raises(ValueError, match="suppressions.yaml"):
+    with pytest.raises(ValueError, match=r"suppressions\.yaml"):
         load_review(tmp_path)
     (tmp_path / "suppressions.yaml").unlink()
     (tmp_path / "issues.yaml").write_text(
         "- id: ISS-1\n  title: t\n  subject: inspect_evals/x\n  findings: []\n  author: m\n"
         "  opened: 2026-09-30\n"
     )
-    with pytest.raises(ValueError, match="issues.yaml"):
+    with pytest.raises(ValueError, match=r"issues\.yaml"):
         load_review(tmp_path)
 
 

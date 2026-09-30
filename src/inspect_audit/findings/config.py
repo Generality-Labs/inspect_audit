@@ -41,7 +41,8 @@ class DatasetConfig(BaseModel):
 
     @model_validator(mode="after")
     def _task_or_hf(self) -> DatasetConfig:
-        if self.task is not None and (not self.task or "/" in self.task):
+        # a @task function's name, as eval.yaml lists it: not a spec, file or path
+        if self.task is not None and not self.task.isidentifier():
             raise ValueError(
                 f"task must be a bare task name from the eval's eval.yaml, such as arc_challenge, "
                 f"not {self.task!r}"

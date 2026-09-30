@@ -362,10 +362,17 @@ def test_replay_task_reads_the_samples_file_the_adapter_names() -> None:
     assert _replay_samples.SAMPLES_ENV == SAMPLES_ENV
 
 
-@pytest.mark.parametrize("task", ["", "inspect_evals/arc_easy"])
+@pytest.mark.parametrize(
+    "task", ["", "inspect_evals/arc_easy", "arc.py@arc_easy", " arc_easy", "arc-easy", "1arc"]
+)
 def test_a_task_must_be_a_bare_task_name(task: str) -> None:
     with pytest.raises(ValidationError, match="bare task name"):
         DatasetConfig(task=task)
+
+
+@pytest.mark.parametrize("task", ["arc_easy", "sad_mini", "mmlu_0_shot", "_private"])
+def test_a_task_name_is_a_python_identifier(task: str) -> None:
+    assert DatasetConfig(task=task).task == task
 
 
 def test_a_declared_task_missing_from_eval_yaml_is_a_skip_naming_the_listed_tasks(

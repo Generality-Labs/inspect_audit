@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from inspect_audit.findings.config import Config, EvalConfig, LogFilter
 from inspect_audit.findings.adapters import (
     Context,
     ProducerError,
@@ -21,6 +20,7 @@ from inspect_audit.findings.adapters import (
     subject_for,
     task_version_from_yaml,
 )
+from inspect_audit.findings.config import Config, EvalConfig, LogFilter
 from inspect_audit.findings.producers import DATASET_SPEC, LINT_SPEC, ProducerConfig
 
 STUBS = Path(__file__).parent / "stubs"

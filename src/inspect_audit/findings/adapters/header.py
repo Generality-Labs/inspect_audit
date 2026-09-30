@@ -128,8 +128,11 @@ def _is_mock(header: EvalLog) -> bool:
 
 
 def _passed_args(header: EvalLog) -> dict[str, Any]:
-    """The task arguments the operator gave. `task_args` also holds resolved defaults, so a
-    parameterised task never has an empty one; only the passed set tells default from variant."""
+    """The task arguments the operator gave.
+
+    `task_args` also holds resolved defaults, so a parameterised task never has an empty one;
+    only the passed set tells a default run from a variant.
+    """
     return dict(header.eval.task_args_passed or {})
 
 
@@ -212,10 +215,11 @@ def parse(
     *,
     timestamp: datetime,
     resolved_ids: set[str] | None = None,
-    log_filter: LogFilter = LogFilter(),
+    log_filter: LogFilter | None = None,
     excluded: Sequence[Mapping[str, str]] = (),
 ) -> Run:
     """Run the header checks over already-read headers."""
+    log_filter = log_filter or LogFilter()
     run_id = new_run_id(PRODUCER, target, timestamp)
     build = _Builder(target, run_id)
 
@@ -349,24 +353,24 @@ def parse(
                 )
         build.outcome("header.unknown_sample_ids", unknown_fired)
 
+    # each finding's subject is the log's own revision; the run says what it compared against
+    logs_record: dict[str, JsonValue] = {
+        "used": [str(path) for path, _ in headers],
+        "excluded": [dict(entry) for entry in excluded],
+        "count_excluded": [dict(entry) for entry in count_excluded],
+    }
+    comparison: dict[str, JsonValue] = {
+        "commit": subject.revision.commit,
+        "package_version": subject.revision.package_version,
+        "task_version": subject.task_version.full if subject.task_version else None,
+    }
+    inputs: dict[str, JsonValue] = {"logs": logs_record, "comparison": comparison}
     return Run(
         id=run_id,
         timestamp=timestamp,
         producer=PRODUCER,
         subject=subject,
-        # each finding's subject is the log's own revision; the run says what it compared against
-        inputs={
-            "logs": {
-                "used": [str(path) for path, _ in headers],
-                "excluded": [dict(entry) for entry in excluded],
-                "count_excluded": count_excluded,
-            },
-            "comparison": {
-                "commit": subject.revision.commit,
-                "package_version": subject.revision.package_version,
-                "task_version": subject.task_version.full if subject.task_version else None,
-            },
-        },
+        inputs=inputs,
         outcomes=build.outcomes,
         findings=build.findings,
     )

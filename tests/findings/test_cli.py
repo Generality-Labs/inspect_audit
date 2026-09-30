@@ -345,7 +345,17 @@ def test_reruns_keep_earlier_runs_and_a_partial_sweep_keeps_other_producers_curr
     log = _log(tmp_path / "logs")
     _stubbed_env(monkeypatch)
     out = tmp_path / "out"
-    args = ["run", "--config", str(PILOT), "--root", str(root), "--logs", str(log), "--out", str(out)]
+    args = [
+        "run",
+        "--config",
+        str(PILOT),
+        "--root",
+        str(root),
+        "--logs",
+        str(log),
+        "--out",
+        str(out),
+    ]
     assert main([*args, "inspect_evals/stereoset"]) == 0
     slug_dir = out / "inspect-evals-stereoset"
     first = json.loads((slug_dir / "current.json").read_text())
@@ -388,7 +398,16 @@ def test_default_config_excludes_mock_logs_so_header_is_a_skip(
     _stubbed_env(monkeypatch)
     out = tmp_path / "out"
     code = main(
-        ["run", "--root", str(root), "--logs", str(log), "--out", str(out), "inspect_evals/stereoset"]
+        [
+            "run",
+            "--root",
+            str(root),
+            "--logs",
+            str(log),
+            "--out",
+            str(out),
+            "inspect_evals/stereoset",
+        ]
     )
     assert code == 1  # the header producer skipped: its only log is a mock run
     summary = (out / "inspect-evals-stereoset" / "SUMMARY.md").read_text()

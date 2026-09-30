@@ -122,7 +122,9 @@ def test_resolve_skips_when_the_resolved_dataset_has_no_ids(
     log = _log(tmp_path / "logs", samples=3)
     idless = Task(dataset=MemoryDataset([Sample(input="q") for _ in range(3)]), scorer=match())
     monkeypatch.setattr(resolve_module, "resolve_task", lambda spec, args=None: idless)
-    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log], resolve=True, config=MOCK_OK))
+    result = run(
+        "inspect_evals/stereoset", Context(ie_root=root, logs=[log], resolve=True, config=MOCK_OK)
+    )
     assert not any(f.rule == "header.unknown_sample_ids" for f in result.findings)
     skip = next(o for o in result.outcomes if o.rule == "header.unknown_sample_ids")
     assert skip.status == "skip" and "no ids" in (skip.message or "")
@@ -137,7 +139,9 @@ def test_resolve_compares_logged_ids_against_the_resolved_dataset(
     log = _log(tmp_path / "logs", samples=3)  # ids 1, 2, 3
     smaller = Task(dataset=MemoryDataset([Sample(id=i, input="q") for i in (1, 2)]), scorer=match())
     monkeypatch.setattr(resolve_module, "resolve_task", lambda spec, args=None: smaller)
-    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log], resolve=True, config=MOCK_OK))
+    result = run(
+        "inspect_evals/stereoset", Context(ie_root=root, logs=[log], resolve=True, config=MOCK_OK)
+    )
     finding = next(f for f in result.findings if f.rule == "header.unknown_sample_ids")
     assert "1 of 3" in finding.summary
 
@@ -164,7 +168,8 @@ def test_no_drift_with_one_version(tmp_path: Path) -> None:
 def test_no_logs_is_a_skip(tmp_path: Path) -> None:
     root = make_root(tmp_path)
     result = run(
-        "inspect_evals/stereoset", Context(ie_root=root, logs=[_log(tmp_path / "x", name="hle")], config=MOCK_OK)
+        "inspect_evals/stereoset",
+        Context(ie_root=root, logs=[_log(tmp_path / "x", name="hle")], config=MOCK_OK),
     )
     assert [o.status for o in result.outcomes] == ["skip"]
     assert "no logs" in (result.outcomes[0].message or "")
@@ -253,7 +258,9 @@ class _Spec:
 
 def test_qualified_registry_names_match_only_their_own_package() -> None:
     names = {"scicode"}
-    assert _header_matches(_Spec("inspect_evals/scicode", "scicode"), "inspect_evals/scicode", names)
+    assert _header_matches(
+        _Spec("inspect_evals/scicode", "scicode"), "inspect_evals/scicode", names
+    )
     # the sample auditor's task over scicode is not scicode
     assert not _header_matches(
         _Spec("audit/inspect_evals/scicode", "scicode"), "inspect_evals/scicode", names

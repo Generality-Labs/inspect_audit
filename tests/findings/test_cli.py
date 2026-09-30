@@ -175,7 +175,7 @@ def test_featured_flag_expands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(
         cli, "sweep", lambda targets, ctx, producers, **kw: seen.append(list(targets)) or {}
     )
-    monkeypatch.setattr(cli, "write_outputs", lambda out, runs: None)
+    monkeypatch.setattr(cli, "write_outputs", lambda out, runs, review=None: None)
     assert main(["run", "--root", str(tmp_path), "--out", str(tmp_path / "o"), "--featured"]) == 0
     assert seen[0] == [f"inspect_evals/{name}" for name in FEATURED]
 
@@ -241,7 +241,7 @@ def test_hawk_task_flag_resolves_sets_by_task(
         cli, "collect_logs", lambda sources, **kw: seen.setdefault("sources", list(sources)) and []
     )
     monkeypatch.setattr(cli, "sweep", lambda targets, ctx, producers, **kw: {})
-    monkeypatch.setattr(cli, "write_outputs", lambda out, runs: None)
+    monkeypatch.setattr(cli, "write_outputs", lambda out, runs, review=None: None)
     assert (
         main(
             [
@@ -434,3 +434,79 @@ def test_malformed_config_is_a_usage_error(
     )
     assert code == 2
     assert "bad.yaml" in capsys.readouterr().err
+
+
+def test_review_files_beside_the_out_dir_are_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    log = _log(tmp_path / "logs")
+    _stubbed_env(monkeypatch)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "suppressions.yaml").write_text(
+        "- rule: duplicate_questions\n  subject: inspect_evals/stereoset\n  author: matt\n"
+        "  reason: known duplicates\n  since: 2026-09-30\n"
+    )
+    args = [
+        "run",
+        "--config",
+        str(PILOT),
+        "--root",
+        str(root),
+        "--logs",
+        str(log),
+        "--out",
+        str(out),
+    ]
+    assert main([*args, "inspect_evals/stereoset"]) == 0
+    findings = pd.read_parquet(out / "findings.parquet")
+    dup = findings[findings["rule"] == "duplicate_questions"]
+    assert len(dup) == 18 and bool(dup["suppressed"].all())  # kept in the parquet, marked
+    summary = (out / "inspect-evals-stereoset" / "SUMMARY.md").read_text()
+    assert "## Suppressed" in summary
+    assert (
+        "duplicate_questions · 18 observations · false_positive · matt: known duplicates" in summary
+    )
+    # the run files on disk are untouched
+    current = json.loads((out / "inspect-evals-stereoset" / "current.json").read_text())
+    stored = json.loads((out / "inspect-evals-stereoset" / current["inspect_dataset"]).read_text())
+    assert all(f["suppressions"] == [] for f in stored["findings"])
+    # an issue linking a fingerprint the sweep produced, plus one it did not
+    fingerprint = str(dup.iloc[0]["fingerprint"])
+    (out / "issues.yaml").write_text(
+        f"- id: ISS-0001\n  title: dups\n  subject: inspect_evals/stereoset\n"
+        f"  findings: [{fingerprint}, sha256:gone]\n  author: matt\n  opened: 2026-09-30\n"
+    )
+    assert main(["summary", str(out)]) == 0
+    findings = pd.read_parquet(out / "findings.parquet")
+    assert int((findings["issue"] == "ISS-0001").sum()) == 1
+    assert (
+        "- ISS-0001 · dups · 1 current observation"
+        in (out / "inspect-evals-stereoset" / "SUMMARY.md").read_text()
+    )
+    assert "sha256:gone" in capsys.readouterr().err
+
+
+def test_malformed_review_file_is_a_usage_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "issues.yaml").write_text("- id: ISS-1\n  bogus: 1\n")
+    code = main(
+        [
+            "run",
+            "--config",
+            str(PILOT),
+            "--root",
+            str(root),
+            "--out",
+            str(out),
+            "inspect_evals/stereoset",
+        ]
+    )
+    assert code == 2
+    assert "issues.yaml" in capsys.readouterr().err

@@ -508,3 +508,26 @@ def test_without_a_lock_the_replay_is_not_pinned(
     assert json.loads(record.read_text())["argv"][1] == "scan"
     examined = result.inputs["dataset"]
     assert isinstance(examined, dict) and examined["inspect_ai"] is None
+
+
+def test_an_hf_scan_runs_from_the_callers_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # inspect-dataset reads ./.env (an HF token for gated datasets, say) and resolves relative paths from it
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    monkeypatch.chdir(caller)
+    root = make_root(tmp_path, extra=ASSET)
+    record = tmp_path / "scan.json"
+    monkeypatch.setenv("STUB_SCAN_RECORD", str(record))
+    monkeypatch.setenv("STUB_OUTPUT_DIR", str(FIXTURE))
+    ctx = Context(
+        ie_root=root,
+        out_dir=tmp_path / "out",
+        producers=ProducerConfig(dataset=(sys.executable, str(STUBS / "echo_file.py"))),
+        config=Config(
+            evals={"inspect_evals/stereoset": EvalConfig(dataset=DatasetConfig(split="validation"))}
+        ),
+    )
+    run("inspect_evals/stereoset", ctx)
+    assert Path(json.loads(record.read_text())["cwd"]).resolve() == caller.resolve()

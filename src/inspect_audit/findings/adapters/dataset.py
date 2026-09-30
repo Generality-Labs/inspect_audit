@@ -390,15 +390,20 @@ def run(target: str, ctx: Context) -> Run:
                 str(scan_dir),
             ]
             scan_env: dict[str, str] | None = {SAMPLES_ENV: str(samples)}
+            # the replay needs nothing from the caller's directory, and must not pick up its .env
+            scan_cwd: Path | None = scan_dir
         else:
             scan_dir = Path(tempfile.mkdtemp(prefix="inspect_dataset_", dir=ctx.out_dir))
             argv = [*ctx.producers.dataset, "scan", path, *options, "-o", str(scan_dir)]
             dataset = None
             scan_env = None
+            # inspect-dataset reads ./.env (an HF token for gated datasets, say) and resolves a
+            # relative dataset path from the caller's directory, as it did before task scans
+            scan_cwd = None
         inputs["argv"] = list(argv)
         inputs["scan_dir"] = str(scan_dir)
         try:
-            result = run_command(argv, timeout=ctx.producers.timeout_s, cwd=scan_dir, env=scan_env)
+            result = run_command(argv, timeout=ctx.producers.timeout_s, cwd=scan_cwd, env=scan_env)
         except ProducerError as ex:
             return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp, inputs=inputs)
     duration = time.monotonic() - started

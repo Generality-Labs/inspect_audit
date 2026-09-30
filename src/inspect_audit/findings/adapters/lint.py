@@ -67,21 +67,24 @@ def _outcomes(entry: Mapping[str, Any]) -> list[Outcome]:
     """
     rules = entry.get("rules")
     if isinstance(rules, list) and rules:
+        # `rules` rows carry no message; the `outcomes` rows for passed and skipped rules do,
+        # and a skip's reason is what a reader of "not examined" needs
+        messages = {
+            str(row.get("code") or row.get("rule")): row.get("message")
+            for row in entry.get("outcomes", [])
+        }
         outcomes: list[Outcome] = []
         for row in rules:
+            code = str(row.get("code") or row.get("rule"))
             status = _status(str(row.get("status")))
             diagnostics = row.get("diagnostics") or []
             count = len(diagnostics) if isinstance(diagnostics, list) else 0
             message = (
                 f"{count} diagnostic{'' if count == 1 else 's'}"
                 if status == "fail" and count
-                else None
+                else messages.get(code)
             )
-            outcomes.append(
-                Outcome(
-                    rule=str(row.get("code") or row.get("rule")), status=status, message=message
-                )
-            )
+            outcomes.append(Outcome(rule=code, status=status, message=message))
         return outcomes
     return [
         Outcome(

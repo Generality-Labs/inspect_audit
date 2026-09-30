@@ -84,3 +84,72 @@ def test_sweep_summary_one_row_per_eval(run: Run) -> None:
 
 def test_rendering_is_deterministic(run: Run) -> None:
     assert render_eval_summary([run]) == render_eval_summary([run])
+
+
+def _header_run(run: Run) -> Run:
+    return run.model_copy(
+        update={
+            "id": "header-1",
+            "producer": "inspect_audit_header",
+            "findings": [],
+            "outcomes": [Outcome(rule="header.dataset_samples", status="pass")],
+            "inputs": {
+                "logs": {
+                    "used": ["/logs/a.eval", "/logs/b.eval"],
+                    "excluded": [{"path": "/logs/mock.eval", "reason": "mock model mockllm/model"}],
+                    "count_excluded": [
+                        {
+                            "path": "/logs/b.eval",
+                            "reason": "task args {'subset': 'small'} differ from the default configuration",
+                        }
+                    ],
+                },
+                "comparison": {
+                    "commit": "5687c5cdf",
+                    "package_version": "0.21.1",
+                    "task_version": "3-A",
+                },
+            },
+        }
+    )
+
+
+def _dataset_run(run: Run) -> Run:
+    return run.model_copy(
+        update={
+            "id": "dataset-1",
+            "producer": "inspect_dataset",
+            "findings": [],
+            "inputs": {
+                "dataset": {
+                    "path": "McGill-NLP/stereoset",
+                    "config": "intersentence",
+                    "split": "validation",
+                    "revision": None,
+                    "fields": {"question": "context"},
+                    "declared": True,
+                }
+            },
+        }
+    )
+
+
+def test_eval_summary_has_an_inputs_section(run: Run) -> None:
+    text = render_eval_summary([run, _header_run(run), _dataset_run(run)])
+    inputs = text.split("## Inputs", 1)[1].split("## Outcomes", 1)[0]
+    assert "McGill-NLP/stereoset" in inputs and "intersentence" in inputs and "declared" in inputs
+    assert "2 log(s) used" in inputs
+    assert "1 excluded" in inputs and "mock model mockllm/model" in inputs
+    assert "1 not compared for sample count" in inputs and "subset" in inputs
+    assert "compared against 5687c5cdf" in inputs and "3-A" in inputs
+
+
+def test_eval_summary_inputs_section_says_when_nothing_was_declared(run: Run) -> None:
+    text = render_eval_summary([run])
+    inputs = text.split("## Inputs", 1)[1].split("## Outcomes", 1)[0]
+    assert "no dataset scan" in inputs and "no logs" in inputs
+
+
+def test_sweep_summary_shows_log_counts(run: Run) -> None:
+    text = render_sweep_summary({"inspect_evals/stereoset": [run, _header_run(run)]})
+    assert "inspect_audit_header: 0 findings (2 logs, 1 excluded)" in text

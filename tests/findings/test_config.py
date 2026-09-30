@@ -57,12 +57,9 @@ def test_non_mapping_file_is_a_value_error(tmp_path: Path) -> None:
         load_config(path)
 
 
-def test_packaged_default_declares_stereoset() -> None:
+def test_packaged_default_leaves_stereoset_to_its_task() -> None:
     config = load_config(DEFAULT_CONFIG_PATH)
-    stereoset = config.for_eval("inspect_evals/stereoset")
-    assert stereoset.dataset is not None
-    assert stereoset.dataset.config == "intersentence"
-    assert stereoset.dataset.fields["question"] == "context"
+    assert config.for_eval("inspect_evals/stereoset").dataset is None
     assert config.defaults.logs.include_mock is False
 
 

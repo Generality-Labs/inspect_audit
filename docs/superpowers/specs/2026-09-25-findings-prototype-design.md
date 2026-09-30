@@ -176,6 +176,7 @@ inspect-audit-findings summary <out dir>
 - `hawk-pull [--manifest scripts/hawk-artefacts.yaml] [--dest DIR]` fetches a declared working set instead of a per-run cache: the manifest names eval sets under `logs:` and investigator bundles under `artifacts:` (each `id` plus a free-text `note`), and they land in `<dest>/logs/<set>/` and `<dest>/artifacts/<set>/`. The default dest `artefacts/hawk` is gitignored, so anyone with `hawk login` can reproduce the same local inputs without anything private entering the repo. A failed entry is reported and the rest still pull; exit 1 if any failed. `hawk download-artifacts` needs `aiofiles`, which the 3.5.0 `hawk[cli]` extra omits, so the `remote` and `dev` extras add it.
 - `--producers` selects external producers, default `lint,dataset`. The header producer runs whenever `--logs` was supplied; without logs it is not requested, so a lint-and-dataset sweep can exit 0.
 - `--config PATH` (default: the packaged `findings/pilot.yaml`) declares per eval what to scan and which logs count. A file that fails validation is a usage error naming the file.
+- `--review DIR` (default: `--out`) names the directory holding `suppressions.yaml` and `issues.yaml`; both are applied to copies of the current runs before summaries and parquet are written, and a malformed file is a usage error naming the file. Every `Finding` carries an `id` of the form `<run id>/<n>`, assigned by its run when the producer set none.
 - For each target, in order: header, then the selected producers. Each run is written to `<out>/<slug>/runs/<run id>.run.json` and never overwritten (a name collision within one second gets a `-2` suffix). The sweep then rewrites `<out>/<slug>/current.json`, a manifest from producer name to the run file that producer's current view uses; producers that did not run keep their previous entry. `findings.parquet`, `runs.parquet`, `<out>/SUMMARY.md` and each `<out>/<slug>/SUMMARY.md` are rendered from the runs the manifests select, so a partial sweep never mixes fresh and stale results by accident and history is never lost (changed 2026-09-29 after the prototype review).
 - Exit code 0 if every producer ran; 1 if any run was a skip; 2 on a usage error. Findings do not affect the exit code.
 - `summary` re-renders every `SUMMARY.md` and both parquet files from the runs `current.json` selects, without re-running producers. `read_runs` still walks every run file for history.
@@ -190,7 +191,11 @@ inspect-audit-findings summary <out dir>
   findings.parquet
   runs.parquet
   SUMMARY.md
+  suppressions.yaml               optional, written by a person; see docs/review-files.md
+  issues.yaml                     optional, written by a person
 ```
+
+The two review files may sit beside the output or in `--review DIR`. They are applied to copies of the current runs before summaries and parquet are written; run files are never edited. Summaries group findings by rule with a count and two examples, list suppressed observations with their reasons, and list accepted issues with the number of current observations linked to each.
 
 `findings.parquet` has the envelope flattened to columns: identity (`fingerprint`, `fingerprint_version`, `schema_version`), the whole subject (`subject_eval`, revision commit, package version and dirty flag, task version full, comparability and interface, dataset path, config, split and revision, `subject_task_args` as JSON), taxonomy position, severity, status, summary, primary location kind and key, run and producer, and the review fields (`aliases`, `suppressions`, `suppressed`, `history`, `introduced`, `fixed`, `effect`) as JSON strings or null, plus `source` and `locations` as JSON strings. A consumer reading only the parquet has everything the envelope holds. `runs.parquet` has one row per run with outcome counts, duration and whether it was skipped.
 

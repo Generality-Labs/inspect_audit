@@ -234,23 +234,25 @@ Both review files live in git beside the runs, not inside them, so a producer re
 
 ```yaml
 # suppressions.yaml
-- rule: inspect_dataset.answer_length
-  subject: inspect_evals/stereoset
-  applies_when: {answer_type: struct}     # optional; omitted means every observation of the rule on the subject
+- rule: answer_length
+  subject: inspect_evals/stereoset      # or "*" for every eval
+  producer: inspect_dataset             # optional
   kind: false_positive
   author: matt
   reason: struct-typed answers have no meaningful length
-  since: 2026-09-29
+  since: 2026-09-30
 
 # issues.yaml
 - id: ISS-0001
   title: strong_reject records 313 samples where eval.yaml declares 324
   subject: inspect_evals/strong_reject
-  github: https://github.com/UKGovernmentBEIS/inspect_evals/issues/0000
-  observations: [sha256:..., sha256:...]
-  opened: 2026-09-29
+  findings: [sha256:..., sha256:...]    # fingerprints: the matching key across runs
   author: matt
+  opened: 2026-09-30
+  github: https://github.com/UKGovernmentBEIS/inspect_evals/issues/0000
 ```
+
+Implemented 2026-09-30 in `findings/review.py`; the CLI applies both files at render time. Issues link by fingerprint rather than record id because record ids change on every run and the fingerprint is the matching key the standard permits as assistance; a colliding fingerprint would share an issue link until a person splits it.
 
 The compaction step applies suppressions before rendering and joins issues to observations, so every consumer sees the same reviewed view.
 

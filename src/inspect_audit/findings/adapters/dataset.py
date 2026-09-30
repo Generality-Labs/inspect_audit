@@ -303,18 +303,24 @@ def run(target: str, ctx: Context) -> Run:
             timestamp=timestamp,
         )
     ctx.out_dir.mkdir(parents=True, exist_ok=True)
-    scan_dir = Path(tempfile.mkdtemp(prefix="inspect_dataset_", dir=ctx.out_dir))
-    inputs: dict[str, JsonValue] = {"scan_dir": str(scan_dir)}
+    inputs: dict[str, JsonValue] = {"dataset": examined}
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="inspect_dataset_samples_") as work:
         if examined["mode"] == "task":
             samples, meta_path = Path(work) / "samples.jsonl", Path(work) / "meta.json"
+            try:
+                eval_deps = eval_dependency_args(ctx.ie_root, package_of(target))
+            except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as ex:
+                return skip_run(
+                    PRODUCER,
+                    target,
+                    ctx,
+                    f"could not read {ctx.ie_root / 'pyproject.toml'} for the eval's dependencies: {ex}",
+                    timestamp=timestamp,
+                    inputs=inputs,
+                )
             dump_argv = [
-                *_expand(
-                    ctx.producers.dataset_dump,
-                    ctx.ie_root,
-                    eval_dependency_args(ctx.ie_root, package_of(target)),
-                ),
+                *_expand(ctx.producers.dataset_dump, ctx.ie_root, eval_deps),
                 str(DUMP_SCRIPT),
                 path,
                 str(samples),
@@ -330,7 +336,7 @@ def run(target: str, ctx: Context) -> Run:
                     dump_argv, timeout=ctx.producers.timeout_s, cwd=ctx.ie_root, env=dump_env
                 )
             except ProducerError as ex:
-                return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp)
+                return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp, inputs=inputs)
             if dumped.returncode != 0 or not meta_path.is_file():
                 return skip_run(
                     PRODUCER,
@@ -338,12 +344,24 @@ def run(target: str, ctx: Context) -> Run:
                     ctx,
                     f"sample dump exit {dumped.returncode}: {_output_tail(dumped)}",
                     timestamp=timestamp,
+                    inputs=inputs,
                 )
-            meta = json.loads(meta_path.read_text())
+            try:
+                meta = json.loads(meta_path.read_text())
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as ex:
+                return skip_run(
+                    PRODUCER,
+                    target,
+                    ctx,
+                    f"sample dump wrote unreadable meta: {ex}",
+                    timestamp=timestamp,
+                    inputs=inputs,
+                )
             meta = meta if isinstance(meta, dict) else {}
             # the dataset as Inspect records it for this task, not whichever asset eval.yaml lists first
             dataset: DatasetRef | None = DatasetRef(path=dataset_identity(meta, path))
-            examined = {**examined, "samples": meta.get("samples")}
+            inputs["dataset"] = {**examined, "samples": meta.get("samples")}
+            scan_dir = Path(tempfile.mkdtemp(prefix="inspect_dataset_", dir=ctx.out_dir))
             argv = [
                 *ctx.producers.dataset_task,
                 "scan",
@@ -353,15 +371,16 @@ def run(target: str, ctx: Context) -> Run:
             ]
             scan_env: dict[str, str] | None = {SAMPLES_ENV: str(samples)}
         else:
+            scan_dir = Path(tempfile.mkdtemp(prefix="inspect_dataset_", dir=ctx.out_dir))
             argv = [*ctx.producers.dataset, "scan", path, *options, "-o", str(scan_dir)]
             dataset = None
             scan_env = None
         inputs["argv"] = list(argv)
-        inputs["dataset"] = examined
+        inputs["scan_dir"] = str(scan_dir)
         try:
             result = run_command(argv, timeout=ctx.producers.timeout_s, cwd=scan_dir, env=scan_env)
         except ProducerError as ex:
-            return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp)
+            return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp, inputs=inputs)
     duration = time.monotonic() - started
     if result.returncode != 0 or not (scan_dir / "scan_summary.json").is_file():
         return skip_run(
@@ -370,6 +389,7 @@ def run(target: str, ctx: Context) -> Run:
             ctx,
             f"inspect-dataset exit {result.returncode}: {_output_tail(result)}",
             timestamp=timestamp,
+            inputs=inputs,
         )
     try:
         return parse(

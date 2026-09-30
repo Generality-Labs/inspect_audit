@@ -432,3 +432,39 @@ def test_task_scan_identity_is_never_a_local_path(
     assert result.subject.dataset is not None and result.subject.dataset.path == identity
     primary = result.findings[0].primary_location
     assert isinstance(primary, SampleLocation) and primary.dataset == identity
+
+
+def test_an_unreadable_pyproject_is_a_skip_not_a_crash(tmp_path: Path) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    (root / "pyproject.toml").write_text("[project\nname=")
+    result = run("inspect_evals/stereoset", _task_ctx(root, tmp_path))
+    assert result.outcomes[0].status == "skip"
+    assert "pyproject.toml" in (result.outcomes[0].message or "")
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [({"STUB_META": "not json"}, "unreadable"), ({"STUB_NO_META": "1"}, "sample dump exit 0")],
+)
+def test_a_dump_without_readable_meta_is_a_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env: dict[str, str], expected: str
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    result = run("inspect_evals/stereoset", _task_ctx(root, tmp_path))
+    assert result.outcomes[0].status == "skip"
+    assert expected in (result.outcomes[0].message or "")
+
+
+def test_a_failed_dump_leaves_no_scan_dir_and_records_the_dump(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    monkeypatch.setenv("STUB_DUMP_EXIT", "1")
+    ctx = _task_ctx(root, tmp_path)
+    result = run("inspect_evals/stereoset", ctx)
+    assert result.outcomes[0].status == "skip"
+    assert not list(ctx.out_dir.glob("inspect_dataset_*"))
+    dump_argv = result.inputs["dump_argv"]
+    assert isinstance(dump_argv, list) and "inspect_evals/stereoset" in dump_argv

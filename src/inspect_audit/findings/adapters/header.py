@@ -88,6 +88,20 @@ def _header_task(header: EvalLog) -> str | None:
     return _tail(header.eval.task_registry_name) or _tail(header.eval.task)
 
 
+def _header_matches(spec: Any, target: str, names: set[str]) -> bool:
+    """Whether a header's task is one of `names` for this target.
+
+    A qualified registry name (`pkg/task`) must share the target's package: the sample
+    auditor's `audit/inspect_evals/scicode` is a run over scicode, not a run of it. A bare
+    task name, as an inline Task records, matches on the tail alone.
+    """
+    registry = spec.task_registry_name
+    if registry and "/" in registry:
+        package, _, task_name = registry.rpartition("/")
+        return package == target.rpartition("/")[0] and task_name in names
+    return bool({_tail(registry), _tail(spec.task)} & names)
+
+
 def matching_headers(
     logs: Sequence[Path], target: str, names: set[str] | None = None
 ) -> list[tuple[Path, EvalLog]]:
@@ -103,7 +117,7 @@ def matching_headers(
             header = read_eval_log(str(path), header_only=True)
         except Exception:  # an unreadable log is not this eval's problem
             continue
-        if wanted & {_tail(header.eval.task_registry_name), _tail(header.eval.task)}:
+        if _header_matches(header.eval, target, wanted):
             matched.append((path, header))
     return matched
 

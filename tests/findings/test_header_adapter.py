@@ -13,6 +13,7 @@ from test_adapters_common import make_root
 from inspect_audit.findings.adapters import Context, subject_for
 from inspect_audit.findings.adapters.header import (
     PRODUCER,
+    _header_matches,
     eval_spec_dict,
     matching_headers,
     parse,
@@ -229,3 +230,30 @@ def test_findings_carry_the_logs_revision_and_the_run_records_the_comparison(
     comparison = result.inputs["comparison"]
     assert isinstance(comparison, dict) and comparison["task_version"] == "3-A"
     assert comparison["commit"] == result.subject.revision.commit
+
+
+class _Spec:
+    def __init__(self, registry: str | None, task: str) -> None:
+        self.task_registry_name, self.task = registry, task
+
+
+def test_qualified_registry_names_match_only_their_own_package() -> None:
+    names = {"scicode"}
+    assert _header_matches(_Spec("inspect_evals/scicode", "scicode"), "inspect_evals/scicode", names)
+    # the sample auditor's task over scicode is not scicode
+    assert not _header_matches(
+        _Spec("audit/inspect_evals/scicode", "scicode"), "inspect_evals/scicode", names
+    )
+    # a bare task name (a Task run from a file) still matches on the tail
+    assert _header_matches(_Spec(None, "scicode"), "inspect_evals/scicode", names)
+    # a multi-task package: registry name is the task, package prefix still has to agree
+    assert _header_matches(
+        _Spec("inspect_evals/lab_bench_litqa", "lab_bench_litqa"),
+        "inspect_evals/lab_bench",
+        {"lab_bench", "lab_bench_litqa"},
+    )
+    assert not _header_matches(
+        _Spec("other_pkg/lab_bench_litqa", "lab_bench_litqa"),
+        "inspect_evals/lab_bench",
+        {"lab_bench", "lab_bench_litqa"},
+    )

@@ -1,5 +1,6 @@
 """End to end over a temporary inspect_evals root with stubbed producers."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -55,11 +56,16 @@ def test_run_writes_the_layout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     )
     assert code == 0
     slug_dir = out / "inspect-evals-stereoset"
-    assert sorted(p.name for p in slug_dir.glob("*.run.json")) == [
-        "dataset.run.json",
-        "header.run.json",
-        "lint.run.json",
+    run_files = sorted(p.name for p in (slug_dir / "runs").glob("*.run.json"))
+    assert len(run_files) == 3
+    assert [name.split("-")[0] for name in run_files] == [
+        "inspect_audit_header",
+        "inspect_dataset",
+        "inspect_evals_lint",
     ]
+    current = json.loads((slug_dir / "current.json").read_text())
+    assert sorted(current) == ["inspect_audit_header", "inspect_dataset", "inspect_evals_lint"]
+    assert all((slug_dir / rel).is_file() for rel in current.values())
     assert (slug_dir / "SUMMARY.md").read_text().startswith("# inspect_evals/stereoset")
     assert (out / "SUMMARY.md").read_text().startswith("# Sweep summary")
     findings = pd.read_parquet(out / "findings.parquet")
@@ -116,9 +122,10 @@ def test_producers_flag_selects_external_producers_only(
         )
         == 0
     )
-    assert sorted(p.name for p in (out / "inspect-evals-stereoset").glob("*.run.json")) == [
-        "header.run.json",
-        "lint.run.json",
+    run_files = sorted((out / "inspect-evals-stereoset" / "runs").glob("*.run.json"))
+    assert [p.name.split("-")[0] for p in run_files] == [
+        "inspect_audit_header",
+        "inspect_evals_lint",
     ]
 
 
@@ -185,9 +192,8 @@ def test_without_logs_the_header_producer_is_not_run_and_exit_is_zero(
         )
         == 0
     )
-    assert sorted(p.name for p in (out / "inspect-evals-stereoset").glob("*.run.json")) == [
-        "lint.run.json"
-    ]
+    run_files = list((out / "inspect-evals-stereoset" / "runs").glob("*.run.json"))
+    assert [p.name.split("-")[0] for p in run_files] == ["inspect_evals_lint"]
 
 
 def test_hawk_logs_source_is_downloaded_into_the_cache(
@@ -315,3 +321,43 @@ def test_hawk_pull_uses_the_manifest(
     assert "set-a" in out and "inv-1" in out
     assert (tmp_path / "dest" / "logs" / "set-a" / src.name).is_file()
     assert (tmp_path / "dest" / "artifacts" / "inv-1" / "bundle.txt").is_file()
+
+
+def test_reruns_keep_earlier_runs_and_a_partial_sweep_keeps_other_producers_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    log = _log(tmp_path / "logs")
+    _stubbed_env(monkeypatch)
+    out = tmp_path / "out"
+    args = ["run", "--root", str(root), "--logs", str(log), "--out", str(out)]
+    assert main([*args, "inspect_evals/stereoset"]) == 0
+    slug_dir = out / "inspect-evals-stereoset"
+    first = json.loads((slug_dir / "current.json").read_text())
+    # second sweep, lint only, no logs: the first three run files survive, only lint's pointer moves
+    assert (
+        main(
+            [
+                "run",
+                "--root",
+                str(root),
+                "--out",
+                str(out),
+                "--producers",
+                "lint",
+                "inspect_evals/stereoset",
+            ]
+        )
+        == 0
+    )
+    second = json.loads((slug_dir / "current.json").read_text())
+    assert len(list((slug_dir / "runs").glob("*.run.json"))) == 4
+    assert second["inspect_dataset"] == first["inspect_dataset"]
+    assert second["inspect_audit_header"] == first["inspect_audit_header"]
+    assert second["inspect_evals_lint"] != first["inspect_evals_lint"]
+    runs = pd.read_parquet(out / "runs.parquet")
+    assert len(runs) == 3  # the current view, not every run ever written
+    assert set(runs["run_id"]) == {
+        Path(rel).name.removesuffix(".run.json") for rel in second.values()
+    }
+    assert "header.dataset_samples" in (slug_dir / "SUMMARY.md").read_text()

@@ -17,11 +17,13 @@ from ..models import (
     Finding,
     LogLocation,
     Outcome,
+    Revision,
     Run,
     ScorerLocation,
     Severity,
     Source,
     Subject,
+    TaskVersion,
     utcnow,
 )
 from . import Context, eval_yaml, new_run_id, package_of, skip_run, subject_for
@@ -44,6 +46,28 @@ def eval_spec_dict(log: EvalLog) -> dict[str, JsonValue]:
     if isinstance(dataset, dict):
         dataset.pop("sample_ids", None)
     return spec
+
+
+def subject_from_header(target: str, header: EvalLog) -> Subject:
+    """The code that produced this log, as the header records it: the finding is about that, not the checkout."""
+    revision = header.eval.revision
+    packages = header.eval.packages or {}
+    commit = revision.commit if revision else None
+    package_version = packages.get("inspect_evals")
+    if commit is None and package_version is None:
+        package_version = "unknown"  # the same fallback identity repo_revision() uses
+    return Subject(
+        eval=target,
+        revision=Revision(
+            commit=commit,
+            package_version=package_version,
+            dirty=revision.dirty if revision else None,
+        ),
+        task_version=TaskVersion.parse(str(header.eval.task_version))
+        if header.eval.task_version is not None
+        else None,
+        task_args=dict(header.eval.task_args or {}),
+    )
 
 
 def _tail(name: str | None) -> str | None:
@@ -98,8 +122,8 @@ def _declared_samples(yaml_data: Mapping[str, Any], task_name: str | None) -> in
 
 
 class _Builder:
-    def __init__(self, target: str, subject: Subject, run_id: str) -> None:
-        self.target, self.subject, self.run_id = target, subject, run_id
+    def __init__(self, target: str, run_id: str) -> None:
+        self.target, self.run_id = target, run_id
         self.outcomes: list[Outcome] = []
         self.findings: list[Finding] = []
 
@@ -119,7 +143,7 @@ class _Builder:
                 fingerprint_version=FINGERPRINT_VERSION,
                 producer=PRODUCER,
                 rule=rule,
-                subject=self.subject,
+                subject=subject_from_header(self.target, header),
                 dimension=dimension,
                 severity=severity,
                 status="supported",
@@ -144,7 +168,7 @@ def parse(
 ) -> Run:
     """Run the header checks over already-read headers."""
     run_id = new_run_id(PRODUCER, target, timestamp)
-    build = _Builder(target, subject, run_id)
+    build = _Builder(target, run_id)
 
     fired = False
     any_declared = False
@@ -265,7 +289,15 @@ def parse(
         timestamp=timestamp,
         producer=PRODUCER,
         subject=subject,
-        inputs={"logs": [str(path) for path, _ in headers]},
+        # each finding's subject is the log's own revision; the run says what it compared against
+        inputs={
+            "logs": [str(path) for path, _ in headers],
+            "comparison": {
+                "commit": subject.revision.commit,
+                "package_version": subject.revision.package_version,
+                "task_version": subject.task_version.full if subject.task_version else None,
+            },
+        },
         outcomes=build.outcomes,
         findings=build.findings,
     )

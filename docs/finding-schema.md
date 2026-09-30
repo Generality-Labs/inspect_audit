@@ -1,5 +1,7 @@
 # A finding schema for eval audits
 
+**Superseded** on 2026-09-25 by [finding-schema-envelope.md](finding-schema-envelope.md), which was chosen and implemented. Kept for the field-by-field rationale and the prior-art references.
+
 Proposal, 2026-09-25. One record shape that every producer writes (inspect-evals-lint, inspect-dataset, the inspect_audit sample auditor and investigator, Scout scanners) and every consumer reads (the hosted Inspect Evals issue index, the third-party audit reports, the maintenance agent, the hillclimb harness). It is a defect record, not a measurement record: a Scout `Result` says what was observed in one transcript; a finding says what is wrong with an eval and whether it still is.
 
 The evidence for the design is the deterministic pass over StereoSet in `agent_artefacts/deterministic_pass/stereoset/SUMMARY.md`, where three producers found the same defect from three sides and disagreed on every version identifier.

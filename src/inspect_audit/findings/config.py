@@ -51,7 +51,12 @@ class Config(BaseModel):
     evals: dict[str, EvalConfig] = Field(default_factory=dict)
 
     def for_eval(self, target: str) -> EvalConfig:
-        return self.evals.get(target, self.defaults)
+        """The eval's entry with every field it did not set taken from `defaults`."""
+        entry = self.evals.get(target)
+        if entry is None:
+            return self.defaults
+        overrides = {name: getattr(entry, name) for name in entry.model_fields_set}
+        return self.defaults.model_copy(update=overrides)
 
 
 def load_config(path: Path) -> Config:

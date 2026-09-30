@@ -8,12 +8,14 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from inspect_ai.log import list_eval_logs
+from pydantic import ValidationError
 
 from . import hawk
 from .adapters import Context, ProducerError, slug
 from .adapters import dataset as dataset_adapter
 from .adapters import header as header_adapter
 from .adapters import lint as lint_adapter
+from .config import DEFAULT_CONFIG_PATH, load_config
 from .featured import FEATURED
 from .io import findings_df, read_current, runs_df, update_current, write_parquet, write_run
 from .models import Run
@@ -150,6 +152,12 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="resolve the task to compare logged sample ids (needs inspect_evals importable)",
     )
+    run_p.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help="per-eval declaration of what to scan and which logs count (default: the packaged pilot.yaml)",
+    )
     run_p.add_argument("--featured", action="store_true", help="add the 35 Featured evals")
     run_p.add_argument("targets", nargs="*", help="registry names, e.g. inspect_evals/stereoset")
     sum_p = sub.add_parser("summary", help="re-render summaries from existing run files")
@@ -240,6 +248,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         sources += [f"hawk:{entry.eval_set_id}" for entry in found]
+    try:
+        config = load_config(args.config)
+    except (OSError, ValueError, ValidationError) as ex:
+        print(f"could not load {args.config}: {ex}", file=sys.stderr)
+        return 2
     producers_config = ProducerConfig.from_env()
     try:
         logs = collect_logs(sources, hawk_cache=args.hawk_cache, producers=producers_config)
@@ -252,6 +265,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         out_dir=args.out.resolve(),
         producers=producers_config,
         resolve=bool(args.resolve),
+        config=config,
     )
     # the header producer needs logs; with no log sources it is not requested rather than skipped,
     # so a lint-and-dataset sweep exits 0 when its producers all ran

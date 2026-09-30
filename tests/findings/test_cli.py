@@ -14,6 +14,7 @@ from inspect_audit.findings.featured import FEATURED
 from inspect_audit.findings.producers import ProducerConfig
 
 FIXTURES = Path(__file__).parent / "fixtures"
+PILOT = FIXTURES / "pilot.yaml"  # allows the mock-model logs the tests produce
 ASSET = "external_assets:\n  - type: huggingface\n    source: McGill-NLP/stereoset\n    fetch_method: hf_dataset\n    state: pinned\n"
 
 
@@ -45,6 +46,8 @@ def test_run_writes_the_layout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     code = main(
         [
             "run",
+            "--config",
+            str(PILOT),
             "--root",
             str(root),
             "--logs",
@@ -84,6 +87,8 @@ def test_run_with_a_failing_producer_exits_one_and_records_a_skip(
     code = main(
         [
             "run",
+            "--config",
+            str(PILOT),
             "--root",
             str(root),
             "--logs",
@@ -109,6 +114,8 @@ def test_producers_flag_selects_external_producers_only(
         main(
             [
                 "run",
+                "--config",
+                str(PILOT),
                 "--root",
                 str(root),
                 "--logs",
@@ -139,6 +146,8 @@ def test_summary_regenerates_identical_files(
     main(
         [
             "run",
+            "--config",
+            str(PILOT),
             "--root",
             str(root),
             "--logs",
@@ -181,6 +190,8 @@ def test_without_logs_the_header_producer_is_not_run_and_exit_is_zero(
         main(
             [
                 "run",
+                "--config",
+                str(PILOT),
                 "--root",
                 str(root),
                 "--out",
@@ -235,6 +246,8 @@ def test_hawk_task_flag_resolves_sets_by_task(
         main(
             [
                 "run",
+                "--config",
+                str(PILOT),
                 "--root",
                 str(tmp_path),
                 "--out",
@@ -270,6 +283,8 @@ def test_hawk_task_flag_refuses_too_many_sets(
         main(
             [
                 "run",
+                "--config",
+                str(PILOT),
                 "--root",
                 str(tmp_path),
                 "--out",
@@ -330,7 +345,7 @@ def test_reruns_keep_earlier_runs_and_a_partial_sweep_keeps_other_producers_curr
     log = _log(tmp_path / "logs")
     _stubbed_env(monkeypatch)
     out = tmp_path / "out"
-    args = ["run", "--root", str(root), "--logs", str(log), "--out", str(out)]
+    args = ["run", "--config", str(PILOT), "--root", str(root), "--logs", str(log), "--out", str(out)]
     assert main([*args, "inspect_evals/stereoset"]) == 0
     slug_dir = out / "inspect-evals-stereoset"
     first = json.loads((slug_dir / "current.json").read_text())
@@ -339,6 +354,8 @@ def test_reruns_keep_earlier_runs_and_a_partial_sweep_keeps_other_producers_curr
         main(
             [
                 "run",
+                "--config",
+                str(PILOT),
                 "--root",
                 str(root),
                 "--out",
@@ -361,3 +378,40 @@ def test_reruns_keep_earlier_runs_and_a_partial_sweep_keeps_other_producers_curr
         Path(rel).name.removesuffix(".run.json") for rel in second.values()
     }
     assert "header.dataset_samples" in (slug_dir / "SUMMARY.md").read_text()
+
+
+def test_default_config_excludes_mock_logs_so_header_is_a_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    log = _log(tmp_path / "logs")
+    _stubbed_env(monkeypatch)
+    out = tmp_path / "out"
+    code = main(
+        ["run", "--root", str(root), "--logs", str(log), "--out", str(out), "inspect_evals/stereoset"]
+    )
+    assert code == 1  # the header producer skipped: its only log is a mock run
+    summary = (out / "inspect-evals-stereoset" / "SUMMARY.md").read_text()
+    assert "all excluded" in summary and "mockllm" in summary
+
+
+def test_malformed_config_is_a_usage_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("evals:\n  inspect_evals/stereoset:\n    dataset:\n      pth: x\n")
+    code = main(
+        [
+            "run",
+            "--root",
+            str(root),
+            "--out",
+            str(tmp_path / "out"),
+            "--config",
+            str(bad),
+            "inspect_evals/stereoset",
+        ]
+    )
+    assert code == 2
+    assert "bad.yaml" in capsys.readouterr().err

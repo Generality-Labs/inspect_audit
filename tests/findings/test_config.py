@@ -64,3 +64,18 @@ def test_packaged_default_declares_stereoset() -> None:
     assert stereoset.dataset.config == "intersentence"
     assert stereoset.dataset.fields["question"] == "context"
     assert config.defaults.logs.include_mock is False
+
+
+def test_eval_entry_inherits_defaults_it_does_not_set() -> None:
+    config = Config(
+        defaults=EvalConfig(logs=LogFilter(include_mock=True)),
+        evals={"inspect_evals/stereoset": EvalConfig(dataset=DatasetConfig(split="validation"))},
+    )
+    stereoset = config.for_eval("inspect_evals/stereoset")
+    assert stereoset.dataset == DatasetConfig(split="validation")
+    assert stereoset.logs.include_mock is True  # inherited: the entry said nothing about logs
+    explicit = Config(
+        defaults=EvalConfig(logs=LogFilter(include_mock=True)),
+        evals={"inspect_evals/x": EvalConfig(logs=LogFilter(include_mock=False))},
+    )
+    assert explicit.for_eval("inspect_evals/x").logs.include_mock is False

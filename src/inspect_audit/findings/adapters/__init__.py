@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml
 
+from ..config import Config
 from ..models import Outcome, Revision, Run, Subject, TaskVersion, utcnow
 from ..producers import ProducerConfig
 
@@ -27,6 +28,7 @@ class Context:
     out_dir: Path = Path("findings-out")
     producers: ProducerConfig = field(default_factory=ProducerConfig)
     resolve: bool = False
+    config: Config = field(default_factory=Config)
 
 
 class ProducerError(Exception):

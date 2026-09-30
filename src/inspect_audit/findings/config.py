@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 DEFAULT_CONFIG_PATH = Path(__file__).parent / "pilot.yaml"
 
@@ -18,15 +18,35 @@ FieldRole = Literal["question", "answer", "id"]
 
 
 class DatasetConfig(BaseModel):
-    """Which dataset to scan. `path` falls back to eval.yaml's HuggingFace asset when None."""
+    """Which dataset to scan.
+
+    With none of `path`, `config`, `split`, `revision` or `fields` set, the scan goes through the
+    eval's task: `task`, or the first task in eval.yaml. Setting any of them scans the HuggingFace
+    dataset directly instead, with `path` falling back to eval.yaml's HuggingFace asset.
+    """
 
     model_config = ConfigDict(extra="forbid")
+    task: str | None = None
     path: str | None = None
     config: str | None = None
     split: str | None = None
     revision: str | None = None
     # inspect-dataset column names by role; a misspelled role is a validation error, not a no-op
     fields: dict[FieldRole, str] = Field(default_factory=dict)
+
+    @property
+    def selects_hf(self) -> bool:
+        """Whether this declaration asks for a direct HuggingFace scan rather than a task scan."""
+        return bool(self.path or self.config or self.split or self.revision or self.fields)
+
+    @model_validator(mode="after")
+    def _task_or_hf(self) -> DatasetConfig:
+        if self.task and self.selects_hf:
+            raise ValueError(
+                "task cannot be combined with path, config, split, revision or fields: "
+                "a task scan uses the eval's own loader"
+            )
+        return self
 
 
 class LogFilter(BaseModel):

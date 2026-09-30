@@ -22,6 +22,9 @@ def _stubbed_env(monkeypatch: pytest.MonkeyPatch, *, lint_ok: bool = True) -> No
     lint = str(STUBS / ("echo_file.py" if lint_ok else "fail.py"))
     monkeypatch.setenv("INSPECT_AUDIT_LINT_CMD", f"{sys.executable} {lint}")
     monkeypatch.setenv("INSPECT_AUDIT_DATASET_CMD", f"{sys.executable} {STUBS / 'echo_file.py'}")
+    monkeypatch.setenv(
+        "INSPECT_AUDIT_DATASET_TASK_CMD", f"{sys.executable} {STUBS / 'echo_file.py'}"
+    )
     monkeypatch.setenv("STUB_OUTPUT_FILE", str(FIXTURES / "lint.json"))
     monkeypatch.setenv("STUB_OUTPUT_DIR", str(FIXTURES / "dataset"))
 

@@ -144,6 +144,31 @@ def test_eval_summary_has_an_inputs_section(run: Run) -> None:
     assert "compared against 5687c5cdf" in inputs and "3-A" in inputs
 
 
+def test_eval_summary_inputs_section_names_a_task_scan(run: Run) -> None:
+    task_run = _dataset_run(run).model_copy(
+        update={
+            "inputs": {
+                "dataset": {
+                    "path": "inspect_evals/stereoset",
+                    "config": None,
+                    "split": None,
+                    "revision": None,
+                    "fields": {},
+                    "declared": False,
+                    "mode": "task",
+                    "task": "stereoset",
+                }
+            }
+        }
+    )
+    text = render_eval_summary([run, task_run])
+    inputs = text.split("## Inputs", 1)[1].split("## Outcomes", 1)[0]
+    assert (
+        "- Dataset scanned: `inspect_evals/stereoset` (through the task's own loader), "
+        "inferred from eval.yaml." in inputs
+    )
+
+
 def test_eval_summary_inputs_section_says_when_nothing_was_declared(run: Run) -> None:
     text = render_eval_summary([run])
     inputs = text.split("## Inputs", 1)[1].split("## Outcomes", 1)[0]

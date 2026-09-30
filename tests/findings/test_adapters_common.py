@@ -79,6 +79,21 @@ def test_env_overrides_are_shell_split() -> None:
     assert config.dataset == ProducerConfig().dataset
 
 
+def test_task_mode_dataset_command_runs_in_the_eval_project() -> None:
+    assert ProducerConfig().dataset_task == (
+        "uv",
+        "run",
+        "--project",
+        "{ie_root}",
+        "--frozen",
+        "--with",
+        DATASET_SPEC,
+        "inspect-dataset",
+    )
+    config = ProducerConfig.from_env({"INSPECT_AUDIT_DATASET_TASK_CMD": "python stub.py {ie_root}"})
+    assert config.dataset_task == ("python", "stub.py", "{ie_root}")
+
+
 def test_package_of_and_slug() -> None:
     assert package_of("inspect_evals/stereoset") == "stereoset"
     assert package_of("stereoset") == "stereoset"

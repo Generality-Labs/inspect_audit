@@ -1,11 +1,21 @@
 """Deterministic markdown from runs; no model, byte-stable."""
 
-from inspect_audit.findings.models import Outcome, Run, SampleLocation, Source
+from datetime import UTC, date, datetime
+
+from inspect_audit.findings.models import (
+    Outcome,
+    Provenance,
+    Run,
+    SampleLocation,
+    Source,
+    Suppression,
+)
 from inspect_audit.findings.render import (
     NOISE_THRESHOLD,
     render_eval_summary,
     render_sweep_summary,
 )
+from inspect_audit.findings.review import IssueEntry
 
 
 def _noisy(run: Run, count: int) -> Run:
@@ -37,7 +47,7 @@ def test_eval_summary_has_subject_outcomes_and_findings(run: Run) -> None:
     assert "| Revision | 5687c5cdf" in text
     assert "| Task version | 3-A" in text
     assert "| inspect_evals_lint | IEBP008 | fail | dup filter |" in text
-    assert "| inspect_evals_lint | 1 |" in text
+    assert "| inspect_evals_lint | 1 | 0 |" in text
     assert "| dataset | minor | 1 |" in text
     assert (
         "- minor · dataset · IEBP008 · `code:src/inspect_evals/stereoset/stereoset.py:64` · filter_duplicate_ids() without max_duplicates= or reason="
@@ -48,7 +58,8 @@ def test_eval_summary_has_subject_outcomes_and_findings(run: Run) -> None:
 def test_eval_summary_flags_noisy_rules(run: Run) -> None:
     text = render_eval_summary([run, _noisy(run, NOISE_THRESHOLD + 1)])
     assert f"answer_length produced {NOISE_THRESHOLD + 1} findings" in text
-    assert text.count("- none · dataset · answer_length") == NOISE_THRESHOLD + 1
+    assert text.count("- none · dataset · answer_length") == 1  # grouped, not one line per row
+    assert f"answer_length · {NOISE_THRESHOLD + 1} observations" in text
 
 
 def test_eval_summary_marks_a_skipped_producer(run: Run) -> None:
@@ -181,3 +192,82 @@ def test_inputs_section_lists_excluded_logs_when_none_were_used(run: Run) -> Non
     inputs = text.split("## Inputs", 1)[1].split("## Outcomes", 1)[0]
     assert "no logs examined" not in inputs
     assert "0 log(s) used, 1 excluded" in inputs and "/logs/mock.eval" in inputs
+
+
+def _suppressed(run: Run) -> Run:
+    finding = run.findings[0].model_copy(
+        update={
+            "suppressions": [
+                Suppression(
+                    kind="false_positive",
+                    provenance=Provenance(
+                        timestamp=datetime(2026, 9, 30, tzinfo=UTC),
+                        author="matt",
+                        reason="struct answers",
+                    ),
+                )
+            ]
+        }
+    )
+    return run.model_copy(update={"findings": [finding]})
+
+
+def test_grouped_findings_show_count_and_examples(run: Run) -> None:
+    text = render_eval_summary([_noisy(run, 3)])
+    assert "- none · dataset · answer_length · 3 observations" in text
+    assert text.count("  - `sample:d:") == 2  # EXAMPLES
+
+
+def test_suppressed_findings_are_counted_and_listed_separately(run: Run) -> None:
+    text = render_eval_summary([_suppressed(run)])
+    assert "| inspect_evals_lint | 0 | 1 |" in text
+    assert "## Suppressed" in text
+    assert (
+        "- inspect_evals_lint · IEBP008 · 1 observation · false_positive · matt: struct answers"
+        in text
+    )
+    assert "- minor · dataset · IEBP008" not in text.split("## Findings", 1)[1]
+
+
+def test_issues_section_lists_current_and_missing_observations(run: Run) -> None:
+    linked = run.model_copy(
+        update={"findings": [run.findings[0].model_copy(update={"issue": "ISS-0007"})]}
+    )
+    opened = date(2026, 9, 30)
+    issues = [
+        IssueEntry(
+            id="ISS-0007",
+            title="dup filter",
+            subject="inspect_evals/stereoset",
+            findings=["sha256:0"],
+            author="matt",
+            opened=opened,
+            github="https://github.com/x/y/issues/1",
+        ),
+        IssueEntry(
+            id="ISS-0008",
+            title="gone",
+            subject="inspect_evals/stereoset",
+            findings=["sha256:gone"],
+            author="matt",
+            opened=opened,
+        ),
+        IssueEntry(
+            id="ISS-0009",
+            title="other eval",
+            subject="inspect_evals/hle",
+            findings=["sha256:z"],
+            author="matt",
+            opened=opened,
+        ),
+    ]
+    text = render_eval_summary([linked], issues=issues)
+    section = text.split("## Issues", 1)[1]
+    assert "- ISS-0007 · dup filter · 1 current observation · https://github.com/x/y/issues/1" in section
+    assert "- ISS-0008 · gone · 0 current observations · no current observation" in section
+    assert "ISS-0009" not in section
+
+
+def test_sweep_summary_counts_active_and_suppressed(run: Run) -> None:
+    text = render_sweep_summary({"inspect_evals/stereoset": [_suppressed(run)]})
+    assert "inspect_evals_lint: 0 findings, 1 suppressed" in text

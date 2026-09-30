@@ -7,8 +7,10 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .models import Finding, Run
+from .review import IssueEntry
 
 NOISE_THRESHOLD = 100
+EXAMPLES = 2  # observations shown under a grouped rule
 
 _SEVERITY_ORDER = {"critical": 0, "major": 1, "minor": 2, "none": 3}
 
@@ -88,12 +90,39 @@ def _inputs_lines(runs: Sequence[Run]) -> list[str]:
     return lines
 
 
+def _active(run: Run) -> list[Finding]:
+    return [finding for finding in run.findings if not finding.suppressions]
+
+
+def _suppressed(run: Run) -> list[Finding]:
+    return [finding for finding in run.findings if finding.suppressions]
+
+
+def _example_line(finding: Finding) -> str:
+    return f"  - `{finding.primary_location.key()}` · {finding.summary}"
+
+
+def _grouped_lines(findings: Sequence[Finding]) -> list[str]:
+    """One line per (severity, dimension, rule); a group of more than one shows a count and examples."""
+    groups: dict[tuple[str, str, str], list[Finding]] = {}
+    for finding in _sorted_findings(findings):
+        groups.setdefault((finding.severity, finding.dimension, finding.rule), []).append(finding)
+    lines: list[str] = []
+    for (severity, dimension, rule), members in groups.items():
+        if len(members) == 1:
+            lines.append(_finding_line(members[0]))
+            continue
+        lines.append(f"- {severity} · {dimension} · {rule} · {len(members)} observations")
+        lines += [_example_line(member) for member in members[:EXAMPLES]]
+    return lines
+
+
 def _is_skipped(run: Run) -> bool:
     return bool(run.outcomes) and all(outcome.status == "skip" for outcome in run.outcomes)
 
 
-def render_eval_summary(runs: Sequence[Run]) -> str:
-    """One eval: subject, outcomes across producers, counts, then every finding by producer."""
+def render_eval_summary(runs: Sequence[Run], issues: Sequence[IssueEntry] = ()) -> str:
+    """One eval: subject, inputs, outcomes, counts, findings grouped by rule, suppressions, issues."""
     runs = sorted(runs, key=lambda r: (r.producer, r.id))
     subject = runs[0].subject
     parts: list[str] = [f"# {subject.eval}", ""]
@@ -127,18 +156,25 @@ def render_eval_summary(runs: Sequence[Run]) -> str:
     if outcome_rows:
         parts += [_table(["Producer", "Rule", "Status", "Message"], outcome_rows), ""]
 
-    by_producer = Counter(finding.producer for run in runs for finding in run.findings)
+    active_count: Counter[str] = Counter()
+    suppressed_count: Counter[str] = Counter()
+    for run in runs:
+        active_count[run.producer] += len(_active(run))
+        suppressed_count[run.producer] += len(_suppressed(run))
     parts += [
         "## Findings by producer",
         "",
         _table(
-            ["Producer", "Findings"],
-            [[producer, str(n)] for producer, n in sorted(by_producer.items())],
+            ["Producer", "Findings", "Suppressed"],
+            [
+                [producer, str(active_count[producer]), str(suppressed_count[producer])]
+                for producer in sorted({run.producer for run in runs})
+            ],
         ),
         "",
     ]
     by_dimension = Counter(
-        (finding.dimension, finding.severity) for run in runs for finding in run.findings
+        (finding.dimension, finding.severity) for run in runs for finding in _active(run)
     )
     dimension_rows = [
         [dimension, severity, str(n)]
@@ -153,7 +189,7 @@ def render_eval_summary(runs: Sequence[Run]) -> str:
         "",
     ]
 
-    by_rule = Counter((finding.producer, finding.rule) for run in runs for finding in run.findings)
+    by_rule = Counter((finding.producer, finding.rule) for run in runs for finding in _active(run))
     noisy = [
         (producer, rule, n)
         for (producer, rule), n in sorted(by_rule.items())
@@ -170,10 +206,39 @@ def render_eval_summary(runs: Sequence[Run]) -> str:
     parts += ["## Findings", ""]
     for run in runs:
         parts += [f"### {run.producer} ({run.id})", ""]
-        if not run.findings:
+        active = _active(run)
+        if not active:
             parts += ["No findings.", ""]
             continue
-        parts += [_finding_line(finding) for finding in _sorted_findings(run.findings)]
+        parts += _grouped_lines(active)
+        parts.append("")
+
+    suppressed_groups = Counter(
+        (finding.producer, finding.rule, s.kind, s.provenance.author, s.provenance.reason or "")
+        for run in runs
+        for finding in _suppressed(run)
+        for s in finding.suppressions[:1]
+    )
+    if suppressed_groups:
+        parts += ["## Suppressed", ""]
+        for (producer, rule, kind, author, reason), n in sorted(suppressed_groups.items()):
+            parts.append(
+                f"- {producer} · {rule} · {n} observation{'' if n == 1 else 's'} · {kind} · {author}: {reason}"
+            )
+        parts.append("")
+
+    relevant = [issue for issue in issues if issue.subject == subject.eval]
+    if relevant:
+        linked = Counter(finding.issue for run in runs for finding in run.findings if finding.issue)
+        parts += ["## Issues", ""]
+        for issue in relevant:
+            k = linked.get(issue.id, 0)
+            line = f"- {issue.id} · {issue.title} · {k} current observation{'' if k == 1 else 's'}"
+            if issue.github:
+                line += f" · {issue.github}"
+            if k == 0:
+                line += " · no current observation"
+            parts.append(line)
         parts.append("")
     return "\n".join(parts).rstrip() + "\n"
 
@@ -187,8 +252,10 @@ def render_sweep_summary(runs_by_eval: Mapping[str, Sequence[Run]]) -> str:
             if _is_skipped(run):
                 cells.append(f"{run.producer}: skipped")
             else:
-                n = len(run.findings)
+                n, m = len(_active(run)), len(_suppressed(run))
                 cell = f"{run.producer}: {n} finding{'' if n == 1 else 's'}"
+                if m:
+                    cell += f", {m} suppressed"
                 logs = _dict(run.inputs.get("logs"))
                 if logs:
                     used = len(_list(logs.get("used")))

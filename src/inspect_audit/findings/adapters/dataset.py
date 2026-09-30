@@ -7,9 +7,11 @@ runs on. A pilot-config declaration with HuggingFace settings scans the HuggingF
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import time
-from collections.abc import Mapping
+import tomllib
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -30,12 +32,15 @@ from ..models import (
     utcnow,
 )
 from . import (
+    CommandResult,
     Context,
     ProducerError,
     eval_yaml,
     new_run_id,
+    package_of,
     run_command,
     skip_run,
+    slug,
     subject_for,
 )
 
@@ -208,8 +213,54 @@ def parse(
     )
 
 
+DUMP_SCRIPT = Path(__file__).with_name("_dump_task_samples.py")
+REPLAY_SCRIPT = Path(__file__).with_name("_replay_samples.py")
+# names the dumped samples for the replay task; _replay_samples.SAMPLES_ENV must match
+SAMPLES_ENV = "INSPECT_AUDIT_SAMPLES_FILE"
+
+
+def eval_dependency_args(ie_root: Path, package: str) -> list[str]:
+    """`--extra`/`--group` flags for the eval's own dependencies, where the checkout declares them."""
+    path = ie_root / "pyproject.toml"
+    if not path.is_file():
+        return []
+    data = tomllib.loads(path.read_text())
+    args: list[str] = []
+    if package in data.get("project", {}).get("optional-dependencies", {}):
+        args += ["--extra", package]
+    if package in data.get("dependency-groups", {}):
+        args += ["--group", package]
+    return args
+
+
+def eval_env_dir(ctx: Context) -> Path:
+    """The scratch environment task dumps run in: never the checkout's own `.venv`."""
+    if ctx.producers.eval_env:
+        return Path(ctx.producers.eval_env)
+    cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    return cache / "inspect_audit" / "eval-envs" / f"ie-{slug(str(ctx.ie_root.resolve()))}"
+
+
+def _expand(prefix: Sequence[str], ie_root: Path, eval_deps: list[str]) -> list[str]:
+    argv: list[str] = []
+    for part in prefix:
+        if part == "{eval_deps}":
+            argv += eval_deps
+        else:
+            argv.append(part.replace("{ie_root}", str(ie_root)))
+    return argv
+
+
+def _output_tail(result: CommandResult) -> str:
+    return (result.stderr or result.stdout)[-1500:]
+
+
 def run(target: str, ctx: Context) -> Run:
-    """Scan the eval's dataset with static scanners into a temporary directory, then parse it."""
+    """Scan the eval's dataset with static scanners into a temporary directory, then parse it.
+
+    A task scan first dumps the task's samples in the eval's environment, then scans a replay of
+    them in inspect-dataset's, so neither sees the other's dependencies.
+    """
     timestamp = utcnow()
     declared = ctx.config.for_eval(target).dataset
     yaml_data = eval_yaml(ctx.ie_root, target)
@@ -222,29 +273,74 @@ def run(target: str, ctx: Context) -> Run:
             "no dataset path: none declared in the pilot config, no huggingface asset in eval.yaml external_assets, and no tasks in eval.yaml",
             timestamp=timestamp,
         )
-    if examined["mode"] == "task":
-        prefix = [
-            part.replace("{ie_root}", str(ctx.ie_root)) for part in ctx.producers.dataset_task
-        ]
-        dataset: DatasetRef | None = DatasetRef(path=hf_asset(yaml_data) or path)
-    else:
-        prefix = list(ctx.producers.dataset)
-        dataset = None
     ctx.out_dir.mkdir(parents=True, exist_ok=True)
     scan_dir = Path(tempfile.mkdtemp(prefix="inspect_dataset_", dir=ctx.out_dir))
-    argv = [*prefix, "scan", path, *options, "-o", str(scan_dir)]
+    inputs: dict[str, JsonValue] = {"scan_dir": str(scan_dir)}
     started = time.monotonic()
-    try:
-        result = run_command(argv, timeout=ctx.producers.timeout_s)
-    except ProducerError as ex:
-        return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp)
+    with tempfile.TemporaryDirectory(prefix="inspect_dataset_samples_") as work:
+        if examined["mode"] == "task":
+            samples, meta_path = Path(work) / "samples.jsonl", Path(work) / "meta.json"
+            dump_argv = [
+                *_expand(
+                    ctx.producers.dataset_dump,
+                    ctx.ie_root,
+                    eval_dependency_args(ctx.ie_root, package_of(target)),
+                ),
+                str(DUMP_SCRIPT),
+                path,
+                str(samples),
+                str(meta_path),
+            ]
+            inputs["dump_argv"] = list(dump_argv)
+            dump_env = {
+                "UV_PROJECT_ENVIRONMENT": str(eval_env_dir(ctx)),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+            try:
+                dumped = run_command(
+                    dump_argv, timeout=ctx.producers.timeout_s, cwd=ctx.ie_root, env=dump_env
+                )
+            except ProducerError as ex:
+                return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp)
+            if dumped.returncode != 0 or not meta_path.is_file():
+                return skip_run(
+                    PRODUCER,
+                    target,
+                    ctx,
+                    f"sample dump exit {dumped.returncode}: {_output_tail(dumped)}",
+                    timestamp=timestamp,
+                )
+            meta = json.loads(meta_path.read_text())
+            meta = meta if isinstance(meta, dict) else {}
+            # the dataset as Inspect records it for this task, not whichever asset eval.yaml lists first
+            identity = meta.get("dataset_location") or meta.get("dataset_name") or path
+            dataset: DatasetRef | None = DatasetRef(path=str(identity))
+            examined = {**examined, "samples": meta.get("samples")}
+            argv = [
+                *ctx.producers.dataset_task,
+                "scan",
+                f"{REPLAY_SCRIPT}@replay_samples",
+                "-o",
+                str(scan_dir),
+            ]
+            scan_env: dict[str, str] | None = {SAMPLES_ENV: str(samples)}
+        else:
+            argv = [*ctx.producers.dataset, "scan", path, *options, "-o", str(scan_dir)]
+            dataset = None
+            scan_env = None
+        inputs["argv"] = list(argv)
+        inputs["dataset"] = examined
+        try:
+            result = run_command(argv, timeout=ctx.producers.timeout_s, cwd=scan_dir, env=scan_env)
+        except ProducerError as ex:
+            return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp)
     duration = time.monotonic() - started
     if result.returncode != 0 or not (scan_dir / "scan_summary.json").is_file():
         return skip_run(
             PRODUCER,
             target,
             ctx,
-            f"inspect-dataset exit {result.returncode}: {(result.stderr or result.stdout)[-1500:]}",
+            f"inspect-dataset exit {result.returncode}: {_output_tail(result)}",
             timestamp=timestamp,
         )
     try:
@@ -254,7 +350,7 @@ def run(target: str, ctx: Context) -> Run:
             subject_for(target, ctx),
             timestamp=timestamp,
             duration_s=duration,
-            inputs={"argv": argv, "scan_dir": str(scan_dir), "dataset": examined},
+            inputs=inputs,
             dataset=dataset,
         )
     except (

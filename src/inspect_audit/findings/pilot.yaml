@@ -1,16 +1,17 @@
 # What the deterministic producers examine for each pilot eval. An eval without an entry
 # uses `defaults`. Declare here whatever inference gets wrong; the run records what it used.
+#
+# The dataset is scanned through the eval's first task in eval.yaml unless an entry says
+# otherwise, for example:
+#
+#   inspect_evals/arc:
+#     dataset:
+#       task: arc_challenge
+#
+# HuggingFace settings (path, config, split, revision, fields) scan the HuggingFace dataset
+# directly instead.
 defaults:
   logs:
     include_mock: false
 
-evals:
-  inspect_evals/stereoset:
-    dataset:
-      path: McGill-NLP/stereoset
-      config: intersentence
-      split: validation
-      fields:
-        question: context
-        answer: sentences
-        id: id
+evals: {}

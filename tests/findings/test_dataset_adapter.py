@@ -235,7 +235,7 @@ def _task_ctx(
                 "{ie_root}",
                 "{eval_deps}",
             ),
-            dataset_task=(sys.executable, str(STUBS / scan)),
+            dataset_task=(sys.executable, str(STUBS / scan), "{inspect_ai}"),
             eval_env=str(tmp_path / "eval-env"),
         ),
     )
@@ -273,7 +273,7 @@ def test_task_scan_dumps_in_the_eval_environment_then_scans_the_replay(
     assert dump["bytecode"] == "1"
 
     scan = json.loads(scan_record.read_text())
-    assert scan["argv"][1:3] == ["scan", f"{REPLAY_SCRIPT}@replay_samples"]
+    assert scan["argv"][1:3] == ["scan", f"{REPLAY_SCRIPT}@replay_samples"]  # no uv.lock: no pin
     assert scan["samples"] == dump["argv"][-2]
     assert Path(scan["cwd"]).resolve() == Path(str(result.inputs["scan_dir"])).resolve()
     dump_argv = result.inputs["dump_argv"]
@@ -468,3 +468,43 @@ def test_a_failed_dump_leaves_no_scan_dir_and_records_the_dump(
     assert not list(ctx.out_dir.glob("inspect_dataset_*"))
     dump_argv = result.inputs["dump_argv"]
     assert isinstance(dump_argv, list) and "inspect_evals/stereoset" in dump_argv
+
+
+LOCK = """version = 1
+
+[[package]]
+name = "inspect-ai"
+version = "0.3.263"
+
+[[package]]
+name = "datasets"
+version = "4.8.5"
+"""
+
+
+def test_the_replay_uses_the_inspect_ai_the_eval_locks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    (root / "uv.lock").write_text(LOCK)
+    record = tmp_path / "scan.json"
+    monkeypatch.setenv("STUB_SCAN_RECORD", str(record))
+    monkeypatch.setenv("STUB_OUTPUT_DIR", str(TASK_FIXTURE))
+    result = run("inspect_evals/stereoset", _task_ctx(root, tmp_path))
+    argv = json.loads(record.read_text())["argv"]
+    assert argv[1:3] == ["--with", "inspect-ai==0.3.263"]
+    examined = result.inputs["dataset"]
+    assert isinstance(examined, dict) and examined["inspect_ai"] == "0.3.263"
+
+
+def test_without_a_lock_the_replay_is_not_pinned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    record = tmp_path / "scan.json"
+    monkeypatch.setenv("STUB_SCAN_RECORD", str(record))
+    monkeypatch.setenv("STUB_OUTPUT_DIR", str(TASK_FIXTURE))
+    result = run("inspect_evals/stereoset", _task_ctx(root, tmp_path))
+    assert json.loads(record.read_text())["argv"][1] == "scan"
+    examined = result.inputs["dataset"]
+    assert isinstance(examined, dict) and examined["inspect_ai"] is None

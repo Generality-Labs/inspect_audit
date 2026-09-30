@@ -29,7 +29,7 @@ class ProducerConfig:
     scratch environment (`eval_env`, by default a cache directory per checkout) so the checkout's
     `.venv` is never touched. `{ie_root}` is replaced by the checkout path. That imports the eval's
     code on the host, as running the eval would. `dataset_task` then scans the dumped samples in
-    inspect-dataset's own environment.
+    inspect-dataset's own environment, with the checkout's locked inspect-ai (`{inspect_ai}`).
     """
 
     lint: tuple[str, ...] = ("uvx", "--from", LINT_SPEC, "inspect-evals-lint")
@@ -44,7 +44,15 @@ class ProducerConfig:
         "{eval_deps}",
         "python",
     )
-    dataset_task: tuple[str, ...] = ("uvx", "--from", DATASET_TASK_SPEC, "inspect-dataset")
+    # {inspect_ai}: `--with inspect-ai==<the checkout's locked version>`, so the replay reads the
+    # samples with the Sample model the eval wrote them with
+    dataset_task: tuple[str, ...] = (
+        "uvx",
+        "--from",
+        DATASET_TASK_SPEC,
+        "{inspect_ai}",
+        "inspect-dataset",
+    )
     eval_env: str | None = None
     hawk: tuple[str, ...] = ("hawk",)
     timeout_s: float = 1800.0

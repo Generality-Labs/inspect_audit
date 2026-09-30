@@ -242,11 +242,25 @@ def eval_env_dir(ctx: Context) -> Path:
     return cache / "inspect_audit" / "eval-envs" / f"ie-{slug(str(ctx.ie_root.resolve()))}"
 
 
-def _expand(prefix: Sequence[str], ie_root: Path, eval_deps: list[str]) -> list[str]:
+def locked_version(ie_root: Path, package: str) -> str | None:
+    """The version of `package` in the checkout's uv.lock, or None without a readable entry."""
+    try:
+        lock = tomllib.loads((ie_root / "uv.lock").read_text())
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None
+    for entry in lock.get("package", []):
+        if isinstance(entry, dict) and entry.get("name") == package:
+            version = entry.get("version")
+            return str(version) if version else None
+    return None
+
+
+def _expand(prefix: Sequence[str], ie_root: Path, lists: Mapping[str, list[str]]) -> list[str]:
+    """The command with `{ie_root}` substituted and each list placeholder replaced by its items."""
     argv: list[str] = []
     for part in prefix:
-        if part == "{eval_deps}":
-            argv += eval_deps
+        if part in lists:
+            argv += lists[part]
         else:
             argv.append(part.replace("{ie_root}", str(ie_root)))
     return argv
@@ -320,7 +334,7 @@ def run(target: str, ctx: Context) -> Run:
                     inputs=inputs,
                 )
             dump_argv = [
-                *_expand(ctx.producers.dataset_dump, ctx.ie_root, eval_deps),
+                *_expand(ctx.producers.dataset_dump, ctx.ie_root, {"{eval_deps}": eval_deps}),
                 str(DUMP_SCRIPT),
                 path,
                 str(samples),
@@ -360,10 +374,16 @@ def run(target: str, ctx: Context) -> Run:
             meta = meta if isinstance(meta, dict) else {}
             # the dataset as Inspect records it for this task, not whichever asset eval.yaml lists first
             dataset: DatasetRef | None = DatasetRef(path=dataset_identity(meta, path))
-            inputs["dataset"] = {**examined, "samples": meta.get("samples")}
+            inspect_ai = locked_version(ctx.ie_root, "inspect-ai")
+            inputs["dataset"] = {
+                **examined,
+                "samples": meta.get("samples"),
+                "inspect_ai": inspect_ai,
+            }
+            pin = ["--with", f"inspect-ai=={inspect_ai}"] if inspect_ai else []
             scan_dir = Path(tempfile.mkdtemp(prefix="inspect_dataset_", dir=ctx.out_dir))
             argv = [
-                *ctx.producers.dataset_task,
+                *_expand(ctx.producers.dataset_task, ctx.ie_root, {"{inspect_ai}": pin}),
                 "scan",
                 f"{REPLAY_SCRIPT}@replay_samples",
                 "-o",

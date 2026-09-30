@@ -95,7 +95,13 @@ def test_task_scans_dump_in_the_eval_project_and_scan_in_inspect_datasets_own_en
         "{eval_deps}",
         "python",
     )
-    assert config.dataset_task == ("uvx", "--from", DATASET_TASK_SPEC, "inspect-dataset")
+    assert config.dataset_task == (
+        "uvx",
+        "--from",
+        DATASET_TASK_SPEC,
+        "{inspect_ai}",
+        "inspect-dataset",
+    )
     assert f"inspect-dataset[inspect] @ {DATASET_SPEC}" == DATASET_TASK_SPEC
     assert config.eval_env is None
 

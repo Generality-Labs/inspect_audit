@@ -586,3 +586,32 @@ def test_explicit_review_dir_that_does_not_exist_is_a_usage_error(
     )
     assert code == 2 and "typo" in capsys.readouterr().err
     assert not (out / "inspect-evals-stereoset").exists()  # nothing ran
+
+
+def test_leads_subcommand_prints_and_writes(
+    tmp_path: Path, run: Run, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    assert main(["leads", "--out", str(out), "inspect_evals/stereoset"]) == 0
+    printed = capsys.readouterr().out
+    assert printed.startswith("# Leads for inspect_evals/stereoset") and "`lint-1/1`" in printed
+    target = tmp_path / "LEADS.md"
+    assert (
+        main(["leads", "--out", str(out), "--write", str(target), "inspect_evals/stereoset"]) == 0
+    )
+    assert target.read_text() == printed
+
+
+def test_leads_subcommand_with_no_runs_is_a_usage_error(
+    tmp_path: Path, run: Run, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    assert main(["leads", "--out", str(out), "inspect_evals/hle"]) == 2
+    err = capsys.readouterr().err
+    assert "inspect_evals/hle" in err and str(out) in err

@@ -18,6 +18,7 @@ from .adapters import lint as lint_adapter
 from .config import DEFAULT_CONFIG_PATH, load_config
 from .featured import FEATURED
 from .io import findings_df, read_current, runs_df, update_current, write_parquet, write_run
+from .leads import NoRuns, leads_markdown
 from .models import Run
 from .producers import ProducerConfig
 from .render import render_eval_summary, render_sweep_summary
@@ -244,7 +245,41 @@ def _parser() -> argparse.ArgumentParser:
     )
     pull_p.add_argument("--manifest", type=Path, default=Path("scripts/hawk-artefacts.yaml"))
     pull_p.add_argument("--dest", type=Path, default=None, help="override the manifest's dest")
+    leads_p = sub.add_parser("leads", help="one eval's reviewed findings as leads for an agent")
+    leads_p.add_argument("--out", required=True, type=Path, help="the findings output directory")
+    leads_p.add_argument(
+        "--review",
+        type=Path,
+        default=None,
+        help="directory holding suppressions.yaml and issues.yaml (default: --out)",
+    )
+    leads_p.add_argument(
+        "--sample", default=None, help="only leads whose locations name this sample id"
+    )
+    leads_p.add_argument(
+        "--write", type=Path, default=None, help="write LEADS.md here instead of printing"
+    )
+    leads_p.add_argument("eval", help="registry name, e.g. inspect_evals/scicode")
     return parser
+
+
+def _leads(
+    out: Path, review_dir: Path | None, eval: str, sample: str | None, write: Path | None
+) -> int:
+    review = _load_review_or_exit(review_dir or out, explicit=review_dir is not None)
+    if review is None:
+        return 2
+    try:
+        text = leads_markdown(out, eval, review, sample_id=sample)
+    except NoRuns as ex:
+        print(f"{ex} under {out}", file=sys.stderr)
+        return 2
+    if write is not None:
+        write.parent.mkdir(parents=True, exist_ok=True)
+        write.write_text(text)
+    else:
+        print(text, end="")
+    return 0
 
 
 def _hawk_pull(manifest_path: Path, dest: Path | None) -> int:
@@ -295,6 +330,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _hawk_sets(args.task)
     if args.command == "hawk-pull":
         return _hawk_pull(args.manifest, args.dest)
+    if args.command == "leads":
+        return _leads(args.out, args.review, args.eval, args.sample, args.write)
 
     targets = list(args.targets) + (
         [f"inspect_evals/{name}" for name in FEATURED] if args.featured else []

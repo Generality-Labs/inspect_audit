@@ -41,6 +41,11 @@ class DatasetConfig(BaseModel):
 
     @model_validator(mode="after")
     def _task_or_hf(self) -> DatasetConfig:
+        if self.task is not None and (not self.task or "/" in self.task):
+            raise ValueError(
+                f"task must be a bare task name from the eval's eval.yaml, such as arc_challenge, "
+                f"not {self.task!r}"
+            )
         if self.task and self.selects_hf:
             raise ValueError(
                 "task cannot be combined with path, config, split, revision or fields: "

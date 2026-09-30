@@ -360,3 +360,42 @@ def test_eval_dependency_args_name_the_evals_extra_and_group(tmp_path: Path) -> 
 
 def test_replay_task_reads_the_samples_file_the_adapter_names() -> None:
     assert _replay_samples.SAMPLES_ENV == SAMPLES_ENV
+
+
+@pytest.mark.parametrize("task", ["", "inspect_evals/arc_easy"])
+def test_a_task_must_be_a_bare_task_name(task: str) -> None:
+    with pytest.raises(ValidationError, match="bare task name"):
+        DatasetConfig(task=task)
+
+
+def test_a_declared_task_missing_from_eval_yaml_is_a_skip_naming_the_listed_tasks(
+    tmp_path: Path,
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    ctx = _task_ctx(root, tmp_path)
+    ctx = Context(
+        ie_root=root,
+        out_dir=ctx.out_dir,
+        producers=ctx.producers,
+        config=Config(
+            evals={"inspect_evals/stereoset": EvalConfig(dataset=DatasetConfig(task="stereo"))}
+        ),
+    )
+    result = run("inspect_evals/stereoset", ctx)
+    assert result.outcomes[0].status == "skip"
+    message = result.outcomes[0].message or ""
+    assert "'stereo'" in message and "stereoset" in message
+
+
+def test_hf_settings_without_a_path_is_a_skip_that_says_so(tmp_path: Path) -> None:
+    root = make_root(tmp_path)  # eval.yaml lists a task but has no huggingface asset
+    ctx = Context(
+        ie_root=root,
+        config=Config(
+            evals={"inspect_evals/stereoset": EvalConfig(dataset=DatasetConfig(split="test"))}
+        ),
+    )
+    result = run("inspect_evals/stereoset", ctx)
+    assert result.outcomes[0].status == "skip"
+    message = result.outcomes[0].message or ""
+    assert "HuggingFace settings" in message and "no tasks" not in message

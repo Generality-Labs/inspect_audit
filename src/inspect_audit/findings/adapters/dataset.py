@@ -266,11 +266,19 @@ def run(target: str, ctx: Context) -> Run:
     yaml_data = eval_yaml(ctx.ie_root, target)
     path, options, examined = scan_arguments(target, yaml_data, declared)
     if path is None:
+        reason = (
+            "HuggingFace settings are declared in the pilot config but there is no dataset path: declare `path`, or add a huggingface asset to eval.yaml external_assets"
+            if declared and declared.selects_hf
+            else "no dataset path: none declared in the pilot config, no huggingface asset in eval.yaml external_assets, and no tasks in eval.yaml"
+        )
+        return skip_run(PRODUCER, target, ctx, reason, timestamp=timestamp)
+    listed = yaml_tasks(yaml_data)
+    if declared and declared.task and listed and declared.task not in listed:
         return skip_run(
             PRODUCER,
             target,
             ctx,
-            "no dataset path: none declared in the pilot config, no huggingface asset in eval.yaml external_assets, and no tasks in eval.yaml",
+            f"declared task {declared.task!r} is not among eval.yaml's tasks ({', '.join(listed)})",
             timestamp=timestamp,
         )
     ctx.out_dir.mkdir(parents=True, exist_ok=True)

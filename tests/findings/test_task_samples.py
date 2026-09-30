@@ -67,3 +67,72 @@ def test_replay_returns_the_dumped_samples_unchanged(
     monkeypatch.setenv(_replay_samples.SAMPLES_ENV, str(samples))
     replayed = list(_replay_samples.replay_samples().dataset)
     assert [s.model_dump() for s in replayed] == [s.model_dump() for s in original]
+
+
+RICH_TASK_FILE = """
+import numpy as np
+from inspect_ai import Task, task
+from inspect_ai.dataset import MemoryDataset, Sample
+from inspect_ai.model import ChatMessageSystem, ChatMessageUser, ContentImage, ContentText
+
+
+class Opaque:
+    def __str__(self) -> str:
+        return "opaque"
+
+
+@task
+def rich() -> Task:
+    return Task(
+        dataset=MemoryDataset(
+            [
+                Sample(
+                    id="img-1",
+                    input=[
+                        ChatMessageSystem(content="Answer briefly."),
+                        ChatMessageUser(
+                            content=[
+                                ContentText(text="What colour is this?"),
+                                ContentImage(image="data:image/png;base64,iVBORw0KGgo="),
+                            ]
+                        ),
+                    ],
+                    target=["red", "crimson"],
+                    choices=["red", "blue"],
+                    files={"notes.txt": "hello"},
+                    sandbox="docker",
+                    setup="echo ready",
+                    metadata={"count": np.int64(3), "thing": Opaque(), "subject": "art"},
+                )
+            ]
+        )
+    )
+"""
+
+
+def test_dump_and_replay_keep_messages_images_files_and_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "rich_task.py").write_text(RICH_TASK_FILE)
+    samples, meta = tmp_path / "samples.jsonl", tmp_path / "meta.json"
+    _dump_task_samples.main(["rich_task.py@rich", str(samples), str(meta)])
+    monkeypatch.setenv(_replay_samples.SAMPLES_ENV, str(samples))
+    (replayed,) = list(_replay_samples.replay_samples().dataset)
+    assert replayed.model_dump(exclude={"metadata"}) == {
+        **replayed.model_dump(exclude={"metadata"}),
+        "id": "img-1",
+        "target": ["red", "crimson"],
+        "choices": ["red", "blue"],
+        "files": {"notes.txt": "hello"},
+        "setup": "echo ready",
+    }
+    assert replayed.sandbox is not None and replayed.sandbox.type == "docker"
+    assert isinstance(replayed.input, list) and [m.role for m in replayed.input] == [
+        "system",
+        "user",
+    ]
+    content = replayed.input[1].content
+    assert isinstance(content, list) and content[1].type == "image"
+    # values JSON cannot hold are written as their str() rather than failing the whole eval
+    assert replayed.metadata == {"count": 3, "thing": "opaque", "subject": "art"}

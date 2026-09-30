@@ -12,6 +12,7 @@ import pandas as pd
 from .models import Run
 
 FINDING_COLUMNS: tuple[str, ...] = (
+    "id",
     "fingerprint",
     "fingerprint_version",
     "schema_version",
@@ -44,6 +45,7 @@ FINDING_COLUMNS: tuple[str, ...] = (
     "aliases",
     "suppressions",
     "suppressed",
+    "issue",
     "history",
     "introduced",
     "fixed",
@@ -126,6 +128,7 @@ def _finding_records(runs: Sequence[Run]) -> list[dict[str, Any]]:
             dataset = finding.subject.dataset
             records.append(
                 {
+                    "id": finding.id,
                     "fingerprint": finding.fingerprint,
                     "fingerprint_version": finding.fingerprint_version,
                     "schema_version": finding.schema_version,
@@ -166,6 +169,7 @@ def _finding_records(runs: Sequence[Run]) -> list[dict[str, Any]]:
                     "aliases": json.dumps(finding.aliases) if finding.aliases else None,
                     "suppressions": _json_or_none(finding.suppressions),
                     "suppressed": bool(finding.suppressions),
+                    "issue": finding.issue,
                     "history": _json_or_none(finding.history),
                     "introduced": _json_or_none(finding.introduced),
                     "fixed": _json_or_none(finding.fixed),

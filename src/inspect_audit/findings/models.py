@@ -241,6 +241,9 @@ class Finding(BaseModel):
     schema_version: Literal["0.1"] = "0.1"
     fingerprint: str
     fingerprint_version: int = 1
+    # record id, assigned by the run that holds the finding: "<run id>/<n>". Addresses one
+    # observation; the fingerprint is for matching across runs and may collide
+    id: str | None = None
     producer: str
     rule: str
     subject: Subject
@@ -259,6 +262,8 @@ class Finding(BaseModel):
     introduced: VersionRef | None = None
     fixed: VersionRef | None = None
     effect: Effect | None = None
+    # the accepted issue this observation is linked to, set by review at render time
+    issue: str | None = None
 
     @model_validator(mode="after")
     def _one_primary(self) -> Finding:
@@ -294,3 +299,10 @@ class Run(BaseModel):
     duration_s: float | None = None
     outcomes: list[Outcome] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _assign_record_ids(self) -> Run:
+        for index, finding in enumerate(self.findings, 1):
+            if finding.id is None:
+                finding.id = f"{self.id}/{index}"
+        return self

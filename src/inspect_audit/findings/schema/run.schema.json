@@ -309,6 +309,18 @@
           "title": "History",
           "type": "array"
         },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
         "introduced": {
           "anyOf": [
             {
@@ -319,6 +331,18 @@
             }
           ],
           "default": null
+        },
+        "issue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Issue"
         },
         "locations": {
           "items": {

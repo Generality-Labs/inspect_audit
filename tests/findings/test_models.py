@@ -2,6 +2,7 @@
 
 import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -132,3 +133,18 @@ def test_source_keeps_record_verbatim() -> None:
 def test_subject_defaults(subject: Subject) -> None:
     assert subject.dataset is None
     assert subject.task_args == {}
+
+
+def test_run_assigns_record_ids_to_findings_that_lack_one(finding: Finding, subject: Subject) -> None:
+    second = finding.model_copy(update={"fingerprint": "sha256:1", "id": "kept/explicit"})
+    run = Run(
+        id="lint-9",
+        timestamp=datetime(2026, 9, 30, tzinfo=UTC),
+        producer="inspect_evals_lint",
+        subject=subject,
+        findings=[finding, second],
+    )
+    assert [f.id for f in run.findings] == ["lint-9/1", "kept/explicit"]
+    assert run.findings[0].issue is None
+    again = Run.model_validate_json(run.model_dump_json())
+    assert [f.id for f in again.findings] == ["lint-9/1", "kept/explicit"]

@@ -10,6 +10,7 @@ from typing import Any
 from inspect_ai.log import EvalLog, read_eval_log
 from pydantic import JsonValue
 
+from ..config import LogFilter
 from ..fingerprint import FINGERPRINT_VERSION, fingerprint
 from ..models import (
     AnyLocation,
@@ -88,6 +89,20 @@ def _header_task(header: EvalLog) -> str | None:
     return _tail(header.eval.task_registry_name) or _tail(header.eval.task)
 
 
+def _header_matches(spec: Any, target: str, names: set[str]) -> bool:
+    """Whether a header's task is one of `names` for this target.
+
+    A qualified registry name (`pkg/task`) must share the target's package: the sample
+    auditor's `audit/inspect_evals/scicode` is a run over scicode, not a run of it. A bare
+    task name, as an inline Task records, matches on the tail alone.
+    """
+    registry = spec.task_registry_name
+    if registry and "/" in registry:
+        package, _, task_name = registry.rpartition("/")
+        return package == target.rpartition("/")[0] and task_name in names
+    return bool({_tail(registry), _tail(spec.task)} & names)
+
+
 def matching_headers(
     logs: Sequence[Path], target: str, names: set[str] | None = None
 ) -> list[tuple[Path, EvalLog]]:
@@ -103,9 +118,44 @@ def matching_headers(
             header = read_eval_log(str(path), header_only=True)
         except Exception:  # an unreadable log is not this eval's problem
             continue
-        if wanted & {_tail(header.eval.task_registry_name), _tail(header.eval.task)}:
+        if _header_matches(header.eval, target, wanted):
             matched.append((path, header))
     return matched
+
+
+def _is_mock(header: EvalLog) -> bool:
+    return str(header.eval.model or "").startswith("mockllm/")
+
+
+def _passed_args(header: EvalLog) -> dict[str, Any]:
+    """The task arguments the operator gave.
+
+    `task_args` also holds resolved defaults, so a parameterised task never has an empty one;
+    only the passed set tells a default run from a variant.
+    """
+    return dict(header.eval.task_args_passed or {})
+
+
+def select_headers(
+    headers: Sequence[tuple[Path, EvalLog]], log_filter: LogFilter
+) -> tuple[list[tuple[Path, EvalLog]], list[dict[str, str]]]:
+    """Split matched headers into the logs this eval's checks use and the ones left out, with reasons."""
+    used: list[tuple[Path, EvalLog]] = []
+    excluded: list[dict[str, str]] = []
+    for path, header in headers:
+        passed = _passed_args(header)
+        if _is_mock(header) and not log_filter.include_mock:
+            excluded.append({"path": str(path), "reason": f"mock model {header.eval.model}"})
+        elif log_filter.task_args is not None and passed != log_filter.task_args:
+            excluded.append(
+                {
+                    "path": str(path),
+                    "reason": f"task args {passed} differ from the configured {log_filter.task_args}",
+                }
+            )
+        else:
+            used.append((path, header))
+    return used, excluded
 
 
 def _declared_samples(yaml_data: Mapping[str, Any], task_name: str | None) -> int | None:
@@ -165,14 +215,34 @@ def parse(
     *,
     timestamp: datetime,
     resolved_ids: set[str] | None = None,
+    log_filter: LogFilter | None = None,
+    excluded: Sequence[Mapping[str, str]] = (),
 ) -> Run:
     """Run the header checks over already-read headers."""
+    log_filter = log_filter or LogFilter()
     run_id = new_run_id(PRODUCER, target, timestamp)
     build = _Builder(target, run_id)
 
+    # a run with non-default task arguments may legitimately use a different dataset size, and
+    # eval.yaml declares the count for the default configuration only: compare just the logs whose
+    # passed arguments are empty, even when the eval's filter selected a variant on purpose
+    count_excluded: list[dict[str, str]] = []
+    countable: list[tuple[Path, EvalLog]] = []
+    for path, header in headers:
+        passed = _passed_args(header)
+        if passed:
+            count_excluded.append(
+                {
+                    "path": str(path),
+                    "reason": f"task args {passed} differ from the default configuration",
+                }
+            )
+        else:
+            countable.append((path, header))
+
     fired = False
     any_declared = False
-    for path, header in headers:
+    for path, header in countable:
         declared = _declared_samples(yaml_data, _header_task(header))
         any_declared = any_declared or declared is not None
         actual = header.eval.dataset.samples
@@ -284,20 +354,24 @@ def parse(
                 )
         build.outcome("header.unknown_sample_ids", unknown_fired)
 
+    # each finding's subject is the log's own revision; the run says what it compared against
+    logs_record: dict[str, JsonValue] = {
+        "used": [str(path) for path, _ in headers],
+        "excluded": [dict(entry) for entry in excluded],
+        "count_excluded": [dict(entry) for entry in count_excluded],
+    }
+    comparison: dict[str, JsonValue] = {
+        "commit": subject.revision.commit,
+        "package_version": subject.revision.package_version,
+        "task_version": subject.task_version.full if subject.task_version else None,
+    }
+    inputs: dict[str, JsonValue] = {"logs": logs_record, "comparison": comparison}
     return Run(
         id=run_id,
         timestamp=timestamp,
         producer=PRODUCER,
         subject=subject,
-        # each finding's subject is the log's own revision; the run says what it compared against
-        inputs={
-            "logs": [str(path) for path, _ in headers],
-            "comparison": {
-                "commit": subject.revision.commit,
-                "package_version": subject.revision.package_version,
-                "task_version": subject.task_version.full if subject.task_version else None,
-            },
-        },
+        inputs=inputs,
         outcomes=build.outcomes,
         findings=build.findings,
     )
@@ -324,17 +398,30 @@ def _resolved_ids(
 
 
 def run(target: str, ctx: Context) -> Run:
-    """Read the headers of the logs that match `target` and run the checks."""
+    """Read the headers of the logs that match `target`, keep the ones the eval's filter allows, run the checks."""
     timestamp = utcnow()
     yaml_data = eval_yaml(ctx.ie_root, target)
-    headers = matching_headers(ctx.logs, target, task_names(yaml_data, target))
-    if not headers:
+    matched = matching_headers(ctx.logs, target, task_names(yaml_data, target))
+    if not matched:
         return skip_run(
             PRODUCER,
             target,
             ctx,
             f"no logs for target {target} among {len(ctx.logs)} file(s)",
             timestamp=timestamp,
+        )
+    log_filter = ctx.config.for_eval(target).logs
+    headers, excluded = select_headers(matched, log_filter)
+    if not headers:
+        reasons = sorted({entry["reason"] for entry in excluded})
+        excluded_record: list[JsonValue] = [dict(entry) for entry in excluded]
+        return skip_run(
+            PRODUCER,
+            target,
+            ctx,
+            f"{len(matched)} matching log(s), all excluded: {'; '.join(reasons)}",
+            timestamp=timestamp,
+            inputs={"logs": {"used": [], "excluded": excluded_record, "count_excluded": []}},
         )
     resolved, reason = _resolved_ids(target, headers) if ctx.resolve else (None, None)
     result = parse(
@@ -344,6 +431,8 @@ def run(target: str, ctx: Context) -> Run:
         yaml_data,
         timestamp=timestamp,
         resolved_ids=resolved,
+        log_filter=log_filter,
+        excluded=excluded,
     )
     if ctx.resolve and resolved is None:
         result.outcomes.append(

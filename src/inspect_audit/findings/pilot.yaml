@@ -1,0 +1,16 @@
+# What the deterministic producers examine for each pilot eval. An eval without an entry
+# uses `defaults`. Declare here whatever inference gets wrong; the run records what it used.
+defaults:
+  logs:
+    include_mock: false
+
+evals:
+  inspect_evals/stereoset:
+    dataset:
+      path: McGill-NLP/stereoset
+      config: intersentence
+      split: validation
+      fields:
+        question: context
+        answer: sentences
+        id: id

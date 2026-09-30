@@ -9,12 +9,13 @@ from test_adapters_common import STUBS, make_root
 
 from inspect_audit.findings.adapters import Context, subject_for
 from inspect_audit.findings.adapters.dataset import (
-    DATASET_OVERRIDES,
     PRODUCER,
     hf_asset,
     parse,
     run,
+    scan_arguments,
 )
+from inspect_audit.findings.config import Config, DatasetConfig, EvalConfig
 from inspect_audit.findings.models import SampleLocation
 from inspect_audit.findings.producers import ProducerConfig
 
@@ -63,36 +64,85 @@ def test_hf_asset_reads_eval_yaml() -> None:
     assert hf_asset({}) is None
 
 
-def test_overrides_include_stereoset() -> None:
-    assert DATASET_OVERRIDES["inspect_evals/stereoset"] == {
+def test_scan_arguments_prefer_the_declaration() -> None:
+    declared = DatasetConfig(
+        path="McGill-NLP/stereoset",
+        config="intersentence",
+        split="validation",
+        revision="abc123",
+        fields={"question": "context", "answer": "sentences", "id": "id"},
+    )
+    path, options, examined = scan_arguments("inspect_evals/stereoset", {}, declared)
+    assert path == "McGill-NLP/stereoset"
+    assert options == [
+        "--config",
+        "intersentence",
+        "--split",
+        "validation",
+        "--revision",
+        "abc123",
+        "--question-field",
+        "context",
+        "--answer-field",
+        "sentences",
+        "--id-field",
+        "id",
+    ]
+    assert examined == {
+        "path": "McGill-NLP/stereoset",
         "config": "intersentence",
         "split": "validation",
-        "question_field": "context",
-        "answer_field": "sentences",
-        "id_field": "id",
+        "revision": "abc123",
+        "fields": {"question": "context", "answer": "sentences", "id": "id"},
+        "declared": True,
     }
 
 
-def test_run_without_an_asset_is_a_skip(tmp_path: Path) -> None:
+def test_scan_arguments_fall_back_to_eval_yaml_asset() -> None:
+    yaml_data = {"external_assets": [{"type": "huggingface", "source": "a/b"}]}
+    path, options, examined = scan_arguments("inspect_evals/x", yaml_data, None)
+    assert (path, options) == ("a/b", [])
+    assert examined["declared"] is False and examined["path"] == "a/b"
+
+
+def test_scan_arguments_declared_without_path_uses_asset_for_path_only() -> None:
+    yaml_data = {"external_assets": [{"type": "huggingface", "source": "a/b"}]}
+    declared = DatasetConfig(split="test")
+    path, options, examined = scan_arguments("inspect_evals/x", yaml_data, declared)
+    assert path == "a/b" and options == ["--split", "test"]
+    assert examined["declared"] is True and examined["path"] == "a/b"
+
+
+def test_run_without_a_declaration_or_asset_is_a_skip_naming_both(tmp_path: Path) -> None:
     root = make_root(tmp_path)
     result = run("inspect_evals/stereoset", Context(ie_root=root))
     assert result.outcomes[0].status == "skip"
-    assert "no huggingface asset" in (result.outcomes[0].message or "")
+    message = result.outcomes[0].message or ""
+    assert "pilot config" in message and "eval.yaml" in message
 
 
 def test_run_with_a_stubbed_scan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = make_root(tmp_path, extra=ASSET)
     monkeypatch.setenv("STUB_OUTPUT_DIR", str(FIXTURE))
+    declared = DatasetConfig(
+        config="intersentence",
+        split="validation",
+        fields={"question": "context", "answer": "sentences", "id": "id"},
+    )
     ctx = Context(
         ie_root=root,
         out_dir=tmp_path / "out",
         producers=ProducerConfig(dataset=(sys.executable, str(STUBS / "echo_file.py"))),
+        config=Config(evals={"inspect_evals/stereoset": EvalConfig(dataset=declared)}),
     )
     result = run("inspect_evals/stereoset", ctx)
     assert len(result.findings) == 46
     argv = result.inputs["argv"]
     assert isinstance(argv, list)
     assert "McGill-NLP/stereoset" in argv and "--config" in argv and "--question-field" in argv
+    examined = result.inputs["dataset"]
+    assert isinstance(examined, dict)
+    assert examined["declared"] is True and examined["split"] == "validation"
 
 
 def test_run_with_a_failing_scan_is_a_skip(tmp_path: Path) -> None:

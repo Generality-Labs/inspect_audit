@@ -76,6 +76,20 @@ def _run_path(directory: Path, run: Run) -> Path:
     return path
 
 
+def _renamed(run: Run, file_id: str) -> Run:
+    """The run under a new id, with its findings' record ids and run_id moved with it."""
+    findings = [
+        finding.model_copy(
+            update={
+                "run_id": file_id,
+                "id": f"{file_id}/{n}" if finding.id == f"{run.id}/{n}" else finding.id,
+            }
+        )
+        for n, finding in enumerate(run.findings, 1)
+    ]
+    return run.model_copy(update={"id": file_id, "findings": findings})
+
+
 def write_outputs(
     out: Path, runs_by_eval: Mapping[str, Sequence[Run]], review: Review | None = None
 ) -> None:
@@ -86,7 +100,7 @@ def write_outputs(
         for run in runs:
             path = _run_path(directory, run)
             file_id = path.name.removesuffix(".run.json")
-            stored = run if file_id == run.id else run.model_copy(update={"id": file_id})
+            stored = run if file_id == run.id else _renamed(run, file_id)
             write_run(stored, path)
             written.append(stored)
         update_current(directory, written)
@@ -114,10 +128,37 @@ def render_current(out: Path, review: Review | None = None) -> None:
             f"observation: {', '.join(fingerprints)}",
             file=sys.stderr,
         )
+    for issue in review.issues:
+        if issue.subject not in runs_by_eval:
+            print(
+                f"warning: issue {issue.id} names subject {issue.subject}, which has no runs in the "
+                "current view, so it appears in no summary",
+                file=sys.stderr,
+            )
+        elsewhere = sorted(
+            {
+                finding.subject.eval
+                for run in all_runs
+                for finding in run.findings
+                if finding.issue == issue.id and finding.subject.eval != issue.subject
+            }
+        )
+        if elsewhere:
+            print(
+                f"warning: issue {issue.id} ({issue.subject}) is linked to findings on "
+                f"{', '.join(elsewhere)}",
+                file=sys.stderr,
+            )
 
 
-def _load_review_or_exit(directory: Path) -> Review | None:
-    """The review files under `directory`, or None after printing why they could not be loaded."""
+def _load_review_or_exit(directory: Path, *, explicit: bool) -> Review | None:
+    """The review files under `directory`, or None after printing why they could not be loaded.
+
+    A directory the operator named must exist: a typo would otherwise silently apply nothing.
+    """
+    if explicit and not directory.is_dir():
+        print(f"--review {directory} is not a directory", file=sys.stderr)
+        return None
     try:
         return load_review(directory)
     except (OSError, ValueError) as ex:
@@ -246,7 +287,7 @@ def _hawk_sets(task: str) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "summary":
-        review = _load_review_or_exit(args.review or args.out)
+        review = _load_review_or_exit(args.review or args.out, explicit=args.review is not None)
         if review is None:
             return 2
         return _summaries_from_disk(args.out, review)
@@ -289,7 +330,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError, ValidationError) as ex:
         print(f"could not load {args.config}: {ex}", file=sys.stderr)
         return 2
-    review = _load_review_or_exit(args.review or args.out)
+    review = _load_review_or_exit(args.review or args.out, explicit=args.review is not None)
     if review is None:
         return 2
     producers_config = ProducerConfig.from_env()

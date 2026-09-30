@@ -117,3 +117,14 @@ def test_apply_review_links_issues_by_fingerprint_and_reports_unmatched(run: Run
     assert applied[0].findings[0].issue == "ISS-0007"
     assert run.findings[0].issue is None
     assert unmatched_issue_findings(review, applied) == {"ISS-0007": ["sha256:gone"]}
+
+
+def test_yaml_syntax_error_is_a_value_error_naming_the_file(tmp_path: Path) -> None:
+    (tmp_path / "suppressions.yaml").write_text("- [unclosed\n")
+    with pytest.raises(ValueError, match=r"suppressions\.yaml"):
+        load_review(tmp_path)
+
+
+def test_duplicate_issue_ids_are_rejected() -> None:
+    with pytest.raises(ValidationError, match="ISS-1"):
+        Review(issues=[_issue(), _issue(findings=["sha256:other"])])

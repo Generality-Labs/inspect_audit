@@ -11,6 +11,7 @@ from test_header_adapter import _log
 
 from inspect_audit.findings.cli import collect_logs, main
 from inspect_audit.findings.featured import FEATURED
+from inspect_audit.findings.models import Run
 from inspect_audit.findings.producers import ProducerConfig
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -510,3 +511,75 @@ def test_malformed_review_file_is_a_usage_error(
     )
     assert code == 2
     assert "issues.yaml" in capsys.readouterr().err
+
+
+def test_a_renamed_run_file_carries_its_own_record_ids(tmp_path: Path, run: Run) -> None:
+    from inspect_audit.findings.cli import write_outputs
+    from inspect_audit.findings.io import read_run
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    write_outputs(out, {"inspect_evals/stereoset": [run]})  # same run id within one second
+    runs_dir = out / "inspect-evals-stereoset" / "runs"
+    first = read_run(runs_dir / "lint-1.run.json")
+    second = read_run(runs_dir / "lint-1-2.run.json")
+    assert [f.id for f in first.findings] == ["lint-1/1"]
+    assert second.id == "lint-1-2"
+    assert [f.id for f in second.findings] == ["lint-1-2/1"]
+    assert [f.run_id for f in second.findings] == ["lint-1-2"]
+
+
+def test_issue_with_a_subject_no_eval_matches_is_warned_about(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    out = tmp_path / "out"
+    assert (
+        main(
+            [
+                "run",
+                "--config",
+                str(PILOT),
+                "--root",
+                str(root),
+                "--out",
+                str(out),
+                "inspect_evals/stereoset",
+            ]
+        )
+        == 0
+    )
+    findings = pd.read_parquet(out / "findings.parquet")
+    fingerprint = str(findings.iloc[0]["fingerprint"])
+    (out / "issues.yaml").write_text(
+        f"- id: ISS-0002\n  title: typo\n  subject: inspect_evals/steroset\n  findings: [{fingerprint}]\n"
+        "  author: matt\n  opened: 2026-09-30\n"
+    )
+    assert main(["summary", str(out)]) == 0
+    err = capsys.readouterr().err
+    assert "ISS-0002" in err and "inspect_evals/steroset" in err
+
+
+def test_explicit_review_dir_that_does_not_exist_is_a_usage_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    out = tmp_path / "out"
+    code = main(
+        [
+            "run",
+            "--config",
+            str(PILOT),
+            "--root",
+            str(root),
+            "--out",
+            str(out),
+            "--review",
+            str(tmp_path / "typo"),
+            "inspect_evals/stereoset",
+        ]
+    )
+    assert code == 2 and "typo" in capsys.readouterr().err
+    assert not (out / "inspect-evals-stereoset").exists()  # nothing ran

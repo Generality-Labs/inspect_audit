@@ -62,11 +62,19 @@ class Review(BaseModel):
     issues: list[IssueEntry] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _one_issue_per_fingerprint(self) -> Review:
-        counts = Counter(fp for issue in self.issues for fp in issue.findings)
-        duplicates = sorted(fp for fp, n in counts.items() if n > 1)
-        if duplicates:
-            raise ValueError(f"a fingerprint may belong to one issue only: {', '.join(duplicates)}")
+    def _issues_are_distinct(self) -> Review:
+        ids = Counter(issue.id for issue in self.issues)
+        repeated = sorted(issue_id for issue_id, n in ids.items() if n > 1)
+        if repeated:
+            raise ValueError(f"issue id used more than once: {', '.join(repeated)}")
+        owners: dict[str, list[str]] = {}
+        for issue in self.issues:
+            for fp in issue.findings:
+                owners.setdefault(fp, []).append(issue.id)
+        shared = {fp: ids for fp, ids in owners.items() if len(ids) > 1}
+        if shared:
+            detail = "; ".join(f"{fp} in {', '.join(ids)}" for fp, ids in sorted(shared.items()))
+            raise ValueError(f"a fingerprint may belong to one issue only: {detail}")
         return self
 
 
@@ -78,7 +86,10 @@ def _load_list(path: Path, adapter: TypeAdapter[Any]) -> list[Any]:
     """The file as a validated list, or an empty list when the file is absent. Errors name the file."""
     if not path.is_file():
         return []
-    loaded = yaml.safe_load(path.read_text())
+    try:
+        loaded = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as ex:
+        raise ValueError(f"{path}: {ex}") from ex
     if loaded is None:
         return []
     if not isinstance(loaded, list):

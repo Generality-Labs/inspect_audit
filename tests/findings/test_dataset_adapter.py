@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from test_adapters_common import STUBS, make_root
 
 from inspect_audit.findings.adapters import Context, subject_for
@@ -95,6 +96,8 @@ def test_scan_arguments_prefer_the_declaration() -> None:
         "revision": "abc123",
         "fields": {"question": "context", "answer": "sentences", "id": "id"},
         "declared": True,
+        "mode": "hf",
+        "task": None,
     }
 
 
@@ -113,12 +116,15 @@ def test_scan_arguments_declared_without_path_uses_asset_for_path_only() -> None
     assert examined["declared"] is True and examined["path"] == "a/b"
 
 
-def test_run_without_a_declaration_or_asset_is_a_skip_naming_both(tmp_path: Path) -> None:
+def test_run_without_a_declaration_asset_or_task_is_a_skip_naming_all_three(
+    tmp_path: Path,
+) -> None:
     root = make_root(tmp_path)
+    (root / "src" / "inspect_evals" / "stereoset" / "eval.yaml").write_text("title: StereoSet\n")
     result = run("inspect_evals/stereoset", Context(ie_root=root))
     assert result.outcomes[0].status == "skip"
     message = result.outcomes[0].message or ""
-    assert "pilot config" in message and "eval.yaml" in message
+    assert "pilot config" in message and "eval.yaml" in message and "tasks" in message
 
 
 def test_run_with_a_stubbed_scan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -150,7 +156,7 @@ def test_run_with_a_failing_scan_is_a_skip(tmp_path: Path) -> None:
     ctx = Context(
         ie_root=root,
         out_dir=tmp_path / "out",
-        producers=ProducerConfig(dataset=(sys.executable, str(STUBS / "fail.py"))),
+        producers=ProducerConfig(dataset_task=(sys.executable, str(STUBS / "fail.py"))),
     )
     result = run("inspect_evals/stereoset", ctx)
     assert result.outcomes[0].status == "skip"
@@ -166,9 +172,99 @@ def test_run_with_malformed_scan_is_a_skip(tmp_path: Path, monkeypatch: pytest.M
     ctx = Context(
         ie_root=root,
         out_dir=tmp_path / "out",
-        producers=ProducerConfig(dataset=(sys.executable, str(STUBS / "echo_file.py"))),
+        producers=ProducerConfig(dataset_task=(sys.executable, str(STUBS / "echo_file.py"))),
     )
     result = run("inspect_evals/stereoset", ctx)
     assert result.findings == []
     assert result.outcomes[0].status == "skip"
     assert "could not parse" in (result.outcomes[0].message or "")
+
+
+TASKS = {
+    "tasks": [{"name": "arc_easy"}, {"name": "arc_challenge"}],
+    "external_assets": [{"type": "huggingface", "source": "allenai/ai2_arc"}],
+}
+
+
+def test_scan_arguments_default_to_the_first_task() -> None:
+    path, options, examined = scan_arguments("inspect_evals/arc", TASKS, None)
+    assert (path, options) == ("inspect_evals/arc_easy", [])
+    assert examined == {
+        "path": "inspect_evals/arc_easy",
+        "config": None,
+        "split": None,
+        "revision": None,
+        "fields": {},
+        "declared": False,
+        "mode": "task",
+        "task": "arc_easy",
+    }
+
+
+def test_scan_arguments_declared_task_is_scanned() -> None:
+    path, options, examined = scan_arguments(
+        "inspect_evals/arc", TASKS, DatasetConfig(task="arc_challenge")
+    )
+    assert (path, options) == ("inspect_evals/arc_challenge", [])
+    assert examined["mode"] == "task" and examined["declared"] is True
+
+
+def test_scan_arguments_hf_declaration_wins_over_tasks() -> None:
+    path, options, examined = scan_arguments(
+        "inspect_evals/arc", TASKS, DatasetConfig(config="ARC-Easy", split="test")
+    )
+    assert path == "allenai/ai2_arc" and options == ["--config", "ARC-Easy", "--split", "test"]
+    assert examined["mode"] == "hf" and examined["task"] is None
+
+
+def test_declaring_a_task_with_hf_settings_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="cannot be combined"):
+        DatasetConfig(task="arc_easy", split="test")
+
+
+def test_run_task_mode_scans_in_the_eval_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    monkeypatch.setenv("STUB_OUTPUT_DIR", str(FIXTURE))
+    ctx = Context(
+        ie_root=root,
+        out_dir=tmp_path / "out",
+        producers=ProducerConfig(
+            dataset=(sys.executable, str(STUBS / "fail.py")),
+            dataset_task=(sys.executable, str(STUBS / "echo_file.py"), "--project", "{ie_root}"),
+        ),
+    )
+    result = run("inspect_evals/stereoset", ctx)
+    argv = result.inputs["argv"]
+    assert isinstance(argv, list)
+    assert argv[2:6] == ["--project", str(root), "scan", "inspect_evals/stereoset"]
+    assert "--config" not in argv and "--question-field" not in argv
+    # the dataset is the one the eval declares; the summary's split and config describe HF mode only
+    assert result.subject.dataset is not None
+    assert result.subject.dataset.model_dump() == {
+        "path": "McGill-NLP/stereoset",
+        "config": None,
+        "split": None,
+        "revision": None,
+    }
+    primary = result.findings[0].primary_location
+    assert isinstance(primary, SampleLocation) and primary.dataset == "McGill-NLP/stereoset"
+    examined = result.inputs["dataset"]
+    assert isinstance(examined, dict)
+    assert examined["mode"] == "task" and examined["task"] == "stereoset"
+
+
+def test_run_task_mode_without_an_asset_names_the_task_as_the_dataset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path)
+    monkeypatch.setenv("STUB_OUTPUT_DIR", str(FIXTURE))
+    ctx = Context(
+        ie_root=root,
+        out_dir=tmp_path / "out",
+        producers=ProducerConfig(dataset_task=(sys.executable, str(STUBS / "echo_file.py"))),
+    )
+    result = run("inspect_evals/stereoset", ctx)
+    assert result.subject.dataset is not None
+    assert result.subject.dataset.path == "inspect_evals/stereoset"

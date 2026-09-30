@@ -107,7 +107,7 @@ Adapters call it once at write time and store the result with `fingerprint_versi
 
 | producer | default prefix                                                                                                                                                        | override                    |
 | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| lint     | `["uvx", "--from", "inspect-evals-lint==0.7.0", "inspect-evals-lint"]`                                                                                                | `INSPECT_AUDIT_LINT_CMD`    |
+| lint     | `["uvx", "--from", "inspect-evals-lint==0.9.0", "inspect-evals-lint"]`                                                                                                | `INSPECT_AUDIT_LINT_CMD`    |
 | dataset  | `["uvx", "--from", "git+https://github.com/Generality-Labs/inspect_dataset@afbc94c0b509", "inspect-dataset"]` (origin/main on 2026-09-25; the package is not on PyPI) | `INSPECT_AUDIT_DATASET_CMD` |
 
 An override is a shell-split string. Each adapter exposes two functions: `parse(...) -> Run` which is pure and tested against fixtures, and `run(target, ctx) -> Run` which invokes the subprocess with a timeout, then calls `parse`. Any failure in `run` (non-zero exit, timeout, missing binary, unparseable output) returns a `Run` with a single `Outcome(rule="<producer>", status="skip", message=<error tail>)` and no findings. Nothing raises past the adapter.

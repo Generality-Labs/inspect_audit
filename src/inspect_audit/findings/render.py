@@ -50,8 +50,14 @@ def _inputs_lines(runs: Sequence[Run]) -> list[str]:
         (_dict(run.inputs.get("dataset")) for run in runs if "dataset" in run.inputs), {}
     )
     if dataset:
-        where = ", ".join(
-            f"{key} {dataset[key]}" for key in ("config", "split", "revision") if dataset.get(key)
+        where = (
+            "through the task's own loader"
+            if dataset.get("mode") == "task"
+            else ", ".join(
+                f"{key} {dataset[key]}"
+                for key in ("config", "split", "revision")
+                if dataset.get(key)
+            )
         )
         origin = (
             "declared in the pilot config" if dataset.get("declared") else "inferred from eval.yaml"

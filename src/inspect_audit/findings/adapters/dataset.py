@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import time
 import tomllib
@@ -251,6 +252,26 @@ def _expand(prefix: Sequence[str], ie_root: Path, eval_deps: list[str]) -> list[
     return argv
 
 
+def _is_local_path(value: str) -> bool:
+    """A filesystem path, which differs per machine, rather than a hub id or URL."""
+    return (
+        value.startswith(("/", "~", ".", "file:", "\\"))
+        or re.match(r"^[A-Za-z]:[\\/]", value) is not None
+    )
+
+
+def dataset_identity(meta: Mapping[str, Any], spec: str) -> str:
+    """The dataset a task scan's findings belong to: Inspect's location unless it is a local path.
+
+    A file-backed dataset's location is this machine's copy (for inspect_evals, a cache path) and
+    its name only the file's stem, so neither identifies it across machines; the task spec does.
+    """
+    location = meta.get("dataset_location")
+    if isinstance(location, str) and location and not _is_local_path(location):
+        return location
+    return spec
+
+
 def _output_tail(result: CommandResult) -> str:
     return (result.stderr or result.stdout)[-1500:]
 
@@ -321,8 +342,7 @@ def run(target: str, ctx: Context) -> Run:
             meta = json.loads(meta_path.read_text())
             meta = meta if isinstance(meta, dict) else {}
             # the dataset as Inspect records it for this task, not whichever asset eval.yaml lists first
-            identity = meta.get("dataset_location") or meta.get("dataset_name") or path
-            dataset: DatasetRef | None = DatasetRef(path=str(identity))
+            dataset: DatasetRef | None = DatasetRef(path=dataset_identity(meta, path))
             examined = {**examined, "samples": meta.get("samples")}
             argv = [
                 *ctx.producers.dataset_task,

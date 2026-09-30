@@ -399,3 +399,36 @@ def test_hf_settings_without_a_path_is_a_skip_that_says_so(tmp_path: Path) -> No
     assert result.outcomes[0].status == "skip"
     message = result.outcomes[0].message or ""
     assert "HuggingFace settings" in message and "no tasks" not in message
+
+
+@pytest.mark.parametrize(
+    ("meta", "identity"),
+    [
+        # a HuggingFace dataset: the location is the hub path, preferred over a differing name
+        ({"dataset_name": "mmlu", "dataset_location": "cais/mmlu"}, "cais/mmlu"),
+        # a downloaded file: the location is this machine's cache path and the name only its stem
+        (
+            {
+                "dataset_name": "gpqa_diamond",
+                "dataset_location": "/Users/someone/Library/Caches/inspect_evals/gpqa/gpqa_diamond.csv",
+            },
+            "inspect_evals/stereoset",
+        ),
+        (
+            {"dataset_name": "x", "dataset_location": "file:///home/someone/x.jsonl"},
+            "inspect_evals/stereoset",
+        ),
+        ({"dataset_name": "x", "dataset_location": "~/data/x.csv"}, "inspect_evals/stereoset"),
+        ({"dataset_name": "x", "dataset_location": "C:\\data\\x.csv"}, "inspect_evals/stereoset"),
+    ],
+)
+def test_task_scan_identity_is_never_a_local_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, meta: dict[str, str], identity: str
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    monkeypatch.setenv("STUB_OUTPUT_DIR", str(TASK_FIXTURE))
+    monkeypatch.setenv("STUB_META", json.dumps(meta))
+    result = run("inspect_evals/stereoset", _task_ctx(root, tmp_path))
+    assert result.subject.dataset is not None and result.subject.dataset.path == identity
+    primary = result.findings[0].primary_location
+    assert isinstance(primary, SampleLocation) and primary.dataset == identity

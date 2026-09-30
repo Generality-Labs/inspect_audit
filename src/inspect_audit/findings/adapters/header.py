@@ -223,13 +223,14 @@ def parse(
     run_id = new_run_id(PRODUCER, target, timestamp)
     build = _Builder(target, run_id)
 
-    # a run with non-default task arguments may legitimately use a different dataset size;
-    # compare against eval.yaml's declared count only where the passed arguments are the defaults
+    # a run with non-default task arguments may legitimately use a different dataset size, and
+    # eval.yaml declares the count for the default configuration only: compare just the logs whose
+    # passed arguments are empty, even when the eval's filter selected a variant on purpose
     count_excluded: list[dict[str, str]] = []
     countable: list[tuple[Path, EvalLog]] = []
     for path, header in headers:
         passed = _passed_args(header)
-        if log_filter.task_args is None and passed:
+        if passed:
             count_excluded.append(
                 {
                     "path": str(path),
@@ -413,12 +414,14 @@ def run(target: str, ctx: Context) -> Run:
     headers, excluded = select_headers(matched, log_filter)
     if not headers:
         reasons = sorted({entry["reason"] for entry in excluded})
+        excluded_record: list[JsonValue] = [dict(entry) for entry in excluded]
         return skip_run(
             PRODUCER,
             target,
             ctx,
             f"{len(matched)} matching log(s), all excluded: {'; '.join(reasons)}",
             timestamp=timestamp,
+            inputs={"logs": {"used": [], "excluded": excluded_record, "count_excluded": []}},
         )
     resolved, reason = _resolved_ids(target, headers) if ctx.resolve else (None, None)
     result = parse(

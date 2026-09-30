@@ -7,11 +7,14 @@ acceptance sweep. The pilot declares these per eval; an eval without an entry ge
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 DEFAULT_CONFIG_PATH = Path(__file__).parent / "pilot.yaml"
+
+FieldRole = Literal["question", "answer", "id"]
 
 
 class DatasetConfig(BaseModel):
@@ -22,8 +25,8 @@ class DatasetConfig(BaseModel):
     config: str | None = None
     split: str | None = None
     revision: str | None = None
-    # inspect-dataset field names by role: question, answer, id
-    fields: dict[str, str] = Field(default_factory=dict)
+    # inspect-dataset column names by role; a misspelled role is a validation error, not a no-op
+    fields: dict[FieldRole, str] = Field(default_factory=dict)
 
 
 class LogFilter(BaseModel):

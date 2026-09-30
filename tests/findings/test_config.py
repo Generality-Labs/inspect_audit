@@ -79,3 +79,12 @@ def test_eval_entry_inherits_defaults_it_does_not_set() -> None:
         evals={"inspect_evals/x": EvalConfig(logs=LogFilter(include_mock=False))},
     )
     assert explicit.for_eval("inspect_evals/x").logs.include_mock is False
+
+
+def test_unknown_field_role_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError):
+        DatasetConfig(fields={"questoin": "ctx"})  # type: ignore[dict-item]
+    path = tmp_path / "pilot.yaml"
+    path.write_text("evals:\n  inspect_evals/x:\n    dataset:\n      fields: {questoin: ctx}\n")
+    with pytest.raises(ValidationError):
+        load_config(path)

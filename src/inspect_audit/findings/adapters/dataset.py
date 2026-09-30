@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import JsonValue
 
-from ..config import DatasetConfig
+from ..config import DatasetConfig, FieldRole
 from ..fingerprint import FINGERPRINT_VERSION, fingerprint
 from ..models import (
     DatasetRef,
@@ -49,7 +49,11 @@ def hf_asset(data: Mapping[str, Any]) -> str | None:
     return None
 
 
-_FIELD_OPTIONS = {"question": "--question-field", "answer": "--answer-field", "id": "--id-field"}
+_FIELD_OPTIONS: dict[FieldRole, str] = {
+    "question": "--question-field",
+    "answer": "--answer-field",
+    "id": "--id-field",
+}
 
 
 def scan_arguments(
@@ -73,14 +77,13 @@ def scan_arguments(
             if value:
                 options += [option, value]
         for role, name in declared.fields.items():
-            if role in _FIELD_OPTIONS:
-                options += [_FIELD_OPTIONS[role], name]
+            options += [_FIELD_OPTIONS[role], name]
     examined: dict[str, JsonValue] = {
         "path": path,
         "config": declared.config if declared else None,
         "split": declared.split if declared else None,
         "revision": declared.revision if declared else None,
-        "fields": dict(declared.fields) if declared else {},
+        "fields": {str(role): name for role, name in declared.fields.items()} if declared else {},
         "declared": declared is not None,
     }
     return path, options, examined

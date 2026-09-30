@@ -153,3 +153,31 @@ def test_eval_summary_inputs_section_says_when_nothing_was_declared(run: Run) ->
 def test_sweep_summary_shows_log_counts(run: Run) -> None:
     text = render_sweep_summary({"inspect_evals/stereoset": [run, _header_run(run)]})
     assert "inspect_audit_header: 0 findings (2 logs, 1 excluded)" in text
+
+
+def test_inputs_section_lists_excluded_logs_when_none_were_used(run: Run) -> None:
+    skipped = run.model_copy(
+        update={
+            "id": "header-skip",
+            "producer": "inspect_audit_header",
+            "findings": [],
+            "outcomes": [
+                Outcome(
+                    rule="inspect_audit_header",
+                    status="skip",
+                    message="1 matching log(s), all excluded: mock model mockllm/model",
+                )
+            ],
+            "inputs": {
+                "logs": {
+                    "used": [],
+                    "excluded": [{"path": "/logs/mock.eval", "reason": "mock model mockllm/model"}],
+                    "count_excluded": [],
+                }
+            },
+        }
+    )
+    text = render_eval_summary([skipped])
+    inputs = text.split("## Inputs", 1)[1].split("## Outcomes", 1)[0]
+    assert "no logs examined" not in inputs
+    assert "0 log(s) used, 1 excluded" in inputs and "/logs/mock.eval" in inputs

@@ -20,7 +20,7 @@ from inspect_audit.findings.adapters.header import (
     run,
     select_headers,
 )
-from inspect_audit.findings.config import LogFilter
+from inspect_audit.findings.config import Config, EvalConfig, LogFilter
 from inspect_audit.findings.models import LogLocation, ScorerLocation
 
 STAMP = datetime(2026, 9, 25, 4, 20, 50, tzinfo=UTC)
@@ -318,7 +318,7 @@ def test_non_default_task_args_skip_the_sample_count_comparison_but_join_drift(
         "inspect_evals/stereoset", Context(ie_root=root, logs=[default, variant], config=MOCK_OK)
     )
     counts = [f for f in result.findings if f.rule == "header.dataset_samples"]
-    assert len(counts) == 1 and "3" in counts[0].summary  # only the default-args log is compared
+    assert len(counts) == 1 and "records 3 " in counts[0].summary  # only the default-args log
     assert any(f.rule == "header.version_drift" for f in result.findings)  # both logs join drift
     logs = result.inputs["logs"]
     assert isinstance(logs, dict)
@@ -329,3 +329,31 @@ def test_non_default_task_args_skip_the_sample_count_comparison_but_join_drift(
             "reason": "task args {'subset': 'small'} differ from the default configuration",
         }
     ]
+
+
+def test_a_declared_variant_filter_never_compares_against_the_default_count(tmp_path: Path) -> None:
+    root = make_root(tmp_path)  # eval.yaml declares 2123 for the default configuration
+    variant = _log(tmp_path / "b", samples=2, task_args={"subset": "small"})
+    config = Config(
+        evals={
+            "inspect_evals/stereoset": EvalConfig(
+                logs=LogFilter(task_args={"subset": "small"}, include_mock=True)
+            )
+        }
+    )
+    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[variant], config=config))
+    assert not any(f.rule == "header.dataset_samples" for f in result.findings)
+    logs = result.inputs["logs"]
+    assert isinstance(logs, dict)
+    assert logs["used"] == [str(variant)]
+    assert [entry["path"] for entry in logs["count_excluded"]] == [str(variant)]
+
+
+def test_all_excluded_skip_still_records_the_excluded_logs(tmp_path: Path) -> None:
+    root = make_root(tmp_path)
+    log = _log(tmp_path / "logs")
+    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log]))  # default config
+    assert [o.status for o in result.outcomes] == ["skip"]
+    logs = result.inputs["logs"]
+    assert isinstance(logs, dict)
+    assert logs["used"] == [] and [e["path"] for e in logs["excluded"]] == [str(log)]

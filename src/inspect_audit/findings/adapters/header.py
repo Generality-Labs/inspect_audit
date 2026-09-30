@@ -10,6 +10,7 @@ from typing import Any
 from inspect_ai.log import EvalLog, read_eval_log
 from pydantic import JsonValue
 
+from ..config import LogFilter
 from ..fingerprint import FINGERPRINT_VERSION, fingerprint
 from ..models import (
     AnyLocation,
@@ -122,6 +123,38 @@ def matching_headers(
     return matched
 
 
+def _is_mock(header: EvalLog) -> bool:
+    return str(header.eval.model or "").startswith("mockllm/")
+
+
+def _passed_args(header: EvalLog) -> dict[str, Any]:
+    """The task arguments the operator gave. `task_args` also holds resolved defaults, so a
+    parameterised task never has an empty one; only the passed set tells default from variant."""
+    return dict(header.eval.task_args_passed or {})
+
+
+def select_headers(
+    headers: Sequence[tuple[Path, EvalLog]], log_filter: LogFilter
+) -> tuple[list[tuple[Path, EvalLog]], list[dict[str, str]]]:
+    """Split matched headers into the logs this eval's checks use and the ones left out, with reasons."""
+    used: list[tuple[Path, EvalLog]] = []
+    excluded: list[dict[str, str]] = []
+    for path, header in headers:
+        passed = _passed_args(header)
+        if _is_mock(header) and not log_filter.include_mock:
+            excluded.append({"path": str(path), "reason": f"mock model {header.eval.model}"})
+        elif log_filter.task_args is not None and passed != log_filter.task_args:
+            excluded.append(
+                {
+                    "path": str(path),
+                    "reason": f"task args {passed} differ from the configured {log_filter.task_args}",
+                }
+            )
+        else:
+            used.append((path, header))
+    return used, excluded
+
+
 def _declared_samples(yaml_data: Mapping[str, Any], task_name: str | None) -> int | None:
     """`dataset_samples` for the eval.yaml task entry named `task_name`."""
     tasks = yaml_data.get("tasks")
@@ -179,14 +212,32 @@ def parse(
     *,
     timestamp: datetime,
     resolved_ids: set[str] | None = None,
+    log_filter: LogFilter = LogFilter(),
+    excluded: Sequence[Mapping[str, str]] = (),
 ) -> Run:
     """Run the header checks over already-read headers."""
     run_id = new_run_id(PRODUCER, target, timestamp)
     build = _Builder(target, run_id)
 
+    # a run with non-default task arguments may legitimately use a different dataset size;
+    # compare against eval.yaml's declared count only where the passed arguments are the defaults
+    count_excluded: list[dict[str, str]] = []
+    countable: list[tuple[Path, EvalLog]] = []
+    for path, header in headers:
+        passed = _passed_args(header)
+        if log_filter.task_args is None and passed:
+            count_excluded.append(
+                {
+                    "path": str(path),
+                    "reason": f"task args {passed} differ from the default configuration",
+                }
+            )
+        else:
+            countable.append((path, header))
+
     fired = False
     any_declared = False
-    for path, header in headers:
+    for path, header in countable:
         declared = _declared_samples(yaml_data, _header_task(header))
         any_declared = any_declared or declared is not None
         actual = header.eval.dataset.samples
@@ -305,7 +356,11 @@ def parse(
         subject=subject,
         # each finding's subject is the log's own revision; the run says what it compared against
         inputs={
-            "logs": [str(path) for path, _ in headers],
+            "logs": {
+                "used": [str(path) for path, _ in headers],
+                "excluded": [dict(entry) for entry in excluded],
+                "count_excluded": count_excluded,
+            },
             "comparison": {
                 "commit": subject.revision.commit,
                 "package_version": subject.revision.package_version,
@@ -338,16 +393,27 @@ def _resolved_ids(
 
 
 def run(target: str, ctx: Context) -> Run:
-    """Read the headers of the logs that match `target` and run the checks."""
+    """Read the headers of the logs that match `target`, keep the ones the eval's filter allows, run the checks."""
     timestamp = utcnow()
     yaml_data = eval_yaml(ctx.ie_root, target)
-    headers = matching_headers(ctx.logs, target, task_names(yaml_data, target))
-    if not headers:
+    matched = matching_headers(ctx.logs, target, task_names(yaml_data, target))
+    if not matched:
         return skip_run(
             PRODUCER,
             target,
             ctx,
             f"no logs for target {target} among {len(ctx.logs)} file(s)",
+            timestamp=timestamp,
+        )
+    log_filter = ctx.config.for_eval(target).logs
+    headers, excluded = select_headers(matched, log_filter)
+    if not headers:
+        reasons = sorted({entry["reason"] for entry in excluded})
+        return skip_run(
+            PRODUCER,
+            target,
+            ctx,
+            f"{len(matched)} matching log(s), all excluded: {'; '.join(reasons)}",
             timestamp=timestamp,
         )
     resolved, reason = _resolved_ids(target, headers) if ctx.resolve else (None, None)
@@ -358,6 +424,8 @@ def run(target: str, ctx: Context) -> Run:
         yaml_data,
         timestamp=timestamp,
         resolved_ids=resolved,
+        log_filter=log_filter,
+        excluded=excluded,
     )
     if ctx.resolve and resolved is None:
         result.outcomes.append(

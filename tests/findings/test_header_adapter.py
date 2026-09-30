@@ -4,11 +4,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from inspect_ai import Task, eval
+from inspect_ai import Task, eval, task
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.log import read_eval_log
 from inspect_ai.scorer import match
-from test_adapters_common import make_root
+from test_adapters_common import MOCK_OK, make_root
 
 from inspect_audit.findings.adapters import Context, subject_for
 from inspect_audit.findings.adapters.header import (
@@ -18,27 +18,41 @@ from inspect_audit.findings.adapters.header import (
     matching_headers,
     parse,
     run,
+    select_headers,
 )
+from inspect_audit.findings.config import LogFilter
 from inspect_audit.findings.models import LogLocation, ScorerLocation
 
 STAMP = datetime(2026, 9, 25, 4, 20, 50, tzinfo=UTC)
 
 
 def _log(
-    log_dir: Path, *, name: str = "stereoset", version: int | str = 3, samples: int = 3
+    log_dir: Path,
+    *,
+    name: str = "stereoset",
+    version: int | str = 3,
+    samples: int = 3,
+    task_args: dict[str, str] | None = None,
 ) -> Path:
-    task = Task(
-        name=name,
-        dataset=MemoryDataset(
-            [Sample(id=i, input=f"q{i}", target="ANSWER") for i in range(1, samples + 1)]
-        ),
-        scorer=match(),
-        version=version,
-    )
+    @task(name=name)
+    def _make(subset: str = "all") -> Task:
+        return Task(
+            name=name,
+            dataset=MemoryDataset(
+                [Sample(id=i, input=f"q{i}", target="ANSWER") for i in range(1, samples + 1)]
+            ),
+            scorer=match(),
+            version=version,
+        )
+
     return Path(
-        eval(task, model="mockllm/model", log_dir=str(log_dir), display="none")[
-            0
-        ].location.removeprefix("file://")
+        eval(
+            _make,
+            task_args=task_args or {},
+            model="mockllm/model",
+            log_dir=str(log_dir),
+            display="none",
+        )[0].location.removeprefix("file://")
     )
 
 
@@ -56,7 +70,7 @@ def test_matching_on_registry_name_or_task(tmp_path: Path) -> None:
 def test_dataset_samples_mismatch_fires(tmp_path: Path) -> None:
     root = make_root(tmp_path)  # eval.yaml says 2123
     log = _log(tmp_path / "logs", samples=3)
-    ctx = Context(ie_root=root, logs=[log])
+    ctx = Context(ie_root=root, logs=[log], config=MOCK_OK)
     result = run("inspect_evals/stereoset", ctx)
     assert result.producer == PRODUCER
     finding = next(f for f in result.findings if f.rule == "header.dataset_samples")
@@ -79,7 +93,7 @@ def test_dataset_samples_uses_the_matching_task_entry(tmp_path: Path) -> None:
         "  - name: stereoset\n    dataset_samples: 2123\n"
     )
     log = _log(tmp_path / "logs", samples=3)
-    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log]))
+    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log], config=MOCK_OK))
     assert any(f.rule == "header.dataset_samples" for f in result.findings)
 
 
@@ -93,7 +107,7 @@ def test_multi_task_package_matches_logs_by_yaml_task_names(tmp_path: Path) -> N
         "  - name: lab_bench_suppqa\n    dataset_samples: 82\n"
     )
     log = _log(tmp_path / "logs", name="lab_bench_litqa", samples=3)
-    result = run("inspect_evals/lab_bench", Context(ie_root=root, logs=[log]))
+    result = run("inspect_evals/lab_bench", Context(ie_root=root, logs=[log], config=MOCK_OK))
     assert not any(o.status == "skip" for o in result.outcomes)
     finding = next(f for f in result.findings if f.rule == "header.dataset_samples")
     assert "199" in finding.summary
@@ -108,7 +122,7 @@ def test_resolve_skips_when_the_resolved_dataset_has_no_ids(
     log = _log(tmp_path / "logs", samples=3)
     idless = Task(dataset=MemoryDataset([Sample(input="q") for _ in range(3)]), scorer=match())
     monkeypatch.setattr(resolve_module, "resolve_task", lambda spec, args=None: idless)
-    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log], resolve=True))
+    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log], resolve=True, config=MOCK_OK))
     assert not any(f.rule == "header.unknown_sample_ids" for f in result.findings)
     skip = next(o for o in result.outcomes if o.rule == "header.unknown_sample_ids")
     assert skip.status == "skip" and "no ids" in (skip.message or "")
@@ -123,7 +137,7 @@ def test_resolve_compares_logged_ids_against_the_resolved_dataset(
     log = _log(tmp_path / "logs", samples=3)  # ids 1, 2, 3
     smaller = Task(dataset=MemoryDataset([Sample(id=i, input="q") for i in (1, 2)]), scorer=match())
     monkeypatch.setattr(resolve_module, "resolve_task", lambda spec, args=None: smaller)
-    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log], resolve=True))
+    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log], resolve=True, config=MOCK_OK))
     finding = next(f for f in result.findings if f.rule == "header.unknown_sample_ids")
     assert "1 of 3" in finding.summary
 
@@ -131,7 +145,7 @@ def test_resolve_compares_logged_ids_against_the_resolved_dataset(
 def test_version_drift_across_logs(tmp_path: Path) -> None:
     root = make_root(tmp_path)
     logs = [_log(tmp_path / "a", version=3), _log(tmp_path / "b", version=4)]
-    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=logs))
+    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=logs, config=MOCK_OK))
     drift = [f for f in result.findings if f.rule == "header.version_drift"]
     assert len(drift) == 1
     assert drift[0].dimension == "informativeness"
@@ -142,7 +156,7 @@ def test_version_drift_across_logs(tmp_path: Path) -> None:
 def test_no_drift_with_one_version(tmp_path: Path) -> None:
     root = make_root(tmp_path)
     logs = [_log(tmp_path / "a"), _log(tmp_path / "b")]
-    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=logs))
+    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=logs, config=MOCK_OK))
     assert not any(f.rule == "header.version_drift" for f in result.findings)
     assert any(o.rule == "header.version_drift" and o.status == "pass" for o in result.outcomes)
 
@@ -150,7 +164,7 @@ def test_no_drift_with_one_version(tmp_path: Path) -> None:
 def test_no_logs_is_a_skip(tmp_path: Path) -> None:
     root = make_root(tmp_path)
     result = run(
-        "inspect_evals/stereoset", Context(ie_root=root, logs=[_log(tmp_path / "x", name="hle")])
+        "inspect_evals/stereoset", Context(ie_root=root, logs=[_log(tmp_path / "x", name="hle")], config=MOCK_OK)
     )
     assert [o.status for o in result.outcomes] == ["skip"]
     assert "no logs" in (result.outcomes[0].message or "")
@@ -159,7 +173,7 @@ def test_no_logs_is_a_skip(tmp_path: Path) -> None:
 def test_unscored_and_dirty_checks_exist(tmp_path: Path) -> None:
     root = make_root(tmp_path)
     log = _log(tmp_path / "logs")
-    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log]))
+    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log], config=MOCK_OK))
     rules = {o.rule for o in result.outcomes}
     assert {
         "header.dataset_samples",
@@ -217,7 +231,7 @@ def test_findings_carry_the_logs_revision_and_the_run_records_the_comparison(
     root = make_root(tmp_path)  # eval.yaml says version 3-A
     log = _log(tmp_path / "logs", version=2, samples=3)
     header = read_eval_log(str(log), header_only=True)
-    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log]))
+    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log], config=MOCK_OK))
     finding = next(f for f in result.findings if f.rule == "header.dataset_samples")
     # the finding is about the code that produced the log, not the checkout being compared against
     assert finding.subject.task_version is not None and finding.subject.task_version.full == "2"
@@ -257,3 +271,54 @@ def test_qualified_registry_names_match_only_their_own_package() -> None:
         "inspect_evals/lab_bench",
         {"lab_bench", "lab_bench_litqa"},
     )
+
+
+def test_mock_logs_are_excluded_unless_the_filter_allows_them(tmp_path: Path) -> None:
+    log = _log(tmp_path / "logs")
+    headers = matching_headers([log], "inspect_evals/stereoset")
+    used, excluded = select_headers(headers, LogFilter())
+    assert used == [] and len(excluded) == 1
+    assert excluded[0]["path"] == str(log) and "mockllm/model" in excluded[0]["reason"]
+    used, excluded = select_headers(headers, LogFilter(include_mock=True))
+    assert len(used) == 1 and excluded == []
+
+
+def test_task_args_filter_excludes_other_configurations(tmp_path: Path) -> None:
+    default = _log(tmp_path / "a")
+    variant = _log(tmp_path / "b", task_args={"subset": "small"})
+    headers = matching_headers([default, variant], "inspect_evals/stereoset")
+    used, excluded = select_headers(headers, LogFilter(task_args={}, include_mock=True))
+    assert [p.name for p, _ in used] == [default.name]
+    assert excluded[0]["path"] == str(variant) and "task args" in excluded[0]["reason"]
+
+
+def test_all_logs_excluded_is_a_skip_that_says_why(tmp_path: Path) -> None:
+    root = make_root(tmp_path)
+    log = _log(tmp_path / "logs")
+    result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log]))  # default config
+    assert [o.status for o in result.outcomes] == ["skip"]
+    message = result.outcomes[0].message or ""
+    assert "1 matching log" in message and "excluded" in message and "mockllm" in message
+
+
+def test_non_default_task_args_skip_the_sample_count_comparison_but_join_drift(
+    tmp_path: Path,
+) -> None:
+    root = make_root(tmp_path)  # eval.yaml declares 2123
+    default = _log(tmp_path / "a", samples=3, version=3)
+    variant = _log(tmp_path / "b", samples=2, version=4, task_args={"subset": "small"})
+    result = run(
+        "inspect_evals/stereoset", Context(ie_root=root, logs=[default, variant], config=MOCK_OK)
+    )
+    counts = [f for f in result.findings if f.rule == "header.dataset_samples"]
+    assert len(counts) == 1 and "3" in counts[0].summary  # only the default-args log is compared
+    assert any(f.rule == "header.version_drift" for f in result.findings)  # both logs join drift
+    logs = result.inputs["logs"]
+    assert isinstance(logs, dict)
+    assert len(logs["used"]) == 2 and logs["excluded"] == []
+    assert logs["count_excluded"] == [
+        {
+            "path": str(variant),
+            "reason": "task args {'subset': 'small'} differ from the default configuration",
+        }
+    ]

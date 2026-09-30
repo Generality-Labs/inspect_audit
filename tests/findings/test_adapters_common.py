@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from inspect_audit.findings.config import Config, EvalConfig, LogFilter
 from inspect_audit.findings.adapters import (
     Context,
     ProducerError,
@@ -23,6 +24,10 @@ from inspect_audit.findings.adapters import (
 from inspect_audit.findings.producers import DATASET_SPEC, LINT_SPEC, ProducerConfig
 
 STUBS = Path(__file__).parent / "stubs"
+
+
+# the test logs are produced by mockllm/model, which the default filter excludes on purpose
+MOCK_OK = Config(defaults=EvalConfig(logs=LogFilter(include_mock=True)))
 
 
 def make_root(tmp_path: Path, *, version: str = "3-A", extra: str = "") -> Path:

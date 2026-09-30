@@ -71,7 +71,8 @@ def _outcomes(entry: Mapping[str, Any]) -> list[Outcome]:
         # and a skip's reason is what a reader of "not examined" needs
         messages = {
             str(row.get("code") or row.get("rule")): row.get("message")
-            for row in entry.get("outcomes", [])
+            for row in entry.get("outcomes") or []
+            if isinstance(row, dict)
         }
         outcomes: list[Outcome] = []
         for row in rules:
@@ -92,7 +93,8 @@ def _outcomes(entry: Mapping[str, Any]) -> list[Outcome]:
             status=_status(str(row.get("status"))),
             message=row.get("message"),
         )
-        for row in entry.get("outcomes", [])
+        for row in entry.get("outcomes") or []
+        if isinstance(row, dict)
     ]
 
 

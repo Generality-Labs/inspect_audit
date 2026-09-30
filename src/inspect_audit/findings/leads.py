@@ -20,13 +20,15 @@ from .review import IssueEntry, Review, apply_review
 EXAMPLES = 3
 
 PREAMBLE = (
-    "These are hypotheses, not findings. Each was emitted by a deterministic producer over this "
+    "These are hypotheses, not findings. Each was emitted by an automated producer over this "
     "eval's source, dataset or logs, then grouped, with suppressed observations removed by a "
-    "reviewer. Treat each lead as you treat a worker verdict: state the suspected mechanism, find "
-    "the cheapest check that could refute it, and confirm or retire it. When you record a finding "
-    "that rests on a lead, cite its record id (the `<run>/<n>` in backticks) in the evidence. The "
-    "full observations are in the run files named below."
+    "reviewer. For each lead, state the suspected mechanism, find the cheapest check that could "
+    "refute it, and confirm or retire it. When you record a finding that rests on a lead, cite its "
+    "record id (the `<run>/<n>` in backticks) in the evidence. The full observations are in the "
+    "run files named below."
 )
+
+SKIP_MESSAGE_CHARS = 200
 
 
 class NoRunsError(ValueError):
@@ -49,15 +51,32 @@ def select_leads(
     mine = [run for run in runs if run.subject.eval == eval]
     if not mine:
         raise NoRunsError(f"no runs for {eval} in the current view")
-    active = [f for run in mine for f in run.findings if not f.suppressions]
-    suppressed = sum(1 for run in mine for f in run.findings if f.suppressions)
+    findings = [f for run in mine for f in run.findings]
     if sample_id is not None:
-        active = [f for f in active if sample_id in _sample_ids(f)]
+        findings = [f for f in findings if sample_id in _sample_ids(f)]
+    active = [f for f in findings if not f.suppressions]
+    suppressed = sum(1 for f in findings if f.suppressions)
     return mine, active, suppressed
 
 
 def _run_file(run_id: str) -> str:
     return f"runs/{run_id}.run.json"
+
+
+def _skip_line(producer: str, rule: str, message: str) -> str:
+    """One bounded line per skipped check: first line of the reason, or a note that none was recorded."""
+    first = message.strip().splitlines()[0].strip() if message.strip() else "(no reason recorded)"
+    if len(first) > SKIP_MESSAGE_CHARS:
+        first = first[: SKIP_MESSAGE_CHARS - 1] + "…"
+    what = "whole producer did not run" if rule == producer else rule
+    return f"- {producer} · {what}: {first}"
+
+
+def _all_skipped(runs: Sequence[Run]) -> bool:
+    return all(
+        run.outcomes and all(o.status == "skip" for o in run.outcomes) and not run.findings
+        for run in runs
+    )
 
 
 def render_leads(
@@ -86,18 +105,35 @@ def render_leads(
             parts.append(line)
         parts.append("")
 
-    group_count = len({(f.producer, f.rule) for f in findings})
-    parts += [
-        "## Leads",
-        "",
-        f"{len(findings)} observation{'' if len(findings) == 1 else 's'} in {group_count} "
-        f"group(s); {suppressed} suppressed by review and not shown.",
-        "",
-    ]
     groups: dict[tuple[str, str, str, str], list[Finding]] = {}
     for finding in sorted_findings(findings):
         key = (finding.producer, finding.rule, finding.dimension, finding.severity)
         groups.setdefault(key, []).append(finding)
+    shown = {(f.run_id, f.id) for f in findings}
+    hidden = (
+        sum(
+            1
+            for run in runs
+            for f in run.findings
+            if not f.suppressions and (f.run_id, f.id) not in shown
+        )
+        if sample_id is not None
+        else 0
+    )
+    parts += ["## Leads", ""]
+    if _all_skipped(runs):
+        parts += ["No producer ran for this eval; see Not examined below.", ""]
+    else:
+        summary = (
+            f"{len(findings)} observation{'' if len(findings) == 1 else 's'} in {len(groups)} "
+            f"group(s); {suppressed} suppressed by review and not shown."
+        )
+        if sample_id is not None:
+            summary += (
+                f" {hidden} eval-wide observation{'' if hidden == 1 else 's'} (not about this "
+                "sample) not shown; see the eval's LEADS.md."
+            )
+        parts += [summary, ""]
     for (producer, rule, dimension, severity), members in groups.items():
         n = len(members)
         parts.append(
@@ -127,7 +163,7 @@ def render_leads(
             "Checks that did not run; absence of a lead here is not evidence.",
             "",
         ]
-        parts += [f"- {producer} · {rule}: {message}" for producer, rule, message in skips]
+        parts += [_skip_line(producer, rule, message) for producer, rule, message in skips]
         parts.append("")
     return "\n".join(parts).rstrip() + "\n"
 

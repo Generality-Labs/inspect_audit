@@ -7,7 +7,7 @@ import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-LINT_SPEC = "inspect-evals-lint==0.7.0"
+LINT_SPEC = "inspect-evals-lint==0.9.0"
 DATASET_SPEC = "git+https://github.com/Generality-Labs/inspect_dataset@afbc94c0b509"
 
 LINT_ENV = "INSPECT_AUDIT_LINT_CMD"

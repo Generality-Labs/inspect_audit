@@ -64,7 +64,7 @@ def test_default_prefixes_pin_the_specs() -> None:
     config = ProducerConfig()
     assert config.lint == ("uvx", "--from", LINT_SPEC, "inspect-evals-lint")
     assert config.dataset == ("uvx", "--from", DATASET_SPEC, "inspect-dataset")
-    assert LINT_SPEC == "inspect-evals-lint==0.7.0"
+    assert LINT_SPEC == "inspect-evals-lint==0.9.0"
     assert DATASET_SPEC == "git+https://github.com/Generality-Labs/inspect_dataset@afbc94c0b509"
 
 

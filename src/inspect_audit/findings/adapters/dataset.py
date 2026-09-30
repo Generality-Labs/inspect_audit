@@ -10,6 +10,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import JsonValue
+
+from ..config import DatasetConfig
 from ..fingerprint import FINGERPRINT_VERSION, fingerprint
 from ..models import (
     DatasetRef,
@@ -34,17 +37,6 @@ from . import (
 
 PRODUCER = "inspect_dataset"
 
-# per-eval scan arguments where auto-detection does not work. Keys are CLI option names without dashes.
-DATASET_OVERRIDES: dict[str, dict[str, str]] = {
-    "inspect_evals/stereoset": {
-        "config": "intersentence",
-        "split": "validation",
-        "question_field": "context",
-        "answer_field": "sentences",
-        "id_field": "id",
-    },
-}
-
 SEVERITY: dict[str, Severity] = {"low": "none", "medium": "minor", "high": "major"}
 _SUMMARY_CHARS = 200
 
@@ -55,6 +47,43 @@ def hf_asset(data: Mapping[str, Any]) -> str | None:
         if isinstance(asset, dict) and asset.get("type") == "huggingface" and asset.get("source"):
             return str(asset["source"])
     return None
+
+
+_FIELD_OPTIONS = {"question": "--question-field", "answer": "--answer-field", "id": "--id-field"}
+
+
+def scan_arguments(
+    target: str, yaml_data: Mapping[str, Any], declared: DatasetConfig | None
+) -> tuple[str | None, list[str], dict[str, JsonValue]]:
+    """Dataset path, extra `inspect-dataset scan` options, and a record of what will be examined.
+
+    The declaration wins where it speaks; eval.yaml's HuggingFace asset supplies the path
+    otherwise. `declared` in the record says whether any declaration was consulted, so a
+    consumer can tell an inferred scan from a configured one.
+    """
+    asset = hf_asset(yaml_data)
+    path = (declared.path if declared and declared.path else None) or asset
+    options: list[str] = []
+    if declared:
+        for option, value in (
+            ("--config", declared.config),
+            ("--split", declared.split),
+            ("--revision", declared.revision),
+        ):
+            if value:
+                options += [option, value]
+        for role, name in declared.fields.items():
+            if role in _FIELD_OPTIONS:
+                options += [_FIELD_OPTIONS[role], name]
+    examined: dict[str, JsonValue] = {
+        "path": path,
+        "config": declared.config if declared else None,
+        "split": declared.split if declared else None,
+        "revision": declared.revision if declared else None,
+        "fields": dict(declared.fields) if declared else {},
+        "declared": declared is not None,
+    }
+    return path, options, examined
 
 
 def _rows(path: Path) -> list[dict[str, Any]]:
@@ -133,24 +162,21 @@ def parse(
 
 
 def run(target: str, ctx: Context) -> Run:
-    """Scan the eval's HuggingFace dataset with static scanners into a temporary directory, then parse it."""
+    """Scan the eval's dataset with static scanners into a temporary directory, then parse it."""
     timestamp = utcnow()
-    source = hf_asset(eval_yaml(ctx.ie_root, target))
-    if source is None:
+    declared = ctx.config.for_eval(target).dataset
+    path, options, examined = scan_arguments(target, eval_yaml(ctx.ie_root, target), declared)
+    if path is None:
         return skip_run(
             PRODUCER,
             target,
             ctx,
-            "no huggingface asset in eval.yaml external_assets",
+            "no dataset path: none declared in the pilot config and no huggingface asset in eval.yaml external_assets",
             timestamp=timestamp,
         )
-    overrides = DATASET_OVERRIDES.get(target, {})
     ctx.out_dir.mkdir(parents=True, exist_ok=True)
     scan_dir = Path(tempfile.mkdtemp(prefix="inspect_dataset_", dir=ctx.out_dir))
-    argv = [*ctx.producers.dataset, "scan", source]
-    for key, value in overrides.items():
-        argv += [f"--{key.replace('_', '-')}", value]
-    argv += ["-o", str(scan_dir)]
+    argv = [*ctx.producers.dataset, "scan", path, *options, "-o", str(scan_dir)]
     started = time.monotonic()
     try:
         result = run_command(argv, timeout=ctx.producers.timeout_s)
@@ -172,7 +198,7 @@ def run(target: str, ctx: Context) -> Run:
             subject_for(target, ctx),
             timestamp=timestamp,
             duration_s=duration,
-            inputs={"argv": argv, "scan_dir": str(scan_dir)},
+            inputs={"argv": argv, "scan_dir": str(scan_dir), "dataset": examined},
         )
     except (
         Exception

@@ -8,7 +8,7 @@ import pytest
 from inspect_audit.findings.cli import write_outputs
 from inspect_audit.findings.leads import (
     EXAMPLES,
-    NoRuns,
+    NoRunsError,
     leads_markdown,
     render_leads,
     select_leads,
@@ -114,7 +114,7 @@ def test_select_leads_by_sample_matches_sample_and_transcript_locations(run: Run
 
 
 def test_select_leads_with_no_runs_for_the_eval_raises(run: Run) -> None:
-    with pytest.raises(NoRuns, match="inspect_evals/hle"):
+    with pytest.raises(NoRunsError, match="inspect_evals/hle"):
         select_leads([run], "inspect_evals/hle")
 
 
@@ -155,9 +155,7 @@ def test_render_leads_shows_accepted_issues_and_suppressed_count(run: Run) -> No
     assert "(issue ISS-0007)" in text
 
 
-def test_leads_markdown_reads_the_current_view_and_applies_review(
-    tmp_path: Path, run: Run
-) -> None:
+def test_leads_markdown_reads_the_current_view_and_applies_review(tmp_path: Path, run: Run) -> None:
     out = tmp_path / "out"
     write_outputs(out, {"inspect_evals/stereoset": [run, _dataset_run(run, 2)]})
     review = Review(
@@ -170,5 +168,5 @@ def test_leads_markdown_reads_the_current_view_and_applies_review(
     assert "IEBP008" not in leads_section
     assert "1 suppressed" in text
     assert "duplicate_questions" in text
-    with pytest.raises(NoRuns):
+    with pytest.raises(NoRunsError):
         leads_markdown(out, "inspect_evals/hle", review)

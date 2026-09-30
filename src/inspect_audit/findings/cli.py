@@ -18,7 +18,7 @@ from .adapters import lint as lint_adapter
 from .config import DEFAULT_CONFIG_PATH, load_config
 from .featured import FEATURED
 from .io import findings_df, read_current, runs_df, update_current, write_parquet, write_run
-from .leads import NoRuns, leads_markdown
+from .leads import NoRunsError, leads_markdown
 from .models import Run
 from .producers import ProducerConfig
 from .render import render_eval_summary, render_sweep_summary
@@ -271,7 +271,7 @@ def _leads(
         return 2
     try:
         text = leads_markdown(out, eval, review, sample_id=sample)
-    except NoRuns as ex:
+    except NoRunsError as ex:
         print(f"{ex} under {out}", file=sys.stderr)
         return 2
     if write is not None:

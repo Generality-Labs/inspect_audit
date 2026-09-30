@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .io import read_current
 from .models import Finding, Run
-from .render import _inputs_lines, _sorted_findings
+from .render import inputs_lines, sorted_findings
 from .review import IssueEntry, Review, apply_review
 
 EXAMPLES = 3
@@ -29,7 +29,7 @@ PREAMBLE = (
 )
 
 
-class NoRuns(ValueError):
+class NoRunsError(ValueError):
     """The current view has no runs for the eval."""
 
 
@@ -48,7 +48,7 @@ def select_leads(
     """The eval's runs, its active findings (for one sample when asked), and how many were suppressed."""
     mine = [run for run in runs if run.subject.eval == eval]
     if not mine:
-        raise NoRuns(f"no runs for {eval} in the current view")
+        raise NoRunsError(f"no runs for {eval} in the current view")
     active = [f for run in mine for f in run.findings if not f.suppressions]
     suppressed = sum(1 for run in mine for f in run.findings if f.suppressions)
     if sample_id is not None:
@@ -72,7 +72,7 @@ def render_leads(
     """LEADS.md: preamble, inputs, accepted issues, grouped and capped leads, skipped checks."""
     scope = f" (sample {sample_id})" if sample_id is not None else ""
     parts: list[str] = [f"# Leads for {eval}{scope}", "", PREAMBLE, ""]
-    parts += ["## Inputs", "", *_inputs_lines(runs), ""]
+    parts += ["## Inputs", "", *inputs_lines(runs), ""]
 
     relevant = [issue for issue in issues if issue.subject == eval]
     if relevant:
@@ -95,7 +95,7 @@ def render_leads(
         "",
     ]
     groups: dict[tuple[str, str, str, str], list[Finding]] = {}
-    for finding in _sorted_findings(findings):
+    for finding in sorted_findings(findings):
         key = (finding.producer, finding.rule, finding.dimension, finding.severity)
         groups.setdefault(key, []).append(finding)
     for (producer, rule, dimension, severity), members in groups.items():

@@ -22,7 +22,7 @@ def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
     return "\n".join([head, rule, *body])
 
 
-def _sorted_findings(findings: Sequence[Finding]) -> list[Finding]:
+def sorted_findings(findings: Sequence[Finding]) -> list[Finding]:
     return sorted(
         findings, key=lambda f: (_SEVERITY_ORDER[f.severity], f.rule, f.primary_location.key())
     )
@@ -43,7 +43,7 @@ def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
-def _inputs_lines(runs: Sequence[Run]) -> list[str]:
+def inputs_lines(runs: Sequence[Run]) -> list[str]:
     """What the producers examined, and what they left out, as bullet lines."""
     lines: list[str] = []
     dataset = next(
@@ -111,7 +111,7 @@ def _example_line(finding: Finding) -> str:
 def _grouped_lines(findings: Sequence[Finding]) -> list[str]:
     """One line per (severity, dimension, rule); a group of more than one shows a count and examples."""
     groups: dict[tuple[str, str, str], list[Finding]] = {}
-    for finding in _sorted_findings(findings):
+    for finding in sorted_findings(findings):
         groups.setdefault((finding.severity, finding.dimension, finding.rule), []).append(finding)
     lines: list[str] = []
     for (severity, dimension, rule), members in groups.items():
@@ -149,7 +149,7 @@ def render_eval_summary(runs: Sequence[Run], issues: Sequence[IssueEntry] = ()) 
     if skipped:
         parts += [", ".join(f"{producer}: skipped" for producer in skipped), ""]
 
-    parts += ["## Inputs", "", *_inputs_lines(runs), ""]
+    parts += ["## Inputs", "", *inputs_lines(runs), ""]
 
     outcome_rows = [
         [run.producer, outcome.rule, outcome.status, outcome.message or ""]

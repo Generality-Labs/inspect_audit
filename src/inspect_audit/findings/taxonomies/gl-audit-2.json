@@ -2,7 +2,7 @@
   "id": "gl-audit",
   "version": 2,
   "status": "draft",
-  "source": "Audit Reports - Strategy (Laurence Wroe, Google Doc 1y6X1KJekIOj8f2bQ6a2jdc5RtsPFCuD2ipAxD7ouM2Y, 2026-09-23). Ids are slugs assigned here; the document gives none.",
+  "source": "Audit Reports - Strategy (Laurence Wroe, Google Doc 1y6X1KJekIOj8f2bQ6a2jdc5RtsPFCuD2ipAxD7ouM2Y, 2026-09-23). Ids are slugs assigned here; the document gives none. Laurence (2026-10-01, on the findings-store canvas): provisionally OK to treat this structure (seven dimensions, five Implementation contributions) as the authoritative data file with the .sty generated from it; the dimensions and checks themselves still need fixing, adding and refining. Stays draft: no records are written under gl-audit@2 until the content is pinned, so identifiers never change under a record.",
   "dimensions": [
     {
       "id": "implementation",
@@ -11,11 +11,63 @@
       "question": "Does the dataset + solver + scorer work as intended?",
       "validity": "measurement",
       "contributions": [
-        {"id": "implementation.task_specification", "name": "Task specification", "definition": "Are individual tasks correctly specified and solvable in the intended way?", "items": ["incorrect_reference_answer", "impossible_task", "reference_answer_leaked_or_inferrable", "underspecified_instructions", "unintended_shortcuts"]},
-        {"id": "implementation.environment", "name": "Environment", "definition": "Does the environment the model operates in function as intended?", "items": ["tool_failures", "resource_failures", "information_leakage", "unintended_restrictions_or_access", "environment_failures"]},
-        {"id": "implementation.scaffolding", "name": "Scaffolding", "definition": "Does the scaffolding provide the appropriate means for completing the task?", "items": ["feedback_issues", "system_prompt_issues", "tool_interface_issues", "information_issues", "submission_issues"]},
-        {"id": "implementation.harness", "name": "Harness", "definition": "Does the harness correctly execute?", "items": ["harness_failures"]},
-        {"id": "implementation.grading", "name": "Grading", "definition": "Does the grading setup consistently assign the correct grade?", "items": ["false_positives", "false_negatives", "grader_exploitation", "grader_implementation_failures", "grader_inconsistency", "rubric_ambiguity"]}
+        {
+          "id": "implementation.task_specification",
+          "name": "Task specification",
+          "definition": "Are individual tasks correctly specified and solvable in the intended way?",
+          "items": [
+            "incorrect_reference_answer",
+            "impossible_task",
+            "reference_answer_leaked_or_inferrable",
+            "underspecified_instructions",
+            "unintended_shortcuts"
+          ]
+        },
+        {
+          "id": "implementation.environment",
+          "name": "Environment",
+          "definition": "Does the environment the model operates in function as intended?",
+          "items": [
+            "tool_failures",
+            "resource_failures",
+            "information_leakage",
+            "unintended_restrictions_or_access",
+            "environment_failures"
+          ]
+        },
+        {
+          "id": "implementation.scaffolding",
+          "name": "Scaffolding",
+          "definition": "Does the scaffolding provide the appropriate means for completing the task?",
+          "items": [
+            "feedback_issues",
+            "system_prompt_issues",
+            "tool_interface_issues",
+            "information_issues",
+            "submission_issues"
+          ]
+        },
+        {
+          "id": "implementation.harness",
+          "name": "Harness",
+          "definition": "Does the harness correctly execute?",
+          "items": [
+            "harness_failures"
+          ]
+        },
+        {
+          "id": "implementation.grading",
+          "name": "Grading",
+          "definition": "Does the grading setup consistently assign the correct grade?",
+          "items": [
+            "false_positives",
+            "false_negatives",
+            "grader_exploitation",
+            "grader_implementation_failures",
+            "grader_inconsistency",
+            "rubric_ambiguity"
+          ]
+        }
       ]
     },
     {
@@ -25,12 +77,47 @@
       "question": "To what extent does the model configuration, harness choices, and rollout variability affect score?",
       "validity": "measurement",
       "contributions": [
-        {"id": "sensitivity.token_limits", "name": "Token limits", "definition": "Is performance constrained by token limits?", "items": ["inference_scaling"]},
-        {"id": "sensitivity.model_reasoning", "name": "Model reasoning", "definition": "Is performance dependent on model reasoning level?", "items": []},
-        {"id": "sensitivity.harness", "name": "Harness", "definition": "Is performance dependent on harness?", "items": []},
-        {"id": "sensitivity.rollouts", "name": "Rollouts", "definition": "Is performance dependent on rollouts, and how many are needed for statistical significance?", "items": []},
-        {"id": "sensitivity.retries", "name": "Retries", "definition": "Is performance dependent on the ability to resubmit?", "items": ["with_feedback", "without_feedback"]},
-        {"id": "sensitivity.prompt", "name": "Prompt / instruction sensitivity", "definition": "Does subtly changing the prompt or instruction affect performance?", "items": []}
+        {
+          "id": "sensitivity.token_limits",
+          "name": "Token limits",
+          "definition": "Is performance constrained by token limits?",
+          "items": [
+            "inference_scaling"
+          ]
+        },
+        {
+          "id": "sensitivity.model_reasoning",
+          "name": "Model reasoning",
+          "definition": "Is performance dependent on model reasoning level?",
+          "items": []
+        },
+        {
+          "id": "sensitivity.harness",
+          "name": "Harness",
+          "definition": "Is performance dependent on harness?",
+          "items": []
+        },
+        {
+          "id": "sensitivity.rollouts",
+          "name": "Rollouts",
+          "definition": "Is performance dependent on rollouts, and how many are needed for statistical significance?",
+          "items": []
+        },
+        {
+          "id": "sensitivity.retries",
+          "name": "Retries",
+          "definition": "Is performance dependent on the ability to resubmit?",
+          "items": [
+            "with_feedback",
+            "without_feedback"
+          ]
+        },
+        {
+          "id": "sensitivity.prompt",
+          "name": "Prompt / instruction sensitivity",
+          "definition": "Does subtly changing the prompt or instruction affect performance?",
+          "items": []
+        }
       ]
     },
     {
@@ -40,9 +127,24 @@
       "question": "Can the scores meaningfully distinguish differences in performance?",
       "validity": "measurement",
       "contributions": [
-        {"id": "informativeness.saturation", "name": "Saturation", "definition": "Is the benchmark saturated?", "items": []},
-        {"id": "informativeness.floor_ceiling", "name": "Floor / ceiling", "definition": "Is there a floor or ceiling?", "items": []},
-        {"id": "informativeness.random_baseline", "name": "Baseline measurement of random chance", "definition": "If relevant.", "items": []}
+        {
+          "id": "informativeness.saturation",
+          "name": "Saturation",
+          "definition": "Is the benchmark saturated?",
+          "items": []
+        },
+        {
+          "id": "informativeness.floor_ceiling",
+          "name": "Floor / ceiling",
+          "definition": "Is there a floor or ceiling?",
+          "items": []
+        },
+        {
+          "id": "informativeness.random_baseline",
+          "name": "Baseline measurement of random chance",
+          "definition": "If relevant.",
+          "items": []
+        }
       ]
     },
     {
@@ -52,9 +154,28 @@
       "question": "Are differences from independently reported measurements understood and accounted for?",
       "validity": "measurement",
       "contributions": [
-        {"id": "comparability.audited_implementation", "name": "Audited implementation", "definition": "How does the audited implementation compare with the original implementation?", "items": []},
-        {"id": "comparability.reproducibility", "name": "Reproducibility", "definition": "Can the original results be reproduced within expected statistical uncertainty?", "items": []},
-        {"id": "comparability.identity", "name": "Identity", "definition": "Are we confident we are auditing the same eval as public use?", "items": ["removed_or_modified_samples", "changes_to_implementation", "model_configuration_settings"]}
+        {
+          "id": "comparability.audited_implementation",
+          "name": "Audited implementation",
+          "definition": "How does the audited implementation compare with the original implementation?",
+          "items": []
+        },
+        {
+          "id": "comparability.reproducibility",
+          "name": "Reproducibility",
+          "definition": "Can the original results be reproduced within expected statistical uncertainty?",
+          "items": []
+        },
+        {
+          "id": "comparability.identity",
+          "name": "Identity",
+          "definition": "Are we confident we are auditing the same eval as public use?",
+          "items": [
+            "removed_or_modified_samples",
+            "changes_to_implementation",
+            "model_configuration_settings"
+          ]
+        }
       ]
     },
     {
@@ -64,9 +185,28 @@
       "question": "Are the resources required to reproduce results practical?",
       "validity": "measurement",
       "contributions": [
-        {"id": "practical_reproducibility.cost", "name": "Cost", "definition": "How much does a rollout of a frontier model cost?", "items": []},
-        {"id": "practical_reproducibility.precision", "name": "Precision", "definition": "How many repeated rollouts are needed to measure performance to a specified precision?", "items": []},
-        {"id": "practical_reproducibility.requirements", "name": "Requirements", "definition": "Are any specialist requirements needed to run the eval?", "items": ["compute_and_memory", "specialist_software_or_access", "setup_effort"]}
+        {
+          "id": "practical_reproducibility.cost",
+          "name": "Cost",
+          "definition": "How much does a rollout of a frontier model cost?",
+          "items": []
+        },
+        {
+          "id": "practical_reproducibility.precision",
+          "name": "Precision",
+          "definition": "How many repeated rollouts are needed to measure performance to a specified precision?",
+          "items": []
+        },
+        {
+          "id": "practical_reproducibility.requirements",
+          "name": "Requirements",
+          "definition": "Are any specialist requirements needed to run the eval?",
+          "items": [
+            "compute_and_memory",
+            "specialist_software_or_access",
+            "setup_effort"
+          ]
+        }
       ]
     },
     {
@@ -76,12 +216,49 @@
       "question": "Does the score represent the intended system property?",
       "validity": "evaluation",
       "contributions": [
-        {"id": "construct_validity.implementation_distortion", "name": "Implementation distortion", "definition": "Do implementation issues undermine the score's interpretation?", "items": []},
-        {"id": "construct_validity.contamination", "name": "Contamination", "definition": "Was benchmark data included as part of model training?", "items": []},
-        {"id": "construct_validity.situational_awareness", "name": "Situational awareness", "definition": "Does recognising the evaluation context change behaviour in ways that undermine the score's interpretation?", "items": ["eval_awareness", "sandbagging"]},
-        {"id": "construct_validity.confounds", "name": "Confounds", "definition": "Is the measurement confounded by other aspects than the intended system property?", "items": []},
-        {"id": "construct_validity.task_construct_alignment", "name": "Task-construct alignment", "definition": "To what extent does successful task performance require and demonstrate the intended system property?", "items": []},
-        {"id": "construct_validity.scoring_alignment", "name": "Scoring alignment", "definition": "To what extent is weighting, aggregation, and partial credit representative?", "items": ["weighting", "aggregation", "partial_credit"]}
+        {
+          "id": "construct_validity.implementation_distortion",
+          "name": "Implementation distortion",
+          "definition": "Do implementation issues undermine the score's interpretation?",
+          "items": []
+        },
+        {
+          "id": "construct_validity.contamination",
+          "name": "Contamination",
+          "definition": "Was benchmark data included as part of model training?",
+          "items": []
+        },
+        {
+          "id": "construct_validity.situational_awareness",
+          "name": "Situational awareness",
+          "definition": "Does recognising the evaluation context change behaviour in ways that undermine the score's interpretation?",
+          "items": [
+            "eval_awareness",
+            "sandbagging"
+          ]
+        },
+        {
+          "id": "construct_validity.confounds",
+          "name": "Confounds",
+          "definition": "Is the measurement confounded by other aspects than the intended system property?",
+          "items": []
+        },
+        {
+          "id": "construct_validity.task_construct_alignment",
+          "name": "Task-construct alignment",
+          "definition": "To what extent does successful task performance require and demonstrate the intended system property?",
+          "items": []
+        },
+        {
+          "id": "construct_validity.scoring_alignment",
+          "name": "Scoring alignment",
+          "definition": "To what extent is weighting, aggregation, and partial credit representative?",
+          "items": [
+            "weighting",
+            "aggregation",
+            "partial_credit"
+          ]
+        }
       ]
     },
     {
@@ -91,8 +268,18 @@
       "question": "Are the tasks representative of the intended system property?",
       "validity": "evaluation",
       "contributions": [
-        {"id": "content_validity.coverage_gaps", "name": "Coverage gaps", "definition": "Are important parts of the target measurement absent?", "items": []},
-        {"id": "content_validity.unrepresentative_distribution", "name": "Unrepresentative task distribution", "definition": "Does the task distribution differ materially from the intended measurement?", "items": []}
+        {
+          "id": "content_validity.coverage_gaps",
+          "name": "Coverage gaps",
+          "definition": "Are important parts of the target measurement absent?",
+          "items": []
+        },
+        {
+          "id": "content_validity.unrepresentative_distribution",
+          "name": "Unrepresentative task distribution",
+          "definition": "Does the task distribution differ materially from the intended measurement?",
+          "items": []
+        }
       ]
     }
   ]

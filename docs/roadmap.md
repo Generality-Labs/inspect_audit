@@ -93,13 +93,13 @@ Rendering the GL LaTeX report from the findings store, with lint and dataset fin
 - Backlog shape (GitHub issues plus findings database, or GitHub Projects) and any custom voting. Deferred until the pilot has run with issue reactions.
 - Whether the view files issues automatically or only drafts them. Drafts. Auto-closing needs a confidence field and a QA step; neither exists.
 - Total cost of rollout. Milestone 2 turns it into a number for Justin.
-- Whether `gl-audit@2` is final. Confirm with Laurence separately; the pilot does not depend on it.
+- `gl-audit@2` content. Laurence (2026-10-01): the structure is provisionally the authoritative data file, with the `.sty` generated from it; the dimensions and checks still need fixing, adding and refining. Rule: records stay under `gl-audit@1` until `@2` is pinned, so identifiers never change under a record; the `.sty` generator can be built against the structure now; a later content change after pinning is `@3` with a mapping, not an edit to `@2`.
 - Where `cases.yaml` lives (findings output beside the review files, or Inspect Evals `tests/cases/`), and how a merged PR gets its defect class without asking the contributor. See maintenance-loop.md.
 
 ## Dependencies on other people
 
 - James: the SciCode investigation directory, the branch decision, and a view on rendering the report from the store.
-- Laurence: the v2 dimensions and contributions, when convenient.
+- Laurence: pinning the v2 dimensions and contributions; structure provisionally agreed 2026-10-01.
 - Tania and Justin: the policy questions the rule-check raises (inspect_evals #2599 to #2602 today); a lint rule waits on its question. Tania: pilot evals, acceptance criteria, review of the pilot output. Tania or Aleksey for the Inspect Evals side of run-time links to findings, once a URL exists.
 - Aleksey: what his maintenance agent expects from findings and issues.
 - Hawk: nothing beyond `hawk login`. The server is on 3.6.0; the 3.5.0 CLI extra omits `aiofiles`, which the `remote` extra here adds.

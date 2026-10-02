@@ -19,7 +19,7 @@ All log reading goes through `inspect_ai.log`. Pick the cheapest function that a
 | `read_eval_log(log_file, header_only=True)` | You only need task/model/status/config/aggregated results. Skips all sample data. **Fastest by far.** |
 | `read_eval_log_sample_summaries(log_file)` | You need per-sample IDs and scores but not transcripts. Orders of magnitude faster than reading full samples. |
 | `read_eval_log_sample(log_file, id=N)` | You need exactly one sample's full content. |
-| `read_eval_log_samples(log_file)` | Generator over all samples. Use when you genuinely need full transcripts. Pass `all_samples_required=False` if the log status isn't `success` (cancelled or errored runs). |
+| `read_eval_log_samples(log_file)` | Generator over full transcripts. Pass `all_samples_required=False` for cancelled/errored runs, unequal archival repeat counts, or sliced logs that retain the parent run's epoch config. Even `success` logs can contain a sparse set of `(id, epoch)` pairs. |
 | `read_eval_log(log_file)` | You really do need the whole log as one object. Last resort for big logs. |
 
 ```python
@@ -49,7 +49,19 @@ for sample in read_eval_log_samples("logs/run.eval"):
 # Stream even from a cancelled or errored log
 for sample in read_eval_log_samples("logs/incomplete.eval", all_samples_required=False):
     process(sample)
+
+# Converted archives and item slices may have unequal numbers of stored epochs,
+# even with status success. Read every stored attempt, without inventing missing ones.
+for sample in read_eval_log_samples("logs/archive.eval", all_samples_required=False):
+    process(sample)
 ```
+
+An audit's item slice preserves the source log's epoch configuration for provenance.
+Its actual stored attempts can be fewer: for example, the parent archive's maximum
+is nine trials, but this question has only two. The default strict iterator then
+raises `IndexError` at epoch three. Use `all_samples_required=False`, enumerate the
+actual IDs/epochs, and compare them with the item inventory. Missing stored trials
+are not additional wrong answers or proof of missing source records.
 
 ## Never unzip `.eval` files
 

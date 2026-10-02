@@ -1860,13 +1860,20 @@ def checkpoint_record(remote: Remote) -> Any:
     return on_checkpoint
 
 
-def resume_record(remote: Remote) -> Any:
-    """Task on_resume: rebuild the ledger and spend from the Store, then ask Hawk."""
+def resume_record(remote: Remote, instructions: str | None = None) -> Any:
+    """Restore accounting and deliver the current operator guidance on resume.
+
+    A checkpoint restores the old conversation, so updated task instructions
+    otherwise disappear when the new dataset input is replaced by that state.
+    """
 
     async def on_resume(state: TaskState, attempt: str) -> str:
         restored = remote.restore_record()
         notes = await remote.reconcile()
-        return "; ".join([restored, *notes])
+        note = "; ".join([restored, *notes])
+        if instructions:
+            note += "\n\nCurrent operator instructions for this resumed attempt:\n" + instructions
+        return note
 
     return on_resume
 
@@ -2132,7 +2139,9 @@ async def _continue(
     return await operator_turn(state)
 
 
-def _checkpointing(enabled: bool, remote: Remote | None) -> dict[str, Any]:
+def _checkpointing(
+    enabled: bool, remote: Remote | None, instructions: str | None = None
+) -> dict[str, Any]:
     """Task checkpoint arguments, when enabled and this Inspect has checkpointing.
 
     Captures the workspace and the inputs (collected job logs live there), and hands
@@ -2151,7 +2160,7 @@ def _checkpointing(enabled: bool, remote: Remote | None) -> dict[str, Any]:
     }
     if remote is not None:
         args["on_checkpoint"] = checkpoint_record(remote)
-        args["on_resume"] = resume_record(remote)
+        args["on_resume"] = resume_record(remote, instructions)
     return args
 
 
@@ -2511,7 +2520,7 @@ def investigate(
         return await _continue(state, interactive, remote)
 
     checkpointing = _checkpointing(
-        execution == "hawk" if checkpoint is None else bool(checkpoint), remote
+        execution == "hawk" if checkpoint is None else bool(checkpoint), remote, instructions
     )
 
     return Task(

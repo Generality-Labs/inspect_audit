@@ -1284,6 +1284,37 @@ def test_the_hosted_investigator_checkpoints_its_workspace_and_inputs(
     assert _investigate._checkpointing(False, None) == {}
 
 
+def test_resume_delivers_updated_guidance_without_losing_accounting() -> None:
+    from inspect_audit import _investigate
+
+    calls: list[str] = []
+
+    class Remote:
+        def restore_record(self) -> str:
+            calls.append("restore")
+            return "restored prior spend and ledger"
+
+        async def reconcile(self) -> list[str]:
+            calls.append("reconcile")
+            return ["existing child collected"]
+
+    args = _investigate._checkpointing(
+        True,
+        Remote(),
+        "Use the completed follow-up evidence.",  # type: ignore[arg-type]
+    )
+    note = asyncio.run(args["on_resume"](None, "second-attempt"))
+    assert calls == ["restore", "reconcile"]
+    assert "restored prior spend and ledger; existing child collected" in note
+    assert "Current operator instructions" in note
+    assert "Use the completed follow-up evidence." in note
+    calls.clear()
+    unchanged = asyncio.run(
+        _investigate.resume_record(Remote())(None, "third-attempt")  # type: ignore[arg-type]
+    )
+    assert unchanged == "restored prior spend and ledger; existing child collected"
+
+
 def test_unpriced_spend_stays_unknown_across_a_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

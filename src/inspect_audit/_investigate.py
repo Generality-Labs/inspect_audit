@@ -564,7 +564,15 @@ def prepare_workspace(
     budget_usd: float,
 ) -> Path:
     """Create a fresh run directory; expose only explicit inputs to the shell."""
-    root = Path(output_dir).expanduser().resolve() / uuid4().hex
+    resume_workspace = os.environ.get("INSPECT_AUDIT_RESUME_WORKSPACE")
+    if resume_workspace:
+        root = Path(resume_workspace).expanduser()
+        if not root.is_absolute():
+            raise ValueError("INSPECT_AUDIT_RESUME_WORKSPACE must be an absolute path")
+        if root.exists():
+            raise ValueError("Resume workspace already exists; refusing to overwrite it")
+    else:
+        root = Path(output_dir).expanduser().resolve() / uuid4().hex
     inputs = root / "inputs"
     work = root / "work"
     inputs.mkdir(parents=True)
@@ -1871,11 +1879,39 @@ def resume_record(remote: Remote, instructions: str | None = None) -> Any:
         restored = remote.restore_record()
         notes = await remote.reconcile()
         note = "; ".join([restored, *notes])
-        if instructions:
-            note += "\n\nCurrent operator instructions for this resumed attempt:\n" + instructions
+        guidance = os.environ.get("INSPECT_AUDIT_RESUME_INSTRUCTIONS", instructions)
+        if guidance:
+            note += "\n\nCurrent operator instructions for this resumed attempt:\n" + guidance
         return note
 
     return on_resume
+
+
+def resume_skill_paths(paths: list[str]) -> list[str]:
+    """Recreate the recorded skill mounts on a fresh hosted runner.
+
+    Inspect includes the skill tool's absolute paths in its task identity.
+    Hosted package installation directories can change between attempts.
+    """
+    recorded = os.environ.get("INSPECT_AUDIT_RESUME_SKILL_PATHS")
+    if recorded is None:
+        return paths
+    aliases = json.loads(recorded)
+    if not isinstance(aliases, list) or len(aliases) != len(paths):
+        raise ValueError("Recorded resume skill paths must match the current skill list")
+    for alias, source in zip(aliases, paths, strict=True):
+        if not isinstance(alias, str):
+            raise ValueError("Recorded resume skill paths must be strings")
+        destination, target = Path(alias), Path(source)
+        if not destination.is_absolute() or destination.name != target.name:
+            raise ValueError("Recorded resume skill paths must retain absolute paths and names")
+        if destination.exists() or destination.is_symlink():
+            if destination.resolve() != target.resolve():
+                raise ValueError("Resume skill mount already exists; refusing to overwrite it")
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.symlink_to(target, target_is_directory=True)
+    return aliases
 
 
 @solver
@@ -2269,6 +2305,13 @@ def investigate(
             resumes (`hawk eval-set resume`, `inspect eval-retry`) with its conversation,
             workspace, job ledger and spend. Defaults to on for execution='hawk' and off
             locally, where the workspace is a bind mount that already outlives the run.
+            On a fresh Hawk runner, set INSPECT_AUDIT_RESUME_WORKSPACE to the prior
+            log's metadata.investigation_dir to preserve Inspect's task identity.
+            Keep task arguments and execution limits unchanged. Updated operator
+            guidance can be supplied as INSPECT_AUDIT_RESUME_INSTRUCTIONS in the
+            runner environment; it is delivered after checkpoint restoration.
+            INSPECT_AUDIT_RESUME_SKILL_PATHS can preserve the skill tool's recorded
+            absolute path list (JSON) when the package installation directory changes.
     """
     # the file is read before anything else is decided: a setting it carries must be
     # able to change what gets validated, which skills load and how much may be spent.
@@ -2347,6 +2390,7 @@ def investigate(
         if not (resolved / "SKILL.md").is_file():
             raise ValueError(f"Expected a skill directory containing SKILL.md: {path}")
         skill_paths.append(str(resolved))
+    skill_paths = resume_skill_paths(skill_paths)
     if not repo:
         raise ValueError("investigate needs a repo: the benchmark to audit, or a config naming one")
 

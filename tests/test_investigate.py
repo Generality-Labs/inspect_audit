@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from inspect_ai import eval, task_with
 from inspect_ai.model import (
+    GenerateConfig,
     ModelCost,
     ModelInfo,
     ModelOutput,
@@ -57,6 +59,56 @@ def test_headless_defaults_enforce_the_allowance_without_a_token_cap(
     assert planning.cost_limit is None
     assert planning.token_limit == 500_000
     assert planning.token_limit_type == "output"
+
+
+def test_resume_workspace_preserves_the_eval_set_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_ai._eval.evalset import EvalSetArgsInTaskIdentifier, task_identifier
+    from inspect_ai._eval.loader import resolve_tasks
+
+    from inspect_audit import _investigate
+
+    repo = str(git_repo(tmp_path / "repo"))
+    canonical = [
+        str(_investigate.ASSETS / "skills" / name) for name in _investigate.INVESTIGATION_SKILLS
+    ]
+    canonical += [str(_investigate.SKILLS / name) for name in _investigate.SUPPORT_SKILLS]
+    aliases = [
+        str(tmp_path / "old-install" / str(i) / Path(path).name) for i, path in enumerate(canonical)
+    ]
+    monkeypatch.setenv("INSPECT_AUDIT_RESUME_SKILL_PATHS", json.dumps(aliases))
+    baseline = investigate(
+        repo, output_dir=str(tmp_path / "runs"), execution="local", required_coverage=1.0
+    )
+    old_root = Path(baseline.metadata["investigation_dir"])
+    # The checkpoint returns on a fresh runner with no old host scratch tree.
+    old_root.rename(tmp_path / "previous-host-workspace")
+    for alias in aliases:
+        Path(alias).unlink()
+    # The fresh runner installs the same package under a different prefix.
+    new_assets, new_skills = tmp_path / "new-assets", tmp_path / "new-skills"
+    shutil.copytree(_investigate.ASSETS, new_assets)
+    shutil.copytree(_investigate.SKILLS, new_skills)
+    monkeypatch.setattr(_investigate, "ASSETS", new_assets)
+    monkeypatch.setattr(_investigate, "SKILLS", new_skills)
+    monkeypatch.setenv("INSPECT_AUDIT_RESUME_WORKSPACE", str(old_root))
+    target = investigate(
+        repo, output_dir=str(tmp_path / "runs"), execution="local", required_coverage=1.0
+    )
+    assert target.metadata["investigation_dir"] == str(old_root)
+    assert target.cost_limit == 10
+    model = get_model("mockllm/model")
+    original = resolve_tasks(baseline, {}, model, None, None, None)[0]
+    resumed = resolve_tasks(target, {}, model, None, None, None)[0]
+    options = EvalSetArgsInTaskIdentifier(config=GenerateConfig())
+    assert task_identifier(original, options) == task_identifier(resumed, options)
+    assert all(Path(alias).is_symlink() for alias in aliases)
+    assert (
+        Path(aliases[0]).resolve() == new_assets / "skills" / _investigate.INVESTIGATION_SKILLS[0]
+    )
+    with pytest.raises(ValueError, match="refusing to overwrite"):
+        investigate(repo, output_dir=str(tmp_path / "runs"), execution="local")
 
 
 def test_snapshot_paths_paper_download_and_docs_mount(
@@ -1284,7 +1336,9 @@ def test_the_hosted_investigator_checkpoints_its_workspace_and_inputs(
     assert _investigate._checkpointing(False, None) == {}
 
 
-def test_resume_delivers_updated_guidance_without_losing_accounting() -> None:
+def test_resume_delivers_updated_guidance_without_losing_accounting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from inspect_audit import _investigate
 
     calls: list[str] = []
@@ -1313,6 +1367,13 @@ def test_resume_delivers_updated_guidance_without_losing_accounting() -> None:
         _investigate.resume_record(Remote())(None, "third-attempt")  # type: ignore[arg-type]
     )
     assert unchanged == "restored prior spend and ledger; existing child collected"
+    monkeypatch.setenv("INSPECT_AUDIT_RESUME_INSTRUCTIONS", "New guidance, same task arguments.")
+    overridden = asyncio.run(
+        _investigate.resume_record(Remote(), "old guidance")(None, "fourth-attempt")  # type: ignore[arg-type]
+    )
+    assert "restored prior spend and ledger; existing child collected" in overridden
+    assert "New guidance, same task arguments." in overridden
+    assert "old guidance" not in overridden
 
 
 def test_unpriced_spend_stays_unknown_across_a_retry(

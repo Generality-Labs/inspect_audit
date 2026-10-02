@@ -2234,6 +2234,8 @@ def test_openrouter_direct_ships_the_operators_key_and_routes_past_the_proxy(
         for g in submitted["models"]
         for i in g["items"]
     )
+    assert submitted["models"][0]["package"] == "inspect-ai"
+    assert submitted["models"][0]["items"][0]["name"].startswith("openrouter/")
     assert r.hawk.secrets == {"OPENROUTER_API_KEY": "sk-or-test"}  # type: ignore[attr-defined]
     assert "sk-or-test" not in r.hawk.submitted[-1].read_text()  # type: ignore[attr-defined]
 

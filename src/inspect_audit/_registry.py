@@ -305,28 +305,11 @@ def _hawk_fetch(eval_sets: str) -> str:
 
 
 def _hawk_token() -> str:
-    # a fresh token via the runner's refresh credentials, else the static one
-    refresh_url = os.environ.get("HAWK_TOKEN_REFRESH_URL")
-    refresh_token = os.environ.get("HAWK_REFRESH_TOKEN")
-    client_id = os.environ.get("HAWK_TOKEN_REFRESH_CLIENT_ID")
-    if refresh_url and refresh_token and client_id:
-        import urllib.parse
-        import urllib.request
+    if os.environ.get("HAWK_REFRESH_TOKEN") or os.environ.get("HAWK_RUNNER_REFRESH_TOKEN"):
+        from ._hawk_auth import credentials
 
-        body = urllib.parse.urlencode(
-            {
-                "grant_type": "refresh_token",
-                "client_id": client_id,
-                "refresh_token": refresh_token,
-            }
-        ).encode()
-        req = urllib.request.Request(
-            refresh_url,
-            data=body,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return str(json.load(r)["access_token"])
+        token, _ = credentials(os.environ["HAWK_API_URL"])
+        return token
     token = os.environ.get("HAWK_ACCESS_TOKEN")
     if not token:
         raise ValueError(

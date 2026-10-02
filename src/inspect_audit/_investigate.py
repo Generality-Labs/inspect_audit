@@ -1160,6 +1160,14 @@ def route_direct(config: dict[str, Any]) -> None:
     environment["OPENROUTER_BASE_URL"] = OPENROUTER_BASE_URL
     environment[MODEL_KEY_HOOK_VAR] = ""
     for _, group in _groups(config):
+        # Builtin model entries carry their full Inspect name. Hawk's catalog
+        # recognizes newly released models under that name, while the partial
+        # package/provider form can be absent; neither the model nor route changes.
+        if group.get("package") == "openai" and group.get("name") == "openrouter":
+            group["package"] = "inspect-ai"
+            group.pop("name")
+            for item in group.get("items") or []:
+                item["name"] = "openrouter/" + item["name"].removeprefix("openrouter/")
         for item in group.get("items") or []:
             item["args"] = {**(item.get("args") or {}), "base_url": OPENROUTER_BASE_URL}
 

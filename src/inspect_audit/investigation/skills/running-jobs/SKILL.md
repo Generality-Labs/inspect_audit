@@ -5,15 +5,20 @@ description: Submit, monitor and collect benchmark or per-item audit jobs throug
 
 ## Choose the work
 
-The seed's remote block identifies allowed packages, workers and log sources. Use
-cheap allowed workers for plumbing/screens and stronger ones for difficult verification.
+The seed's remote block identifies allowed packages, workers and log sources. Its
+`workers` table gives each worker's `model_item` (for models and model_roles) and
+`task_arg_model` (for task arguments that name a model); submission rewrites either
+spelling to the right one and says so. Use cheap allowed workers for plumbing/screens
+and stronger ones for difficult verification. Prices are set at submission: do not
+write model_prices or model_cost_config. A job that fails at startup is reported by
+jobs(wait/collect) with the runner's first error line and settled at $0.
 A benchmark job generates attempts; inspect_audit/audit investigates dataset items
 with selected checks and optional recorded attempts. Choose the actual candidate and
 judge explicitly, including task-specific judge arguments. model_roles alone does not
 configure a judge that the task constructs independently.
 
-Start from /workspace/jobs/templates/benchmark.yaml or audit.yaml when present. Copy,
-set task arguments and sample selection, then submit the path with hawk_submit. Do not
+Write the config from the examples in the investigating skill, set task arguments
+and sample selection, save it under /workspace/jobs/, then submit the path with hawk_submit. Do not
 invent an eval_set_id: submission assigns one. The host validates the config with
 Hawk's schema and this investigation's allowlists. Fix a rejected config rather than
 switching models to work around a deterministic error.

@@ -1,0 +1,512 @@
+% !TeX root = Example_Audit.tex
+% ==================================================================
+% EXAMPLE --- FULL REPORT CONTENT SKELETON (one file, in reading order)
+%
+% To start a new audit: copy reports/Example/ to reports/<Eval>/, rename
+% Example_Audit.tex to <Eval>_Audit.tex, fill in its reference numbers,
+% then replace every [bracketed placeholder] in this file. Compile from
+% inside the report directory (its .latexmkrc finds the shared class,
+% style and sections in template/).
+%
+% Structure per findings dimension:
+%   Overall Assessment and summary
+%   Contribution Assessment table (every registry contribution)
+%   Evidence for Observed Concerns (only where concerns are identified)
+% Replace [assessment] with the appropriate assessment macro, including
+% \assessNotAssessed or \assessNA. Add evidence links to relevant rows.
+% The evidence blocks below are placeholders: remove them for dimensions
+% without observed concerns, or duplicate them for additional concerns.
+% ==================================================================
+
+% --- DIMENSION ASSESSMENTS -----------------------------------------
+% Drives BOTH the scorecard table and the findings boxes. Assessment
+% levels: \assessNone \assessMinor \assessMajor \assessCritical
+% \assessNotAssessed \assessNA. Key contributions use
+% \issue{code}{name}{one-line description}.
+\setdimension{construct}{[assessment]}{\issue{A.1}{[contribution]}{[one-line description]}}
+\setdimension{contentvalidity}{[assessment]}{[key contributions]}
+\setdimension{dataset}{[assessment]}{[key contributions]}
+\setdimension{scaffold}{[assessment]}{[key contributions]}
+\setdimension{harness}{[assessment]}{[key contributions]}
+\setdimension{environment}{[assessment]}{[key contributions]}
+\setdimension{grading}{[assessment]}{[key contributions]}
+\setdimension{resources}{[assessment]}{[key contributions]}
+\setdimension{informativeness}{[assessment]}{[key contributions]}
+% Scorecard rows, most to least critical; delete a key to omit its row.
+\scorecardorder{construct,contentvalidity,dataset,scaffold,harness,environment,grading,resources,informativeness}
+
+% gl house colours + chips for the architecture diagram
+\definecolor{glInk}{HTML}{1A1919}%
+\definecolor{glMuted}{HTML}{5B5858}%
+\definecolor{glSoft}{HTML}{837878}%
+\definecolor{glHairline}{HTML}{E6E6E6}%
+\definecolor{glBg}{HTML}{FAFAFA}%
+\definecolor{glPaper}{HTML}{F2F2F2}%
+\definecolor{glMintSoft}{HTML}{ECF8F5}%
+\definecolor{glMintEdge}{HTML}{C5E8E1}%
+\definecolor{glMintDeep}{HTML}{24857A}%
+\definecolor{glGood}{HTML}{1BAF7A}%
+\definecolor{glBad}{HTML}{D1495B}%
+\definecolor{glWarn}{HTML}{EDA100}%
+\definecolor{glWarnInk}{HTML}{B07D00}%
+\definecolor{glNeutral}{HTML}{5A748C}%
+% chip: fixed = grey, varying-per-sample = teal, outcome tones
+\newcommand{\bxchip}[1]{{\setlength{\fboxsep}{2pt}\fcolorbox{glHairline}{glPaper}{\scriptsize\textcolor{glMuted}{#1}}}}
+\newcommand{\bxchipv}[1]{{\setlength{\fboxsep}{2pt}\fcolorbox{glMintEdge}{glMintSoft}{\scriptsize\textcolor{glMintDeep}{#1}}}}
+\newcommand{\bxchipt}[2]{{\setlength{\fboxsep}{2pt}\fcolorbox{#1}{white}{\scriptsize\textcolor{#1}{#2}}}}
+
+% ==================================================================
+% COVER SHEET
+% ==================================================================
+\gdef\ppartname{Cover Sheet}
+\auditdestination{cover}
+
+\begin{adjustwidth}{5mm}{5mm}
+
+\noindent
+{\LARGE\itshape \textbf{Cover Sheet} -- \evaltitle}\par\medskip
+
+\medskip
+
+\noindent
+\begin{dsbox}{Document}
+  \dsfieldA[28mm]{Title}{Evaluation audit of \eevalname}
+  \dsfieldA[28mm]{Report no.}{\rreportno}
+  \dsfieldA[28mm]{Report type}{\rreporttype}
+\end{dsbox}
+
+\noindent
+\begin{dsbox}{Executive Summary}
+[Summarise the audit scope, principal findings, and implications for
+interpreting and using the evaluation's scores.]
+\end{dsbox}
+
+\noindent
+\begin{dsbox}{Traceability}
+\renewcommand{\arraystretch}{1.15}%
+\noindent\begin{tabularx}{\linewidth}{|L{0.7}|L{1.5}|L{0.8}|}
+\hline
+\textbf{Role} & \textbf{Name} & \textbf{Date} \\ \hline
+Prepared by & [name] & [date] \\ \hline
+Verified by & [name] & [date] \\ \hline
+Approved by & [name] & [date] \\ \hline
+\end{tabularx}
+\end{dsbox}
+
+\noindent
+\begin{dsbox}{Distribution}
+[Distribution: e.g.\ ``Draft --- not yet released.'']
+\end{dsbox}
+
+\noindent
+\begin{dsbox}{Revision History}
+\renewcommand{\arraystretch}{1.15}%
+\noindent\begin{tabularx}{\linewidth}{|C{0.35}|C{0.55}|L{2.1}|}
+\hline
+\textbf{Rev.} & \textbf{Date} & \textbf{Description of changes} \\ \hline
+0.1 & [date] & Creation \\ \hline
+\end{tabularx}
+\end{dsbox}
+
+\end{adjustwidth}
+
+\begin{maincontentstyled}
+
+% ==================================================================
+% CONTENTS
+% ==================================================================
+\auditpart{Contents}{contents}
+\begin{reportpart}{Contents}{contents}{sec:contents}
+
+\begingroup
+\hypersetup{linkcolor=black}
+\setlength{\parskip}{7pt}
+\auditcontentsrow{cover}{Cover Sheet and Executive Summary}
+\auditcontentsrow{scorecard}{Eval Scorecard}
+\auditcontentsrow{datasheet}{Eval Datasheet}
+\auditcontentsrow{methodology}{Audit Setup}
+\auditcontentsrow{findings}{Audit Findings}
+\auditcontentsrow[6]{dimension:construct}{A. Construct validity}
+\auditcontentsrow[6]{dimension:contentvalidity}{B. Content validity}
+\auditcontentsrow[6]{dimension:dataset}{C. Task specification}
+\auditcontentsrow[6]{dimension:scaffold}{D. Scaffolding}
+\auditcontentsrow[6]{dimension:harness}{E. Harness}
+\auditcontentsrow[6]{dimension:environment}{F. Environment}
+\auditcontentsrow[6]{dimension:grading}{G. Grading}
+\auditcontentsrow[6]{dimension:resources}{H. Resource limits}
+\auditcontentsrow[6]{dimension:informativeness}{I. Informativeness}
+\auditcontentsrow{criteria}{Scoring Criteria}
+\endgroup
+\par\bigskip
+\end{reportpart}
+
+% ==================================================================
+% EVAL SCORECARD
+% ==================================================================
+\auditpart{Eval Scorecard}{scorecard}
+\phantomsection
+\addcontentsline{toc}{section}{Eval Scorecard}
+\label{sec:scorecard}
+\auditdestination{scorecard}
+
+\begin{adjustwidth}{-10mm}{0mm}
+
+% --- Title row: eval name + overall grade badge -------------------
+\noindent
+\begin{minipage}[c]{0.78\linewidth}
+  {\LARGE\itshape \textbf{Eval Scorecard} -- \evaltitle}
+\end{minipage}%
+\hfill
+\begin{minipage}[c]{0.18\linewidth}
+  \raggedleft\gradebadge{\eevalscore}
+\end{minipage}
+
+\vspace{2pt}
+
+% --- Headline assessment (no box) ----------------------------------
+\noindent
+[Headline assessment: two or three sentences on the eval's biggest
+issues and their measured effect.]
+
+\vspace{2pt}
+
+% --- Eval details (full width) --------------------------------------
+\noindent
+\begin{dsbox}[top=1mm, bottom=1mm, before skip=4pt, after skip=4pt]{Eval details}
+  \dsfield{Type}{[e.g.\ Agentic data analysis / Single-turn prompt response]}
+  \dsfield{Domain}{[Capability/Safety -- domain]}
+  \dsfield{Measurement aim}{[what the headline metric claims to measure]}
+  \dsfield{Status}{[release date, leaderboard, maintenance status]}
+\end{dsbox}
+
+\smallskip
+
+% --- Full-width: audit assessment breakdown -----------------------
+\scorecardbreakdown
+
+\smallskip
+
+\noindent
+\begin{dsbox}[top=1mm, bottom=1mm, before skip=4pt, after skip=4pt]{Requirements}
+    \dsfield{Environment}{[sandbox/API, dataset size, content handling]}
+    \dsfield{Cost}{[cost per model/episode incl.\ judges; audit total]}
+    \dsfield{Runtime}{[wall-clock per model/episode]}
+    \dsfield{Inspect import}{[port location; commit \ccommitref]}
+\end{dsbox}
+
+\end{adjustwidth}
+
+% ==================================================================
+% EVAL DATASHEET
+% ==================================================================
+\auditpart{Eval Datasheet}{datasheet}
+\phantomsection
+\addcontentsline{toc}{section}{Eval Datasheet}
+\label{sec:datasheet}
+\auditdestination{datasheet}
+
+\begin{adjustwidth}{-10mm}{0mm}
+
+\noindent
+{\LARGE\itshape \textbf{Eval Datasheet} -- \evaltitle}
+
+\bigskip
+
+\noindent
+\begin{dsbox}{Developers}
+  \dsfield{Institutions}{[institutions]}
+  \dsfield{Authors}{[authors]}
+  \dsfield{Correspondence}{[contact]}
+\end{dsbox}
+
+\begin{dsbox}{Links}
+  \dsfieldA[32mm]{Paper}{[url]}
+  \dsfieldA[32mm]{Hugging Face}{[url]}
+  \dsfieldA[32mm]{Website}{[url]}
+  \dsfieldA[32mm]{Project GitHub}{[url]}
+  \dsfieldA[32mm]{Inspect Evals}{[url]}
+\end{dsbox}
+
+\begin{dsbox}[breakable, title after break={EVAL ARCHITECTURE OVERVIEW CONT.}]{Eval Architecture Overview}
+%
+% [Architecture diagram: tikz card/chip diagram of the eval pipeline.
+%  See FORTRESS/Content.tex and BixBench/Content.tex for worked
+%  examples using \bxchip (fixed), \bxchipv (varies per sample) and
+%  \bxchipt (outcome tones).]
+\noindent
+[diagram]
+\smallskip
+
+\noindent\textbf{Dataset:} [where the tasks come from, how many, how
+constructed]\par\smallskip
+\noindent\textbf{Solver:} [how the model interacts with the task: turns,
+tools, budgets]\par\smallskip
+\noindent\textbf{Scorer:} [how responses are graded and aggregated into
+the headline metric]
+\end{dsbox}
+
+\begin{dsbox}{Relevance}
+  \dsfield{Citations}{[count and source, as of date]}
+  \dsfield{Hugging Face downloads}{[count, as of date]}
+  \dsfield{Eval Context}{[who reports results on this eval]}
+\end{dsbox}
+
+\begin{dsbox}{Other}
+  \dsfield{Updates}{[dataset/leaderboard updates, drift affecting
+    reproducibility]}
+\end{dsbox}
+
+\end{adjustwidth}
+
+% ==================================================================
+% AUDIT SETUP
+% ==================================================================
+\auditpart{Audit Setup}{methodology}
+\begin{reportpart}{Audit Setup}{methodology}{sec:methodology}
+\auditdestination{methodology}
+
+% --- Scope -----------------------------------------------------------
+\noindent
+\begin{dsbox}[top=1mm, bottom=1mm, before skip=3pt, after skip=3pt]{Scope of Report}
+\textbf{Methodology:} This report is based on Generality Labs mini-audit
+methodology. Its scope is focused on surfacing and reporting on the most
+glaring and problematic dimensions of the audited eval. \\
+\textbf{Conflict of interest:} [relationship with the eval's developers;
+funding]
+\end{dsbox}
+
+% --- Run setup --------------------------------------------------------
+\noindent
+\begin{dsbox}[top=1mm, bottom=1mm, before skip=3pt, after skip=3pt]{Run Setup}
+  \dsfieldA[30mm]{Implementation}{[port + audited commit, linked to the
+    eval's source]}
+  \dsfieldA[30mm]{Dataset}{[dataset id, revision, size]}
+  \dsfieldA[30mm]{Samples}{[how many audited]}
+  \dsfieldA[30mm]{Attempts}{[attempts per sample]}
+  \dsfieldA[30mm]{Limit}{[message/turn/token limits]}
+  \dsfieldA[30mm]{Judges}{[judge models; deviations from the official
+    setup]}
+  \dsfieldA[30mm]{Run dates}{[dates]}
+  \dsfieldA[30mm]{Costs}{[model costs]}
+  \dsfieldA[30mm]{Artifacts}{[.eval logs location / availability]}
+  \par\smallskip
+  {\small [Any other defaults or deviations.]}
+\end{dsbox}
+
+% --- Models evaluated -------------------------------------------------
+\noindent
+\begin{dsbox}[top=1mm, bottom=1mm, before skip=3pt, after skip=3pt]{Model Configurations}
+\renewcommand{\arraystretch}{1.05}%
+\small
+\noindent\begin{tabularx}{\linewidth}{|L{1.15}|C{1.35}|C{0.75}|C{0.75}|C{1.0}|}
+\hline
+\textbf{Model} & \textbf{Reasoning} & \textbf{Temp.} & \textbf{Top-p} & \textbf{Max tokens} \\
+\hline
+[model] & [default/thinking/effort] & [value] & [value] & [value] \\ \hline
+\end{tabularx}
+\smallskip
+
+{\small \textbf{Sampling:} [what ``default'' means; where the values
+were verified (e.g.\ the runs' \texttt{.eval} logs)].}
+\end{dsbox}
+
+% --- Judge configuration ----------------------------------------------
+\noindent
+\begin{dsbox}[top=1mm, bottom=1mm, before skip=3pt, after skip=3pt]{Judge Configurations}
+\renewcommand{\arraystretch}{1.1}%
+\small
+\noindent\begin{tabularx}{\linewidth}{|L{1.4}|C{1.0}|C{0.7}|C{0.7}|C{1.2}|}
+\hline
+\textbf{Judge} & \textbf{Reasoning} & \textbf{Temp.} & \textbf{Top-p} & \textbf{Max tokens} \\
+\hline
+[judge] & [value] & [value] & [value] & [value] \\ \hline
+\end{tabularx}
+\smallskip
+
+{\small \textbf{Scoring rule:} [how judge outputs become scores:
+parsing, majority rules, tie-breaking, abstention handling].}
+\end{dsbox}
+
+\end{reportpart}
+
+% ==================================================================
+% AUDIT FINDINGS
+% ==================================================================
+\auditpart{Audit Findings}{audit}
+\begin{reportpart}{Audit Findings}{audit}{sec:auditreport}
+
+\auditdestination{findings}
+
+\begin{dimensionreview}{construct}
+\dimensionoverview{construct}{[Overall assessment summary.]}{
+  \contributionrow{A.0}{measurement distortion}{[assessment]}{[Summary or justification.]}
+  \contributionrow{A.1}{contamination}{[assessment]}{[Summary or justification.]}
+  \contributionrow{A.2}{memorisation}{[assessment]}{[Summary or justification.]}
+  \contributionrow{A.3}{eval awareness}{[assessment]}{[Summary or justification.]}
+  \contributionrow{A.4}{sandbagging}{[assessment]}{[Summary or justification.]}
+  \contributionrow{A.5}{confounds}{[assessment]}{[Summary or justification.]}
+  \contributionrow{A.6}{proxy measurement}{[assessment]}{[Summary or justification.]}
+  \contributionrow{A.7}{capability vs propensity}{[assessment]}{[Summary or justification.]}
+}
+% Add \evidencelink{A.0} to the corresponding table row when evidence is included.
+\observedevidence
+\begin{concernevidence}{A.0}{measurement distortion}{[assessment]}
+\begin{cnotes}
+  \item {[Describe the concern, supporting evidence, and implications for interpreting the scores.]}
+\end{cnotes}
+\end{concernevidence}
+\end{dimensionreview}
+
+% --------------------------------------------------------------
+\begin{dimensionreview}{contentvalidity}
+\dimensionoverview{contentvalidity}{[Overall assessment summary.]}{
+  \contributionrow{B.1}{coverage gaps}{[assessment]}{[Summary or justification.]}
+  \contributionrow{B.2}{unrepresentative task distribution}{[assessment]}{[Summary or justification.]}
+}
+% Add \evidencelink{B.1} to the corresponding table row when evidence is included.
+\observedevidence
+\begin{concernevidence}{B.1}{coverage gaps}{[assessment]}
+\begin{cnotes}
+  \item {[Describe the concern, supporting evidence, and implications for interpreting the scores.]}
+\end{cnotes}
+\end{concernevidence}
+\end{dimensionreview}
+
+% --------------------------------------------------------------
+\begin{dimensionreview}{dataset}
+\dimensionoverview{dataset}{[Overall assessment summary.]}{
+  \contributionrow{C.1}{incorrect reference answer}{[assessment]}{[Summary or justification.]}
+  \contributionrow{C.2}{impossible tasks}{[assessment]}{[Summary or justification.]}
+  \contributionrow{C.3}{missing information}{[assessment]}{[Summary or justification.]}
+  \contributionrow{C.4}{guessability}{[assessment]}{[Summary or justification.]}
+  \contributionrow{C.5}{prompt defects}{[assessment]}{[Summary or justification.]}
+  \contributionrow{C.6}{hidden requirements}{[assessment]}{[Summary or justification.]}
+  \contributionrow{C.7}{unintended shortcuts}{[assessment]}{[Summary or justification.]}
+}
+% Add \evidencelink{C.1} to the corresponding table row when evidence is included.
+\observedevidence
+\begin{concernevidence}{C.1}{incorrect reference answer}{[assessment]}
+\begin{cnotes}
+  \item {[Describe the concern, supporting evidence, and implications for interpreting the scores.]}
+\end{cnotes}
+\end{concernevidence}
+\end{dimensionreview}
+
+% --------------------------------------------------------------
+\begin{dimensionreview}{scaffold}
+\dimensionoverview{scaffold}{[Overall assessment summary.]}{
+  \contributionrow{D.1}{system prompt issues}{[assessment]}{[Summary or justification.]}
+  \contributionrow{D.2}{planning or agent loop}{[assessment]}{[Summary or justification.]}
+  \contributionrow{D.3}{memory \& context strategy}{[assessment]}{[Summary or justification.]}
+  \contributionrow{D.4}{retry/error feedback}{[assessment]}{[Summary or justification.]}
+  \contributionrow{D.5}{coaching}{[assessment]}{[Summary or justification.]}
+}
+% Add \evidencelink{D.1} to the corresponding table row when evidence is included.
+\observedevidence
+\begin{concernevidence}{D.1}{system prompt issues}{[assessment]}
+\begin{cnotes}
+  \item {[Describe the concern, supporting evidence, and implications for interpreting the scores.]}
+\end{cnotes}
+\end{concernevidence}
+\end{dimensionreview}
+
+% --------------------------------------------------------------
+\begin{dimensionreview}{harness}
+\dimensionoverview{harness}{[Overall assessment summary.]}{
+  \contributionrow{E.1}{tool-call handling}{[assessment]}{[Summary or justification.]}
+  \contributionrow{E.2}{submission/termination logic}{[assessment]}{[Summary or justification.]}
+  \contributionrow{E.3}{context delivery}{[assessment]}{[Summary or justification.]}
+  \contributionrow{E.4}{message handling}{[assessment]}{[Summary or justification.]}
+  \contributionrow{E.5}{state management}{[assessment]}{[Summary or justification.]}
+  \contributionrow{E.6}{harness bugs}{[assessment]}{[Summary or justification.]}
+  \contributionrow{E.7}{harness sensitivity}{[assessment]}{[Summary or justification.]}
+}
+% Add \evidencelink{E.1} to the corresponding table row when evidence is included.
+\observedevidence
+\begin{concernevidence}{E.1}{tool-call handling}{[assessment]}
+\begin{cnotes}
+  \item {[Describe the concern, supporting evidence, and implications for interpreting the scores.]}
+\end{cnotes}
+\end{concernevidence}
+\end{dimensionreview}
+
+% --------------------------------------------------------------
+\begin{dimensionreview}{environment}
+\dimensionoverview{environment}{[Overall assessment summary.]}{
+  \contributionrow{F.1}{tool failures}{[assessment]}{[Summary or justification.]}
+  \contributionrow{F.2}{missing resources}{[assessment]}{[Summary or justification.]}
+  \contributionrow{F.3}{broken files \& dependencies}{[assessment]}{[Summary or justification.]}
+  \contributionrow{F.4}{non-determinism}{[assessment]}{[Summary or justification.]}
+  \contributionrow{F.5}{information leakage}{[assessment]}{[Summary or justification.]}
+  \contributionrow{F.6}{implementation differs from specification}{[assessment]}{[Summary or justification.]}
+}
+% Add \evidencelink{F.1} to the corresponding table row when evidence is included.
+\observedevidence
+\begin{concernevidence}{F.1}{tool failures}{[assessment]}
+\begin{cnotes}
+  \item {[Describe the concern, supporting evidence, and implications for interpreting the scores.]}
+\end{cnotes}
+\end{concernevidence}
+\end{dimensionreview}
+
+% --------------------------------------------------------------
+\begin{dimensionreview}{grading}
+\dimensionoverview{grading}{[Overall assessment summary.]}{
+  \contributionrow{G.1}{false positives and false negatives}{[assessment]}{[Summary or justification.]}
+  \contributionrow{G.2}{underspecified criteria}{[assessment]}{[Summary or justification.]}
+  \contributionrow{G.3}{judge errors}{[assessment]}{[Summary or justification.]}
+  \contributionrow{G.4}{surface-form sensitivity}{[assessment]}{[Summary or justification.]}
+  \contributionrow{G.5}{incorrect partial credit}{[assessment]}{[Summary or justification.]}
+  \contributionrow{G.6}{grader exploitation}{[assessment]}{[Summary or justification.]}
+}
+% Add \evidencelink{G.1} to the corresponding table row when evidence is included.
+\observedevidence
+\begin{concernevidence}{G.1}{false positives and false negatives}{[assessment]}
+\begin{cnotes}
+  \item {[Describe the concern, supporting evidence, and implications for interpreting the scores.]}
+\end{cnotes}
+\end{concernevidence}
+\end{dimensionreview}
+
+% --------------------------------------------------------------
+\begin{dimensionreview}{resources}
+\dimensionoverview{resources}{[Overall assessment summary.]}{
+  \contributionrow{H.1}{turn/token/time limits}{[assessment]}{[Summary or justification.]}
+  \contributionrow{H.2}{resource sensitivity}{[assessment]}{[Summary or justification.]}
+  \contributionrow{H.3}{unequal constraint effects}{[assessment]}{[Summary or justification.]}
+}
+% Add \evidencelink{H.1} to the corresponding table row when evidence is included.
+\observedevidence
+\begin{concernevidence}{H.1}{turn/token/time limits}{[assessment]}
+\begin{cnotes}
+  \item {[Describe the concern, supporting evidence, and implications for interpreting the scores.]}
+\end{cnotes}
+\end{concernevidence}
+\end{dimensionreview}
+
+% --------------------------------------------------------------
+\begin{dimensionreview}{informativeness}
+\dimensionoverview{informativeness}{[Overall assessment summary.]}{
+  \contributionrow{I.1}{saturation}{[assessment]}{[Summary or justification.]}
+  \contributionrow{I.2}{floor/ceiling effects}{[assessment]}{[Summary or justification.]}
+  \contributionrow{I.3}{clustering}{[assessment]}{[Summary or justification.]}
+}
+% Add \evidencelink{I.1} to the corresponding table row when evidence is included.
+\observedevidence
+\begin{concernevidence}{I.1}{saturation}{[assessment]}
+\begin{cnotes}
+  \item {[Describe the concern, supporting evidence, and implications for interpreting the scores.]}
+\end{cnotes}
+\end{concernevidence}
+\end{dimensionreview}
+
+\end{reportpart}
+
+% SCORING CRITERIA (shared by every report)
+\auditpart{Scoring Criteria}{criteria}
+\auditdestination{criteria}
+\input{sections/ScoringCriteria}
+
+\auditpartsend
+
+\end{maincontentstyled}

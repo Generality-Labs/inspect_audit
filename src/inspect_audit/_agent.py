@@ -5,13 +5,15 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, cast
 
+from inspect_ai import score_async
 from inspect_ai.agent import Agent, AgentSubmit, agent, react
-from inspect_ai.model import GenerateConfig, Model, get_model
+from inspect_ai.model import GenerateConfig, Model, get_model, model_roles
 from inspect_ai.scorer import (
     Score,
     Scorer,
     Target,
     frequency,
+    mean,
     scorer,
 )
 from inspect_ai.solver import TaskState
@@ -33,6 +35,7 @@ from inspect_ai.tool._tools._execute import code_viewer
 from inspect_ai.util import (
     LimitExceededError,
     StoreModel,
+    sample_limits,
     sandbox,
     sandbox_default,
     store_as,
@@ -41,6 +44,7 @@ from PIL import Image
 from pydantic import BaseModel, Field, JsonValue
 
 from . import prompts
+from ._concordance import Concordance
 from ._contract import SolverContract
 from ._item import AUDIT_ROOT
 from ._sandbox import (
@@ -50,16 +54,20 @@ from ._sandbox import (
     phoenix_benchmark,
     restore_benchmark,
 )
-from ._state import BenchmarkState, attempt, benchmark_task_state, benchmark_tools
+from ._state import (
+    BenchmarkState,
+    attempt,
+    benchmark_sample,
+    benchmark_tools,
+    grade_log,
+    replay_choices,
+)
 
 SKILLS = Path(__file__).parent / "skills"
 
 # support skills help with the work rather than defining it; an auditor is never
 # asked to investigate one of these
-SUPPORT_SKILLS = ("reading-logs", "analyzing-logs", "map-inspect-packages")
-
-
-
+SUPPORT_SKILLS = ("reading-logs", "analyzing-logs", "map-inspect-packages", "audit-framework")
 
 
 class AuditItemSkill(BaseModel):
@@ -82,9 +90,7 @@ class AuditItemSkill(BaseModel):
 _GRANTABLE_TOOLS = frozenset({"attempt", "grade", "reset"})
 
 
-def _item_skill(
-    name: str, description: str, metadata: dict[str, Any]
-) -> AuditItemSkill:
+def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> AuditItemSkill:
     """Read one item skill's frontmatter contract, loudly.
 
     The frontmatter drives grade validation, evidence rules and tool grants, so
@@ -135,6 +141,21 @@ def _item_skill(
         details={str(k): str(v) for k, v in declared.items()},
         tools=tools,
     )
+
+
+def effort_problem(model: object, reasoning_effort: object) -> str | None:
+    """Why an auditor's reasoning effort cannot apply, if it cannot.
+
+    There is nothing to bind it to without an explicit model (the eval's model is not
+    resolved at task-construction time), and dropping the knob silently corrupts
+    effort comparisons.
+    """
+    if reasoning_effort is not None and model is None:
+        return (
+            "reasoning_effort needs an explicit model to bind to: pass "
+            "model= alongside it (the eval-level --model cannot carry it)"
+        )
+    return None
 
 
 def audit_items(items: list[str] | None = None) -> list[AuditItemSkill]:
@@ -191,6 +212,20 @@ class Verdicts(StoreModel):
 
     verdicts: dict[str, Verdict] = Field(default_factory=dict)
     debrief: dict[str, list[Evidence]] = Field(default_factory=dict)
+    # why record_verdict refused each item, so a missing verdict can say why
+    rejected: dict[str, list[str]] = Field(default_factory=dict)
+
+
+def _details_help(skill: AuditItemSkill, sent: object) -> str:
+    """What record_verdict needs in `details`, said so a model can correct itself."""
+    fields = "; ".join(f"{key}: {description}" for key, description in skill.details.items())
+    shape = json.dumps(dict.fromkeys(skill.details, "..."))
+    began = str(sent)[:60].replace("\n", " ")
+    return (
+        f"details must be a JSON object as text, starting with '{{', but it began "
+        f"{began!r}. Put your summary in remarks. For {skill.name} the object needs "
+        f"{fields or 'no fields: send {}'}. Shape: {shape if skill.details else '{}'}"
+    )
 
 
 @tool
@@ -224,34 +259,57 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
         # misses the contract becomes a retry rather than a lost verdict
         skill = lookup.get(item)
         if skill is None:
-            raise ToolError(
-                f"Unknown item {item!r}. Expected one of {', '.join(lookup)}."
-            )
+            raise ToolError(f"Unknown item {item!r}. Expected one of {', '.join(lookup)}.")
+        # a string in the schema, not an object: OpenAI's validator (Azure, via
+        # OpenRouter) refuses an object property without a type, and the fields
+        # items declare are lists, strings and booleans. Python callers pass a dict
         try:
-            # Accept dictionaries from existing Python callers, while the model-facing
-            # schema uses a string: arbitrary objects cannot use OpenAI strict schemas.
             recorded_details = json.loads(details) if isinstance(details, str) else details
-        except ValueError as ex:
-            raise ToolError("details must encode a valid JSON object") from ex
+        except ValueError:
+            recorded_details = None
         if not isinstance(recorded_details, dict):
-            raise ToolError("details must encode a JSON object")
+            # 09-29 chess run: an auditor wrote prose summaries here 54 times against
+            # a bare "must encode a valid JSON object" and never recovered
+            raise ToolError(_details_help(skill, details))
         if grade not in skill.grades:
-            raise ToolError(
-                f"Grade for {item} must be one of {', '.join(skill.grades)}."
-            )
+            raise ToolError(f"Grade for {item} must be one of {', '.join(skill.grades)}.")
         if not evidence and grade not in skill.unevidenced:
-            raise ToolError(
-                f"A grade of {grade} needs at least one observation with its source."
-            )
+            raise ToolError(f"A grade of {grade} needs at least one observation with its source.")
         for entry in evidence:
             if not entry.observed.strip() or not entry.source.strip():
-                raise ToolError(
-                    "Every piece of evidence needs both an observation and its source."
-                )
+                raise ToolError("Every piece of evidence needs both an observation and its source.")
         missing = [key for key in skill.details if key not in recorded_details]
         if missing:
             asks = ", ".join(f"{key} ({skill.details[key]})" for key in missing)
             raise ToolError(f"This item also requires details: {asks}.")
+
+        if item == "question-labels":
+            from ._coverage import validate_labels
+
+            current = sample_state()
+            if current is None:
+                raise ToolError("Question labels require a live audit sample")
+            metadata = current.metadata or {}
+            expected = metadata.get("assessment_ids")
+            if expected is None:
+                expected = [
+                    str((metadata.get("audit_item") or {}).get("sample_id", current.sample_id))
+                ]
+            try:
+                labels = validate_labels(
+                    recorded_details["question_assessments"], expected, require_classification=True
+                )
+                overall = (
+                    "DEFECT"
+                    if any(r.status == "DEFECT" for r in labels)
+                    else "UNRESOLVED"
+                    if any(r.status in ("UNRESOLVED", "NOT_ASSESSED") for r in labels)
+                    else "NO_ISSUE_FOUND"
+                )
+                if grade != overall:
+                    raise ValueError(f"Overall grade must be {overall} for these question labels")
+            except ValueError as ex:
+                raise ToolError(str(ex)) from ex
 
         # replace rather than mutate so the store sees the change
         recorded = store_as(Verdicts)
@@ -268,22 +326,39 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
         }
         return json.dumps({"item": item, "grade": grade})
 
-    definition = ToolDef(execute, name="record_verdict")
+    async def recording(
+        item: str,
+        evidence: list[Evidence],
+        approaches: str,
+        tried: str,
+        remarks: str,
+        grade: str,
+        details: str,
+    ) -> str:
+        try:
+            return await execute(item, evidence, approaches, tried, remarks, grade, details)
+        except ToolError as ex:
+            store_as(Verdicts).rejected.setdefault(item, []).append(str(ex))
+            raise
+
+    recording.__doc__ = execute.__doc__
+    definition = ToolDef(recording, name="record_verdict")
     fields: dict[str, list[str]] = {}
     for item in items:
         for key, description in item.details.items():
             fields.setdefault(key, []).append(f"{item.name}: {description}")
     definition.parameters.properties["details"] = ToolParam(
         type="string",
-        description="JSON-encoded object. Required fields by item:\n"
-        + "\n".join(
-            f"{item.name}: {', '.join(item.details) or '(none)'}" for item in items
-        ),
+        description="A JSON object as text, starting with '{' (not prose: your summary "
+        "goes in remarks). Required fields by item:\n"
+        + "\n".join(f"{item.name}: {', '.join(item.details) or '(none)'}" for item in items),
     )
     # Keep arbitrary nested skill data inside the JSON string and validate it above.
     details = definition.parameters.properties["details"]
-    details.description = (details.description or "") + "\n" + "\n".join(
-        f"{key}: {'; '.join(descriptions)}" for key, descriptions in fields.items()
+    details.description = (
+        (details.description or "")
+        + "\n"
+        + "\n".join(f"{key}: {'; '.join(descriptions)}" for key, descriptions in fields.items())
     )
     return definition.as_tool()
 
@@ -293,7 +368,7 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
 # only reason it isn't just `ToolDef(bash(...))`)
 @tool(viewer=code_viewer("bash", "cmd"), parallel=True)
 def audit_probe() -> Tool:
-    async def execute(cmd: str, service: str) -> str:
+    async def execute(cmd: str, service: str, timeout: int | None) -> str:
         """Look inside one of the benchmark's own containers, off the record.
 
         Runs a bash command in the named benchmark box, exactly as the
@@ -308,7 +383,13 @@ def audit_probe() -> Tool:
                 evaluated agent held); a multi-service benchmark also has its
                 sibling services, addressable by name. An unknown name is
                 rejected with the list of this item's boxes.
+            timeout: Probe deadline in seconds (1-3600); null uses 180. For a
+                benchmark timeout reproduction, allow time beyond its own
+                deadline. This does not change the benchmark's grading limit.
         """
+        timeout = 180 if timeout is None else timeout
+        if not 1 <= timeout <= 3600:
+            raise ToolError("Probe timeout must be between 1 and 3600 seconds.")
         boxes = benchmark_boxes()
         if not boxes:
             raise ToolError("This item has no benchmark environment to probe.")
@@ -321,9 +402,14 @@ def audit_probe() -> Tool:
         # whose environment lives in /etc/profile.d (conda, rustup, nvm) must
         # give the probe the same PATH the evaluated agent had, or the auditor
         # concludes a present tool is missing
-        result = await sandbox(service).exec(
-            ["bash", "--login", "-c", cmd], timeout=180
-        )
+        try:
+            result = await sandbox(service).exec(["bash", "--login", "-c", cmd], timeout=timeout)
+        except TimeoutError as ex:
+            raise ToolError(
+                f"The audit probe exceeded its {timeout}-second deadline. "
+                "This is not evidence that the benchmark grader timed out. "
+                "Use a longer probe timeout when reproducing its own deadline."
+            ) from ex
         # inspect's own bash-tool convention: stderr first, then stdout
         output = f"{result.stderr}\n" if result.stderr else ""
         return f"{output}{result.stdout}"
@@ -348,9 +434,7 @@ def view_image() -> Tool:
         try:
             data = await sandbox().read_file(path, text=False)
         except Exception as ex:
-            raise ToolError(
-                f"Could not read {path!r}: {type(ex).__name__}: {ex}"
-            ) from None
+            raise ToolError(f"Could not read {path!r}: {type(ex).__name__}: {ex}") from None
         if not isinstance(data, bytes):
             raise ToolError(f"{path!r} did not read back as bytes.")
         if Path(path).suffix.lower() == ".svg" or b"<svg" in data[:4096]:
@@ -359,7 +443,8 @@ def view_image() -> Tool:
             try:
                 result = await sandbox().exec(
                     [
-                        "python", "-c",
+                        "python",
+                        "-c",
                         "import base64, subprocess, sys; "
                         "p = subprocess.run(['rsvg-convert', '--', sys.argv[1]], "
                         "capture_output=True, check=True, timeout=45); "
@@ -380,8 +465,12 @@ def view_image() -> Tool:
             with Image.open(BytesIO(data)) as preview:
                 image_format = preview.format
                 preview.verify()
-            mime = {"PNG": "image/png", "JPEG": "image/jpeg",
-                    "GIF": "image/gif", "WEBP": "image/webp"}.get(image_format or "")
+            mime = {
+                "PNG": "image/png",
+                "JPEG": "image/jpeg",
+                "GIF": "image/gif",
+                "WEBP": "image/webp",
+            }.get(image_format or "")
             if mime is None:
                 raise ValueError(f"unsupported image format {image_format}; export a PNG")
         except Exception as ex:
@@ -390,6 +479,44 @@ def view_image() -> Tool:
         return [ContentImage(image=f"data:{mime};base64,{encoded}")]
 
     return execute
+
+
+@scorer(metrics=[mean()], name="inspect_audit_grade")
+def grade_collector(
+    benchmark: list[Scorer], results: list[dict[str, Any]], failure: list[BaseException]
+) -> Scorer:
+    """Run the benchmark's scorers inside the context score_async set up for its sample.
+
+    One collector rather than each scorer passed to score_async: the benchmark's
+    own metrics (dict-valued, custom) are not ours to recompute, and one failing
+    scorer must surface as the failure, not a half-scored log.
+    """
+
+    async def score(state: TaskState, target: Target) -> Score:
+        replay_choices(state)
+        # the benchmark's scorer calls sandbox() expecting the eval's own box; in the
+        # auditor's two-box world that default is us, so aim it at the benchmark.
+        # only when a benchmark box exists: redirecting to an absent name would
+        # resolve BACK to the auditor on a one-environment sample.
+        redirect = sandbox_default(BENCHMARK_SERVICE) if has_benchmark_box() else nullcontext()
+        with redirect:
+            for inner in benchmark:
+                try:
+                    graded = await inner(state, target)
+                except Exception as ex:
+                    failure.append(ex)
+                    break
+                if graded is not None:
+                    results.append(
+                        {
+                            "value": graded.value,
+                            "answer": graded.answer,
+                            "explanation": graded.explanation,
+                        }
+                    )
+        return Score(value=0)
+
+    return score
 
 
 @tool(name="grade")
@@ -406,61 +533,66 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
 
         Args:
             answer: Submission to grade as the attempt's completion. Pass an
-                empty string when the submission is the state of the box
-                (apply it with `benchmark_bash` first) rather than a text
-                answer.
+                empty string to grade the session's own completed answer (a
+                loaded recorded attempt, or one fixed with attempt complete),
+                or, when there is none, the state of the box (apply it with
+                `benchmark_bash` first).
         """
         if not scorers:
             raise ToolError("This benchmark exposes no grader to grade with.")
         state = sample_state()
         if state is None:
             raise ToolError("Grading is only available while auditing a sample.")
+        gate = store_as(Concordance)
+        if gate.verdict == "blocked":
+            raise ToolError(
+                f"grade channel blocked (concordance: {', '.join(gate.reasons)}); "
+                f"a grade here would judge our reconstruction, not the benchmark. "
+                f"See {AUDIT_ROOT}/concordance.json."
+            )
 
-        # the grader judges the benchmark's own TaskState, never the audit's:
-        # its question, its choices, its metadata, the reconstructed session
+        # the grader judges the benchmark's own sample, never the audit's: its
+        # question, its choices, its metadata, the reconstructed session. Inspect's
+        # score_async rebuilds the TaskState from it exactly as `inspect score`
+        # does, binding the sample's own store, transcript and model roles.
         session = store_as(BenchmarkState)
-        graded = benchmark_task_state(state, session, answer)
-
-        # the benchmark's scorer calls sandbox() expecting the eval's own box; in the
-        # auditor's two-box world that default is us, so aim it at the benchmark.
-        # only when a benchmark box exists: redirecting to an absent name would
-        # resolve BACK to the auditor on a one-environment sample.
-        redirect = (
-            sandbox_default(BENCHMARK_SERVICE) if has_benchmark_box() else nullcontext()
+        # an empty answer grades the session's own output: a loaded attempt carries
+        # the answer the benchmark actually graded
+        graded = benchmark_sample(
+            state, session, None if not answer and session.completed else answer
         )
         results: list[dict[str, Any]] = []
-        with redirect:
-            for scorer in scorers:
-                try:
-                    score = await scorer(graded, graded.target)
-                except LimitExceededError:
-                    raise
-                except Exception as ex:
-                    # a grader that cannot run (its judge model is gone, its
-                    # sandbox call failed) is a fact for the auditor to record,
-                    # not a reason to error the sample and cancel the run
-                    # Provider exceptions may follow a long request dump. Prefer
-                    # the underlying exception so the diagnostic reaches the agent.
-                    cause: BaseException = ex
-                    visited = {id(cause)}
-                    while (
-                        cause.__cause__ is not None
-                        and id(cause.__cause__) not in visited
-                    ):
-                        cause = cause.__cause__
-                        visited.add(id(cause))
-                    raise ToolError(
-                        f"the benchmark's grader failed to run: {type(cause).__name__}: "
-                        f"{str(cause)}"
-                    ) from ex
-                if score is not None:
-                    results.append(
-                        {
-                            "value": score.value,
-                            "answer": score.answer,
-                            "explanation": score.explanation,
-                        }
-                    )
+        failure: list[BaseException] = []
+        try:
+            await score_async(
+                grade_log(state, session, graded),
+                [grade_collector(scorers, results, failure)],
+                action="overwrite",
+                model=get_model(),
+                model_roles=dict(model_roles()),
+                display="none",
+                copy=False,
+            )
+        except LimitExceededError:
+            raise
+        except Exception as ex:
+            failure.append(ex)
+        if failure:
+            # a grader that cannot run (its judge model is gone, its sandbox call
+            # failed) is a fact for the auditor to record, not a reason to error the
+            # sample and cancel the run. Provider exceptions may follow a long
+            # request dump: prefer the underlying exception so the diagnostic
+            # reaches the agent.
+            cause: BaseException = failure[0]
+            visited = {id(cause)}
+            while cause.__cause__ is not None and id(cause.__cause__) not in visited:
+                cause = cause.__cause__
+                visited.add(id(cause))
+            if isinstance(cause, LimitExceededError):
+                raise cause
+            raise ToolError(
+                f"the benchmark's grader failed to run: {type(cause).__name__}: {cause!s}"
+            ) from failure[0]
         return json.dumps(
             {
                 "scores": results if len(results) != 1 else results[0],
@@ -516,9 +648,7 @@ def reset_benchmark() -> Tool:
                 # worktree was never found reads as "reset nothing" rather than a
                 # silent success -- the auditor can see it and reach for hard
                 if reset_repos:
-                    summary = (
-                        f"benchmark reset in place (repos: {', '.join(reset_repos)})"
-                    )
+                    summary = f"benchmark reset in place (repos: {', '.join(reset_repos)})"
                 else:
                     summary = (
                         "benchmark reset in place; no git worktree was reset "
@@ -698,15 +828,9 @@ def audit_agent(
     # resolve the model object here so a generate config binds to it -- react
     # re-resolves a bare string without one, so the config would be dropped
     resolved: str | Model | None = model
+    if problem := effort_problem(model, reasoning_effort):
+        raise ValueError(problem)
     if reasoning_effort is not None:
-        if model is None:
-            # there is nothing to bind the config to yet (the eval's model is
-            # not resolved at task-construction time), and dropping the knob
-            # silently corrupts effort comparisons
-            raise ValueError(
-                "reasoning_effort needs an explicit model to bind to: pass "
-                "model= alongside it (the eval-level --model cannot carry it)"
-            )
         # a str arg so the CLI can pass it; GenerateConfig validates the value
         resolved = get_model(
             model, config=GenerateConfig(reasoning_effort=cast(Any, reasoning_effort))
@@ -737,10 +861,33 @@ def audit_agent(
         ),
         tools=tools,
         model=resolved,
-        submit=AgentSubmit(
-            tool=submit_audit(scoped), name="submit", keep_in_messages=True
-        ),
+        submit=AgentSubmit(tool=submit_audit(scoped), name="submit", keep_in_messages=True),
     )
+
+
+def _no_verdict_reason(rejected: list[str]) -> str:
+    """Why an item has no verdict, from its refusals and the sample's limits.
+
+    09-29: two items came back NO_VERDICT with nothing but concordance metadata, and
+    the investigator blamed the wrong thing.
+    """
+    reasons = [
+        f"record_verdict refused it {len(rejected)} time(s); last: {rejected[-1]}"
+        if rejected
+        else "the auditor never called record_verdict for this item"
+    ]
+    try:
+        limits = sample_limits()
+    except RuntimeError:  # scored outside a running sample
+        limits = None
+    if limits is not None:
+        for name in ("cost", "token", "time", "working", "message", "turn"):
+            limit = getattr(limits, name)
+            if limit.limit is not None and limit.usage >= limit.limit:
+                reasons.append(
+                    f"the sample hit its {name} limit ({limit.usage:g} of {limit.limit:g})"
+                )
+    return "; ".join(reasons)
 
 
 def item_scorer(item: AuditItemSkill) -> Scorer:
@@ -756,16 +903,22 @@ def item_scorer(item: AuditItemSkill) -> Scorer:
     def factory() -> Scorer:
         async def score(state: TaskState, target: Target) -> Score:
             verdict = state.store_as(Verdicts).verdicts.get(item.name)
+            gate = state.store_as(Concordance)
+            concordance = {"verdict": gate.verdict, "reasons": gate.reasons}
             if verdict is None:
-                return Score(value="NO_VERDICT")
+                rejected = state.store_as(Verdicts).rejected.get(item.name, [])
+                return Score(
+                    value="NO_VERDICT",
+                    explanation=_no_verdict_reason(rejected),
+                    metadata={"concordance": concordance, "rejections": len(rejected)},
+                )
             return Score(
                 value=verdict.grade,
                 answer=verdict.grade,
-                explanation="\n\n".join(
-                    f"{e.observed}\n  -- {e.source}" for e in verdict.evidence
-                )
+                explanation="\n\n".join(f"{e.observed}\n  -- {e.source}" for e in verdict.evidence)
                 or None,
                 metadata={
+                    "concordance": concordance,
                     "evidence": [e.model_dump() for e in verdict.evidence],
                     "approaches": verdict.approaches,
                     **verdict.details,

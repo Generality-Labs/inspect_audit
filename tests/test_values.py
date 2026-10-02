@@ -43,9 +43,11 @@ def write_compose(tmp_path: Path) -> SandboxEnvironmentSpec:
         "    image: python:3.12-slim\n"
         "    working_dir: /workspace\n"
         "    init: true\n"
-        "    privileged: true\n"
-        "    extra_hosts:\n"
-        '      - "codeocean.com:127.0.0.1"\n'
+        "    network_mode: none\n"
+        "  db:\n"
+        "    image: postgres:16\n"
+        "    command: postgres -c fsync=off\n"
+        "    runtime: runc\n"
     )
     return SandboxEnvironmentSpec("docker", str(compose))
 
@@ -61,20 +63,28 @@ def emit_values(tmp_path: Path) -> Path:
     return Path(sandbox[1])
 
 
-def test_their_services_convert_and_the_auditor_gets_scoped_egress(tmp_path: Path) -> None:
+def test_their_services_convert_as_they_ran_on_hawk_and_the_auditor_gets_scoped_egress(
+    tmp_path: Path,
+) -> None:
     path = emit_values(tmp_path)
     assert path.name == "values.yaml"
     values = yaml.safe_load(path.read_text())
 
     services = values["services"]
-    assert set(services) == {"default", "benchmark"}
-    # theirs converts to the chart's vocabulary; what k8s cannot express is dropped
+    assert set(services) == {"default", "benchmark", "db"}
+    # theirs goes through the chart's own converter, after Hawk's sanitising
     assert services["benchmark"]["image"] == "python:3.12-slim"
     assert services["benchmark"]["workingDir"] == "/workspace"
-    for key in ("working_dir", "init", "privileged", "extra_hosts"):
-        assert key not in services["benchmark"]
+    assert "init" not in services["benchmark"]
+    # network_mode: none stays isolated (it used to be silently dropped)
+    assert services["benchmark"]["networkIsolated"] is True
+    # a command feeds the image's entrypoint, and the runtime carries over
+    assert services["db"]["args"] == ["postgres", "-c", "fsync=off"]
+    assert "command" not in services["db"]
+    assert services["db"]["runtimeClassName"] == "runc"
     # ours is the published auditor image, and every service gets a DNS record
     assert services["default"]["image"] == AUDITOR_IMAGE
+    assert services["default"]["command"] == ["sleep", "infinity"]
     assert all(service["dnsRecord"] is True for service in services.values())
 
     # egress is a policy scoped to the auditor's pod, never a sandbox-wide grant
@@ -106,6 +116,36 @@ def test_a_built_service_requires_a_published_image(tmp_path: Path) -> None:
     assert "build" not in values["services"]["benchmark"]
 
 
+def test_a_stand_in_images_command_replaces_its_entrypoint(tmp_path: Path) -> None:
+    """The stand-in's entrypoint is not the build's; its command must run as given."""
+    compose = tmp_path / "their-compose.yaml"
+    compose.write_text("services:\n  default:\n    build: .\n    command: sleep infinity\n")
+    sandbox = audit_values(
+        make_task(),
+        SandboxEnvironmentSpec("docker", str(compose)),
+        stage=tmp_path / "stage",
+        auditor_image=AUDITOR_IMAGE,
+        benchmark_image="ghcr.io/example/benchmark:latest",
+    )
+    values = yaml.safe_load(Path(str(sandbox[1])).read_text())
+    assert values["services"]["benchmark"]["command"] == ["sleep", "infinity"]
+    assert "args" not in values["services"]["benchmark"]
+
+
+def test_bridge_networking_gets_the_world_egress_hawk_gives_it(tmp_path: Path) -> None:
+    compose = tmp_path / "their-compose.yaml"
+    compose.write_text("services:\n  default:\n    image: nginx\n    network_mode: bridge\n")
+    sandbox = audit_values(
+        make_task(),
+        SandboxEnvironmentSpec("docker", str(compose)),
+        stage=tmp_path / "stage",
+        auditor_image=AUDITOR_IMAGE,
+    )
+    values = yaml.safe_load(Path(str(sandbox[1])).read_text())
+    assert "world" in values["allowEntities"]
+    assert "network_mode" not in values["services"]["benchmark"]
+
+
 def test_without_a_compose_file_the_auditor_stands_alone(tmp_path: Path) -> None:
     sandbox = audit_values(make_task(), None, stage=tmp_path, auditor_image=AUDITOR_IMAGE)
     values = yaml.safe_load(Path(str(sandbox[1])).read_text())
@@ -123,6 +163,7 @@ def test_helm_renders_the_generated_values(tmp_path: Path) -> None:
         ["helm", "template", "audit-values-test", str(CHART), "--values", str(path)],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert rendered.returncode == 0, rendered.stderr
     assert "inspect/service: default" in rendered.stdout

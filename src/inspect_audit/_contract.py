@@ -25,6 +25,7 @@ from inspect_ai import Task
 # `is_registry_object` have no public equivalent, which is the one thing this module
 # needs from the private surface
 from inspect_ai._util.registry import is_registry_object, registry_params
+from inspect_ai.log import EvalLog
 from inspect_ai.tool import Tool, ToolDef
 from inspect_ai.util import registry_create, registry_info
 
@@ -63,6 +64,22 @@ def task_contract(task: Task) -> SolverContract:
     for solver in (task.setup, task.solver):
         if solver is not None:
             _walk_object(solver, contract, depth=0)
+    return contract
+
+
+def log_contract(log: EvalLog) -> SolverContract | None:
+    """The contract the eval actually ran, when it overrode the task's own solver.
+
+    `eval.solver` is set only when the eval was given a solver in place of the task's
+    (Hawk agent configs routinely do this). The plan then records what ran, as the
+    same serialised registry refs the task walk rebuilds. None means the task's own
+    solver ran, so `task_contract` is the right source.
+    """
+    if log.eval.solver is None:
+        return None
+    contract = SolverContract()
+    for step in log.plan.steps:
+        _walk_params(step.params, contract, depth=0)
     return contract
 
 
@@ -159,9 +176,7 @@ def _as_prompt(value: Any) -> str | None:
     return None
 
 
-def discrepancies_doc(
-    contract: SolverContract, logged: dict[str, set[str]]
-) -> str | None:
+def discrepancies_doc(contract: SolverContract, logged: dict[str, set[str]]) -> str | None:
     """Render the declared-versus-ran tool diff for one item, or `None`.
 
     Args:

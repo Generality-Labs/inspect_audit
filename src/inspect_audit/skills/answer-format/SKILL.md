@@ -34,6 +34,11 @@ scores and errors. Review every actual submitted answer, whether credited or
 rejected. Interpret its meaning independently of the recorded extraction; then
 compare that interpretation, substantive correctness, extracted answer and score.
 For non-text tasks, inspect the artifact or state that the scorer actually used.
+Where the prompt fixes an answer format and a model extracts the answer, also apply
+the prompt's stated format yourself, deterministically, to every attempt, and
+tabulate where your parse and the extraction disagree in either direction: a
+correct final answer the extractor dropped, or credit for an answer the submission
+never committed to.
 
 Save an attempt-level CSV or JSON table and print it in bounded chunks so the
 audit log retains it after sandbox cleanup. Include exact log/sample/epoch references,

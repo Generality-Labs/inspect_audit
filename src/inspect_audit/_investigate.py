@@ -1,5 +1,6 @@
-"""Local, artifact-first investigation using Inspect's standard agent and ACP."""
+"""Investigation on Hawk, with explicit local execution for development."""
 
+import asyncio
 import errno
 import inspect as inspect_module
 import json
@@ -9,8 +10,9 @@ import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 import urllib.request
-from html.parser import HTMLParser
+from dataclasses import asdict
 from importlib.metadata import version
 from logging import getLogger
 from pathlib import Path
@@ -18,7 +20,6 @@ from typing import Any
 from uuid import uuid4
 
 import yaml
-from dotenv import find_dotenv
 from inspect_ai import Task, task
 from inspect_ai.agent import AgentState, react
 from inspect_ai.dataset import Sample
@@ -33,17 +34,24 @@ from inspect_ai.model import (
 )
 from inspect_ai.model._model import sample_model_usage
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.tool import Tool, ToolError, bash, skill, tool
-from inspect_ai.util import LimitExceededError, sample_limits, sandbox, store_as
+from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
+from inspect_ai.util import LimitExceededError, StoreModel, sample_limits, store_as
+from pydantic import Field
 
 from . import prompts
 from ._agent import SKILLS, SUPPORT_SKILLS, view_image
 from ._jobs import (
+    JOB_TERMINAL,
     Hawk,
     Job,
     JobLedger,
     Policy,
+    Worker,
+    canonicalise,
     copy_into_inputs,
+    expected_evals,
+    http_status,
+    named_models,
     parse_config,
     slug,
     task_package_name,
@@ -54,9 +62,13 @@ from ._jobs import (
     worst_case_usd,
     write_config,
 )
+from ._prices import valid_price
 from ._report import (
     InvestigationState,
-    _operator_turn,
+    check_report,
+    investigation_outcome,
+    operator_turn,
+    report_blocker,
 )
 from ._report import (
     publish_report as publish_report,
@@ -76,7 +88,11 @@ ASSETS = Path(__file__).parent / "investigation"
 # `hawk` binary. See investigation/skills/VENDORED.md for provenance and what changed.
 DEFAULT_AUDITOR_IMAGE = (
     "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
-    "072e50b2ea1c51e67644e97e08cff052a52a1d661294635e1c3e360d1371b9ee"
+    "63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa"
+)
+DEFAULT_INVESTIGATOR_IMAGE = (
+    "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
+    "d21b285bc4ce2f2d34084c2ae382ab5a6996704dbb8d58d1199a1d1925fa71fa"
 )
 
 INVESTIGATION_SKILLS = (
@@ -88,15 +104,22 @@ INVESTIGATION_SKILLS = (
     "security-audit-eval",
     "view-results",
     "debug-stuck-eval",
+    "babysit-eval",
+    "babysitting-evals",
+    "check-trajectories-workflow",
+    "eval-report-workflow",
+    "read-eval-logs",
 )
+# compact the investigator's context once it passes this many tokens
+COMPACTION_TOKENS = 200_000
 OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"
+OPENROUTER_IDS: set[str] = set()  # every id the price registry has seen this process
 DEFAULT_WORKERS = [
     "openai/gpt-5.6-luna",
     "google/gemini-3.6-flash",
     "openai/gpt-5-mini",
     "openai/gpt-5.6-sol",
     "openai/gpt-5.6-terra",
-    "anthropic/claude-sonnet-5",
     "openai/gpt-6-astra",
 ]
 
@@ -221,9 +244,7 @@ def register_openrouter_costs(timeout: float = 15) -> int:
     cost limit then fails loudly at start rather than silently not applying.
     """
     try:
-        request = urllib.request.Request(
-            OPENROUTER_MODELS, headers={"User-Agent": "inspect_audit"}
-        )
+        request = urllib.request.Request(OPENROUTER_MODELS, headers={"User-Agent": "inspect_audit"})
         with urllib.request.urlopen(request, timeout=timeout) as response:
             models = json.load(response)["data"]
     except Exception as ex:
@@ -244,33 +265,27 @@ def register_openrouter_costs(timeout: float = 15) -> int:
             }
         except (TypeError, ValueError):
             continue
+        if not valid_price(per_million):
+            # a router lists -1 ("depends on the route"): registering it would price
+            # every call at minus a million dollars
+            continue
         try:
             # set_model_info creates the entry; set_model_cost needs one to exist
-            set_model_info(
-                f"openrouter/{model['id']}",
-                (get_model_info(f"openrouter/{model['id']}") or ModelInfo()).model_copy(
-                    update={"cost": ModelCost(**per_million)}
-                )
+            info = (get_model_info(f"openrouter/{model['id']}") or ModelInfo()).model_copy(
+                update={"cost": ModelCost(**per_million)}
             )
+            if isinstance(model.get("context_length"), int) and model["context_length"] > 0:
+                info.context_length = model["context_length"]
+            set_model_info(f"openrouter/{model['id']}", info)
+            # Hawk's public route can itself include the provider prefix. The
+            # Inspect factory still prepends its own name to that item id.
+            set_model_info(f"openrouter/openrouter/{model['id']}", info)
         except Exception as ex:  # one odd listing must not lose the rest
             logger.debug(f"skipping price for {model.get('id')}: {ex}")
             continue
+        OPENROUTER_IDS.add(str(model["id"]))
         registered += 1
     return registered
-
-
-def _find_secrets(config: str | None, repo: Path) -> str | None:
-    """The .env a Hawk runner should be given, looked for where one is kept.
-
-    Beside the investigation file, beside the benchmark, then Inspect's own search from
-    the working directory. The working directory alone is not enough: a run launched
-    from a checkout of this package finds nothing, and the failure lands in every
-    runner as a 401 rather than here.
-    """
-    for directory in [Path(config).expanduser().parent if config else None, repo, repo.parent]:
-        if directory and (directory / ".env").is_file():
-            return str(directory / ".env")
-    return find_dotenv(usecwd=True) or None
 
 
 def _investigation_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
@@ -296,9 +311,7 @@ def _investigation_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
     # defaults to None, so "given" is "not None": passing the same value the default
     # would have used is still passing it, and a file cannot turn something back on
     return {
-        key: value
-        for key, value in loaded.items()
-        if key != "config" and passed.get(key) is None
+        key: value for key, value in loaded.items() if key != "config" and passed.get(key) is None
     }
 
 
@@ -349,7 +362,9 @@ def git_package_spec(repo: Path, revision: str | None = None) -> str | None:
     url = origin.removesuffix(".git").replace("git@github.com:", "https://github.com/")
     on_remote = subprocess.run(
         ["git", "-C", str(repo), "branch", "-r", "--contains", commit],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if on_remote.returncode != 0 or not on_remote.stdout.strip():
         logger.warning(
@@ -392,17 +407,13 @@ def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | No
     if directory is None:
         return None
     chosen = {str(directory.relative_to(source))}
-    chosen |= {
-        str(path.relative_to(source)) for path in _imported_by(source, directory)
-    }
+    chosen |= {str(path.relative_to(source)) for path in _imported_by(source, directory)}
     for top in ("pyproject.toml", "README.md"):
         if (source / top).is_file():
             chosen.add(top)
     # a file inside a directory already named adds nothing to the snapshot
     directories = {c for c in chosen if (source / c).is_dir()}
-    return sorted(
-        c for c in chosen if not any(c.startswith(f"{d}/") for d in directories)
-    )
+    return sorted(c for c in chosen if not any(c.startswith(f"{d}/") for d in directories))
 
 
 def _imported_by(source: Path, directory: Path, depth: int = 3) -> set[Path]:
@@ -431,7 +442,11 @@ def _imported_by(source: Path, directory: Path, depth: int = 3) -> set[Path]:
                     continue
                 for dotted in pattern.findall(text):
                     target = _module_path(package, dotted)
-                    if target is not None and target not in found and directory not in target.parents:
+                    if (
+                        target is not None
+                        and target not in found
+                        and directory not in target.parents
+                    ):
                         imported.add(target)
         found |= imported
         # a module's own imports count too: the scorer that imports the constants
@@ -493,8 +508,10 @@ def _task_directory(source: Path, target_task: str | None) -> Path | None:
 # `@task` may name the task itself, or take the function's name. Both spellings, and
 # the registry name may carry spaces where the function has underscores.
 def _declaring_file(source: Path, name: str) -> Path | None:
-    function = re.compile(rf"^\s*def {re.escape(name.replace(' ', '_').lower())}\s*\(", re.M)
-    declared = re.compile(rf"@task\([^)]*name\s*=\s*[\"']{re.escape(name)}[\"']", re.S)
+    function = re.compile(
+        rf"^\s*def {re.escape(name.replace(' ', '_').lower())}\s*\(", re.MULTILINE
+    )
+    declared = re.compile(rf"@task\([^)]*name\s*=\s*[\"']{re.escape(name)}[\"']", re.DOTALL)
     fallback: Path | None = None
     for path in sorted(source.rglob("*.py")):
         if any(part in {".git", "tests", "test", "build", ".venv"} for part in path.parts):
@@ -551,6 +568,7 @@ def prepare_workspace(
     work = root / "work"
     inputs.mkdir(parents=True)
     work.mkdir()
+    shutil.copyfile(Path(__file__).with_name("_coverage.py"), inputs / "coverage.py")
     seed: dict[str, object] = dict(_snapshot_repo(repo, revision, inputs, paths))
     log_index = []
     for index, source in enumerate(logs):
@@ -573,9 +591,7 @@ def prepare_workspace(
         if not files:
             raise ValueError(f"No Inspect logs found: {source}")
         for file in files:
-            relative = Path(str(index)) / (
-                file.name if path.is_file() else file.relative_to(path)
-            )
+            relative = Path(str(index)) / (file.name if path.is_file() else file.relative_to(path))
             _link_or_copy(file, inputs / "logs" / relative)
             log_index.append(
                 {"source": str(file), "staged": f"/inputs/logs/{relative}", "remote": None}
@@ -596,13 +612,14 @@ def prepare_workspace(
         work / "report",
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
+    from ._assessment import prepare_assessments
+
+    prepare_assessments(work / "report")
     (work / "journal.md").write_text(
         "# Activity journal\n\nAppend actions and corrections with evidence references.\n"
     )
     (root / "Dockerfile").write_text(
-        (ASSETS / "Dockerfile")
-        .read_text()
-        .replace("INSPECT_VERSION", version("inspect-ai"))
+        (ASSETS / "Dockerfile").read_text().replace("INSPECT_VERSION", version("inspect-ai"))
     )
     (root / ".dockerignore").write_text("*\n!Dockerfile\n")
     compose = {
@@ -628,79 +645,24 @@ def prepare_workspace(
     return root
 
 
-class _Text(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.parts: list[str] = []
-        self.images: list[str] = []
-        self._skip = 0
+class InvestigationRecord(StoreModel):
+    """The host's records, mirrored into the sample Store so a checkpoint carries them.
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in ("script", "style"):
-            self._skip += 1
-        if tag == "img":
-            src = dict(attrs).get("src") or ""
-            self.images.append(src[:60] + ("…" if len(src) > 60 else ""))
-        if tag in ("p", "h1", "h2", "h3", "h4", "li", "tr", "pre", "div"):
-            self.parts.append("\n")
+    The ledger and spend files live in the runner's scratch directory, which a resumed
+    run on a fresh pod does not have. Inspect checkpoints the Store and restores it on
+    resume, so the records travel with the conversation they belong to.
 
-    def handle_endtag(self, tag: str) -> None:
-        if tag in ("script", "style"):
-            self._skip = max(0, self._skip - 1)
+    `prior_usd` is spend that Inspect's own cost counter does not include: earlier
+    attempts that were not resumed from a checkpoint (a task retry, `resume=` of an
+    investigation directory). A checkpoint resume restores the counter itself, so it
+    must restore this figure rather than add the previous attempt again.
+    """
 
-    def handle_data(self, data: str) -> None:
-        if not self._skip:
-            self.parts.append(data)
-
-
-@tool
-def render_report() -> Tool:
-    """Render the draft and read it back, without publishing."""
-
-    async def execute() -> str:
-        """Render report/report.qmd to HTML and return its text and any warnings.
-
-        Use this to check the draft renders and reads the way you intend before
-        calling publish_report. Figures are listed by source; look at a figure
-        with view_image. Nothing is saved outside the workspace.
-        """
-        result = await sandbox().exec(
-            ["quarto", "render", "/workspace/report/report.qmd", "--to", "html"],
-            timeout=300,
-        )
-        if not result.success:
-            raise ToolError(f"Rendering failed:\n{result.stderr}\n{result.stdout}")
-        html = await sandbox().read_file("/workspace/report/report.html")
-        parser = _Text()
-        parser.feed(html)
-        text = re.sub(r"\n{3,}", "\n\n", "".join(parser.parts)).strip()
-        warnings = "\n".join(
-            line for line in (result.stderr or "").splitlines() if "WARN" in line
-        )
-        # the template embeds resources, so every figure in the HTML is a data: URI
-        # and its src says nothing. The files behind them are what view_image reads.
-        listing = await sandbox().exec(
-            [
-                "find", "/workspace/report/evidence", "-maxdepth", "2", "-type", "f",
-                "-name", "*.png", "-o", "-name", "*.jpg", "-o", "-name", "*.jpeg",
-                "-o", "-name", "*.svg", "-o", "-name", "*.webp",
-            ],
-            timeout=60,
-        )
-        files = sorted(line for line in (listing.stdout or "").splitlines() if line.strip())[:40]
-        return (
-            f"Rendered ({len(text)} characters of text, {len(parser.images)} figures).\n"
-            + (f"Quarto warnings:\n{warnings}\n" if warnings else "")
-            + (
-                "Figure files to look at with view_image:\n  " + "\n  ".join(files) + "\n"
-                if files
-                else "No figure files under /workspace/report/evidence/.\n"
-            )
-            + f"\n{text[:6000]}"
-            + ("\n…" if len(text) > 6000 else "")
-        )
-
-    return execute
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+    known_sources: list[str] = Field(default_factory=list)
+    prior_usd: float = 0.0
+    # models whose calls `prior_usd` could not price: it is then a lower bound
+    prior_unpriced: list[str] = Field(default_factory=list)
 
 
 class Remote:
@@ -710,23 +672,41 @@ class Remote:
         self,
         root: Path,
         hawk_api_url: str,
-        secrets_file: str | None,
         task_package: str,
         audit_package: str,
         auditor_image: str,
         worker_models: list[str],
         allowance_usd: float,
+        provider: str = "middleman",
+        provider_key: str | None = None,
     ) -> None:
+        if provider not in PROVIDERS:
+            raise ValueError(f"provider must be one of {', '.join(PROVIDERS)}")
+        if provider == "openrouter-direct" and not provider_key:
+            raise ValueError(
+                "provider 'openrouter-direct' (the default) needs the operator's OpenRouter "
+                f"key: {OPERATOR_KEY_VAR} as a secret on the investigator's eval set, "
+                "OPENROUTER_API_KEY on a laptop, or a secrets_file holding either. "
+                "Pass provider='middleman' to route child jobs through Hawk's proxy instead."
+            )
+        if provider == "openrouter-direct":
+            _check_openrouter_ids(worker_models)
         self.root = root
-        self.hawk = Hawk(hawk_api_url, secrets_file)
+        self.provider = provider
+        self.provider_key = provider_key
+        self.hawk = Hawk(hawk_api_url)
         self.hawk_api_url = hawk_api_url
         self.task_package = task_package
         self.audit_package = audit_package
         self.auditor_image = auditor_image
         self.worker_models = worker_models
+        self.workers = [
+            Worker(item=m, price=_registered_price(qualified_model_name(m))) for m in worker_models
+        ]
         self.allowance_usd = allowance_usd
         self.ledger = JobLedger(root)
         self.policy = Policy(
+            known_models=frozenset(OPENROUTER_IDS),
             packages=[task_package, audit_package],
             task_names=[task_package_name(task_package), "inspect_audit"],
             models=worker_models,
@@ -734,14 +714,9 @@ class Remote:
             hawk_api_url=hawk_api_url,
         )
         self._spend_path = root / "local_spend.json"
-        spent = (
-            json.loads(self._spend_path.read_text()) if self._spend_path.is_file() else {}
-        )
         # a resumed run starts Inspect's usage accounting from zero; what earlier runs
         # of this investigation spent is carried forward from disk
-        self.prior_local_usd = float(spent.get("prior_usd", 0.0)) + float(
-            spent.get("this_run_usd", 0.0)
-        )
+        self.prior_local_usd, self.prior_unpriced = self._saved_spend()
         self._sources_path = root / "log_sources.json"
         self.known_sources: set[str] = set(
             json.loads(self._sources_path.read_text()) if self._sources_path.is_file() else []
@@ -760,52 +735,115 @@ class Remote:
         """A fresh id per job. Reusing one makes Hawk resume that set instead."""
         return f"{self.policy.id_prefix}{slug(label)}-{uuid4().hex[:8]}"[:43]
 
-    def model_costs(self) -> tuple[dict[str, dict[str, float]], list[str]]:
-        """Prices for the worker models, so the runner can enforce its cost limit.
+    def model_costs(
+        self, named: set[str] | None = None
+    ) -> tuple[dict[str, dict[str, float]], list[str]]:
+        """Prices for the workers a job names, so the runner can enforce its cost limit.
 
         The agent may not write these: a job whose prices are its own invention has a
         cost limit that means nothing. They come from the same registry the local
-        allowance is accounted with.
+        allowance is accounted with, keyed by the Inspect name the job runs under.
 
-        Both the key and the lookup use the name the job will run under. A worker is
-        named in a config the way Hawk composes it, provider group then item, so
-        `openai/gpt-5.6-luna` under the `openrouter` group is `openrouter/openai/
-        gpt-5.6-luna` to Inspect, in the runner's cost table and in its logs. Returns
-        the prices and the workers that have none: without a price a cost limit cannot
-        bind, so that list is a refusal, not a warning.
+        Only the named workers: Hawk applies every stamped price with Inspect's
+        set_model_cost, which refuses a model the runner's Inspect does not know, so
+        pricing an unused worker could stop a job that never calls it. Returns the
+        prices and the workers without a valid one: without a price a cost limit
+        cannot bind, so that list is a refusal, not a warning.
         """
-        from inspect_ai.model import get_model_info
-
         costs: dict[str, dict[str, float]] = {}
         missing: list[str] = []
-        for model in self.worker_models:
-            qualified = qualified_model_name(model)
-            info = get_model_info(qualified)
-            cost = info.cost if info else None
-            if cost is None or not (cost.input or cost.output):
-                missing.append(model)
+        for worker in self.workers:
+            if named is not None and worker.inspect_name not in named:
                 continue
-            costs[qualified] = {
-                "input": cost.input or 0.0,
-                "output": cost.output or 0.0,
-                "input_cache_read": cost.input_cache_read or 0.0,
-                "input_cache_write": cost.input_cache_write or 0.0,
-            }
+            price = _registered_price(worker.inspect_name)
+            if price is None:
+                missing.append(worker.inspect_name)
+                continue
+            costs[worker.inspect_name] = price
         return costs, missing
 
-    def record_local_spend(self) -> None:
-        """Keep this run's own spend on disk, so a resumed investigation inherits it."""
-        local = _local_spend()[0]
-        if local is None:
-            local = sample_limits().cost.usage
+    def worker_table(self) -> list[dict[str, Any]]:
+        """The workers as the agent should name them, with the prices they are held to."""
+        return [
+            {
+                "model_item": w.item,
+                "task_arg_model": w.inspect_name,
+                "price_per_million_tokens": _registered_price(w.inspect_name),
+            }
+            for w in self.workers
+        ]
+
+    def fold_prior_spend(self) -> None:
+        """Start a sample attempt: what earlier attempts spent becomes prior spend.
+
+        Inspect retries a sample on the same Task object with its usage counter back
+        at zero, so without this a retry would forget the first attempt's spend.
+        Idempotent: it recomputes from the file rather than adding to memory.
+        """
+        self.prior_local_usd, self.prior_unpriced = self._saved_spend()
+        self._write_spend(0.0, [])
+
+    def _saved_spend(self) -> tuple[float, list[str]]:
+        """Everything earlier attempts spent, and the models that left it a lower bound."""
+        spent = json.loads(self._spend_path.read_text()) if self._spend_path.is_file() else {}
+        usd = float(spent.get("prior_usd", 0.0)) + float(spent.get("this_run_usd", 0.0))
+        return usd, sorted(set(spent.get("prior_unpriced", [])) | set(spent.get("unpriced", [])))
+
+    def _write_spend(self, this_run_usd: float, unpriced: list[str]) -> None:
         self._spend_path.write_text(
-            json.dumps({"prior_usd": self.prior_local_usd, "this_run_usd": local})
+            json.dumps(
+                {
+                    "prior_usd": self.prior_local_usd,
+                    "prior_unpriced": self.prior_unpriced,
+                    "this_run_usd": this_run_usd,
+                    "unpriced": unpriced,
+                }
+            )
         )
 
+    def snapshot_record(self) -> None:
+        """Mirror the ledger, sources and prior spend into the sample Store."""
+        self.ledger.reload()
+        record = store_as(InvestigationRecord)
+        record.jobs = [asdict(j) for j in self.ledger.jobs]
+        record.known_sources = sorted(self.known_sources)
+        record.prior_usd = self.prior_local_usd
+        record.prior_unpriced = self.prior_unpriced
+
+    def restore_record(self) -> str:
+        """Rebuild the host files from a restored Store, after a checkpoint resume.
+
+        Prior spend is taken from the record, never re-folded from disk: Inspect has
+        restored its cost counter, which already holds everything this sample spent.
+        """
+        record = store_as(InvestigationRecord)
+        with self.ledger.transaction() as ledger:
+            ledger.jobs = [Job(**j) for j in record.jobs]
+        self.known_sources = set(record.known_sources) | {j.eval_set_id for j in self.ledger.jobs}
+        self.save_sources()
+        self.prior_local_usd = record.prior_usd
+        self.prior_unpriced = record.prior_unpriced
+        self.record_local_spend()
+        return (
+            f"restored {len(record.jobs)} job(s) and {len(record.known_sources)} log "
+            f"source(s); prior spend ${record.prior_usd:.2f}"
+        )
+
+    def record_local_spend(self) -> None:
+        """Keep this run's own spend on disk, so a resumed investigation inherits it.
+
+        With an unpriced model the priced part is written with the models that make it
+        a lower bound, so a later attempt knows its prior spend is not the whole cost.
+        """
+        self._write_spend(*_local_spend())
+
+    def unpriced(self) -> list[str]:
+        """Models, in this attempt or an earlier one, whose calls could not be priced."""
+        return sorted(set(_local_spend()[1]) | set(self.prior_unpriced))
+
     def local_usd(self) -> float:
-        """Every dollar this investigation has spent on its own model calls."""
-        local, _ = _local_spend()
-        return self.prior_local_usd + (local if local is not None else sample_limits().cost.usage)
+        """What this investigation's own calls cost, a lower bound when unpriced()."""
+        return self.prior_local_usd + _local_spend()[0]
 
     def committed_usd(self) -> float:
         """Spent locally, plus collected remote costs, plus live reservations."""
@@ -813,8 +851,7 @@ class Remote:
 
     def over_allowance(self) -> str | None:
         """The message to give the agent when the shared allowance is gone, else None."""
-        _, unpriced = _local_spend()
-        if unpriced:
+        if unpriced := self.unpriced():
             return "Cannot enforce the shared allowance: missing prices for " + ", ".join(unpriced)
         committed = self.committed_usd()
         if committed < self.allowance_usd:
@@ -833,7 +870,7 @@ class Remote:
         inside it, so two submissions in flight cannot both take the last of the money.
         The job is written as `pending` before anything is sent to Hawk.
         """
-        if _local_spend()[1]:
+        if self.unpriced():
             raise ToolError("Cannot reserve more work while local model costs are unknown")
         with self.ledger.transaction() as ledger:
             existing = ledger.get(job.label)
@@ -891,40 +928,105 @@ class Remote:
         return notes
 
 
+PROVIDERS = ("middleman", "openrouter-direct")
+# child jobs go straight to OpenRouter on the operator's key unless told otherwise
+DEFAULT_PROVIDER = "openrouter-direct"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# The operator's key, under a name no Inspect provider reads. On a Hawk runner the
+# refresh hook rewrites OPENROUTER_API_KEY to the Hawk token the moment an OpenRouter
+# model is built (inspect_ai/model/_model.py `_apply_api_key_overrides`), so the
+# investigator's copy must live somewhere the hook never touches.
+OPERATOR_KEY_VAR = "INSPECT_AUDIT_OPENROUTER_API_KEY"
+# Setting this empty stops Hawk installing its refresh hook in a child runner
+# (hawk/runner/refresh_token.py `install_hook` needs token, url and client id). That
+# hook answers every provider key with the Hawk token, which OpenRouter refuses. The
+# runner's S3 and Hawk API credentials use separate HAWK_TOKEN_REFRESH_* variables.
+MODEL_KEY_HOOK_VAR = "HAWK_RUNNER_REFRESH_URL"
+
+
+def _check_openrouter_ids(worker_models: list[str]) -> None:
+    """Refuse worker names OpenRouter does not serve, before anything is spent.
+
+    A direct child sends its model item to OpenRouter as the model id, so a worker
+    must be written as OpenRouter lists it. Middleman's route names carry an extra
+    `openrouter/` (2026-09-28: `openrouter/openai/gpt-6-luna` passed every check and
+    every child got HTTP 400 "not a valid model ID"). Nothing is rewritten: the
+    operator's name is either an OpenRouter id or a configuration error. Without a
+    listing (no network at prep) the live worker check at start still catches it.
+    """
+    if not OPENROUTER_IDS:
+        return
+    unknown = [m for m in worker_models if m not in OPENROUTER_IDS]
+    if not unknown:
+        return
+    hints = [
+        f"{m!r} (OpenRouter lists {m.removeprefix('openrouter/')!r}; the extra "
+        "'openrouter/' is Middleman's spelling)"
+        if m.removeprefix("openrouter/") in OPENROUTER_IDS
+        else repr(m)
+        for m in unknown
+    ]
+    raise ValueError(
+        "provider 'openrouter-direct' sends each worker's name to OpenRouter as its model "
+        f"id, and OpenRouter does not serve: {', '.join(hints)}. Write worker_models as "
+        f"OpenRouter ids ({OPENROUTER_MODELS}), or pass provider='middleman'."
+    )
+
+
+def operator_key(secrets_file: str | None) -> str | None:
+    """The operator's OpenRouter key for child jobs, from wherever this process has it.
+
+    On a Hawk runner OPENROUTER_API_KEY holds Hawk's own token, not a key, so it is
+    only trusted off-runner.
+    """
+    key = os.environ.get(OPERATOR_KEY_VAR)
+    if not key and not os.environ.get("HAWK_JOB_ID"):
+        key = os.environ.get("OPENROUTER_API_KEY")
+    if not key and secrets_file:
+        from dotenv import dotenv_values
+
+        values = dotenv_values(Path(secrets_file).expanduser())
+        key = values.get(OPERATOR_KEY_VAR) or values.get("OPENROUTER_API_KEY")
+    return key or None
+
+
+def _registered_price(inspect_name: str) -> dict[str, float] | None:
+    """The price Inspect holds for a model, per million tokens, if it is a usable one.
+
+    OpenRouter's larger-context tier (some models bill input 2x and output 1.5x past
+    272k prompt tokens) is not modelled: a long call is under-counted until Inspect's
+    ModelCost can express tiers.
+    """
+    from inspect_ai.model import get_model_info
+
+    info = get_model_info(inspect_name)
+    cost = info.cost if info else None
+    if cost is None:
+        return None
+    price = {
+        "input": cost.input or 0.0,
+        "output": cost.output or 0.0,
+        "input_cache_read": cost.input_cache_read or 0.0,
+        "input_cache_write": cost.input_cache_write or 0.0,
+    }
+    return price if valid_price(price) else None
+
+
 def qualified_model_name(model: str) -> str:
     """The name a worker runs under: the OpenRouter group, then the model's own id."""
-    return model if model.startswith("openrouter/") else f"openrouter/{model}"
+    return f"openrouter/{model}"
 
 
-def _models_named(config: dict[str, object]) -> set[str]:
-    """Every model the config will actually construct, qualified as Hawk composes it."""
-    named: set[str] = set()
-    models = config.get("models")
-    groups: list[object] = list(models) if isinstance(models, list) else []
-    roles = config.get("model_roles")
-    if isinstance(roles, dict):
-        groups += list(roles.values())
-    for group in groups:
-        if not isinstance(group, dict):
-            continue
-        provider = str(group.get("name", ""))
-        for item in group.get("items") or []:
-            if isinstance(item, dict) and item.get("name"):
-                named.add(f"{provider}/{item['name']}")
-    return named
-
-
-def _local_spend() -> tuple[float | None, list[str]]:
-    """What this investigator has spent on its own calls, and what it could not price.
+def _local_spend() -> tuple[float, list[str]]:
+    """What this investigator's own calls have cost, and the models it could not price.
 
     The total is Inspect's own: `sample_limits().cost.usage` is the same number the
-    cost limit is enforced against, so the tools and the limit cannot disagree. The
-    per-model breakdown has no public equivalent, and it is only used to name the
-    models whose price is missing, which is why an unpriced model makes the total
-    unknown rather than merely smaller.
+    cost limit is enforced against, so the tools and the limit cannot disagree. With
+    an unpriced model it is only the priced part: a lower bound, never the cost, so
+    every caller that compares it with the allowance checks the list first.
     """
     unpriced = [name for name, value in sample_model_usage().items() if value.total_cost is None]
-    return (None if unpriced else sample_limits().cost.usage), unpriced
+    return sample_limits().cost.usage, unpriced
 
 
 @tool(name="budget")
@@ -937,7 +1039,10 @@ def investigation_budget(
         """Show the allowance, spend so far by model, and tokens used."""
         usage = sample_model_usage()
         spend = sample_limits().cost
-        lines = [f"Allowance: ${budget_usd:.2f}" + (" (enforced)" if enforce_cost_limit else " (planning only)")]
+        lines = [
+            f"Allowance: ${budget_usd:.2f}"
+            + (" (enforced)" if enforce_cost_limit else " (planning only)")
+        ]
         total = spend.usage
         unpriced: list[str] = []
         for name, value in usage.items():
@@ -950,12 +1055,14 @@ def investigation_budget(
                 f" (reasoning {value.reasoning_tokens or 0:,}) | "
                 + (f"${cost:.2f}" if cost is not None else "cost unknown")
             )
+        if remote is not None:  # an earlier attempt's unpriced calls are in the prior
+            unpriced = sorted(set(unpriced) | set(remote.prior_unpriced))
         if unpriced:
             lines.append(
                 f"Spent: at least ${total:.2f}; {', '.join(unpriced)} unpriced, so the "
                 "true total and the remaining allowance are unknown"
             )
-        else:
+        elif remote is None:
             remaining = spend.remaining
             lines.append(
                 f"Spent: ${total:.2f}   Remaining: "
@@ -980,14 +1087,87 @@ def investigation_budget(
                     "  collected but unpriced, so their real cost is unknown and their "
                     f"reservation is still held: {', '.join(remote.ledger.unpriced())}"
                 )
-            committed = remote.prior_local_usd + total + remote.ledger.actual_usd() + remote.ledger.reserved_usd()
-            lines.append(f"Committed {'at least' if unpriced else 'in total'}: ${committed:.2f} of ${budget_usd:.2f}")
+            committed = (
+                remote.prior_local_usd
+                + total
+                + remote.ledger.actual_usd()
+                + remote.ledger.reserved_usd()
+            )
+            lines.append(
+                f"Committed {'at least' if unpriced else 'in total'}: ${committed:.2f} of ${budget_usd:.2f}"
+            )
+            lines.append(
+                f"Prior lead segments: ${remote.prior_local_usd:.2f}; current lead segment: ${total:.2f}"
+            )
+            if not unpriced and not remote.ledger.unpriced():
+                lines.append(f"Shared remaining allowance: ${max(0.0, budget_usd - committed):.2f}")
         lines.append(
             "Scope: this investigator's own model calls plus remote jobs it launched. The allowance is shared. Remote reservations include a buffer for model roles; Inspect's solver cost_limit does not cap scoring or in-flight overshoot."
         )
         return "\n".join(lines)
 
     return execute
+
+
+def ship_prices(
+    config: dict[str, Any], costs: dict[str, dict[str, float]], audit_package: str
+) -> None:
+    """Carry the job's prices into its tasks, so they register before Hawk applies them.
+
+    Hawk applies `model_cost_config` with Inspect's set_model_cost, which refuses a
+    model the runner's Inspect has no entry for (its fork predates GPT-6). An
+    inspect_audit task registers `model_prices` itself, offline. A benchmark task runs
+    none of our code, so its items are routed through `inspect_audit/benchmark`, which
+    registers the prices and returns the benchmark's own task, name and all.
+    """
+    for entry in config.get("tasks") or []:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("name") == "inspect_audit":
+            for item in entry.get("items") or []:
+                item["args"] = {**(item.get("args") or {}), "model_prices": costs}
+            continue
+        registry = entry.get("name")
+        entry["items"] = [
+            {
+                **item,
+                "name": "benchmark",
+                "args": {
+                    "task": f"{registry}/{item['name']}",
+                    "task_args": item.get("args") or {},
+                    "model_prices": costs,
+                },
+            }
+            for item in entry.get("items") or []
+        ]
+        entry["package"], entry["name"] = audit_package, "inspect_audit"
+    packages = config.setdefault("packages", [])
+    if audit_package not in packages:
+        packages.append(audit_package)
+
+
+def route_direct(config: dict[str, Any]) -> None:
+    """Send the job's models straight to OpenRouter on the operator's key, not Hawk's proxy.
+
+    Hawk points OPENROUTER_BASE_URL at its proxy for any provider it routes; the
+    operator's key sent there is refused. Every model group and any model a task
+    builds by name must go to OpenRouter itself.
+    """
+    environment = config.setdefault("runner", {}).setdefault("environment", {})
+    # runner.environment is the last layer of Hawk's job secrets (eval_set_server
+    # merges it over provider secrets), so these win over Hawk's proxy settings
+    environment["OPENROUTER_BASE_URL"] = OPENROUTER_BASE_URL
+    environment[MODEL_KEY_HOOK_VAR] = ""
+    for _, group in _groups(config):
+        for item in group.get("items") or []:
+            item["args"] = {**(item.get("args") or {}), "base_url": OPENROUTER_BASE_URL}
+
+
+def _groups(config: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    found = [("models", g) for g in config.get("models") or [] if isinstance(g, dict)]
+    roles = config.get("model_roles") or {}
+    found += [(f"model_roles.{k}", g) for k, g in roles.items() if isinstance(g, dict)]
+    return found
 
 
 @tool
@@ -1018,11 +1198,9 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
                 with the outcome; the reservation is the worst case, not this number.
             note: Why you are running this; recorded in the ledger. Pass null for none.
         """
-        if not config.startswith("/workspace/"):
-            raise ToolError("config must be a path under /workspace")
-        host_path = root / "work" / Path(config).relative_to("/workspace")
-        if not host_path.is_file():
-            raise ToolError(f"no such file: {config}")
+        from ._investigation_workspace import fetch_workspace_file
+
+        host_path = await fetch_workspace_file(root, config)
         try:
             data = yaml.safe_load(host_path.read_text())
         except yaml.YAMLError as ex:
@@ -1031,7 +1209,17 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
             raise ToolError("config must be a YAML mapping")
         if not (estimated_usd > 0):
             raise ToolError("estimated_usd must be positive: say what you expect this to cost")
+        for entry in data.get("tasks") or []:
+            for item in (entry.get("items") or []) if isinstance(entry, dict) else []:
+                if isinstance(item, dict) and "model_prices" in (item.get("args") or {}):
+                    raise ToolError(
+                        "model_prices is set at submission from the investigation's own "
+                        "registry; remove it from the config"
+                    )
 
+        # either spelling of a worker is accepted and rewritten to the one its position
+        # needs; the agent is told what changed rather than refused for it
+        rewrites = canonicalise(data, remote.workers)
         problems = validate_config(data, remote.policy, remote.known_sources)
         if problems:
             raise ToolError("config refused:\n- " + "\n- ".join(problems))
@@ -1039,19 +1227,19 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
         label = str(data["name"]).removeprefix(remote.policy.id_prefix)
         eval_set_id = remote.new_eval_set_id(label)
         data["eval_set_id"] = eval_set_id
-        costs, unpriced = remote.model_costs()
-        named = _models_named(data)
-        blind = sorted(named & {qualified_model_name(m) for m in unpriced})
-        if blind:
+        costs, unpriced = remote.model_costs(named_models(data, remote.workers))
+        if unpriced:
             raise ToolError(
-                f"no registered price for {', '.join(blind)}, so cost_limit could not be "
-                "enforced in the runner and the job's spend would be unbounded. Use a model "
-                "that is priced, or ask the operator to register a price for this one."
+                f"no valid registered price for {', '.join(sorted(unpriced))}, so cost_limit "
+                "could not be enforced in the runner and the job's spend would be unbounded. "
+                "Use a model that is priced, or ask the operator to register a price for it."
             )
-        # every worker's price, not only the ones named here: a task that builds its
-        # own grader still charges the same key, and an unpriced model is invisible to
-        # the runner's cost limit
+        # only the models this job names: Hawk applies each stamped price with
+        # set_model_cost, which refuses a model the runner's Inspect does not know
         data["model_cost_config"] = costs
+        ship_prices(data, costs, remote.audit_package)
+        if remote.provider == "openrouter-direct":
+            route_direct(data)
         parsed, _ = parse_config(data)
         worst = worst_case_usd(parsed, remote.policy)
         if worst is None:  # pragma: no cover - validate_config already refused this
@@ -1070,15 +1258,23 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
             reserved_usd=worst,
             status="pending",
             note=note or "",
+            expected_evals=expected_evals(parsed),
         )
-        replacing_failed = (remote.ledger.get(label) or Job("", "", "", "", "", 0)).status == "failed"
+        replacing_failed = (
+            remote.ledger.get(label) or Job("", "", "", "", "", 0)
+        ).status == "failed"
         if submitted_path.exists() and not replacing_failed:
             raise ToolError(f"{submitted_path.name} already exists; choose another name")
         remote.reserve_and_record(job)
         write_config(root, label, data)
 
         try:
-            returned = await remote.hawk.submit(submitted_path)
+            returned = await remote.hawk.submit(
+                submitted_path,
+                {"OPENROUTER_API_KEY": remote.provider_key}
+                if remote.provider == "openrouter-direct" and remote.provider_key
+                else None,
+            )
         except Exception as ex:
             # the job is already written down as pending; ask Hawk whether it landed
             notes = await remote.reconcile()
@@ -1090,7 +1286,8 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
         remote.settle(label, status="submitted", eval_set_id=eval_set_id)
         remote.known_sources.add(eval_set_id)
         remote.save_sources()
-        return (
+        rewritten = ("Rewrote: " + "; ".join(rewrites) + ". ") if rewrites else ""
+        return rewritten + (
             f"Submitted {data['name']!r} as Hawk eval set {eval_set_id}. Reserved "
             f"${worst:.2f}, the most it can spend (you estimated ${estimated_usd:.2f}). "
             f"jobs(action='watch', label='{label}') shows it running; jobs(action='wait', "
@@ -1099,6 +1296,30 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
         )
 
     return execute
+
+
+async def settle_failed_start(remote: Remote, label: str, job: Job, status: str | None) -> str:
+    """A job that ended without producing a log ran nothing and cost nothing: say why."""
+    try:
+        reason = await remote.hawk.first_error(job.eval_set_id)
+    except Exception as ex:  # the reason is a courtesy; the settlement is not
+        reason = f"(runner log unavailable: {type(ex).__name__})"
+    stopped = job.status == "stopped"
+    remote.settle(
+        label,
+        status="stopped" if stopped else "failed_at_start",
+        actual_usd=0.0,
+        cost_note=f"job {'stopped' if stopped else status} before writing a log",
+    )
+    if stopped:
+        return f"{label} ({job.eval_set_id}) was stopped before writing a log; ${job.reserved_usd:.2f} released"
+    reason = reason or "no error line in the runner log; see jobs(action='logs')"
+    return (
+        f"{label} ({job.eval_set_id}) {status} at startup without writing a log: "
+        f"{reason}. "
+        f"Nothing ran, so nothing was spent; ${job.reserved_usd:.2f} released. "
+        "Fix the cause before resubmitting."
+    )
 
 
 @tool
@@ -1114,8 +1335,9 @@ def jobs(remote: Remote, root: Path) -> Tool:
     ) -> str:
         """Watch and manage the Hawk jobs this investigation launched.
 
-        Every action is the `hawk` command of the same name, run here on the operator's
-        login, restricted to your own jobs. Reads are always safe; the only actions that
+        Every action goes through Hawk's API on the operator's login, restricted to your
+        own jobs; the job's own lifecycle status (pending, running, complete, failed...)
+        decides whether it has finished. Reads are always safe; the only actions that
         change anything are "stop" and "collect".
 
         Args:
@@ -1138,7 +1360,8 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 "transcripts" - every sample's transcript, written to the same place;
                     `limit` caps how many.
                 "wait" - block, spending no tokens, until the job finishes or
-                    wait_minutes pass.
+                    wait_minutes pass. A job that failed at startup is settled at $0
+                    and the runner's first error line is returned.
                 "collect" - download the job's .eval logs to /inputs/jobs/<label>/,
                     record the real cost, release the reservation.
                 "stop" - gracefully stop a running job; completed samples are scored.
@@ -1156,7 +1379,11 @@ def jobs(remote: Remote, root: Path) -> Tool:
             return "\n".join(
                 f"{j.label} ({j.kind}) {j.eval_set_id}: {j.status}"
                 + (f", collected to /inputs/jobs/{j.label}" if j.collected_to else "")
-                + (f", ${j.actual_usd:.2f}" if j.actual_usd is not None else f", reserved ${j.estimated_usd:.2f}")
+                + (
+                    f", ${j.actual_usd:.2f}"
+                    if j.actual_usd is not None
+                    else f", reserved ${j.estimated_usd:.2f}"
+                )
                 for j in ledger.jobs
             )
         if not label or not (job := ledger.get(label)):
@@ -1176,12 +1403,14 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     job.eval_set_id
                 )
             if action == "stacktrace":
-                return f"{label} ({job.eval_set_id}) runner stacks:\n" + await remote.hawk.stacktrace(
-                    job.eval_set_id
+                return (
+                    f"{label} ({job.eval_set_id}) runner stacks:\n"
+                    + await remote.hawk.stacktrace(job.eval_set_id)
                 )
             if action == "status":
-                return f"{label} ({job.eval_set_id}) monitoring report:\n" + await remote.hawk.status(
-                    job.eval_set_id
+                return (
+                    f"{label} ({job.eval_set_id}) monitoring report:\n"
+                    + await remote.hawk.status(job.eval_set_id)
                 )
             if action == "samples":
                 rows_json = await remote.hawk.samples(job.eval_set_id, limit)
@@ -1197,7 +1426,9 @@ def jobs(remote: Remote, root: Path) -> Tool:
                 return "\n".join(out)
             if action == "transcript":
                 if not sample:
-                    raise ToolError("action='transcript' needs sample=<uuid> from jobs(action='samples')")
+                    raise ToolError(
+                        "action='transcript' needs sample=<uuid> from jobs(action='samples')"
+                    )
                 # a sample uuid addresses any sample in the deployment, so membership in
                 # this job is checked here rather than trusted from the argument
                 known = await remote.hawk.samples(job.eval_set_id)
@@ -1220,40 +1451,66 @@ def jobs(remote: Remote, root: Path) -> Tool:
                     + ", ".join(f.name for f in files[:10])
                     + (" …" if len(files) > 10 else "")
                 )
+            status: str | None = None
             if action == "evals":
+                status = await remote.hawk.job_status(job.eval_set_id)
                 rows = await remote.hawk.evals(job.eval_set_id)
             elif action == "wait":
-                rows = await wait_for(remote.hawk, job.eval_set_id, wait_minutes or 20)
+                status, rows = await wait_for(
+                    remote.hawk, job.eval_set_id, wait_minutes or 20, expected=job.expected_evals
+                )
+                if status in ("failed", "deleted") and not rows:
+                    return await settle_failed_start(remote, label, job, status)
             elif action == "stop":
                 await remote.hawk.stop(job.eval_set_id)
+                # settled by collect once the job has finished, never here: a stopped
+                # runner still scores and writes what it has, and eval rows reach the
+                # warehouse minutes after the log does, so "no rows yet" is not "no spend"
                 remote.settle(label, status="stopped")
-                return f"stop requested for {label} ({job.eval_set_id})"
+                return (
+                    f"stop requested for {label} ({job.eval_set_id}); its ${job.reserved_usd:.2f} "
+                    "stays held until jobs(action='collect') settles what it actually spent"
+                )
             elif action == "collect":
+                status = await remote.hawk.job_status(job.eval_set_id)
                 rows = await remote.hawk.evals(job.eval_set_id)
-                if not rows or not all(r["status"] in ("success", "error", "cancelled") for r in rows):
-                    state = ", ".join(f"{r['task']} {r['status']} {r['samples']}" for r in rows) or "no evals yet"
-                    return (
-                        f"{label} is not finished ({state}). No files downloaded. "
-                        f"Use jobs(action='wait', label='{label}') before collecting. "
-                        "If there are no evals, inspect watch/logs once for a startup failure."
+                # the job's own status decides: eval rows look finished between an
+                # eval's error and its retry, while the retry is still spending
+                if status not in JOB_TERMINAL:
+                    listed = (
+                        ", ".join(f"{r['task']} {r['status']} {r['samples']}" for r in rows)
+                        or "no evals yet"
                     )
-                files = await remote.hawk.download(job.eval_set_id, root / "jobs" / "downloads" / label)
+                    return (
+                        f"{label} is {status or 'unknown to Hawk'}, not finished ({listed}). "
+                        f"No files downloaded. Use jobs(action='wait', label='{label}') before collecting."
+                    )
+                # the job's own log files, read from its folder: unlike warehouse rows
+                # they exist as soon as the runner writes them
+                files = await remote.hawk.download(
+                    job.eval_set_id, root / "jobs" / "downloads" / label
+                )
                 if not files:
-                    raise ToolError("no .eval files were downloaded")
+                    return await settle_failed_start(remote, label, job, status)
                 dest = copy_into_inputs(files, root / "inputs", label)
                 cost, usage, recomputed = usage_cost(files)
-                # an unpriced model leaves the real cost unknown: recording the
-                # estimate here would turn a guess into a measurement, so the
-                # reservation stands instead
+                # an unpriced model leaves the real cost unknown. The hold is settled at the
+                # reservation, the most the job could have spent, and says so: a held
+                # reservation that can never be collected otherwise ends the investigation
                 remote.settle(
                     label,
-                    actual_usd=cost,
+                    actual_usd=cost if cost is not None else job.reserved_usd,
+                    cost_note=""
+                    if cost is not None
+                    else "unpriced model: charged at the reservation",
                     collected_to=str(dest),
                     evals=[dict(r) for r in rows],
-                    status="success" if all(r["status"] == "success" for r in rows) else "error",
+                    status="success"
+                    if status == "complete" and all(r["status"] == "success" for r in rows)
+                    else "error",
                 )
                 job = remote.ledger.get(label) or job
-                lines = [f"collected {len(files)} log(s) to /inputs/jobs/{label}/"]
+                lines = [f"collected {len(files)} log(s) to /inputs/jobs/{label}/ (job {status})"]
                 lines += [f"  {r['task']} {r['model']}: {r['status']} {r['samples']}" for r in rows]
                 lines.append(
                     (
@@ -1267,10 +1524,13 @@ def jobs(remote: Remote, root: Path) -> Tool:
                         + f", reservation of ${job.reserved_usd:.2f} released"
                     )
                     if cost is not None
-                    else f"cost unknown: a model in this job has no registered price, so the "
-                    f"${job.reserved_usd:.2f} reservation stays held"
+                    else f"cost unknown: a model in this job has no registered price, so the job is "
+                    f"charged its full ${job.reserved_usd:.2f} reservation"
                 )
-                lines += [f"  {m}: in {u['input']:,} cache_read {u['cache_read']:,} out {u['output']:,}" for m, u in usage.items()]
+                lines += [
+                    f"  {m}: in {u['input']:,} cache_read {u['cache_read']:,} out {u['output']:,}"
+                    for m, u in usage.items()
+                ]
                 return "\n".join(lines)
             else:
                 raise ToolError(
@@ -1280,103 +1540,239 @@ def jobs(remote: Remote, root: Path) -> Tool:
         except ToolError:
             raise
         except Exception as ex:
-            message = str(ex)
-            if "403" in message or "404" in message:
+            if http_status(ex) in (403, 404):
                 raise ToolError(
                     f"Hawk has nothing to show for {label} ({job.eval_set_id}): it is "
                     f"{job.status}. A job that never started has no pod to watch and no "
-                    "monitoring to report; jobs(action='list') shows what happened to it."
+                    "monitoring to report; jobs(action='evals') shows its lifecycle status."
                 ) from ex
-            raise ToolError(f"hawk error: {ex}") from ex
-        if rows:
-            status = "success" if all(r["status"] == "success" for r in rows) else (
-                "error" if any(r["status"] in ("error", "cancelled") for r in rows) and all(r["status"] in ("success", "error", "cancelled") for r in rows) else "running"
+            raise ToolError(f"hawk error: {type(ex).__name__}: {ex}") from ex
+        if rows or status is not None:
+            ledger_status = (
+                "success"
+                if status == "complete" and all(r["status"] == "success" for r in rows)
+                else "error"
+                if status in JOB_TERMINAL
+                else "running"
             )
             # every write goes through the lock: a bare save() here would rewrite the
             # whole file from a stale copy and could drop another process's reservation
-            remote.settle(label, status=status, evals=[dict(r) for r in rows])
-            job.status, job.evals = status, [dict(r) for r in rows]
-        return f"{label} ({job.eval_set_id}): {job.status}\n" + "\n".join(
-            f"  {r['task']} {r['model']}: {r['status']} {r['samples']}" for r in rows
-        ) if rows else f"{label} ({job.eval_set_id}): no evals listed; use jobs(action='watch') or jobs(action='logs') to diagnose"
+            remote.settle(label, status=ledger_status, evals=[dict(r) for r in rows])
+            job.status, job.evals = ledger_status, [dict(r) for r in rows]
+        return (
+            f"{label} ({job.eval_set_id}): job {status or 'unknown to Hawk'}, ledger {job.status}\n"
+            + (
+                "\n".join(f"  {r['task']} {r['model']}: {r['status']} {r['samples']}" for r in rows)
+                or "  no evals listed yet; jobs(action='logs') shows the runner's own log"
+            )
+        )
 
     return execute
 
 
 @solver
 def check_evidence_access(remote: Remote | None, root: Path, sources: list[str]) -> Solver:
-    """Check supplied remote evidence before spending on the lead model."""
+    """Check supplied remote evidence before spending on the lead model.
+
+    Three reads per source: the sample index (what the investigator lists), one
+    transcript, and one presigned log download (the path a child job's `logs`
+    argument takes, a different permission from the index). A per-source HTTP
+    refusal is a fact about that source, recorded for the agent. Anything else --
+    an import error, a missing binary, a token that will not refresh, or one and
+    the same failure on every source -- is our harness broken, and the sample fails
+    here, before the first model call, rather than paying a model to discover it.
+    """
+
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        checks = []
+        checks: list[dict[str, Any]] = []
+        harness: list[str] = []
         for address in sources:
-            check = {"source": address, "status": "unavailable", "reason": ""}
-            try:
-                if remote is None or not address.startswith("hawk:"):
-                    raise ValueError("No supported reader: supply an indexed Hawk eval set or local logs")
-                eval_set = address.removeprefix("hawk:").split("/")[0]
-                rows = await remote.hawk.samples(eval_set, 1)
-                if not rows:
-                    raise ValueError("No indexed samples. A storage prefix is not necessarily an imported eval set")
-                await remote.hawk.transcript(
-                    str(rows[0]["uuid"]), root / "inputs" / "index" / _alias(address) / "transcripts"
+            check: dict[str, Any] = {
+                "source": address,
+                "status": "unavailable",
+                "reason": "",
+                "paths": {},
+            }
+            if remote is None or not address.startswith("hawk:"):
+                check["reason"] = (
+                    "No supported reader: supply an indexed Hawk eval set or local logs"
                 )
-                check.update(status="readable", reason="Sample index and one transcript retrieved; not a complete coverage check")
+                checks.append(check)
+                continue
+            eval_set = address.removeprefix("hawk:").split("/")[0]
+            failure: BaseException | None = None
+            try:
+                rows = await remote.hawk.samples(eval_set, 1)
+                check["paths"]["index"] = "readable" if rows else "empty"
+                if not rows:
+                    raise ValueError(
+                        "No indexed samples. A storage prefix is not necessarily an imported eval set"
+                    )
+                await remote.hawk.transcript(
+                    str(rows[0]["uuid"]),
+                    root / "inputs" / "index" / source_alias(address) / "transcripts",
+                )
+                check["paths"]["transcript"] = "readable"
+                files = await remote.hawk.log_files(eval_set)
+                if not files:
+                    raise ValueError("The eval set lists no .eval files to download")
+                await remote.hawk.download_url(files[0])
+                check["paths"]["download"] = "readable"
+                check.update(
+                    status="readable",
+                    reason="Sample index, one transcript and one log download URL retrieved; "
+                    "not a complete coverage check",
+                )
             except Exception as ex:
-                check["reason"] = str(ex)[-1500:]
+                failure = ex
+                check["reason"] = f"{type(ex).__name__}: {str(ex)[-1500:]}"
+            if failure is not None and _harness_failure(failure):
+                harness.append(check["reason"])
             checks.append(check)
         seed_path = root / "inputs" / "seed.json"
         seed = json.loads(seed_path.read_text())
         seed["evidence_access"] = checks
         seed_path.write_text(json.dumps(seed, indent=2))
         transcript().info(json.dumps({"evidence_access": checks}))
+        failed = [c["reason"] for c in checks if c["status"] != "readable"]
+        # one unreadable source is a fact about that source (2026-09-28: warehouse rows
+        # re-pointed at a stray copy 404ed on transcripts for two sets); every source
+        # failing, or a failure in our own machinery, means the harness is broken
+        nothing_readable = len(checks) >= 2 and len(failed) == len(checks)
+        if harness or nothing_readable:
+            raise RuntimeError(
+                "The investigation's own access to its evidence is broken, so it stops before "
+                "spending on the lead model: "
+                + (harness[0] if harness else failed[0])
+                + ". Fix the harness (installed packages, Hawk login, token refresh) and relaunch."
+            )
         return state
 
     return solve
 
 
-def write_experiment_templates(remote: Remote, root: Path, target: str) -> None:
-    """Generate starting configs from the active policy and validate with Hawk."""
-    import copy
+@solver
+def check_workers(remote: Remote, root: Path) -> Solver:
+    """Call every worker once the way a child job will, before the lead model starts.
 
-    if not remote.worker_models or "/" not in target:
-        return
-    package_name, task_name = target.split("/", 1)
-    def model(name: str) -> dict[str, Any]:
-        return {"package": "openai", "name": "openrouter", "items": [
-            {"name": name, "args": {"base_url": "https://openrouter.ai/api/v1"}}
-        ]}
-    config: dict[str, Any] = {
-        "name": "inv-benchmark-smoke", "packages": [remote.task_package],
-        "tasks": [{"package": remote.task_package, "name": package_name,
-                   "items": [{"name": task_name, "args": {}}]}],
-        "models": [model(remote.worker_models[0])],
-        "model_roles": {"grader": model(remote.worker_models[-1])},
-        "runner": {"environment": {"HAWK_API_URL": remote.hawk_api_url,
-                                    "HAWK_RUNNER_REFRESH_URL": ""},
-                   "secrets": [{"name": "OPENROUTER_API_KEY"}]},
-        "limit": 2, "epochs": 1, "cost_limit": 0.5,
-        "token_limit": 200000, "working_limit": 600, "time_limit": 14400,
-        "max_connections": 5, "max_retries": 3, "retry_attempts": 0,
-    }
-    config["model_roles"]["grader"]["items"][0]["args"]["config"] = {"max_tokens": 2048}
-    audit = copy.deepcopy(config)
-    audit.update(name="inv-audit-smoke", limit=1, cost_limit=2.0,
-                 token_limit=2000000, working_limit=3600)
-    audit["packages"].append(remote.audit_package)
-    audit["tasks"] = [{"package": remote.audit_package, "name": "inspect_audit",
-                       "items": [{"name": "audit", "args": {
-                           "task": target, "items": ["gold-answer", "answer-format"],
-                           "auditor_image": remote.auditor_image}}]}]
-    destination = root / "work" / "jobs" / "templates"
-    destination.mkdir(parents=True, exist_ok=True)
-    for name, value in [("benchmark", config), ("audit", audit)]:
-        problems = validate_config(value, remote.policy, remote.known_sources)
-        if problems:
-            logger.warning("Skipping invalid %s convenience template: %s", name, problems)
-            continue
-        path = destination / f"{name}.yaml"
-        if not path.exists():
-            path.write_text(yaml.safe_dump(value, sort_keys=False))
+    A direct child sends its model item to OpenRouter with the operator's key; this
+    makes that same request with a few output tokens. A refusal (bad id, bad key, no
+    credit, model not routable) is deterministic: every child naming that worker
+    would fail, so the run stops here for nothing rather than paying the lead model
+    to find out. A timeout or server error is recorded for the agent and not fatal.
+    The probe tokens (a fraction of a cent) are outside Inspect's usage accounting.
+    """
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        import httpx
+
+        checks: list[dict[str, Any]] = []
+        async with httpx.AsyncClient(timeout=60) as client:
+            for model in remote.worker_models:
+                checks.append(await _probe_worker(client, model, remote.provider_key or ""))
+        seed_path = root / "inputs" / "seed.json"
+        seed = json.loads(seed_path.read_text())
+        seed["worker_access"] = checks
+        seed_path.write_text(json.dumps(seed, indent=2))
+        transcript().info(json.dumps({"worker_access": checks}))
+        refused = [c for c in checks if c["status"] == "refused"]
+        if refused:
+            raise RuntimeError(
+                "OpenRouter refused a worker model the way it would refuse every child job "
+                "that names it, so the investigation stops before spending on the lead model: "
+                + "; ".join(f"{c['model']}: {c['reason']}" for c in refused)
+            )
+        return state
+
+    return solve
+
+
+async def _probe_worker(client: Any, model: str, key: str) -> dict[str, Any]:
+    import httpx
+
+    check: dict[str, Any] = {"model": model, "status": "unavailable", "reason": ""}
+    for attempt in range(2):
+        try:
+            response = await client.post(
+                f"{OPENROUTER_BASE_URL}/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": "Reply with OK."}],
+                    "max_tokens": 16,
+                },
+            )
+        except httpx.HTTPError as ex:
+            check["reason"] = f"{type(ex).__name__}: {ex}"
+        else:
+            body = response.text[:500]
+            if response.status_code == 200:
+                # OpenRouter reports some upstream failures as a 200 with an error body
+                error = (response.json() or {}).get("error")
+                if not error:
+                    return {"model": model, "status": "ok", "reason": ""}
+                check["reason"] = f"error in response: {str(error)[:500]}"
+            elif response.status_code < 500 and response.status_code not in (408, 429):
+                return {
+                    "model": model,
+                    "status": "refused",
+                    "reason": f"HTTP {response.status_code}: {body}",
+                }
+            else:
+                check["reason"] = f"HTTP {response.status_code}: {body}"
+        if attempt == 0:
+            await asyncio.sleep(5)
+    return check
+
+
+def _harness_failure(ex: BaseException) -> bool:
+    """A failure in our own machinery rather than in one evidence source.
+
+    Missing modules or binaries (the 09-25 runner found a hawk without keyring) and
+    credentials that cannot be obtained break every read, whatever the source.
+    """
+    if isinstance(ex, (ImportError, FileNotFoundError)):
+        return True
+    status = http_status(ex)
+    if status == 401:
+        return True
+    return isinstance(ex, RuntimeError) and any(
+        word in str(ex).lower() for word in ("token", "refresh credential", "keyring")
+    )
+
+
+@solver
+def carry_spend(remote: Remote) -> Solver:
+    """Setup: carry an earlier attempt's own spend into this one."""
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        remote.fold_prior_spend()
+        # a checkpoint resume replaces this with the checkpointed record, and on_resume
+        # takes prior spend from there (setup runs before the checkpoint is restored)
+        remote.snapshot_record()
+        return state
+
+    return solve
+
+
+def checkpoint_record(remote: Remote) -> Any:
+    """Task on_checkpoint: write the host's records into the Store being captured."""
+
+    async def on_checkpoint(state: TaskState) -> None:
+        remote.snapshot_record()
+
+    return on_checkpoint
+
+
+def resume_record(remote: Remote) -> Any:
+    """Task on_resume: rebuild the ledger and spend from the Store, then ask Hawk."""
+
+    async def on_resume(state: TaskState, attempt: str) -> str:
+        restored = remote.restore_record()
+        notes = await remote.reconcile()
+        return "; ".join([restored, *notes])
+
+    return on_resume
 
 
 @solver
@@ -1396,7 +1792,7 @@ def reconcile_jobs(remote: Remote) -> Solver:
     return solve
 
 
-def _alias(source: str) -> str:
+def source_alias(source: str) -> str:
     """A short, filesystem-safe, unique name for a log source the agent can type.
 
     Truncating an address to thirty characters made two runs of the same benchmark the
@@ -1438,7 +1834,7 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
             limit: How many samples to read for "samples"; null means the complete population. Pass
                 null for every argument an action does not use.
         """
-        known = {_alias(s): s for s in sources}
+        known = {source_alias(s): s for s in sources}
         if action == "list":
             if not known:
                 return "no supplied log sources; the logs given to you are files under /inputs/logs"
@@ -1473,7 +1869,9 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
             if action == "samples":
                 rows = await remote.hawk.samples(eval_set, limit)
                 if not rows:
-                    raise ToolError(f"{source}: no accessible indexed samples; this may be an indexing or permission problem, not an empty benchmark")
+                    raise ToolError(
+                        f"{source}: no accessible indexed samples; this may be an indexing or permission problem, not an empty benchmark"
+                    )
                 destination.mkdir(parents=True, exist_ok=True)
                 table = destination / "samples.csv"
                 _write_samples_csv(rows, table)
@@ -1483,9 +1881,16 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
                 )
             if action == "transcript":
                 if not sample:
-                    raise ToolError("action='transcript' needs sample=<uuid> from the samples table")
-                if not await remote.hawk.has_sample(eval_set, sample):
-                    raise ToolError(f"sample {sample!r} is not in {source}")
+                    raise ToolError(
+                        "action='transcript' needs sample=<uuid> from the samples table"
+                    )
+                uuid = await remote.hawk.sample_uuid(eval_set, sample)
+                if uuid is None:
+                    raise ToolError(
+                        f"sample {sample!r} is not in {source}; pass the `uuid` column "
+                        "of the samples table (the numeric `id` repeats across logs)"
+                    )
+                sample = uuid
                 path = await remote.hawk.transcript(sample, destination / "transcripts")
                 return f"wrote /inputs/index/{source}/transcripts/{path.name} ({path.stat().st_size:,} bytes)"
             if action == "fetch":
@@ -1510,18 +1915,29 @@ def _write_samples_csv(rows: list[dict[str, Any]], path: Path) -> None:
 
     scorers = sorted({s.get("scorer", "") for r in rows for s in (r.get("scores") or [])})
     columns = [
-        "uuid", "id", "epoch", "model", "task_name", "status", "limit", "error_message",
-        "input_tokens", "output_tokens", "reasoning_tokens", "total_tokens",
-        "message_count", "action_count", "total_time_seconds", "is_invalid",
+        "uuid",
+        "id",
+        "epoch",
+        "model",
+        "task_name",
+        "status",
+        "limit",
+        "error_message",
+        "input_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+        "total_tokens",
+        "message_count",
+        "action_count",
+        "total_time_seconds",
+        "is_invalid",
     ]
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(columns + scorers)
         for row in rows:
             scored = {s.get("scorer"): s.get("value") for s in (row.get("scores") or [])}
-            writer.writerow(
-                [row.get(c) for c in columns] + [scored.get(s) for s in scorers]
-            )
+            writer.writerow([row.get(c) for c in columns] + [scored.get(s) for s in scorers])
 
 
 def _samples_summary(rows: list[dict[str, Any]]) -> str:
@@ -1548,6 +1964,8 @@ def _samples_summary(rows: list[dict[str, Any]]) -> str:
 async def _continue(
     state: AgentState, interactive: bool, remote: Remote | None = None
 ) -> bool | str:
+    if store_as(InvestigationState).outcome == "blocked":
+        return False
     over = remote.over_allowance() if remote is not None else None
     if over is not None:
         # Inspect's cost limit only sees this agent's own calls, so a run whose children
@@ -1576,7 +1994,30 @@ async def _continue(
         )
     if not interactive:
         return False
-    return await _operator_turn(state)
+    return await operator_turn(state)
+
+
+def _checkpointing(enabled: bool, remote: Remote | None) -> dict[str, Any]:
+    """Task checkpoint arguments, when enabled and this Inspect has checkpointing.
+
+    Captures the workspace and the inputs (collected job logs live there), and hands
+    the host's records through the Store so a resumed run on a fresh runner knows its
+    jobs and what it has spent.
+    """
+    if not enabled:
+        return {}
+    try:
+        from inspect_ai.util import CheckpointConfig
+    except ImportError:  # an Inspect without checkpointing: run without it
+        logger.warning("this Inspect has no checkpointing; the investigation cannot resume")
+        return {}
+    args: dict[str, Any] = {
+        "checkpoint": CheckpointConfig(sandbox_paths={"default": ["/workspace", "/inputs"]})
+    }
+    if remote is not None:
+        args["on_checkpoint"] = checkpoint_record(remote)
+        args["on_resume"] = resume_record(remote)
+    return args
 
 
 def _resumable(resume: str) -> Path:
@@ -1609,16 +2050,21 @@ def investigate(
     extra_skills: list[str] | None = None,
     hawk_api_url: str | None = None,
     audit_package: str | None = None,
+    task_package: str | None = None,
     auditor_image: str | None = None,
     worker_models: list[str] | None = None,
     secrets_file: str | None = None,
-    log_bucket: str | None = None,
-    aws_profile: str | None = None,
+    execution: str | None = None,
+    investigator_image: str | None = None,
+    artifact_dir: str | None = None,
+    instructions: str | None = None,
+    required_coverage: float | None = None,
+    checkpoint: bool | None = None,
+    provider: str | None = None,
 ) -> Task:
-    """Investigate source and existing logs locally, publish HTML, then discuss.
+    """Investigate source and logs on Hawk and publish a GL LaTeX report.
 
-    Requires Docker and, when interactive, --acp-server. Benchmark execution and
-    Hawk job dispatch are deliberately not enabled in this first slice.
+    Submit this task with Hawk. Explicit execution='local' uses Docker instead.
 
     Args:
         repo: Local Git repository or HTTPS Git URL of the benchmark.
@@ -1628,8 +2074,10 @@ def investigate(
         paper: Local file or URL; a URL is downloaded now (arXiv abs -> pdf). Defaults to
             the paper the eval names in its own metadata.
         docs: Documentation directories to mount read-only (inspect docs, Hawk docs).
-        overview: Optional operator steer.
-        target_task: The task under audit, e.g. `inspect_evals/simpleqa_verified`.
+        overview: Benchmark-specific context, supplied-evidence context and operator questions.
+            Execution settings belong in the corresponding arguments; reporting rules
+            are supplied by the package, not repeated in this overview.
+        target_task: The task under audit, e.g. `benchmark/task`.
             Defaults to the only task the repository declares, when there is one.
         revision: Commit to snapshot (default HEAD).
         paths: Repository paths to include in the snapshot. Defaults to the audited
@@ -1640,7 +2088,7 @@ def investigate(
             one. Its inputs, workspace, journal and job ledger are reused, supplied logs
             are not staged again, and jobs left pending by an interrupted run are
             reconciled with Hawk before the agent starts.
-        budget_usd: Dollar allowance for this investigator's own model calls.
+        budget_usd: Shared allowance for investigator calls and reserved/collected Hawk work.
         enforce_cost_limit: Enforce `budget_usd` through Inspect's cost limit. Needs a
             price for the model; OpenRouter prices are registered automatically.
         token_limit: Optional Inspect token limit (e.g. "output:500k"); none by default.
@@ -1651,14 +2099,32 @@ def investigate(
             its tools run here, never in the box.
         audit_package: git spec of inspect_audit for sample-audit jobs. Defaults to the
             commit this process is running.
+        task_package: Explicit benchmark pip spec for remote workers, including optional
+            dependencies when needed. Defaults to the source repository and revision.
         auditor_image: Published auditor image for sample-audit jobs on k8s.
         worker_models: OpenRouter model ids the agent may run (benchmark workers, auditors,
             graders). Prices for these are registered so costs are accounted.
-        secrets_file: .env passed to Hawk jobs (OPENROUTER_API_KEY); never read by the
-            agent. Defaults to the .env Inspect itself loaded, found from the working
-            directory upwards.
-        log_bucket: Retained for compatibility; local logs are no longer uploaded.
-        aws_profile: Retained for compatibility; job-readable inputs use native Hawk import.
+        secrets_file: Dotenv file holding the operator's OpenRouter key
+            (INSPECT_AUDIT_OPENROUTER_API_KEY or OPENROUTER_API_KEY), for
+            provider='openrouter-direct'. On a Hawk runner, pass it as the secret
+            INSPECT_AUDIT_OPENROUTER_API_KEY on the investigator's eval set instead.
+        execution: 'hawk' (default) runs the investigator and auditors on Hawk;
+            'local' explicitly runs the investigator in local Docker.
+        investigator_image: Published investigator sandbox image including LaTeX.
+        artifact_dir: Hawk job's S3 artifacts directory; publications are stored by sample UUID.
+        instructions: Operator instructions and scope, separate from benchmark background.
+        provider: How child jobs reach models. 'openrouter-direct' (default) sends them
+            straight to OpenRouter on the operator's own key, shipped to each child as a
+            runner secret, with Hawk's model-key hook switched off in that child.
+            'middleman' routes them through Hawk's proxy on the org's keys. The
+            investigator's own model calls on Hawk go through Hawk's proxy either way.
+        required_coverage: Fraction of the question population (0-1) the published
+            coverage.json must assess for the run to count as complete. A publication
+            short of it is scored `published_incomplete`, not success. None sets no bar.
+        checkpoint: Checkpoint the investigation with Inspect so an interrupted run
+            resumes (`hawk eval-set resume`, `inspect eval-retry`) with its conversation,
+            workspace, job ledger and spend. Defaults to on for execution='hawk' and off
+            locally, where the workspace is a bind mount that already outlives the run.
     """
     # the file is read before anything else is decided: a setting it carries must be
     # able to change what gets validated, which skills load and how much may be spent.
@@ -1682,12 +2148,46 @@ def investigate(
     extra_skills = settings.get("extra_skills", extra_skills)
     hawk_api_url = settings.get("hawk_api_url", hawk_api_url)
     audit_package = settings.get("audit_package", audit_package)
+    task_package = settings.get("task_package", task_package)
     auditor_image = settings.get("auditor_image", auditor_image)
     worker_models = settings.get("worker_models", worker_models)
     secrets_file = settings.get("secrets_file", secrets_file)
+    execution = settings.get("execution", execution) or "hawk"
+    investigator_image = (
+        settings.get("investigator_image", investigator_image) or DEFAULT_INVESTIGATOR_IMAGE
+    )
+    artifact_dir = settings.get("artifact_dir", artifact_dir)
+    instructions = settings.get("instructions", instructions)
+    required_coverage = settings.get("required_coverage", required_coverage)
+    checkpoint = settings.get("checkpoint", checkpoint)
+    provider = settings.get("provider", provider) or DEFAULT_PROVIDER
+    if provider not in PROVIDERS:
+        raise ValueError(f"provider must be one of {', '.join(PROVIDERS)}")
+    if required_coverage is not None and not (0 < float(required_coverage) <= 1):
+        raise ValueError("required_coverage must be a fraction in (0, 1]")
+    if execution not in {"hawk", "local"}:
+        raise ValueError("execution must be 'hawk' or 'local'")
+    if execution == "hawk":
+        if not os.environ.get("HAWK_JOB_ID"):
+            raise ValueError(
+                "The investigator defaults to Hawk. Submit inspect_audit/investigate "
+                "with `hawk eval-set run`; use execution='local' for local Docker."
+            )
+        if not artifact_dir:
+            raise ValueError("Hawk investigation needs artifact_dir for durable reports")
+        if not artifact_dir.startswith("s3://"):
+            raise ValueError("Hawk artifact_dir must be an S3 job artifacts directory")
 
     overview = overview if overview is not None else ""
-    output_dir = output_dir if output_dir is not None else "investigations"
+    output_dir = (
+        output_dir
+        if output_dir is not None
+        else (
+            str(Path(tempfile.gettempdir()) / "inspect-audit")
+            if execution == "hawk"
+            else "investigations"
+        )
+    )
     budget_usd = budget_usd if budget_usd is not None else 10.0
     enforce_cost_limit = enforce_cost_limit if enforce_cost_limit is not None else True
     interactive = bool(interactive)
@@ -1710,9 +2210,10 @@ def investigate(
     if resumed and revision is None:
         # the snapshot is not retaken, so the commit a runner installs is the one that
         # snapshot was taken at, not wherever the checkout has moved to since
-        revision = str(
-            json.loads((resumed / "inputs" / "seed.json").read_text()).get("revision") or ""
-        ) or None
+        revision = (
+            str(json.loads((resumed / "inputs" / "seed.json").read_text()).get("revision") or "")
+            or None
+        )
 
     # what can be worked out is worked out: the audited repository already says which
     # commit it is, which directory the task lives in and which paper it comes from,
@@ -1720,19 +2221,21 @@ def investigate(
     local_repo = Path(repo).expanduser()
     if local_repo.is_dir():
         target_task = target_task or _only_task(local_repo)
-    # the provider key reaches a Hawk runner from a file. Look beside the investigation
-    # first, then beside the benchmark, then where Inspect itself looks: a run launched
-    # from a worktree found nothing there and every job it started failed with 401.
-    secrets_file = secrets_file or _find_secrets(config, local_repo)
+    provider_key: str | None = None
+    if provider == "openrouter-direct":
+        provider_key = operator_key(secrets_file)
+    elif secrets_file:
+        logger.warning("secrets_file is only read for provider='openrouter-direct'")
     if local_repo.is_dir():
         paths = paths or paths_from_metadata(local_repo, target_task)
         paper = paper or paper_from_metadata(local_repo, target_task)
     hawk_api_url = hawk_api_url or os.environ.get("HAWK_API_URL")
-    task_package: str | None = None
+    if execution == "hawk" and not hawk_api_url:
+        raise ValueError("Hawk investigation requires hawk_api_url or HAWK_API_URL")
     if hawk_api_url:
         # a runner installs the benchmark from git: a local checkout supplies its own
         # origin and commit, and a repository given as a URL is already that answer
-        task_package = (
+        task_package = task_package or (
             git_package_spec(local_repo, revision)
             if local_repo.is_dir()
             else f"git+{repo.removesuffix('.git')}@{revision}"
@@ -1740,13 +2243,6 @@ def investigate(
             else None
         )
         audit_package = audit_package or own_package_spec()
-        if not secrets_file:
-            raise ValueError(
-                "remote work needs a secrets file holding OPENROUTER_API_KEY: a Hawk "
-                "runner has no environment of yours, and every job would fail to "
-                "authenticate. Looked beside the config, beside the repository, and "
-                "upwards from here. Pass secrets_file."
-            )
         if not task_package:
             raise ValueError(
                 "remote work installs the benchmark in a Hawk runner from git, and this "
@@ -1776,8 +2272,15 @@ def investigate(
     remote: Remote | None = None
     if hawk_api_url:
         remote = Remote(
-            root, hawk_api_url, secrets_file, task_package or "", audit_package or "", auditor_image,
-            worker_models or DEFAULT_WORKERS, budget_usd,
+            root,
+            hawk_api_url,
+            task_package or "",
+            audit_package or "",
+            auditor_image,
+            worker_models or DEFAULT_WORKERS,
+            budget_usd,
+            provider,
+            provider_key,
         )
         seed_path = root / "inputs" / "seed.json"
         seed = json.loads(seed_path.read_text())
@@ -1793,6 +2296,11 @@ def investigate(
             "hawk": hawk_api_url,
             "task_package": task_package,
             "worker_models": worker_models or DEFAULT_WORKERS,
+            # one row per worker: the model item a config names under the openrouter
+            # provider group, the name task arguments use, and the price it is held to.
+            # hawk_submit accepts either spelling in either place and rewrites it
+            "workers": remote.worker_table(),
+            "provider": provider,
             "audit_package": audit_package,
             "auditor_image": auditor_image,
             # every remote log source explicitly supplied by the operator
@@ -1813,60 +2321,98 @@ def investigate(
         seed_path.write_text(json.dumps(seed, indent=2))
     setup_steps: list[Solver] = []
     if remote is not None:
+        setup_steps.append(carry_spend(remote))
         if resumed:
             setup_steps.append(reconcile_jobs(remote))
+        if remote.provider == "openrouter-direct":
+            setup_steps.append(check_workers(remote, root))
     tools: list[Tool] = [
-        bash(timeout=300),
+        # a shell dump is the one place the agent routinely wants more than the
+        # 32KB default; everything else writes large results to files
+        ToolDef(bash(timeout=300), max_output=128 * 1024).as_tool(),
         skill(skill_paths),
         investigation_budget(budget_usd, enforce_cost_limit, remote),
-        render_report(),
         view_image(),
-        publish_report(str(root)),
+        check_report(str(root)),
+        publish_report(str(root), required_coverage),
+        report_blocker(),
     ]
+    if required_coverage is not None:
+        seed_path = root / "inputs" / "seed.json"
+        seed = json.loads(seed_path.read_text())
+        seed["required_coverage"] = float(required_coverage)
+        seed_path.write_text(json.dumps(seed, indent=2))
     seed_logs = json.loads((root / "inputs" / "seed.json").read_text()).get("logs") or []
-    remote_sources = [str(e["remote"]) for e in seed_logs if isinstance(e, dict) and e.get("remote")]
+    remote_sources = [
+        str(e["remote"]) for e in seed_logs if isinstance(e, dict) and e.get("remote")
+    ]
     if remote_sources:
         setup_steps.append(check_evidence_access(remote, root, remote_sources))
         tools.append(supplied_logs(remote, root, remote_sources))
     if remote is not None:
-        if target_task:
-            write_experiment_templates(remote, root, target_task)
         tools += [hawk_submit(remote, root), jobs(remote, root)]
+
+    sandbox_spec = ("docker", str(root / "compose.yaml"))
+    task_cleanup = None
+    if execution == "hawk":
+        from ._investigation_workspace import (
+            cleanup,
+            configure,
+            stage_workspace,
+            synchronized,
+        )
+
+        sandbox_spec = configure(root, investigator_image or "", artifact_dir or "")
+        setup_steps.append(stage_workspace(root))
+        task_cleanup = cleanup(root)
+        tools = [
+            synchronized(t, root) if ToolDef(t).name in {"hawk_submit", "jobs", "logs"} else t
+            for t in tools
+        ]
 
     async def on_continue(state: AgentState) -> bool | str:
         if remote is not None:
             remote.record_local_spend()
         return await _continue(state, interactive, remote)
 
+    checkpointing = _checkpointing(
+        execution == "hawk" if checkpoint is None else bool(checkpoint), remote
+    )
+
     return Task(
         setup=setup_steps or None,
         dataset=[
             Sample(
                 id="investigation",
-                input="Read /inputs/seed.json and invoke the investigating skill. Begin the investigation autonomously.",
+                input="Read /inputs/seed.json and invoke the investigating skill. Begin the investigation autonomously."
+                + (f"\n\nOperator instructions:\n{instructions}" if instructions else ""),
             )
         ],
+        scorer=investigation_outcome(),
         solver=react(
             name="investigator",
             prompt=prompts.INVESTIGATE,
             submit=False,
             tools=tools,
-            compaction=CompactionSummary(threshold=0.8),
+            # an absolute threshold: 0.8 of a 1.05M-token context fired at ~840k,
+            # long after every turn had become expensive
+            compaction=CompactionSummary(threshold=COMPACTION_TOKENS),
             truncation="auto",
             on_continue=on_continue,
         ),
-        sandbox=("docker", str(root / "compose.yaml")),
-        # tool results are truncated at 16KB by default; an inventory of fifty
-        # logs or a transcript dump is routinely larger, and a truncated view
-        # is what the agent then reasons from
-        config=GenerateConfig(max_tool_output=200 * 1024),
+        sandbox=sandbox_spec,
+        cleanup=task_cleanup,
+        **checkpointing,
+        # per-tool limits: bash above; the host tools summarise and write the rest to files
+        config=GenerateConfig(max_tool_output=32 * 1024),
         cost_limit=budget_usd if enforce_cost_limit else None,
         token_limit=token_limit,
         working_limit=4 * 3600,
         metadata={
             "investigation_dir": str(root),
             "interactive": interactive,
-            "capabilities": ["repository", "existing_logs", "docs", "quarto_report", "acp"]
+            "execution": execution,
+            "capabilities": ["repository", "existing_logs", "docs", "latex_report", "acp"]
             + (["hawk_jobs"] if remote else []),
         },
     )

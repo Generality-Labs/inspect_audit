@@ -1,80 +1,78 @@
 ---
 name: writing
-description: How to write the audit report so a reader who knows the domain but did not watch you work gets the findings, their size and their evidence with no wasted words. Read before drafting report.qmd.
+description: Fill the pinned Generality Labs Audit Findings template with explained, quantified evidence; compile and inspect the PDF before publication.
 ---
 
-## Who reads it and why
+## Contract
 
-The reader is deciding whether to trust a number. They know what a benchmark is. They
-did not watch you work and do not care how you worked, except in the short method note.
-They want to know what you found, how big it is, how you know, and what would change
-your mind. Give them that, in that order, in every section.
+The deliverable is Laurence's Audit Findings section, using the supplied GL LaTeX
+class and components unchanged. Fill report/metadata.tex and report/Findings.tex.
+Keep all nine dimensionreview sections in A-I order and their dimensionoverview
+commands. Do not substitute a thematic essay or HTML report. Do not add a cover,
+authorship/approval fields, standalone scorecard, audit-setup section or rubric pages.
+The framework and rubric are instructions for the auditor, not printed front matter.
 
-## Sentences
+Read framework/Framework.tex, framework/ScoringCriteria.tex and framework/checks.json.
+The JSON includes each check's meaning, not just its name. Framework/examples contains
+worked reports showing evidence blocks, figures and explanation depth. Their judgments,
+benchmark facts and scope are not defaults for this investigation.
 
-Lead with the finding and its size. The first sentence of a section or paragraph is
-the conclusion; support follows. One idea per sentence, plain words, an active verb.
-Around twenty words; split anything that needs a semicolon. No em dashes; use a
-comma or a full stop. British English.
+## Explain each dimension
 
-Numbers carry their denominators and their scope in the same sentence or the next one:
-"812 of 1,000 attempts" not "81%" alone; "among scored attempts" when that is the
-population. Three or more numbers go in a table, not a sentence.
+Maintain assessments.json with every dimension and check exactly once. Assess the
+question in its definition: a related observation is not a substitute. Explain ratings
+through the framework's extent and consequence criteria. Overall grade, dimension
+severity, defect prevalence and demonstrated score changes are distinct judgments.
+The generated summary/check macros use these records; edit the records, not assessments.tex.
 
-Do not narrate your process in the body. "I reviewed", "I inspected", "the audit
-examined" belong in the method note or nowhere. State what is the case and cite where
-it is shown. Do not pad claims with qualifications that name no alternative: a
-qualification is worth writing only when it says what would change the conclusion.
-Say "not assessed" and why, in one sentence, when you did not check something.
+After the overview and check table, use the template's observedevidence and
+concernevidence environments for substantive concerns. Explain what happened, how it
+was established, what it changes about interpretation, and what remedy the evidence
+supports. Cite primary evidence and concrete examples. Give each supported or qualified
+finding a narrative home in its registered dimension with \label{finding:ID}; cross-reference
+it elsewhere rather than repeating the entire explanation. Clean dimensions still explain
+what was checked and the basis for that assessment. Scope exclusions are Not assessed,
+not evidence that the benchmark passed.
 
-## Structure and figures
+Keep every material finding, including resource limits, in the relevant dimension.
+Concision means removing repetition, generic caveats and administrative narration;
+it does not mean dropping dimensions, evidence, or interpretation. Explain terms before
+relying on them. Use plain British English and put conclusions before their support.
 
-The report is one document: Summary, Benchmark architecture, a divider, then Full
-audit with the supplied detailed sections. The summary introduces the benchmark in
-2–3 sentences, then gives one linked bullet per substantive finding, positive or
-negative. Each bullet leads with the conclusion and evidence or magnitude, with its
-scope. Finish with a short coverage statement. Put execution failures and detailed
-methods in the full audit; mention them briefly above only when they limit findings.
+## Counts and figures
 
-Every detailed finding explains the mechanism, evidence locator, affected population,
-score consequence (or unmeasured consequence), and limitations. Add explicit anchors
-so the brief links directly to the relevant finding. Group repeated instances.
+Use export_coverage from /inputs/coverage.py for coverage.json. Keep complete per-question
+labels and explanations as linked supporting data. State the counted unit, denominator,
+selection method, overlapping categories and demonstrated versus inferred effects where
+numbers appear. A defective question is not automatically a misgraded submission.
 
-Use components.py and styles.css for consistent graphics. Read the component APIs
-before plotting. Architecture uses Graphviz automatic layout: visible agent context
-in a shaded boundary, hidden scoring inputs outside, labelled information flows.
-Keep evidence/architecture.json with source locators and mark unverified edges.
+Decide which findings benefit from visual explanation. Put diagrams and graphs inside
+the relevant dimensions using boxfigure, with a takeaway caption, labelled axes, units,
+denominators and a linked data table. Explain the evaluation pipeline where necessary;
+show score changes and resource sensitivity when the evidence supports them. Do not
+invent comparisons, intervals or a fixed quota of charts. Reference the figure in the
+surrounding explanation; a graph is not a substitute for interpretation.
 
-Use outcome_bars for outcome populations, paired_plot for controlled comparisons,
-response_matrix for model-by-item responses, and the existing chart/table/transcript
-helpers where appropriate. Components retain data/settings beside graphics. Captions
-state denominators and uncertainty methods; narrative interpretation belongs in prose.
-Use labels as well as colour. Never invent error bars or add a graphic to fill space.
+## Evidence and scope
 
-irt_analysis.py provides optional GIRTH Rasch/2PL fitting from a binary response CSV.
-Read its API and diagnostics. Only use it with diverse, comparable model configurations
-and enough coverage. Repeated epochs are not independent models. Error/missing records
-must not become incorrect responses. Document the score encoding, model families,
-settings and assumptions; a fit does not establish unidimensionality or independence.
-Report unstable or unsuitable fits as such. No IRT analysis is required.
+Excluded investigation techniques do not create publication restrictions. Retain ordinary
+scientific explanations and evidence unless an actual confidentiality constraint requires
+redaction. If redaction is required, preserve an informative explanation and evidence
+locator; do not replace every question's explanation with a generic placeholder.
+Keep methodological details and costs in supporting artifacts, with brief relevant
+limitations next to the claims they qualify. Never invent names, approvals or an overall grade.
 
-## What every report has to state
+## Publication
 
-Somewhere the reader can find it, and once only: what you ran and what you read. How
-many samples out of how many, on what dates, with what model versions and package
-revisions, the total tokens and the cost. If you ran jobs yourself, they are in the
-ledger and the collected logs; take the numbers from there, not from memory.
+Call check_report to validate records and generate assessments.tex. Compile from
+/workspace/report with latexmk -pdf -interaction=nonstopmode -halt-on-error report.tex.
+Render every PDF page with pdftoppm -r 110 -png report.pdf preview/page (create preview first).
+Inspect the resulting images with view_image. Check tables, page breaks, whitespace,
+figure readability, typography and links; fix and recompile. A successful build or
+text scan does not constitute visual review. If a renderer is missing, install it or
+report the blocker rather than claim inspection happened.
 
-Compare scores numerically only when the conditions support an interpretable
-comparison. Otherwise state which candidate, judge, dataset or budget differs without
-subtracting unrelated headline scores.
-
-Say the size of what you tested. A hypothesis checked on eight samples is reported as
-eight samples. Anything under roughly twenty cases, or fewer than three cases per
-subgroup you are comparing, is examples rather than a rate, and the sentence says so.
-
-## Before publishing
-
-Read the rendered report with render_report. Remove every drafting comment. Check each
-number against the table it came from. Look at each figure with view_image. Then
-publish.
+Reconcile the supported findings register against the narrative and re-read each
+assessment against its definition. Structural validation cannot establish semantic
+correctness. Then call publish_report, which compiles and preserves the PDF, editable
+LaTeX, figures and evidence as a versioned bundle.

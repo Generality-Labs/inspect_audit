@@ -1,22 +1,69 @@
-# data, never in git
+# Audit data, never in git
 cells/
 out/
 investigations/
 reference/
 calibration/suite/
 *.eval
+dev/logs/
+dev/audit-logs/
 
-# python
+# Byte-compiled
 __pycache__/
-*.egg-info/
+*.py[cod]
+*$py.class
+
+# Virtual environments
 .venv/
-.mypy_cache/
+venv/
+
+# Packaging / build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Tool caches
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 
-dev/logs/
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
-# secrets
+# Local env / secrets — never commit API keys
 .env
 .env.*
-dev/audit-logs/
+!.env.example
+
+# Claude Code per-user overrides (the shared .claude/settings.json is committed)
+.claude/settings.local.json
+
+# Eval / run output
+logs/
+
+# Git worktrees
+.worktrees/
+
+# Editors
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# local symlink to a laptop data dir (a symlink, so no trailing slash)
+dev/logs
+
+# Claude Code scratch
+.superpowers/
+
+# private working artefacts: kept in ~/Developer/inspect_ai/audit-artefacts, never in this public repo
+agent_artefacts/
+
+# pulled Hawk logs and bundles (scripts/hawk-artefacts.yaml -> inspect-audit-findings hawk-pull)
+artefacts/

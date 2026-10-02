@@ -1,0 +1,326 @@
+[
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [11, 410]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 11,
+    "sample_id": "2a994bc105c63ddfdd912f52cbf8c63a",
+    "line": null,
+    "metadata": {
+      "question": "cameroon is a country in africa.",
+      "duplicate_indices": [
+        11,
+        410
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [11, 410]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 410,
+    "sample_id": "7f3668896d796455d9c62baa02475dc9",
+    "line": null,
+    "metadata": {
+      "question": "cameroon is a country in africa.",
+      "duplicate_indices": [
+        11,
+        410
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [667, 691]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 667,
+    "sample_id": "a65f00f54f4a7128185f54d1aeef0dac",
+    "line": null,
+    "metadata": {
+      "question": "saudi arabian is in the middle east",
+      "duplicate_indices": [
+        667,
+        691
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [667, 691]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 691,
+    "sample_id": "964319f781925c0124f8bc4a42308bfc",
+    "line": null,
+    "metadata": {
+      "question": "saudi arabian is in the middle east",
+      "duplicate_indices": [
+        667,
+        691
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [674, 689]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 674,
+    "sample_id": "3aa83427b3a306ef90e59a001bca11ad",
+    "line": null,
+    "metadata": {
+      "question": "spain is in europe.",
+      "duplicate_indices": [
+        674,
+        689
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [674, 689]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 689,
+    "sample_id": "42e99c0bcd8d38ce0217e51af4f39623",
+    "line": null,
+    "metadata": {
+      "question": "spain is in europe.",
+      "duplicate_indices": [
+        674,
+        689
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [733, 837]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 733,
+    "sample_id": "6359b532cc1ad26efa594ca31c5bb170",
+    "line": null,
+    "metadata": {
+      "question": "morocco is a country.",
+      "duplicate_indices": [
+        733,
+        837
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [733, 837]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 837,
+    "sample_id": "74df1bc42f0309aadd31c75af3e5ffb4",
+    "line": null,
+    "metadata": {
+      "question": "morocco is a country.",
+      "duplicate_indices": [
+        733,
+        837
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [1237, 1666]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 1237,
+    "sample_id": "2a5d206ddbe94357e89b79204d7bf51b",
+    "line": null,
+    "metadata": {
+      "question": "the prosecutor entered the courtroom.",
+      "duplicate_indices": [
+        1237,
+        1666
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [1237, 1666]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 1666,
+    "sample_id": "7fff586890963026ad37889953a2466b",
+    "line": null,
+    "metadata": {
+      "question": "the prosecutor entered the courtroom.",
+      "duplicate_indices": [
+        1237,
+        1666
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [1523, 1802]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 1523,
+    "sample_id": "3c2c7a42e129649cb0688724a19c173d",
+    "line": null,
+    "metadata": {
+      "question": "my father is from lebanon.",
+      "duplicate_indices": [
+        1523,
+        1802
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [1523, 1802]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 1802,
+    "sample_id": "64e2f507cea79068d53935b24c63148f",
+    "line": null,
+    "metadata": {
+      "question": "my father is from lebanon.",
+      "duplicate_indices": [
+        1523,
+        1802
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [1550, 1864]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 1550,
+    "sample_id": "ca1cd6553c478ccb28ddb3cd88d6602d",
+    "line": null,
+    "metadata": {
+      "question": "italy is a country in europe.",
+      "duplicate_indices": [
+        1550,
+        1864
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [1550, 1864]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 1864,
+    "sample_id": "a91a82f8ce728b58bd3f3f958ec9212a",
+    "line": null,
+    "metadata": {
+      "question": "italy is a country in europe.",
+      "duplicate_indices": [
+        1550,
+        1864
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [1764, 1803]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 1764,
+    "sample_id": "49a95917e16823da64e15c4e98e0573e",
+    "line": null,
+    "metadata": {
+      "question": "i have a sister.",
+      "duplicate_indices": [
+        1764,
+        1803
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [1764, 1803]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 1803,
+    "sample_id": "4a38922d365c4066190fa63ff19c3d4c",
+    "line": null,
+    "metadata": {
+      "question": "i have a sister.",
+      "duplicate_indices": [
+        1764,
+        1803
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [2077, 2096]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 2077,
+    "sample_id": "84a50d16a3bf2d09ceb5e7faa3cd7310",
+    "line": null,
+    "metadata": {
+      "question": "yemen is a country in the middle east.",
+      "duplicate_indices": [
+        2077,
+        2096
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "Question appears 2 times with different answers (at indices [2077, 2096]). In multimodal datasets this is expected \u2014 use --image-field for precise classification.",
+    "sample_index": 2096,
+    "sample_id": "1d9af73731cb47a0fdf81d55cfcc8816",
+    "line": null,
+    "metadata": {
+      "question": "yemen is a country in the middle east.",
+      "duplicate_indices": [
+        2077,
+        2096
+      ],
+      "duplicate_count": 2,
+      "answers_agree": false
+    }
+  }
+]

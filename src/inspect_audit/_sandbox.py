@@ -1,8 +1,6 @@
 import atexit
 import json
-import math
 import os
-import re
 import shlex
 import shutil
 import tempfile
@@ -44,7 +42,6 @@ from inspect_ai.util._sandbox.docker.config import (
 )
 from inspect_ai.util._sandbox.docker.docker import DockerSandboxEnvironment
 from inspect_ai.util._sandbox.docker.service import (
-    parse_duration,
     services_healthcheck_time,
 )
 from inspect_ai.util._sandbox.environment import resolve_sandbox_environment
@@ -86,7 +83,7 @@ async def run_benchmark_setup(script: str | None) -> None:
     """Run the audited sample's setup in the benchmark service.
 
     The setup is what populates a benchmark's per-sample state; benchmarks whose
-    state is baked into a per-sample image (e.g. SWE-bench) carry no setup.
+    state is baked into a per-sample image (for example, tasks with prebuilt per-sample images) carry no setup.
     Replayed exactly as inspect's own sample-init does (sandbox.py:136-143 +
     context.py): resolve the source (file path, data URI, http, or literal
     text), inject a `#!/usr/bin/env bash` shebang when the script has none, then
@@ -192,9 +189,7 @@ async def restore_benchmark(script: str | None) -> list[str]:
 AUDITOR_SERVICE_NAME = "default"
 
 
-async def phoenix_benchmark(
-    script: str | None, files: dict[str, str] | None = None
-) -> str:
+async def phoenix_benchmark(script: str | None, files: dict[str, str] | None = None) -> str:
     """Rebuild the benchmark box from its image, then repopulate per-sample state.
 
     Where `restore_benchmark` reverts filesystem state *inside a live box*, this
@@ -233,7 +228,7 @@ async def phoenix_benchmark(
             "phoenix reset needs the docker sandbox; this run's provider is not "
             "docker, where rebuilding a bricked box from its image is unsupported."
         ) from None
-    project = docker._project
+    project = docker._project  # pyright: ignore[reportPrivateUsage]
 
     services = await compose_services(project)
     targets = [name for name in services if name != AUDITOR_SERVICE_NAME]
@@ -295,7 +290,9 @@ async def phoenix_benchmark(
         detail = (
             "the rebuild timed out and the box is still not up"
             if timed_out
-            else (result.stderr or "")[:500] if result is not None else ""
+            else (result.stderr or "")[:500]
+            if result is not None
+            else ""
         )
         raise RuntimeError(
             f"the benchmark box did not come back after a rebuild ({', '.join(down)}) "
@@ -312,9 +309,7 @@ async def phoenix_benchmark(
     # `sandbox_env(name)` for it would raise or mis-resolve to the auditor.
     if files:
         live = set(benchmark_boxes())
-        wanted = {
-            file.split(":", 1)[0] for file in files if ":" in file
-        }
+        wanted = {file.split(":", 1)[0] for file in files if ":" in file}
         unreachable = wanted - live - {AUDITOR_SERVICE_NAME}
         if unreachable:
             raise RuntimeError(
@@ -385,7 +380,6 @@ async def _image_declares_volumes(service: dict[str, Any]) -> bool:
     return bool(declared) and declared not in ("null", "{}")
 
 
-
 AUDITOR_SERVICE: dict[str, Any] = {
     "build": {"context": None, "dockerfile": "Dockerfile"},
     "command": "sleep infinity",
@@ -440,10 +434,10 @@ def _service_renames(services: dict[str, Any]) -> dict[str, str]:
         taken.add(name)
         return name
 
-    if BENCHMARK_SERVICE in services and BENCHMARK_SERVICE != default_service:
+    if BENCHMARK_SERVICE in services and default_service != BENCHMARK_SERVICE:
         renames[BENCHMARK_SERVICE] = uniquify(BENCHMARK_SERVICE)
     renames[default_service] = BENCHMARK_SERVICE
-    if AUDITOR_SERVICE_NAME in services and AUDITOR_SERVICE_NAME != default_service:
+    if AUDITOR_SERVICE_NAME in services and default_service != AUDITOR_SERVICE_NAME:
         renames[AUDITOR_SERVICE_NAME] = uniquify(AUDITOR_SERVICE_NAME)
     return renames
 
@@ -582,9 +576,7 @@ def benchmark_source(
         if is_dockerfile(source.name):
             # Inspect's Dockerfile template builds `./Dockerfile`; point it at the
             # audited task's actual Dockerfile, absolute so no anchoring is needed
-            merged = yaml.safe_load(
-                COMPOSE_DOCKERFILE_YAML.format(dockerfile=INSPECT_DOCKERFILE)
-            )
+            merged = yaml.safe_load(COMPOSE_DOCKERFILE_YAML.format(dockerfile=INSPECT_DOCKERFILE))
             merged["services"]["default"]["build"] = {
                 "context": str(source.parent),
                 "dockerfile": source.name,
@@ -603,20 +595,30 @@ def has_benchmark(spec: SandboxEnvironmentSpec | None) -> bool:
 
 
 def sample_sandbox(task: Task, sample: Sample) -> SandboxEnvironmentSpec | None:
-    """The sandbox an audited sample actually runs in (its own, else its task's)."""
-    # resolve_sandbox already falls back to the task's sandbox for a bare sample
-    return resolve_sandbox(task, sample.sandbox)
+    """The sandbox an audited sample actually ran in, resolved the way Inspect resolves it.
 
+    Inspect's own precedence (inspect_ai/_eval/loader.py `resolve_task_sandbox`, then
+    _eval/task/sandbox.py `resolve_sandbox`, which Hawk's runner also uses): the task's
+    implicit compose.yaml/Dockerfile is found, the task's type wins over the sample's,
+    and a sample config overrides only when compatible. Relative config paths are made
+    absolute against the audited task's directory, not the audit's.
+    """
+    from inspect_ai._eval.loader import resolve_task_sandbox
+    from inspect_ai._eval.task.sandbox import resolve_sandbox as inspect_resolve_sandbox
+    from inspect_ai._util._async import run_coroutine
 
-def resolve_sandbox(
-    task: Task, sandbox: SandboxEnvironmentType | None = None
-) -> SandboxEnvironmentSpec | None:
-    """The audited task's own sandbox, with any relative config path made absolute."""
-    spec = resolve_sandbox_environment(sandbox if sandbox is not None else task.sandbox)
+    # a sample built in code may carry the raw (type, config) form; Inspect's resolver
+    # expects the normalised spec its dataset loaders produce
+    normalised = sample.model_copy(update={"sandbox": resolve_sandbox_environment(sample.sandbox)})
+    spec = run_coroutine(
+        inspect_resolve_sandbox(
+            resolve_task_sandbox(task, resolve_sandbox_environment(task.sandbox)),
+            normalised,
+            task.name,
+        )
+    )
     if spec is None:
         return None
-    # inspect resolves relative config paths against the running task's directory,
-    # which is the audit's, not the audited task's
     if isinstance(spec.config, str) and not Path(spec.config).is_absolute():
         return SandboxEnvironmentSpec(
             spec.type, (Path(task_run_dir(task)) / spec.config).as_posix()
@@ -686,6 +688,7 @@ def audit_compose(
 # paths inside a compose file are relative to that file's directory, and the
 # merged file lives somewhere else
 
+
 def _anchor(value: Any, base: Path) -> Any:
     if isinstance(value, str) and not value.startswith(("/", "$")) and ":" not in value:
         return str((base / value).resolve())
@@ -725,146 +728,65 @@ def _anchor_volume(volume: Any, base: Path) -> Any:
     return volume
 
 
-
-_MEMORY = re.compile(r"^(?P<value>\d+(?:\.\d+)?)(?P<unit>gb?|mb?|kb?|b)$", re.IGNORECASE)
-_MEMORY_UNITS = {"b": "", "k": "Ki", "m": "Mi", "g": "Gi"}
-
-
-def _as_list(value: str | list[str]) -> list[str]:
-    return value.split() if isinstance(value, str) else value
+# What Hawk's runner strips from a compose before converting it
+# (hawk/runner/run_eval_set.py `_IGNORED_SERVICE_KEYS`, `_IGNORED_TOP_LEVEL_KEYS`).
+_HAWK_IGNORED_SERVICE_KEYS = ("build", "init")
+_HAWK_IGNORED_TOP_LEVEL_KEYS = ("secrets",)
 
 
-def _seconds(value: Any) -> int | None:
-    # inspect's own compose-duration parser (it knows ns/us/µs and embedded
-    # whitespace, and errors on garbage a regex would silently skip over).
-    # probe fields are whole seconds >= 1: a zero or empty duration returns
-    # None so the field is dropped rather than emitting periodSeconds: 0, which
-    # k8s rejects; a positive sub-second value rounds up.
-    try:
-        total = parse_duration(str(value)).seconds
-    except ValueError:
-        return None
-    return math.ceil(total) if total > 0 else None
+def _hawk_network_mode(compose: dict[str, Any]) -> None:
+    """Hawk's own network-mode patch, so the benchmark gets the network it had in the eval.
+
+    Mirrors hawk/runner/run_eval_set.py `_patch_network_mode` (private to the runner):
+    `none` stays for the converter to isolate; `bridge`, Docker's default with no k8s
+    equivalent, is dropped and grants the sandbox world egress as Hawk does.
+    """
+    bridged = False
+    for name, service in (compose.get("services") or {}).items():
+        mode = service.get("network_mode")
+        if mode not in (None, "none", "bridge"):
+            raise ValueError(f"unsupported network_mode for service {name!r}: {mode}")
+        if mode == "bridge":
+            del service["network_mode"]
+            bridged = True
+    if bridged:
+        extensions = compose.setdefault("x-inspect_k8s_sandbox", {})
+        extensions.setdefault("allow_entities", []).append("world")
+        extensions.setdefault("allow_domains", []).append("*")
 
 
-def _quantity(value: Any) -> Any:
-    # `512m` -> `512Mi`; unrecognised values pass through for the chart to reject.
-    match = _MEMORY.match(str(value))
-    if match is None:
-        return value
-    return f"{match.group('value')}{_MEMORY_UNITS[match.group('unit')[0].lower()]}"
-
-
-def _env(value: dict[str, Any] | list[str]) -> list[dict[str, str]]:
-    if isinstance(value, dict):
-        return [{"name": k, "value": "" if v is None else str(v)} for k, v in value.items()]
-    return [{"name": k, "value": v} for k, _, v in (item.partition("=") for item in value)]
-
-
-def _readiness_probe(src: dict[str, Any], name: str) -> dict[str, Any] | None:
-    test = src.get("test")
-    if not isinstance(test, list) or test[:1] not in (["CMD"], ["CMD-SHELL"]):
-        logger.warning(f"dropping 'healthcheck' from service '{name}': only CMD and CMD-SHELL tests convert")
-        return None
-    command = test[1:] if test[0] == "CMD" else ["sh", "-c", test[1]]
-    probe: dict[str, Any] = {"exec": {"command": command}}
-    for key, target in (
-        ("start_period", "initialDelaySeconds"),
-        ("interval", "periodSeconds"),
-        ("timeout", "timeoutSeconds"),
-    ):
-        if key in src and (seconds := _seconds(src[key])) is not None:
-            probe[target] = seconds
-    if isinstance(src.get("retries"), int):
-        # N retries is a failureThreshold of N+1.
-        probe["failureThreshold"] = src["retries"] + 1
-    return probe
-
-
-def _resources(src: dict[str, Any]) -> dict[str, Any]:
-    declared = (src.pop("deploy", None) or {}).get("resources") or {}
-
-    def section(block: dict[str, Any]) -> dict[str, Any]:
-        out: dict[str, Any] = {}
-        if cpus := block.get("cpus"):
-            out["cpu"] = cpus
-        if memory := block.get("memory"):
-            out["memory"] = _quantity(memory)
-        return out
-
-    limits = section(declared.get("limits") or {})
-    requests = section(declared.get("reservations") or {})
-    if mem_limit := src.pop("mem_limit", None):
-        limits.setdefault("memory", _quantity(mem_limit))
-    if cpus := src.pop("cpus", None):
-        limits.setdefault("cpu", cpus)
-    resources: dict[str, Any] = {}
-    if limits:
-        resources["limits"] = limits
-        # As the chart's own converter does: requests default to limits for QoS.
-        resources["requests"] = {**limits, **requests}
-    elif requests:
-        resources["requests"] = requests
-    return resources
-
-
-def _security_context(user: Any) -> dict[str, Any]:
-    uid, _, gid = str(user).partition(":")
-    context: dict[str, Any] = {"runAsUser": int(uid)}
-    if gid:
-        context["runAsGroup"] = int(gid)
-    return context
-
-
-def _values_service(name: str, service: dict[str, Any], benchmark_image: str | None) -> dict[str, Any]:
-    """Convert one compose service to a chart service, dropping what k8s cannot express."""
-    src = dict(service)
-    out: dict[str, Any] = {}
-    build = src.pop("build", None)
-    if "image" in src:
-        out["image"] = src.pop("image")
-    elif build is not None:
-        if benchmark_image is None:
-            raise ValueError(
-                f"service '{name}' is defined by 'build:', which k8s does not support "
-                "-- images must be pullable. Pass benchmark_image naming a published image."
-            )
-        out["image"] = benchmark_image
-    if build is not None:
-        logger.warning(f"dropping 'build' from service '{name}': k8s images must be pullable")
-    # compose entrypoint maps to the chart's command (the container's argv[0]);
-    # compose command maps to its args -- unless there is no entrypoint, in which
-    # case compose command IS the process to run, so it must be the chart command
-    # or the image's own entrypoint runs instead and a `sleep infinity` never fires
-    if "entrypoint" in src:
-        out["command"] = _as_list(src.pop("entrypoint"))
-        if "command" in src:
-            out["args"] = _as_list(src.pop("command"))
-    elif "command" in src:
-        out["command"] = _as_list(src.pop("command"))
-    if "working_dir" in src:
-        out["workingDir"] = src.pop("working_dir")
-    # A DNS record for every service, matching Docker Compose's name resolution.
-    out["dnsRecord"] = True
-    if "environment" in src:
-        out["env"] = _env(src.pop("environment"))
-    if "volumes" in src:
-        out["volumes"] = src.pop("volumes")
-    if "healthcheck" in src:
-        if (probe := _readiness_probe(src.pop("healthcheck"), name)) is not None:
-            out["readinessProbe"] = probe
-    if resources := _resources(src):
-        out["resources"] = resources
-    if "user" in src:
-        out["securityContext"] = _security_context(src.pop("user"))
-    if "networks" in src:
-        out["networks"] = src.pop("networks")
-    # Everything left -- init, privileged, extra_hosts, stop_grace_period, x-default,
-    # depends_on, ... -- has no chart equivalent and is dropped rather than passed
-    # through to fail schema validation.
-    for key in sorted(src):
-        logger.warning(f"dropping '{key}' from service '{name}': no k8s equivalent")
-    return out
+def _values_compose(
+    compose: dict[str, Any], benchmark_image: str | None, auditor_image: str
+) -> dict[str, Any]:
+    """Their compose, renamed and sanitised the way Hawk does, with the auditor added."""
+    theirs: dict[str, Any] = compose.get("services") or {}
+    renames = _service_renames(theirs)
+    services: dict[str, Any] = {}
+    for name, original in theirs.items():
+        service = dict(original)
+        if "build" in service:
+            if benchmark_image is None:
+                raise ValueError(
+                    f"service {name!r} is built, not pulled, and k8s cannot build: pass "
+                    "benchmark_image, a published image standing in for it"
+                )
+            service["image"] = benchmark_image
+            # the stand-in's entrypoint is not the one the build had, so its command
+            # replaces the entrypoint rather than feeding it (6ee3ca7: a stand-in's
+            # `sleep infinity` never ran and the pod backoff-looped)
+            if "command" in service and "entrypoint" not in service:
+                service["entrypoint"] = service.pop("command")
+        for key in _HAWK_IGNORED_SERVICE_KEYS:
+            service.pop(key, None)
+        if "stop_grace_period" in service:
+            logger.warning(f"dropping stop_grace_period from service {name!r}: no k8s equivalent")
+            service.pop("stop_grace_period")
+        service.pop("x-default", None)
+        services[renames.get(name, name)] = service
+    merged = {k: v for k, v in compose.items() if k not in _HAWK_IGNORED_TOP_LEVEL_KEYS}
+    merged["services"] = {"default": {"image": auditor_image}, **services}
+    _hawk_network_mode(merged)
+    return merged
 
 
 def audit_values(
@@ -878,10 +800,12 @@ def audit_values(
     """The same audit sandbox as `audit_compose`, emitted as Helm values for k8s.
 
     On Kubernetes providers (METR's Hawk) the sandbox is a Helm chart, `build:` is
-    unsupported, and egress is Cilium deny-by-default. So the auditor's image must be
-    published rather than built, and its egress is granted by a per-service network
-    policy appended to the values file -- no sandbox-wide `allowDomains`/`allowEntities`
-    grants, so the benchmark's services stay as isolated as they were during the eval.
+    unsupported, and egress is Cilium deny-by-default. Their compose is converted by
+    inspect_k8s_sandbox's own converter, after the same sanitising Hawk's runner applies,
+    so the benchmark runs in the audit as it ran in the eval: `network_mode: none` stays
+    isolated, `runtime` and seccomp carry over, and a command feeds the image's
+    entrypoint. The auditor's egress is a per-service network policy appended to the
+    values file, never a sandbox-wide grant.
 
     Args:
         task: The task being audited.
@@ -894,8 +818,7 @@ def audit_values(
     Returns:
         A `("k8s", <values.yaml path>)` sandbox spec.
     """
-    values: dict[str, Any] = {}
-    converted: dict[str, Any] = {}
+    from k8s_sandbox.compose import convert_compose_to_helm_values
 
     found = benchmark_source(spec)
     if found is None and spec is not None:
@@ -903,23 +826,19 @@ def audit_values(
             f"cannot reproduce the audited sandbox ({spec.type!r}, config "
             f"{spec.config!r}); the auditor runs without the benchmark environment"
         )
-    if found is not None:
-        compose, _ = found
-        theirs: dict[str, Any] = compose.get("services") or {}
-        renames = _service_renames(theirs)
-        for name, service in theirs.items():
-            converted[renames.get(name, name)] = _values_service(
-                name, service, benchmark_image
-            )
-        if volumes := compose.get("volumes"):
-            values["volumes"] = {name: {} for name in volumes}
-        if networks := compose.get("networks"):
-            values["networks"] = {name: {} for name in networks}
-
-    auditor = {"image": auditor_image, "command": ["sleep", "infinity"], "dnsRecord": True}
-    values = {"services": {"default": auditor, **converted}, **values}
+    compose = _values_compose(found[0] if found else {}, benchmark_image, auditor_image)
 
     stage.mkdir(parents=True, exist_ok=True)
+    source = stage / "audit-compose.yaml"
+    source.write_text(yaml.safe_dump(compose, sort_keys=False))
+    values = convert_compose_to_helm_values(source)
+    # the auditor waits for the agent; it has no service of its own to start
+    auditor = values["services"]["default"]
+    auditor.pop("args", None)
+    auditor["command"] = ["sleep", "infinity"]
+    for service in values["services"].values():
+        service.setdefault("dnsRecord", True)
+
     # Not named `compose.yaml`: the k8s provider reads Helm values, not a compose file.
     out = stage / "values.yaml"
     out.write_text(yaml.safe_dump(values, sort_keys=False) + EGRESS_POLICY)

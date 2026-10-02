@@ -11,13 +11,14 @@ from inspect_ai import Task
 from inspect_ai.agent import as_solver
 from inspect_ai.analysis import EvalModel, EvalTask, SampleSummary, samples_df
 from inspect_ai.dataset import MemoryDataset, Sample
-from inspect_ai.log import EvalLog
+from inspect_ai.log import EvalLog, read_eval_log
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import SandboxEnvironmentType
 
 from ._agent import audit_agent, audit_items, item_scorer
-from ._contract import task_contract
-from ._item import ANSWER_METADATA, AUDIT_ROOT, AttemptRef, AuditItem, item_sample
+from ._concordance import concordance_gate
+from ._contract import log_contract, task_contract
+from ._item import AUDIT_ROOT, AttemptRef, AuditItem, item_sample
 from ._resolve import resolve_task
 from ._sandbox import (
     audit_compose,
@@ -40,9 +41,8 @@ def benchmark_setup() -> Solver:
 
     return solve
 
-ITEM_PROMPT = (
-    f"You are auditing one benchmark sample. Its audit filesystem is at {AUDIT_ROOT}."
-)
+
+ITEM_PROMPT = f"You are auditing one benchmark sample. Its audit filesystem is at {AUDIT_ROOT}."
 
 
 # logs read per samples_df call: the read fans out one open file descriptor per
@@ -115,12 +115,11 @@ def attempts(
         frame = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
     if task is not None and not frame.empty:
         tails = frame["task_name"].astype(str).str.split("/").str[-1]
-        matched = frame[tails == task.split("/")[-1]]
+        names = {name.strip().split("/")[-1] for name in task.split(",")}
+        matched = frame[tails.isin(names)]
         if matched.empty:
             found = ", ".join(sorted(frame["task_name"].astype(str).unique()))
-            raise ValueError(
-                f"None of these logs record task {task!r} (they record: {found})."
-            )
+            raise ValueError(f"None of these logs record task {task!r} (they record: {found}).")
         frame = matched
     if sample_ids is not None and not frame.empty:
         wanted = {str(sample) for sample in sample_ids}
@@ -146,6 +145,8 @@ def audit_task(
     attempts_task: str | None = None,
     auditor_image: str | None = None,
     benchmark_image: str | None = None,
+    assessment_ids: dict[str, list[str]] | None = None,
+    concordance_limit: int = 15,
 ) -> Task:
     """Build the audit as an Inspect `Task`.
 
@@ -170,18 +171,22 @@ def audit_task(
             whichever variant produced them, and each sliced log keeps its own header
             so the auditor can see which variant it is reading. Defaults to the
             audited task's own name, which is the safe choice.
-        redact: Further metadata keys to strip from the item the auditor reads, on
-            top of the answer-bearing keys always stripped. Use it for a key that
-            would pre-empt the judgement under audit as well as for one that carries
-            the answer.
+        redact: Explicit metadata keys to omit from staged sample.json. No keys
+            are guessed from benchmark conventions; source and logs are not redacted.
         auditor_image: Emit the sandbox as Helm values for k8s providers, with this
             published image as the auditor (see `audit_values`).
+        assessment_ids: Optional mapping from sample IDs to assessment-unit IDs.
+            Defaults to one unit per sample. Supply every selected sample; IDs
+            must be nonempty and globally unique.
+        concordance_limit: Maximum recorded attempts regraded before the audit.
         benchmark_image: Published image standing in for benchmark services that
             `build:` their own (k8s only).
     """
+    if concordance_limit < 1:
+        raise ValueError("concordance_limit must be positive")
     target = resolve_task(task, task_args)
     staging = _staging()
-    redacted = (*ANSWER_METADATA, *(redact or ()))
+    redacted = tuple(redact or ())
     contract = task_contract(target)
 
     # one merged compose per distinct environment: ctf-style benchmarks give every
@@ -220,6 +225,23 @@ def audit_task(
     if limit is not None:
         selected = selected[:limit]
     in_scope = set(selected)
+    units = assessment_ids if assessment_ids is not None else {sid: [sid] for sid in selected}
+    if in_scope - units.keys() or units.keys() - set(ids):
+        raise ValueError(
+            "assessment_ids must cover every selected sample and name only known samples"
+        )
+    flat: list[str] = []
+    for sid in selected:
+        values = units[sid]
+        if (
+            not isinstance(values, list)
+            or not values
+            or any(not isinstance(v, str) or not v.strip() for v in values)
+        ):
+            raise ValueError("assessment_ids must contain nonempty lists of nonempty strings")
+        flat.extend(values)
+    if len(flat) != len(set(flat)):
+        raise ValueError("assessment_ids must be globally unique across selected samples")
 
     # group the attempts by sample
     by_sample: dict[str, list[AttemptRef]] = {}
@@ -237,6 +259,13 @@ def audit_task(
                     sample_id=sample_id,
                 )
             )
+        # when the eval ran a solver in place of the task's, the declared tools are
+        # the ones that ran; the first log stands for the set (one eval, one solver)
+        logged = sorted({str(f) for f in frame["log"]}) if not frame.empty else []
+        if logged:
+            planned = log_contract(read_eval_log(logged[0], header_only=True))
+            if planned is not None:
+                contract = planned
         if not by_sample and in_scope:
             raise ValueError(
                 f"No attempts at any selected sample of '{target.name}' were found in "
@@ -269,19 +298,19 @@ def audit_task(
                 original_env=original_env,
                 benchmark=benchmark,
                 redact=redacted,
+                assessment_ids=units[sample_id],
                 contract=contract,
             )
         )
 
     any_media = any(
-        any(f"{AUDIT_ROOT}/media/" in key for key in (s.files or {}))
-        for s in audit_samples
+        any(f"{AUDIT_ROOT}/media/" in key for key in (s.files or {})) for s in audit_samples
     )
 
     return Task(
         name=f"audit/{target.name}",
         dataset=MemoryDataset(audit_samples),
-        setup=benchmark_setup(),
+        setup=[benchmark_setup(), concordance_gate(target.scorer, limit=concordance_limit)],
         solver=solver
         or as_solver(
             audit_agent(

@@ -37,6 +37,12 @@ transcripts decide: a failure that reproduces the same missing dependency across
 field is an artefact; a field that each reaches a different wrong answer by sound
 reasoning is a capability limit.
 
+For sequential tasks, trace which earlier outputs or implementations the failing
+step consumes. Where possible, check the step independently using a controlled,
+valid upstream input. Keep the original end-to-end result separate: an isolated
+step passing does not make the recorded chain pass, and an inherited error does
+not establish a new defect in every downstream step.
+
 ## Grade
 
 - CAPABILITY -- the failures are genuine; name what the work required that was not met

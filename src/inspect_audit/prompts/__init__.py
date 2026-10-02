@@ -37,18 +37,9 @@ AUDIT_NOTES = _read("audit_notes.md")
 # The outer investigator: one benchmark, its logs, its paper, a container and a budget.
 INVESTIGATE = _read("investigate.md")
 
-# The layer-2 synthesis agent, which works over finished audit logs with an operator on
-# the other end of an ACP connection. Filled with `root`.
-REPORT = _read("report.md")
-
-# The same agent when no logs were staged and it has no tools: a plumbing test.
-REPORT_CHAT_ONLY = _read("report_chat_only.md")
-
 __all__ = [
     "AUDIT",
     "AUDIT_CONFIDENTIAL",
     "AUDIT_NOTES",
     "INVESTIGATE",
-    "REPORT",
-    "REPORT_CHAT_ONLY",
 ]

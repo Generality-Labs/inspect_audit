@@ -25,20 +25,25 @@ is why grades stamp the full mix rather than a single flag.
 
 import json
 import tempfile
+from datetime import UTC, datetime
+from logging import getLogger
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from inspect_ai.log import EvalSample, read_eval_log
+from inspect_ai.log import EvalConfig, EvalDataset, EvalLog, EvalSample, EvalSpec, read_eval_log
 from inspect_ai.model import (
     ChatMessage,
     ChatMessageAssistant,
     ChatMessageSystem,
     ChatMessageTool,
     ChatMessageUser,
-    ModelName,
     ModelOutput,
 )
 from inspect_ai.solver import TaskState
+from inspect_ai.solver._multiple_choice import (
+    parse_answers,
+    set_choices_based_on_generated_response,
+)
 from inspect_ai.solver._task_state import sample_state
 from inspect_ai.tool import (
     Tool,
@@ -53,6 +58,8 @@ from inspect_ai.util import StoreModel, sandbox, sandbox_default, store_as
 from pydantic import BaseModel, Field, JsonValue
 
 from ._sandbox import BENCHMARK_SERVICE, has_benchmark_box
+
+logger = getLogger(__name__)
 
 Provenance = Literal["real", "enacted", "authored"]
 
@@ -82,6 +89,10 @@ class BenchmarkState(StoreModel):
     """How the box reached its current state: `initial`, `soft` (reverted in place),
     or `phoenix` (rebuilt from image). Stamped on grades so a receipt says whether
     the judged box was git-restored or genuinely rebuilt."""
+    recorded: dict[str, JsonValue] | None = None
+    """For a loaded attempt: the recorded sample's own id, epoch, input, target,
+    choices and metadata, and the log it came from. The grader judges that sample,
+    not the dataset re-resolved today (an unseeded shuffle reorders choices)."""
 
     def chat_messages(self) -> list[ChatMessage]:
         """The session as plain messages, for a grader or a `TaskState`."""
@@ -113,9 +124,7 @@ def seed_new(state: BenchmarkState, input: JsonValue, prompt: str | None) -> Non
             AttemptMessage(provenance="authored", message=ChatMessageSystem(content=prompt))
         )
     if isinstance(input, str):
-        messages.append(
-            AttemptMessage(provenance="real", message=ChatMessageUser(content=input))
-        )
+        messages.append(AttemptMessage(provenance="real", message=ChatMessageUser(content=input)))
     elif isinstance(input, list):
         for item in input:
             messages.append(AttemptMessage.model_validate({"provenance": "real", "message": item}))
@@ -126,16 +135,27 @@ def seed_new(state: BenchmarkState, input: JsonValue, prompt: str | None) -> Non
     state.output = None
     state.attempt_store = {}
     state.completed = False
+    state.recorded = None
 
 
-def seed_from_sample(state: BenchmarkState, sample: EvalSample, source: str) -> None:
+def seed_from_sample(
+    state: BenchmarkState, sample: EvalSample, source: str, log: str | None = None
+) -> None:
     """Seed the session from a recorded attempt, verbatim.
 
     Args:
         state: The state to seed, replacing anything already there.
         sample: The recorded attempt, read from a sliced log.
         source: Receipt for where the attempt came from (log name and epoch).
+        log: The sliced log's filename, so grading can use that log's header.
     """
+    state.recorded = cast(
+        dict[str, JsonValue],
+        sample.model_dump(
+            mode="json", include={"id", "epoch", "input", "target", "choices", "metadata"}
+        ),
+    )
+    state.recorded["log"] = log
     state.seeded = source
     state.messages = [
         AttemptMessage(provenance="real", message=message) for message in sample.messages
@@ -185,8 +205,7 @@ def append_message(
                 ]
             except (ValueError, TypeError, KeyError) as ex:
                 raise ValueError(
-                    "tool_calls must be a JSON list of {id, function, arguments} "
-                    f"objects: {ex}"
+                    f"tool_calls must be a JSON list of {{id, function, arguments}} objects: {ex}"
                 ) from None
         message = ChatMessageAssistant(content=content, tool_calls=calls, model=AUTHORED_MODEL)
     elif role == "tool":
@@ -247,57 +266,93 @@ def receipt(state: BenchmarkState) -> str:
     )
 
 
-def benchmark_task_state(
-    current: TaskState,
-    session: BenchmarkState,
-    answer: str,
-    *,
-    model: str | None = None,
-) -> TaskState:
-    """The benchmark's own `TaskState`, for its grader to judge.
+def benchmark_sample(current: TaskState, session: BenchmarkState, answer: str | None) -> EvalSample:
+    """The benchmark's own sample as a log would hold it, for its grader to judge.
 
-    Built from the benchmark's side of everything -- its input, choices and
-    metadata carried on the audit sample, and the reconstructed session --
-    the way `inspect score` rebuilds states from a log. The audit's own
-    state supplies nothing but the target and the model name: a grader
-    reading the question, the transcript or the store must see the
-    benchmark's, never the audit's.
+    A loaded attempt is the recorded sample (its id, epoch, input, target, choices
+    and metadata as logged); an authored session is the audited item. Either way
+    the session supplies the messages and store, and the audit supplies nothing:
+    a grader reading the question, the transcript or the store sees the
+    benchmark's. Inspect's own `score_async` then rebuilds the `TaskState` from it
+    the way `inspect score` does.
 
     Args:
-        current: The audit's `TaskState` (for target and ids).
+        current: The audit's `TaskState` (for the item's identity).
         session: The reconstructed benchmark session.
-        answer: The submission under grade, as `output.completion`. Empty
-            grades the benchmark environment exactly as it stands.
-        model: Model identity to stamp on the graded state. Defaults to the
-            auditor's. Set it to the evaluated model when regrading a recorded
-            attempt, so a scorer reading `state.model` (a judge naming the model
-            under test, a model-family gate) sees the model that produced the
-            attempt rather than the auditor.
+        answer: The submission under grade, as the completion. None grades the
+            session's own output (a loaded or completed attempt, else empty).
+    """
+    output = (
+        ModelOutput.from_content(model=AUTHORED_MODEL, content=answer)
+        if answer is not None
+        else session.output or ModelOutput.from_content(model=AUTHORED_MODEL, content="")
+    )
+    common: dict[str, Any] = {
+        "messages": session.chat_messages(),
+        "output": output,
+        "store": dict(session.attempt_store),
+        "events": [],
+    }
+    if session.recorded is not None:
+        fields = {k: v for k, v in session.recorded.items() if k != "log"}
+        return EvalSample.model_validate({**fields, **common})
+    metadata = current.metadata or {}
+    item = metadata.get("audit_item") or {}
+    return EvalSample.model_validate(
+        {
+            "id": item.get("sample_id", current.sample_id),
+            "epoch": current.epoch,
+            "input": metadata.get("benchmark_input") or "",
+            "target": current.target.target,
+            "choices": metadata.get("benchmark_choices"),
+            "metadata": dict(metadata.get("benchmark_metadata") or {}),
+            **common,
+        }
+    )
+
+
+def grade_log(current: TaskState, session: BenchmarkState, sample: EvalSample) -> EvalLog:
+    """A one-sample log to hand `score_async`: a recorded header, else a minimal one.
+
+    The loaded attempt's own sliced log when there is one (its model roles and
+    task are the recorded run's), else any sliced log of this item, else a
+    header synthesised for an item nobody attempted.
     """
     metadata = current.metadata or {}
-    raw_input = metadata.get("benchmark_input") or ""
-    input_messages: str | list[ChatMessage]
-    if isinstance(raw_input, list):
-        input_messages = [
-            AttemptMessage.model_validate({"provenance": "real", "message": m}).message
-            for m in raw_input
-        ]
+    logs = [str(p) for p in metadata.get("sliced_logs") or []]
+    wanted = (session.recorded or {}).get("log")
+    chosen = next((p for p in logs if Path(p).name == wanted), logs[0] if logs else None)
+    if chosen is not None:
+        log = read_eval_log(chosen, header_only=True)
     else:
-        input_messages = str(raw_input)
-    item = metadata.get("audit_item") or {}
-    return TaskState(
-        model=ModelName(model) if model is not None else current.model,
-        sample_id=item.get("sample_id", current.sample_id),
-        epoch=current.epoch,
-        input=input_messages,
-        target=current.target,
-        choices=metadata.get("benchmark_choices"),
-        messages=session.chat_messages(),
-        output=ModelOutput.from_content(model=AUTHORED_MODEL, content=answer),
-        completed=True,
-        metadata=dict(metadata.get("benchmark_metadata") or {}),
-        store=dict(session.attempt_store),
-    )
+        item = metadata.get("audit_item") or {}
+        log = EvalLog(
+            eval=EvalSpec(
+                created=datetime.now(UTC).isoformat(),
+                task=str(item.get("task") or "benchmark"),
+                dataset=EvalDataset(),
+                model=str(current.model),
+                config=EvalConfig(),
+            )
+        )
+    log.samples = [sample]
+    log.results = None
+    return log
+
+
+def replay_choices(state: TaskState, multiple_correct: bool = False) -> None:
+    """Re-derive which choices the answer picked, as `multiple_choice` did at eval time.
+
+    A log keeps choices as plain strings, so a state rebuilt from one has every
+    choice unmarked and `choice()` grades any answer wrong. Parsing the completion
+    again restores the flags the solver set.
+    """
+    if not state.choices:
+        return
+    try:
+        set_choices_based_on_generated_response(state, parse_answers(state, multiple_correct))
+    except Exception as ex:  # an unparseable answer stays unmarked, as it was graded
+        logger.debug(f"could not replay the choice parse: {ex}")
 
 
 def record_enacted(
@@ -342,7 +397,9 @@ async def mirror_state(state: BenchmarkState, root: str) -> None:
     """
     await sandbox().write_file(
         f"{root}/{ATTEMPT_DIR}/messages.json",
-        json.dumps([m.model_dump(exclude_none=True) for m in state.messages], indent=1, default=str),
+        json.dumps(
+            [m.model_dump(exclude_none=True) for m in state.messages], indent=1, default=str
+        ),
     )
     await sandbox().write_file(f"{root}/{ATTEMPT_DIR}/state.json", receipt(state))
 
@@ -408,7 +465,7 @@ def attempt(root: str, prompt: str | None = None) -> Tool:
                     raise ValueError("load needs 'log', the filename as it appears in logs/")
                 epoch = int(a.get("epoch") or 1)
                 sample = await _read_sliced(root, str(log), epoch)
-                seed_from_sample(state, sample, source=f"{log}#epoch={epoch}")
+                seed_from_sample(state, sample, source=f"{log}#epoch={epoch}", log=str(log))
             elif command == "append":
                 if not a.get("role") or a.get("content") is None:
                     raise ValueError("append needs 'role' and 'content'")
@@ -465,8 +522,7 @@ def benchmark_tools(defs: list[ToolDef], root: str) -> list[Tool]:
         root: The cell root (`/audit`).
     """
     return [
-        _submit_tool(d, root) if d.name in _SUBMIT_NAMES else _mirror_tool(d, root)
-        for d in defs
+        _submit_tool(d, root) if d.name in _SUBMIT_NAMES else _mirror_tool(d, root) for d in defs
     ]
 
 
@@ -478,11 +534,13 @@ def _strict_parameters(schema: dict[str, Any]) -> dict[str, Any]:
         required = set(schema.get("required", []))
         properties = {}
         for name, value in schema["properties"].items():
-            value = _strict_parameters(value)
+            strict = _strict_parameters(value)
             if name not in required:
-                value = {"description": value.get("description", ""),
-                         "anyOf": [value, {"type": "null"}]}
-            properties[name] = value
+                strict = {
+                    "description": strict.get("description", ""),
+                    "anyOf": [strict, {"type": "null"}],
+                }
+            properties[name] = strict
         schema.update(properties=properties, required=list(properties), additionalProperties=False)
     if isinstance(schema.get("items"), dict):
         schema["items"] = _strict_parameters(schema["items"])
@@ -516,8 +574,7 @@ def _mirror_tool(d: ToolDef, root: str) -> Tool:
         # replaced was dead code and the tool would have run in the auditor
         if not has_benchmark_box():
             raise ToolError(
-                f"{d.name!r} runs in the benchmark environment, which this item "
-                "does not have."
+                f"{d.name!r} runs in the benchmark environment, which this item does not have."
             )
         kwargs = _restore_omissions(kwargs, original)
         with sandbox_default(BENCHMARK_SERVICE):

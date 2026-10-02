@@ -75,11 +75,7 @@ def test_the_audited_tasks_environment_runs_alongside_the_auditors(tmp_path: Pat
     """
     their_compose = tmp_path / "their-compose.yaml"
     their_compose.write_text(
-        'services:\n'
-        '  default:\n'
-        '    build: .\n'
-        '    extra_hosts:\n'
-        '      - "codeocean.com:127.0.0.1"\n'
+        'services:\n  default:\n    build: .\n    extra_hosts:\n      - "codeocean.com:127.0.0.1"\n'
     )
     task = make_task(1)
     task.sandbox = ("docker", str(their_compose))  # type: ignore[assignment]
@@ -142,6 +138,11 @@ def test_attempts_join_only_the_audited_tasks_logs(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="record task 'absent_task'"):
         attempts(logs, task="absent_task")
 
+    run_fixture_eval(logs, name="audited_feedback")
+    variants = attempts(logs, task="audited_task,pkg/audited_feedback")
+    assert set(variants["task_name"]) == {"audited_task", "audited_feedback"}
+    assert len(variants[variants["id"].astype(str) == "1"]) == 2
+
 
 def test_audit_task_does_not_attach_a_foreign_tasks_attempts(tmp_path: Path) -> None:
     """End to end: audit one task from a dir that also holds another task's logs."""
@@ -200,14 +201,13 @@ def test_attempts_can_come_from_a_sibling_variant_of_the_audited_task(
     assert not attempts(fixture_log, task=name).empty
 
 
-
-def test_resolve_task_accepts_either_registry_name_form(monkeypatch) -> None:  # noqa: ANN001
+def test_resolve_task_accepts_either_registry_name_form(monkeypatch) -> None:
     """`pkg/name` and bare `name` both resolve, whichever way the package was installed."""
     from inspect_audit import _resolve
 
     registered = {"pkg/thing": object()}
 
-    def load_tasks(specs, args):  # noqa: ANN001, ANN202
+    def load_tasks(specs, args):
         return [registered[specs[0]]] if specs[0] in registered else []
 
     monkeypatch.setattr(_resolve, "load_tasks", load_tasks)
@@ -219,3 +219,47 @@ def test_resolve_task_accepts_either_registry_name_form(monkeypatch) -> None:  #
     assert _resolve.resolve_task("pkg/thing") is registered["thing"]
     with pytest.raises(ValueError, match="Tried"):
         _resolve.resolve_task("pkg/missing")
+
+
+def test_explicit_assessment_units_are_staged_without_interpreting_benchmark_metadata():
+    import json
+
+    task = make_task(2)
+    task.dataset[0].metadata = {"parts": ["unrelated"]}
+    units = {"100": ["alpha", "beta"], "101": ["gamma"]}
+    audit = audit_task(task, assessment_ids=units)
+    for sample in audit.dataset:
+        assert sample.metadata["assessment_ids"] == units[sample.id]
+        manifest = Path(sample.files[f"{AUDIT_ROOT}/assessment_ids.json"])
+        assert json.loads(manifest.read_text()) == units[sample.id]
+    default = audit_task(task).dataset[0]
+    assert default.metadata["assessment_ids"] == ["100"]
+
+
+@pytest.mark.parametrize(
+    "units",
+    [
+        {"100": ["a"]},
+        {"100": ["a"], "101": ["a"]},
+        {"100": [], "101": ["b"]},
+        {"100": [" "], "101": ["b"]},
+        {"100": ["a"], "101": ["b"], "unknown": ["c"]},
+    ],
+)
+def test_invalid_assessment_manifest_fails_before_execution(units):
+    with pytest.raises(ValueError, match="assessment_ids"):
+        audit_task(make_task(2), assessment_ids=units)
+
+
+def test_metadata_redaction_is_explicit_and_does_not_change_grader_input():
+    import json
+
+    task = make_task(1)
+    task.dataset[0].metadata = {"answer_material": "hidden", "context": "visible"}
+    ordinary = audit_task(task).dataset[0]
+    record = json.loads(Path(ordinary.files[f"{AUDIT_ROOT}/sample.json"]).read_text())[0]
+    assert record["metadata"]["answer_material"] == "hidden"
+    redacted = audit_task(task, redact=["answer_material"]).dataset[0]
+    record = json.loads(Path(redacted.files[f"{AUDIT_ROOT}/sample.json"]).read_text())[0]
+    assert record["metadata"] == {"context": "visible"}
+    assert redacted.metadata["benchmark_metadata"]["answer_material"] == "hidden"

@@ -1,16 +1,16 @@
 .PHONY: install check test test-docker
 
 install:
-	uv venv
-	uv pip install -e ".[dev]"
+	uv sync
+	uv run pre-commit install
 
 check:
-	uv run ruff check src tests
-	uv run mypy
+	uv run pre-commit run --all-files
+	uv run basedpyright src
 
-# the default run needs no docker daemon; the docker suite is its own target
+# the default run deselects the docker suite (see pytest addopts); it is its own target
 test:
-	uv run pytest -m "not docker"
+	uv run pytest
 
 test-docker:
 	uv run pytest -m docker

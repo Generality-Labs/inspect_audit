@@ -12,7 +12,7 @@ This skill assesses whether an evaluation measures what it claims to measure. It
 3. **Dataset Validity** — Can models both succeed and fail at each sample given the available affordances?
 4. **Scoring Validity** — Does the scorer measure ground truth rather than proxies?
 
-The first dimension is a high-level sense check that should be performed before diving into the mechanical details of the other three. If the evaluation's claims are fundamentally false or unsupported, the detailed checks matter less.
+Check the measurement claim early, then investigate the relevant mechanisms across the framework dimensions.
 
 This review is read-only. It produces a report with findings and recommendations but does not modify evaluation code.
 
@@ -44,10 +44,8 @@ source you are auditing is the read-only snapshot at the seed's `snapshot` path,
   claim you can settle from 4,000 recorded attempts beats a claim you settle by
   reading the scorer.
 
-Its severity vocabulary is the register's own: high means the affected results cannot
-be trusted, medium that they are noisy or imprecise, low that it is an edge case worth
-recording. Write it in the `severity` field of each finding, lowercase. One high-severity
-false claim outweighs clean mechanics.
+Use the framework's severity definitions and examples. Support each rating with the
+extent and consequence of the finding; no finding automatically sets an overall grade.
 
 ## Phase 1: Gather Context
 
@@ -170,12 +168,11 @@ Create a claims inventory table in `/workspace/journal.md`:
 
 | #   | Claim                    | Source            | Category        | Verification Result                  | Severity |
 | --- | ------------------------ | ----------------- | --------------- | ------------------------------------ | -------- |
-| 1   | "samples from X dataset" | README line N     | Data provenance | No loading code; inline samples only | High     |
-| 2   | "non-erasable scar"      | README, docstring | Mechanism       | Operation is trivially reversible    | High     |
+| 1   | "samples from X dataset" | README line N     | Data provenance | No loading code; inline samples only | Major    |
+| 2   | "non-erasable scar"      | README, docstring | Mechanism       | Operation is trivially reversible    | Major    |
 
-For each claim marked Medium or High, write a brief explanation of what the claim states, what the evidence shows, and why it matters for the eval's validity.
+For each consequential claim, write a brief explanation of what the claim states, what the evidence shows, and why it matters for the eval's validity.
 
-A single **High**-severity false claim — especially fabricated data provenance or a demonstrably false mechanism claim — should generally drive the overall validity rating to "Significant Validity Issues" regardless of how well the mechanics work. An evaluation built on false claims cannot produce trustworthy results.
 
 ## Phase 3: Assess Name Validity
 
@@ -200,7 +197,6 @@ Compare the claimed scope against what the samples actually test. Common problem
 For each issue found, note:
 
 - The specific mismatch (what the name implies vs what the eval actually tests)
-- Severity: **High** (actively misleading — someone reading only the name would have a materially wrong understanding), **Medium** (imprecise but not misleading — the name is too broad but not wrong), **Low** (minor quibble — could be more specific but unlikely to cause confusion)
 - A suggested alternative name, if applicable
 
 ## Phase 4: Assess Dataset Validity
@@ -264,7 +260,6 @@ For each issue found, note:
 
 - The specific problem (what can't be done and why)
 - Which samples are affected (specific IDs or "all samples" or "all samples of type X")
-- Severity: **High** (success or failure is impossible for affected samples — the evaluation cannot produce valid signal for these), **Medium** (success or failure is technically possible but unreasonably difficult due to missing information or unclear instructions), **Low** (minor friction that a capable model could work around)
 - A suggested fix, if apparent (e.g., "add a file submission tool", "start the server in compose.yaml", "clarify the submission format in the prompt")
 
 ## Phase 5: Assess Scoring Validity
@@ -297,26 +292,14 @@ Compare what the scorer checks against the ground truth:
 For each issue found, note:
 
 - What the scorer checks vs what it should check
-- Severity: **High** (scorer fundamentally doesn't measure the right thing — results cannot be trusted), **Medium** (scorer is a weak proxy — results are directionally useful but noisy), **Low** (minor edge case that affects a small fraction of samples)
 - A suggested improvement, if apparent (e.g., "run the code on a test set instead of checking compilation", "use an LLM judge instead of substring matching", "check the file contents instead of checking the command was run")
 
-## Writing it up
+## Recording findings
 
-There is no `VALIDITY_REPORT.md`. The four dimensions land in the report's six
-sections, and every supported or qualified claim becomes an entry in
-`/workspace/report/findings.json`:
-
-- Claims coherence and name validity are mostly **The task** (what the items are, what
-  the score is claimed to mean) and **Aggregation and limits** (what the headline number
-  can support). A false provenance or performance claim is a finding under the section
-  it is a claim about, not a section of its own.
-- Dataset validity - impossible success, impossible failure, prompt clarity - is
-  **The task** for the item itself and **The harness and environment** for affordances.
-- Scoring validity is **The grader**. The ladder (direct measurement, strong proxy,
-  weak proxy, substring matching on natural language) is the right way to say what the
-  scorer measures; say where on it this scorer sits, and what that costs.
-- What agents actually do with the affordances is **How agents approach it**; code
-  quality and construction detail are **How it is built**.
-
-Keep the claims inventory in the journal, and quote the rows that mattered in the
-report rather than pasting the whole table.
+Use the canonical nine dimensions and check definitions in report/framework.
+Claims and scope inform construct/content validity; question defects inform task
+specification; scorer defects inform grading; implementation defects inform harness
+or environment. Scaffolding and resource limits require their own assessment.
+Record evidence-backed findings in report/findings.json. Publication structure and
+severity definitions belong to the writing skill and supplied framework. No alternate
+validity rating or automatic overall verdict follows from one finding.

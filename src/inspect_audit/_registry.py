@@ -5,6 +5,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from inspect_ai import Task, task, task_with
 from inspect_ai.log import list_eval_logs
@@ -220,11 +221,28 @@ def fetch_logs(logs: str | list[str]) -> str:
                 else [i.name for i in list_eval_logs(resolved)]
             )
             for filename in files:
-                source_path = Path(filename.removeprefix("file://"))
-                shutil.copyfile(source_path, combined / f"{index}_{source_path.name}")
+                source_path = Path(urlsplit(filename).path)
+                destination = combined / f"{index}_{source_path.name}"
+                if filename.startswith(("s3://", "gs://", "http://", "https://")):
+                    import fsspec
+
+                    with (
+                        fsspec.open(filename, "rb") as incoming,
+                        destination.open("wb") as outgoing,
+                    ):
+                        shutil.copyfileobj(incoming, outgoing)
+                else:
+                    shutil.copyfile(Path(filename.removeprefix("file://")), destination)
         return str(combined)
     if logs.startswith("hawk:"):
         return _hawk_fetch(logs.removeprefix("hawk:"))
+    if logs.startswith(("https://", "http://")) and urlsplit(logs).path.endswith(".eval"):
+        import fsspec
+
+        destination = Path(tempfile.mkdtemp(prefix="audit_http_logs_")) / "supplied.eval"
+        with fsspec.open(logs, "rb") as incoming, destination.open("wb") as outgoing:
+            shutil.copyfileobj(incoming, outgoing)
+        return str(destination)
     return logs
 
 

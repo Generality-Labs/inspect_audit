@@ -85,3 +85,31 @@ def test_directory_sources_accept_inspect_file_uris(tmp_path):
     originals = list(folder.glob("*.eval"))
     assert len(originals) == 1
     assert (copied / f"0_{originals[0].name}").read_bytes() == originals[0].read_bytes()
+
+
+def test_signed_http_log_urls_are_downloaded_before_inspect_parses_paths(monkeypatch):
+    import fsspec
+
+    sources = [
+        "https://read.test/a.eval?signature=first",
+        "https://read.test/a.eval?signature=second",
+    ]
+    opened = []
+
+    def open_remote(source, mode):
+        assert mode == "rb"
+        opened.append(source)
+        return io.BytesIO(source.encode())
+
+    monkeypatch.setattr(fsspec, "open", open_remote)
+    result = Path(fetch_logs(sources))
+    assert sorted(p.read_text() for p in result.glob("*.eval")) == sorted(sources)
+    assert opened == sources
+
+
+def test_a_list_of_s3_files_uses_remote_reads(monkeypatch):
+    import fsspec
+
+    monkeypatch.setattr(fsspec, "open", lambda source, mode: io.BytesIO(b"archived log"))
+    result = Path(fetch_logs(["s3://supplied/source.eval"]))
+    assert (result / "0_source.eval").read_bytes() == b"archived log"

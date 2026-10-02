@@ -2,6 +2,7 @@
 
 import asyncio
 import errno
+import hashlib
 import inspect as inspect_module
 import json
 import math
@@ -23,7 +24,7 @@ import yaml
 from inspect_ai import Task, task
 from inspect_ai.agent import AgentState, react
 from inspect_ai.dataset import Sample
-from inspect_ai.log import list_eval_logs, transcript
+from inspect_ai.log import list_eval_logs, read_eval_log, read_eval_log_sample, transcript
 from inspect_ai.model import (
     CompactionSummary,
     GenerateConfig,
@@ -1574,13 +1575,14 @@ def jobs(remote: Remote, root: Path) -> Tool:
 def check_evidence_access(remote: Remote | None, root: Path, sources: list[str]) -> Solver:
     """Check supplied remote evidence before spending on the lead model.
 
-    Three reads per source: the sample index (what the investigator lists), one
+    Indexed sources receive three reads: the sample index (what the investigator lists), one
     transcript, and one presigned log download (the path a child job's `logs`
     argument takes, a different permission from the index). A per-source HTTP
     refusal is a fact about that source, recorded for the agent. Anything else --
     an import error, a missing binary, a token that will not refresh, or one and
     the same failure on every source -- is our harness broken, and the sample fails
     here, before the first model call, rather than paying a model to discover it.
+    Direct storage sources are checked by downloading and parsing one actual log.
     """
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
@@ -1593,6 +1595,25 @@ def check_evidence_access(remote: Remote | None, root: Path, sources: list[str])
                 "reason": "",
                 "paths": {},
             }
+            if address.startswith(("s3://", "gs://", "http://", "https://")):
+                try:
+                    files = await asyncio.to_thread(
+                        _direct_logs, address, root / "inputs" / "index" / source_alias(address), 1
+                    )
+                    log = await asyncio.to_thread(read_eval_log, files[0])
+                    if not log.samples:
+                        raise ValueError("The first supplied log has no recorded samples")
+                    check.update(
+                        status="readable",
+                        reason="One direct log downloaded and parsed; not a complete coverage check",
+                    )
+                    check["paths"] = {"download": "readable", "transcript": "readable"}
+                except Exception as ex:
+                    check["reason"] = f"{type(ex).__name__}: direct log access failed"
+                    if _harness_failure(ex):
+                        harness.append(check["reason"])
+                checks.append(check)
+                continue
             if remote is None or not address.startswith("hawk:"):
                 check["reason"] = (
                     "No supported reader: supply an indexed Hawk eval set or local logs"
@@ -1649,6 +1670,73 @@ def check_evidence_access(remote: Remote | None, root: Path, sources: list[str])
         return state
 
     return solve
+
+
+def _direct_logs(address: str, destination: Path, limit: int | None = None) -> list[Path]:
+    """Cache explicitly supplied object-store logs with the host's credentials.
+
+    Filenames include a source-path hash so nested logs with the same basename
+    remain distinct. Readiness downloads one; a population read downloads all.
+    """
+    from urllib.parse import urlsplit
+
+    import fsspec
+
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be positive")
+    files = (
+        [address]
+        if urlsplit(address).path.endswith(".eval")
+        else [info.name for info in list_eval_logs(address, recursive=True)]
+    )
+    if not files:
+        raise ValueError("No Inspect logs found in supplied direct source")
+    destination = destination / "logs"
+    destination.mkdir(parents=True, exist_ok=True)
+    result = []
+    for source in sorted(files)[:limit]:
+        target = destination / (hashlib.sha256(source.encode()).hexdigest()[:16] + ".eval")
+        if not target.exists():
+            descriptor, temporary = tempfile.mkstemp(dir=destination, suffix=".partial")
+            os.close(descriptor)
+            partial = Path(temporary)
+            try:
+                with fsspec.open(source, "rb") as incoming, partial.open("wb") as outgoing:
+                    shutil.copyfileobj(incoming, outgoing)
+                partial.replace(target)
+            finally:
+                partial.unlink(missing_ok=True)
+        result.append(target)
+    return result
+
+
+def _direct_samples(files: list[Path], limit: int | None) -> list[dict[str, Any]]:
+    """Rows retain log identity as well as item and epoch; item IDs may repeat."""
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be positive")
+    rows = []
+    for path in files:
+        log = read_eval_log(path)
+        for sample in log.samples or []:
+            rows.append(
+                {
+                    "uuid": f"{path.stem}:{sample.id}:{sample.epoch}",
+                    "id": sample.id,
+                    "epoch": sample.epoch,
+                    "model": log.eval.model,
+                    "task_name": log.eval.task,
+                    "status": "error" if sample.error else "complete",
+                    "error_message": sample.error.message if sample.error else None,
+                    "limit": sample.limit.type if sample.limit else None,
+                    "scores": [
+                        {"scorer": name, "value": score.value}
+                        for name, score in (sample.scores or {}).items()
+                    ],
+                }
+            )
+            if limit is not None and len(rows) >= limit:
+                return rows
+    return rows
 
 
 @solver
@@ -1815,11 +1903,10 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
     ) -> str:
         """Read the recorded runs that live somewhere else.
 
-        Logs supplied as an address are not copied into this box: a benchmark's logs
-        can be tens of gigabytes, and almost all of that is transcripts nobody reads.
-        This reads them where they are, through the operator's credentials, and brings
-        back only what you ask for. Logs supplied as files are already under
-        /inputs/logs and want no tool at all.
+        Indexed Hawk logs are read by sample through the operator's credentials.
+        Direct storage logs are cached on request under /inputs/index, preserving
+        their original addresses for remote workers. Logs supplied as local files
+        are already under /inputs/logs and want no tool at all.
 
         Args:
             action: "list" (the sources this investigation has, and which are files),
@@ -1848,6 +1935,46 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
                 + (", ".join(sorted(known)) or "none")
             )
         address = known[source]
+        if address.startswith(("s3://", "gs://", "http://", "https://")):
+            destination = root / "inputs" / "index" / source
+            try:
+                files = await asyncio.to_thread(_direct_logs, address, destination)
+                if action == "fetch":
+                    return f"downloaded {len(files)} log(s) to /inputs/index/{source}/logs/"
+                if action == "samples":
+                    rows = await asyncio.to_thread(_direct_samples, files, limit)
+                    _write_samples_csv(rows, destination / "samples.csv")
+                    return (
+                        f"{len(rows)} sample(s), written to /inputs/index/{source}/samples.csv\n"
+                        + _samples_summary(rows)
+                    )
+                if action == "transcript":
+                    if not sample:
+                        raise ToolError(
+                            "action='transcript' needs sample=<uuid> from the samples table"
+                        )
+                    rows = await asyncio.to_thread(_direct_samples, files, None)
+                    row = next((r for r in rows if r["uuid"] == sample), None)
+                    if row is None:
+                        raise ToolError("Attempt UUID is not in this supplied source")
+                    path = next(p for p in files if sample.startswith(p.stem + ":"))
+                    header = await asyncio.to_thread(read_eval_log, path, True)
+                    recorded = await asyncio.to_thread(
+                        read_eval_log_sample, path, id=row["id"], epoch=row["epoch"]
+                    )
+                    from hawk.cli.transcript import format_transcript
+
+                    directory = destination / "transcripts"
+                    directory.mkdir(parents=True, exist_ok=True)
+                    name = hashlib.sha256(sample.encode()).hexdigest()[:20] + ".md"
+                    (directory / name).write_text(format_transcript(recorded, header.eval))
+                    return f"wrote /inputs/index/{source}/transcripts/{name}"
+                raise ToolError("action must be list, samples, transcript or fetch")
+            except ToolError:
+                raise
+            except Exception as ex:
+                # Provider errors can contain signed URLs; keep them out of prompts.
+                raise ToolError(f"reading {source} failed: {type(ex).__name__}") from ex
         if remote is None or not address.startswith("hawk:"):
             raise ToolError(
                 f"{source} is at {address}, which this investigation cannot read for you. "
@@ -2284,8 +2411,8 @@ def investigate(
         )
         seed_path = root / "inputs" / "seed.json"
         seed = json.loads(seed_path.read_text())
-        # Local evidence stays local. A remote worker receives only a source
-        # created by Hawk's native import or a previous Hawk evaluation.
+        # Local evidence stays local. Workers may also read the explicitly supplied
+        # direct object-store addresses, without a warehouse import.
         parked = [str(entry["remote"]) for entry in seed["logs"] if entry.get("remote")]
         for address in parked:
             remote.known_sources.add(address)
@@ -2307,7 +2434,7 @@ def investigate(
             "supplied_logs": parked,
             "note": (
                 "Local /inputs/logs files are for local analysis only. Remote audits need an "
-                "operator-imported Hawk source (hawk import), listed in supplied_logs. "
+                "operator-imported Hawk source (hawk import) or explicitly supplied direct storage address, listed in supplied_logs. "
                 "Write an eval-set config under /workspace and hawk_submit it. To audit the "
                 "supplied logs, pass one of supplied_logs as the audit task's logs argument; to audit a "
                 "job you ran, use hawk:<its eval set id>. Do not set eval_set_id: submission "

@@ -1742,8 +1742,14 @@ def test_a_mode_name_is_not_a_model(tmp_path: Path) -> None:
     assert any("not an allowed model" in p for p in validate_config(config, policy(), set()))
 
 
-def test_remote_evidence_is_checked_before_investigation(tmp_path: Path) -> None:
+def test_remote_evidence_is_checked_before_investigation(tmp_path: Path, monkeypatch) -> None:
+    from inspect_audit import _investigate
     from inspect_audit._investigate import check_evidence_access
+
+    def unavailable(*args):
+        raise ValueError("No supplied logs")
+
+    monkeypatch.setattr(_investigate, "_direct_logs", unavailable)
 
     r = remote(tmp_path)
     (tmp_path / "inputs").mkdir()

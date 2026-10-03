@@ -173,7 +173,13 @@ class Hawk:
                     if type(hook).__module__ == "hawk.runner.refresh_token"
                 ),
                 None,
-            ) or os.environ.get("HAWK_RUNNER_REFRESH_TOKEN")
+            )
+            if not refresh_token:
+                from ._hawk_auth import credentials
+
+                _, refresh_token = await anyio.to_thread.run_sync(
+                    credentials, self.env["HAWK_API_URL"]
+                )
             if not refresh_token:
                 raise RuntimeError("Hawk runner has no refresh credential for child jobs")
             async with HawkClient(token=token, api_url=self.env["HAWK_API_URL"]) as client:
@@ -314,7 +320,9 @@ class Hawk:
 
             token = override_api_key("HAWK_ACCESS_TOKEN", "")
             if not token:
-                raise RuntimeError("Hawk runner's token refresh hook is not available")
+                from ._hawk_auth import credentials
+
+                token, _ = await anyio.to_thread.run_sync(credentials, self.env["HAWK_API_URL"])
             return token
         # fetched per session, not cached: the login refreshes it, a cached copy expires
         return (await self._run("auth", "access-token", timeout=60)).strip()

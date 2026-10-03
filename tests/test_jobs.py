@@ -1742,8 +1742,14 @@ def test_a_mode_name_is_not_a_model(tmp_path: Path) -> None:
     assert any("not an allowed model" in p for p in validate_config(config, policy(), set()))
 
 
-def test_remote_evidence_is_checked_before_investigation(tmp_path: Path) -> None:
+def test_remote_evidence_is_checked_before_investigation(tmp_path: Path, monkeypatch) -> None:
+    from inspect_audit import _investigate
     from inspect_audit._investigate import check_evidence_access
+
+    def unavailable(*args):
+        raise ValueError("No supplied logs")
+
+    monkeypatch.setattr(_investigate, "_direct_logs", unavailable)
 
     r = remote(tmp_path)
     (tmp_path / "inputs").mkdir()
@@ -2228,6 +2234,8 @@ def test_openrouter_direct_ships_the_operators_key_and_routes_past_the_proxy(
         for g in submitted["models"]
         for i in g["items"]
     )
+    assert submitted["models"][0]["package"] == "inspect-ai"
+    assert submitted["models"][0]["items"][0]["name"].startswith("openrouter/")
     assert r.hawk.secrets == {"OPENROUTER_API_KEY": "sk-or-test"}  # type: ignore[attr-defined]
     assert "sk-or-test" not in r.hawk.submitted[-1].read_text()  # type: ignore[attr-defined]
 

@@ -157,6 +157,45 @@ async def _nothing(state) -> None:
     pass
 
 
+def test_replays_do_not_require_the_benchmarks_aggregate_registry(graded_log, tmp_path) -> None:
+    """A portable sample replay must not resolve unrelated custom aggregate names."""
+    from uuid import uuid4
+
+    from inspect_ai.log import read_eval_log, write_eval_log
+    from inspect_ai.log._log import EvalMetricDefinition
+    from inspect_ai.scorer import match
+
+    from inspect_audit._agent import grade_benchmark
+
+    source = read_eval_log(graded_log)
+    source.eval.config.epochs = 3
+    source.samples = [
+        sample.model_copy(update={"epoch": epoch, "uuid": str(uuid4())}, deep=True)
+        for epoch in range(1, 4)
+        for sample in source.samples or []
+    ]
+    assert source.results
+    source.results.total_samples = source.results.completed_samples = len(source.samples)
+    source.eval.config.epochs_reducer = ["unavailable_benchmark/repeat_mean"]
+    assert source.eval.scorers
+    source.eval.scorers[0].metrics = [EvalMetricDefinition(name="unavailable_benchmark/accuracy")]
+    path = tmp_path / "custom_aggregates.eval"
+    write_eval_log(source, path)
+    original_bytes = path.read_bytes()
+    seen = []
+    grades = []
+
+    async def body(state):
+        seen.append(state.store_as(Concordance))
+        grades.append(json.loads(await grade_benchmark([match()])(answer="ANSWER")))
+
+    audit = _audit(str(path), tmp_path, body)
+    assert all(c.verdict == "validated" and c.checked == c.agreed == 3 for c in seen), seen
+    assert len(grades) == len(audit.samples) == 3
+    assert all(g["scores"]["value"] == "C" for g in grades)
+    assert path.read_bytes() == original_bytes
+
+
 def test_gate_validates_a_faithful_channel_and_labels_every_score(graded_log, tmp_path) -> None:
     """The fixture's grades are mixed (C, I, C) so a regrade that agrees with anything cannot pass."""
     seen = []

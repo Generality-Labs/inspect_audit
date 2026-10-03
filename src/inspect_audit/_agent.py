@@ -14,6 +14,7 @@ from inspect_ai.scorer import (
     Target,
     frequency,
     mean,
+    mean_score,
     scorer,
 )
 from inspect_ai.solver import TaskState
@@ -568,6 +569,11 @@ def grade_benchmark(scorers: list[Scorer]) -> Tool:
                 grade_log(state, session, graded),
                 [grade_collector(scorers, results, failure)],
                 action="overwrite",
+                # The collector emits a dummy numeric score; the real per-attempt
+                # grades are captured in results. Do not rebuild the original
+                # benchmark's custom metrics/reducer for this different scorer.
+                metrics=[mean()],
+                epochs_reducer=mean_score(),
                 model=get_model(),
                 model_roles=dict(model_roles()),
                 display="none",

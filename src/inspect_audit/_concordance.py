@@ -28,6 +28,7 @@ from inspect_ai.scorer import (
     Target,
     Value,
     frequency,
+    mode_score,
     scorer,
 )
 from inspect_ai.scorer._scorer import unique_scorer_name
@@ -293,6 +294,10 @@ def concordance_gate(scorers: Scorer | list[Scorer] | None, limit: int = 15) -> 
                         log,
                         [concordance_scorer(benchmark)],
                         action="append",
+                        # Compare each attempt, not the benchmark's aggregate.
+                        # Its reducer may be unavailable or incompatible with our
+                        # categorical concordance scores.
+                        epochs_reducer=mode_score(),
                         model=get_model(),
                         model_roles=dict(model_roles()),
                         display="plain",

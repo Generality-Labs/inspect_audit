@@ -2305,6 +2305,9 @@ def investigate(
             resumes (`hawk eval-set resume`, `inspect eval-retry`) with its conversation,
             workspace, job ledger and spend. Defaults to on for execution='hawk' and off
             locally, where the workspace is a bind mount that already outlives the run.
+            A plain `hawk stop` scores the interrupted sample as completed, so a
+            later retry can skip it. Use `hawk stop --error` when the intent is to
+            stop and later retry from a checkpoint; neither command deletes logs.
             On a fresh Hawk runner, set INSPECT_AUDIT_RESUME_WORKSPACE to the prior
             log's metadata.investigation_dir to preserve Inspect's task identity.
             Keep task arguments and execution limits unchanged. Updated operator

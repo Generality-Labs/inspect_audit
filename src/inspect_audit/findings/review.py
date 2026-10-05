@@ -108,6 +108,18 @@ def load_review(directory: Path) -> Review:
     )
 
 
+def save_review(directory: Path, review: Review) -> list[Path]:
+    """Write both review files. Comments are not preserved: the Store API is the editor."""
+    directory.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for name, rows in ((SUPPRESSIONS_FILE, review.suppressions), (ISSUES_FILE, review.issues)):
+        path = directory / name
+        rows_json = [row.model_dump(mode="json", exclude_none=True) for row in rows]
+        path.write_text(yaml.safe_dump(rows_json, sort_keys=False, allow_unicode=True))
+        written.append(path)
+    return written
+
+
 def apply_review(runs: Sequence[Run], review: Review) -> list[Run]:
     """Copies of `runs` with suppressions attached and issue ids set. The inputs are not changed."""
     issue_of = {fp: issue.id for issue in review.issues for fp in issue.findings}

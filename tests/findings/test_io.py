@@ -137,9 +137,7 @@ def test_findings_df_carries_review_and_effect_columns(run: Run) -> None:
 def test_current_view_is_the_newest_run_per_producer(tmp_path: Path, run: Run) -> None:
     eval_dir = tmp_path / "inspect-evals-stereoset"
     older = run.model_copy(update={"id": "lint-1"})
-    newer = run.model_copy(
-        update={"id": "lint-2", "timestamp": datetime(2026, 9, 26, tzinfo=UTC)}
-    )
+    newer = run.model_copy(update={"id": "lint-2", "timestamp": datetime(2026, 9, 26, tzinfo=UTC)})
     other = run.model_copy(update={"id": "dataset-1", "producer": "inspect_dataset"})
     for r in (newer, older, other):
         write_run(r, eval_dir / "runs" / f"{r.id}.run.json")

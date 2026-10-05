@@ -128,3 +128,12 @@ def test_yaml_syntax_error_is_a_value_error_naming_the_file(tmp_path: Path) -> N
 def test_duplicate_issue_ids_are_rejected() -> None:
     with pytest.raises(ValidationError, match="ISS-1"):
         Review(issues=[_issue(), _issue(findings=["sha256:other"])])
+
+
+def test_save_review_round_trips(tmp_path: Path) -> None:
+    from inspect_audit.findings.review import save_review
+
+    review = Review(suppressions=[_rule()], issues=[_issue()])
+    written = save_review(tmp_path, review)
+    assert sorted(p.name for p in written) == ["issues.yaml", "suppressions.yaml"]
+    assert load_review(tmp_path) == review

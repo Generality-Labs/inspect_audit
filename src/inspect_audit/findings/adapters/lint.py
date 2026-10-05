@@ -14,10 +14,12 @@ from ..models import (
     Dimension,
     Finding,
     Outcome,
+    Provenance,
     Run,
     Severity,
     Source,
     Subject,
+    Suppression,
     utcnow,
 )
 from . import (
@@ -42,8 +44,13 @@ LINT_RULES: dict[str, tuple[Dimension, Severity]] = {
     "IEBP007": ("environment", "minor"),
     "IEBP008": ("dataset", "minor"),
     "IEBP009": ("dataset", "minor"),
+    # shuffle_choices_seeded, shuffle_seeded: unseeded shuffles vary samples between builds (F.4)
+    "IEBP010": ("environment", "minor"),
+    "IEBP011": ("environment", "minor"),
     # sandbox_privileges: a compose file granting privileged mode, host mounts or extra capabilities
     "IESC001": ("environment", "major"),
+    # host_code_execution: model-controlled input reaches code run on the host, not in the sandbox
+    "IESC002": ("environment", "major"),
 }
 _DEFAULT: tuple[Dimension, Severity] = ("harness", "minor")
 
@@ -55,6 +62,15 @@ def _status(raw: str) -> Literal["pass", "fail", "skip"]:
     if raw in ("skip", "suppressed"):
         return "skip"
     return "fail"
+
+
+def _in_source_suppression(row: Mapping[str, Any], timestamp: datetime) -> list[Suppression]:
+    """A diagnostic lint reports as `suppressed` was silenced by a comment in the eval's source."""
+    if row.get("status") != "suppressed":
+        return []
+    return [
+        Suppression(kind="in_source", provenance=Provenance(timestamp=timestamp, author=PRODUCER))
+    ]
 
 
 def _outcomes(entry: Mapping[str, Any]) -> list[Outcome]:
@@ -131,6 +147,9 @@ def parse(
     for row in entry.get("diagnostics", []):
         code = str(row.get("code") or row.get("rule"))
         dimension, severity = LINT_RULES.get(code, _DEFAULT)
+        # a rule can report a traced flow as an error and an untraced sink as a warning
+        if row.get("severity") == "warning" and severity in ("major", "critical"):
+            severity = "minor"
         primary = CodeLocation(
             role="primary",
             file=str(row.get("file")),
@@ -152,6 +171,7 @@ def parse(
                 locations=[primary],
                 run_id=run_id,
                 source=Source(format=f"inspect_evals_lint.Diagnostic@{version}", record=dict(row)),
+                suppressions=_in_source_suppression(row, timestamp),
             )
         )
     return Run(

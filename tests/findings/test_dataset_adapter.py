@@ -15,6 +15,7 @@ from inspect_audit.findings.adapters.dataset import (
     PRODUCER,
     REPLAY_SCRIPT,
     SAMPLES_ENV,
+    _scanner_outcomes,
     eval_dependency_args,
     hf_asset,
     parse,
@@ -28,6 +29,8 @@ from inspect_audit.findings.producers import ProducerConfig
 FIXTURE = Path(__file__).parent / "fixtures" / "dataset"
 # a real task-mode scan: StereoSet replayed from dumped samples, summary naming the replay spec
 TASK_FIXTURE = Path(__file__).parent / "fixtures" / "dataset_task"
+# a real 0.5.0 task-mode scan of BBH, with `scanner_status`
+FIXTURE_0_5 = Path(__file__).parent / "fixtures" / "dataset_0_5"
 STAMP = datetime(2026, 9, 25, 4, 20, 50, tzinfo=UTC)
 ASSET = "external_assets:\n  - type: huggingface\n    source: McGill-NLP/stereoset\n    fetch_method: hf_dataset\n    state: pinned\n"
 
@@ -64,6 +67,43 @@ def test_parse_summary_outcomes_and_findings(tmp_path: Path) -> None:
     fmt = next(f for f in result.findings if f.rule == "inconsistent_format")
     assert fmt.severity == "minor"
     assert len(fmt.summary) <= 200
+
+
+def test_parse_0_5_takes_outcomes_from_scanner_status(tmp_path: Path) -> None:
+    # `by_scanner` names only scanners with findings; `scanner_status`, new in 0.5.0, names every
+    # scanner as ran or not_applicable. Without it a clean scan looks like one that examined nothing.
+    root = make_root(tmp_path)
+    subject = subject_for("inspect_evals/bbh", Context(ie_root=root))
+    result = parse(FIXTURE_0_5, "inspect_evals/bbh", subject, timestamp=STAMP)
+    assert result.producer_version == "0.5.0"
+    statuses = {o.rule: o.status for o in result.outcomes}
+    assert len(statuses) == 14
+    assert {rule for rule, status in statuses.items() if status == "fail"} == {
+        "binary_question_ratio",
+        "duplicate_questions",
+        "extraction_artifacts",
+        "forced_choice_leakage",
+    }
+    assert [statuses[rule] for rule in ("answer_distribution", "mojibake")] == ["pass", "pass"]
+    skipped = {o.rule: o.message for o in result.outcomes if o.status == "skip"}
+    assert set(skipped) == {
+        "answer_length",
+        "image_mime_type",
+        "inconsistent_format",
+        "numeric_provenance",
+        "text_layer_recall",
+    }
+    assert "no image field" in (skipped["image_mime_type"] or "")
+    # forced_choice_leakage.json is absent from the fixture on size grounds
+    assert len(result.findings) == 4 + 4 + 3
+
+
+def test_a_scanner_with_findings_fails_whatever_its_status_says() -> None:
+    outcomes = _scanner_outcomes(
+        {"unlisted": {"total": 2}, "odd": {"total": 1}},
+        {"odd": {"status": "not_applicable", "reason": "r"}},
+    )
+    assert [(o.rule, o.status) for o in outcomes] == [("odd", "fail"), ("unlisted", "fail")]
 
 
 def test_hf_asset_reads_eval_yaml() -> None:

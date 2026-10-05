@@ -142,8 +142,8 @@ def _rows(path: Path) -> list[dict[str, Any]]:
 def _scanner_outcomes(by_scanner: Mapping[str, Any], scanner_status: Any) -> list[Outcome]:
     """One outcome per scanner: fail with findings, skip when not applicable, otherwise pass.
 
-    From 0.5.0 `by_scanner` names only scanners with findings and `scanner_status` names every
-    scanner as `ran` or `not_applicable`. Before, `by_scanner` named every scanner that ran.
+    `by_scanner` names only scanners with findings. `scanner_status`, new in 0.5.0, names every
+    scanner as `ran` or `not_applicable`; without it a clean scanner has no outcome.
     """
     totals = {
         scanner: int((counts or {}).get("total", 0)) for scanner, counts in by_scanner.items()

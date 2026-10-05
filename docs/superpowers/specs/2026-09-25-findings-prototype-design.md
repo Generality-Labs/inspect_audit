@@ -136,10 +136,10 @@ By default the dataset is scanned through the eval's task: the path passed to `i
 
 Command: `<prefix> scan <source> [--config C] [--split S] [--question-field Q --answer-field A --id-field I] -o <tmpdir>`. Static scanners only. Parse:
 
-- `scan_summary.json` fills `subject.dataset` (`path`, `config`, `split`, `revision`) and one `Outcome` per scanner: `fail` if it has findings in `by_scanner`, `skip` with the scanner's reason if `scanner_status` says `not_applicable`, otherwise `pass`. `scanner_status` arrived in inspect-dataset 0.5.0, which also stopped listing clean scanners in `by_scanner`; a summary without it is read from `by_scanner` alone (changed 2026-10-05).
+- `scan_summary.json` fills `subject.dataset` (`path`, `config`, `split`, `revision`) and one `Outcome` per scanner: `fail` if it has findings in `by_scanner`, `skip` with the scanner's reason if `scanner_status` says `not_applicable`, otherwise `pass`. `by_scanner` has only ever listed scanners with findings, so before `scanner_status` arrived in inspect-dataset 0.5.0 a clean scanner had no outcome; a summary without it is still read from `by_scanner` alone (changed 2026-10-05).
 - Every row in every `<scanner>.json` becomes a `Finding`: primary `sample` location from `sample_id` (falling back to `sample_index`), `dimension` `dataset`, `severity` by `{"low": "none", "medium": "minor", "high": "major"}`, `summary` from `explanation` truncated to 200 characters, `source.record` the row verbatim, `source.format` `inspect_dataset.Finding@<version>` where the version comes from the summary if present else `unknown`.
 - `dataset.revision` stays `None` in the prototype. The gap is recorded under Open gaps.
-- The `answer_length` flood is expected and not filtered here. Suppression is an aggregator concern; the prototype makes the noise visible and the per-eval summary counts it separately so it does not hide the rest.
+- Noisy scanners are not filtered here. Suppression is an aggregator concern; the prototype makes the noise visible and the per-eval summary counts it separately so it does not hide the rest. The `answer_length` flood of the first pass is gone: from inspect-dataset 0.5.0 it runs only under a scorer that compares answer text verbatim, and the replay task a task scan uses carries no scorer, so on task scans it is a skip (updated 2026-10-05).
 
 ### Header
 

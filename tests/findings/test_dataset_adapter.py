@@ -15,6 +15,7 @@ from inspect_audit.findings.adapters.dataset import (
     PRODUCER,
     REPLAY_SCRIPT,
     SAMPLES_ENV,
+    _scanner_outcomes,
     eval_dependency_args,
     hf_asset,
     parse,
@@ -69,8 +70,8 @@ def test_parse_summary_outcomes_and_findings(tmp_path: Path) -> None:
 
 
 def test_parse_0_5_takes_outcomes_from_scanner_status(tmp_path: Path) -> None:
-    # 0.5.0 names only scanners with findings in `by_scanner`; `scanner_status` names every scanner
-    # as ran or not_applicable. Without it a clean scan would look like one that examined nothing.
+    # `by_scanner` names only scanners with findings; `scanner_status`, new in 0.5.0, names every
+    # scanner as ran or not_applicable. Without it a clean scan looks like one that examined nothing.
     root = make_root(tmp_path)
     subject = subject_for("inspect_evals/bbh", Context(ie_root=root))
     result = parse(FIXTURE_0_5, "inspect_evals/bbh", subject, timestamp=STAMP)
@@ -95,6 +96,14 @@ def test_parse_0_5_takes_outcomes_from_scanner_status(tmp_path: Path) -> None:
     assert "no image field" in (skipped["image_mime_type"] or "")
     # forced_choice_leakage.json is absent from the fixture on size grounds
     assert len(result.findings) == 4 + 4 + 3
+
+
+def test_a_scanner_with_findings_fails_whatever_its_status_says() -> None:
+    outcomes = _scanner_outcomes(
+        {"unlisted": {"total": 2}, "odd": {"total": 1}},
+        {"odd": {"status": "not_applicable", "reason": "r"}},
+    )
+    assert [(o.rule, o.status) for o in outcomes] == [("odd", "fail"), ("unlisted", "fail")]
 
 
 def test_hf_asset_reads_eval_yaml() -> None:

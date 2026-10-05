@@ -1,0 +1,78 @@
+[
+  {
+    "scanner": "binary_question_ratio",
+    "severity": "low",
+    "category": "distribution",
+    "explanation": "In group dataset_name='causal_judgement', 187/187 samples (100%) have binary yes/no answers, measured as the choice text each target letter names. A model that always predicts 'yes' would score 52% without understanding any questions. Consider whether the yes/no balance is appropriate for your benchmark.",
+    "sample_index": -1,
+    "sample_id": null,
+    "line": null,
+    "metadata": {
+      "binary_count": 187,
+      "total": 187,
+      "fraction": 1.0,
+      "yes_count": 97,
+      "no_count": 90,
+      "naive_majority_score": 0.5187,
+      "measured": "choice_text",
+      "group": "causal_judgement"
+    }
+  },
+  {
+    "scanner": "binary_question_ratio",
+    "severity": "low",
+    "category": "distribution",
+    "explanation": "In group dataset_name='navigate', 250/250 samples (100%) have binary yes/no answers, measured as the choice text each target letter names. A model that always predicts 'no' would score 58% without understanding any questions. Consider whether the yes/no balance is appropriate for your benchmark.",
+    "sample_index": -1,
+    "sample_id": null,
+    "line": null,
+    "metadata": {
+      "binary_count": 250,
+      "total": 250,
+      "fraction": 1.0,
+      "yes_count": 105,
+      "no_count": 145,
+      "naive_majority_score": 0.58,
+      "measured": "choice_text",
+      "group": "navigate"
+    }
+  },
+  {
+    "scanner": "binary_question_ratio",
+    "severity": "low",
+    "category": "distribution",
+    "explanation": "In group dataset_name='sports_understanding', 250/250 samples (100%) have binary yes/no answers, measured as the choice text each target letter names. A model that always predicts 'no' would score 54% without understanding any questions. Consider whether the yes/no balance is appropriate for your benchmark.",
+    "sample_index": -1,
+    "sample_id": null,
+    "line": null,
+    "metadata": {
+      "binary_count": 250,
+      "total": 250,
+      "fraction": 1.0,
+      "yes_count": 115,
+      "no_count": 135,
+      "naive_majority_score": 0.54,
+      "measured": "choice_text",
+      "group": "sports_understanding"
+    }
+  },
+  {
+    "scanner": "binary_question_ratio",
+    "severity": "low",
+    "category": "distribution",
+    "explanation": "In group dataset_name='web_of_lies', 250/250 samples (100%) have binary yes/no answers, measured as the choice text each target letter names. A model that always predicts 'no' would score 51% without understanding any questions. Consider whether the yes/no balance is appropriate for your benchmark.",
+    "sample_index": -1,
+    "sample_id": null,
+    "line": null,
+    "metadata": {
+      "binary_count": 250,
+      "total": 250,
+      "fraction": 1.0,
+      "yes_count": 122,
+      "no_count": 128,
+      "naive_majority_score": 0.512,
+      "measured": "choice_text",
+      "group": "web_of_lies"
+    }
+  }
+]

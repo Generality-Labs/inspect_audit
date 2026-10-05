@@ -139,6 +139,35 @@ def _rows(path: Path) -> list[dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict)]
 
 
+def _scanner_outcomes(by_scanner: Mapping[str, Any], scanner_status: Any) -> list[Outcome]:
+    """One outcome per scanner: fail with findings, skip when not applicable, otherwise pass.
+
+    From 0.5.0 `by_scanner` names only scanners with findings and `scanner_status` names every
+    scanner as `ran` or `not_applicable`. Before, `by_scanner` named every scanner that ran.
+    """
+    totals = {
+        scanner: int((counts or {}).get("total", 0)) for scanner, counts in by_scanner.items()
+    }
+    if not isinstance(scanner_status, Mapping):
+        return [
+            Outcome(rule=scanner, status="fail" if total else "pass", message=f"{total} finding(s)")
+            for scanner, total in sorted(totals.items())
+        ]
+    outcomes: list[Outcome] = []
+    for scanner in sorted(set(scanner_status) | set(totals)):
+        entry = scanner_status.get(scanner) or {}
+        total = totals.get(scanner, 0)
+        if entry.get("status") == "not_applicable" and not total:
+            outcomes.append(Outcome(rule=scanner, status="skip", message=entry.get("reason")))
+        else:
+            outcomes.append(
+                Outcome(
+                    rule=scanner, status="fail" if total else "pass", message=f"{total} finding(s)"
+                )
+            )
+    return outcomes
+
+
 def parse(
     scan_dir: Path,
     target: str,
@@ -165,13 +194,10 @@ def parse(
             revision=summary.get("revision"),
         )
     subject = subject.model_copy(update={"dataset": dataset})
-    outcomes: list[Outcome] = []
+    by_scanner = summary.get("by_scanner") or {}
+    outcomes = _scanner_outcomes(by_scanner, summary.get("scanner_status"))
     findings: list[Finding] = []
-    for scanner, counts in sorted((summary.get("by_scanner") or {}).items()):
-        total = int((counts or {}).get("total", 0))
-        outcomes.append(
-            Outcome(rule=scanner, status="fail" if total else "pass", message=f"{total} finding(s)")
-        )
+    for scanner in sorted(by_scanner):
         path = scan_dir / f"{scanner}.json"
         if not path.is_file():
             continue

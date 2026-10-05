@@ -1,0 +1,47 @@
+[
+  {
+    "scanner": "extraction_artifacts",
+    "severity": "low",
+    "category": "format",
+    "explanation": "The question contains PDF-extraction artifact character(s): non-breaking space (U+00A0) x1. These usually indicate the text was copied from an extractor without cleanup.",
+    "sample_index": 5037,
+    "sample_id": "sports_understanding_029",
+    "line": 14,
+    "metadata": {
+      "field": "question",
+      "artifacts": {
+        "non-breaking space (U+00A0)": 1
+      }
+    }
+  },
+  {
+    "scanner": "extraction_artifacts",
+    "severity": "low",
+    "category": "format",
+    "explanation": "The question contains PDF-extraction artifact character(s): non-breaking space (U+00A0) x1. These usually indicate the text was copied from an extractor without cleanup.",
+    "sample_index": 5045,
+    "sample_id": "sports_understanding_037",
+    "line": 14,
+    "metadata": {
+      "field": "question",
+      "artifacts": {
+        "non-breaking space (U+00A0)": 1
+      }
+    }
+  },
+  {
+    "scanner": "extraction_artifacts",
+    "severity": "low",
+    "category": "format",
+    "explanation": "The question contains PDF-extraction artifact character(s): non-breaking space (U+00A0) x1. These usually indicate the text was copied from an extractor without cleanup.",
+    "sample_index": 5144,
+    "sample_id": "sports_understanding_136",
+    "line": 14,
+    "metadata": {
+      "field": "question",
+      "artifacts": {
+        "non-breaking space (U+00A0)": 1
+      }
+    }
+  }
+]

@@ -198,3 +198,29 @@ def test_sandbox_and_shuffle_rules_are_classified() -> None:
     assert LINT_RULES["IESC001"] == ("environment", "major")
     assert LINT_RULES["IESC002"] == ("environment", "major")
     assert LINT_RULES["IEBP010"] == LINT_RULES["IEBP011"] == ("environment", "minor")
+
+
+def test_parse_0_10_marks_diagnostics_lint_suppressed_in_source(tmp_path: Path) -> None:
+    # a real 0.10.0 run over abstention_bench: two diagnostics silenced by comments in the source,
+    # and one warning about a comment without a reason
+    _, subject = _subject(tmp_path)
+    data = json.loads((FIXTURES / "lint_0_10.json").read_text())
+    result = parse(data, "inspect_evals/abstention_bench", subject, timestamp=STAMP)
+    assert result.producer_version == "0.10.0"
+    suppressed = {f.rule: f.suppressions for f in result.findings if f.suppressions}
+    assert set(suppressed) == {"IECQ004", "IEBP008"}
+    suppression = suppressed["IECQ004"][0]
+    assert suppression.kind == "in_source"
+    assert suppression.provenance.author == PRODUCER
+    assert [f.rule for f in result.findings if not f.suppressions] == ["IECQ005"]
+
+
+def test_a_warning_diagnostic_is_at_most_minor(tmp_path: Path) -> None:
+    _, subject = _subject(tmp_path)
+    data = json.loads((FIXTURES / "lint_0_10.json").read_text())
+    error, warning, _ = data["packages"][0]["diagnostics"]
+    error.update(code="IESC002", status="fail")
+    warning.update(code="IESC002")
+    result = parse(data, "inspect_evals/abstention_bench", subject, timestamp=STAMP)
+    severities = [f.severity for f in result.findings if f.rule == "IESC002"]
+    assert severities == ["major", "minor"]

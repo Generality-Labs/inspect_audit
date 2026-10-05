@@ -7,10 +7,11 @@ import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-LINT_SPEC = "inspect-evals-lint==0.9.0"
-DATASET_SPEC = "git+https://github.com/Generality-Labs/inspect_dataset@afbc94c0b509"
+LINT_SPEC = "inspect-evals-lint==0.10.0"
+DATASET_VERSION = "0.5.0"
+DATASET_SPEC = f"inspect-dataset=={DATASET_VERSION}"
 # task scans load a replay task, which needs inspect-dataset's inspect_ai extra
-DATASET_TASK_SPEC = f"inspect-dataset[inspect] @ {DATASET_SPEC}"
+DATASET_TASK_SPEC = f"inspect-dataset[inspect]=={DATASET_VERSION}"
 
 LINT_ENV = "INSPECT_AUDIT_LINT_CMD"
 DATASET_ENV = "INSPECT_AUDIT_DATASET_CMD"

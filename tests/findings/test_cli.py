@@ -618,3 +618,52 @@ def test_leads_subcommand_with_no_runs_is_a_usage_error(
     assert main(["leads", "--out", str(out), "inspect_evals/hle"]) == 2
     err = capsys.readouterr().err
     assert "inspect_evals/hle" in err and str(out) in err
+
+
+def test_review_cli_suppress_accept_link(
+    tmp_path: Path, run: Run, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from inspect_audit.findings.cli import write_outputs
+    from inspect_audit.findings.review import load_review
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    common = ["--out", str(out), "--author", "Matt Fisher <matt@example.com>"]
+    eval_rule = ["--eval", "inspect_evals/stereoset", "--rule", "IEBP008"]
+    assert main(["review", "suppress", *common, *eval_rule, "--reason", "struct answers"]) == 0
+    assert load_review(out).suppressions[0].reason == "struct answers"
+    assert main(["review", "accept", *common, *eval_rule, "--title", "dup filter"]) == 0
+    issue = load_review(out).issues[0]
+    assert issue.id == "ISS-0001" and issue.findings == ["sha256:0"]
+    assert "ISS-0001" in capsys.readouterr().out
+    url = "https://github.com/x/y/issues/1"
+    assert main(["review", "link", *common, "ISS-0001", url]) == 0
+    assert load_review(out).issues[0].github == url
+    # a conflict is a usage error carrying the Store's message, not a traceback
+    assert main(["review", "accept", *common, "--id", "lint-1/1", "--title", "again"]) == 2
+    assert "ISS-0001" in capsys.readouterr().err
+
+
+def test_review_cli_author_falls_back_to_git_config_then_fails(
+    tmp_path: Path, run: Run, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import subprocess
+
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "none"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    args = ["review", "suppress", "--out", str(out), "--rule", "IEBP008", "--reason", "r"]
+    assert main(args) == 2
+    assert "author" in capsys.readouterr().err
+    git = ["git", "-C", str(out)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "config", "user.name", "Ada"], check=True)
+    subprocess.run([*git, "config", "user.email", "ada@example.com"], check=True)
+    assert main(args) == 0
+    log = subprocess.run(
+        [*git, "log", "-1", "--format=%an"], capture_output=True, text=True, check=True
+    )
+    assert log.stdout.strip() == "Ada"

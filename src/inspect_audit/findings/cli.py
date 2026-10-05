@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -23,6 +24,7 @@ from .models import Run
 from .producers import ProducerConfig
 from .render import render_eval_summary, render_sweep_summary
 from .review import Review, apply_review, load_review, unmatched_issue_findings
+from .store import Selection, Store, StoreError
 
 EXTERNAL_PRODUCERS: dict[str, Callable[[str, Context], Run]] = {
     "lint": lint_adapter.run,
@@ -259,7 +261,90 @@ def _parser() -> argparse.ArgumentParser:
         "--write", type=Path, default=None, help="write LEADS.md here instead of printing"
     )
     leads_p.add_argument("eval", help="registry name, e.g. inspect_evals/scicode")
+
+    shared = argparse.ArgumentParser(add_help=False)
+    shared.add_argument("--out", required=True, type=Path, help="the findings output directory")
+    shared.add_argument(
+        "--review",
+        type=Path,
+        default=None,
+        help="directory holding suppressions.yaml and issues.yaml (default: --out)",
+    )
+    shared.add_argument(
+        "--author",
+        default=None,
+        help="'Name <email>' recorded on the decision and its commit (default: git config)",
+    )
+    review_p = sub.add_parser("review", help="record a review decision through the Store")
+    verbs = review_p.add_subparsers(dest="verb", required=True)
+    sup_p = verbs.add_parser("suppress", parents=[shared], help="suppress a rule as noise")
+    sup_p.add_argument("--rule", required=True, help="producer rule id, e.g. IEBP008")
+    sup_p.add_argument("--eval", default=None, help="only on this eval (default: every eval)")
+    sup_p.add_argument("--producer", default=None, help="only from this producer")
+    sup_p.add_argument("--kind", default="false_positive", help="suppression kind")
+    sup_p.add_argument("--reason", required=True, help="why these observations are noise")
+    acc_p = verbs.add_parser("accept", parents=[shared], help="accept findings as an issue")
+    acc_p.add_argument("--eval", default=None, help="the eval the findings belong to")
+    acc_p.add_argument("--rule", default=None, help="every current finding of this rule")
+    acc_p.add_argument("--id", action="append", default=None, help="record id; repeatable")
+    acc_p.add_argument("--title", required=True, help="issue title as a maintainer would search")
+    acc_p.add_argument("--reason", default=None, help="why this is a real problem")
+    link_p = verbs.add_parser("link", parents=[shared], help="record an issue's GitHub URL")
+    link_p.add_argument("issue", help="store issue id, e.g. ISS-0001")
+    link_p.add_argument("url", help="GitHub issue URL")
     return parser
+
+
+def _git_config(directory: Path, key: str) -> str | None:
+    completed = subprocess.run(
+        ["git", "-C", str(directory), "config", "--get", key],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.stdout.strip() or None
+
+
+def _author(review_dir: Path, explicit: str | None) -> str | None:
+    if explicit:
+        return explicit
+    name = _git_config(review_dir, "user.name")
+    email = _git_config(review_dir, "user.email")
+    return f"{name} <{email}>" if name and email else None
+
+
+def _review(args: argparse.Namespace) -> int:
+    review_dir: Path = args.review or args.out
+    store = Store(args.out, review_dir)
+    author = _author(review_dir, args.author)
+    if author is None:
+        print(
+            "no author: pass --author 'Name <email>' or set git user.name and user.email",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        if args.verb == "suppress":
+            entry = store.suppress(
+                rule=args.rule,
+                subject=args.eval or "*",
+                producer=args.producer,
+                kind=args.kind,
+                author=author,
+                reason=args.reason,
+            )
+            print(f"suppressed {entry.rule} on {entry.subject}")
+        elif args.verb == "accept":
+            selection = Selection(eval=args.eval, rule=args.rule, ids=tuple(args.id or ()))
+            issue = store.accept(selection, title=args.title, author=author, reason=args.reason)
+            print(f"accepted {issue.id}: {issue.title} ({len(issue.findings)} observation(s))")
+        else:
+            store.link(args.issue, args.url, author=author)
+            print(f"linked {args.issue} to {args.url}")
+    except StoreError as ex:
+        print(str(ex), file=sys.stderr)
+        return 2
+    return 0
 
 
 def _leads(
@@ -331,6 +416,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _hawk_pull(args.manifest, args.dest)
     if args.command == "leads":
         return _leads(args.out, args.review, args.eval, args.sample, args.write)
+    if args.command == "review":
+        return _review(args)
 
     targets = list(args.targets) + (
         [f"inspect_evals/{name}" for name in FEATURED] if args.featured else []

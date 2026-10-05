@@ -12,7 +12,7 @@ from inspect_audit.findings.adapters import Context, subject_for
 from inspect_audit.findings.adapters.lint import LINT_RULES, PRODUCER, parse, run
 from inspect_audit.findings.io import runs_df
 from inspect_audit.findings.models import CodeLocation, Subject
-from inspect_audit.findings.producers import LINT_SPEC, ProducerConfig
+from inspect_audit.findings.producers import ProducerConfig
 
 FIXTURES = Path(__file__).parent / "fixtures"
 STAMP = datetime(2026, 9, 25, 4, 20, 50, tzinfo=UTC)
@@ -194,6 +194,7 @@ def test_parse_0_7_document_without_rules_still_uses_outcomes(tmp_path: Path) ->
     assert len(result.outcomes) == 25 and len(result.findings) == 1
 
 
-def test_sandbox_privileges_rule_is_classified_and_the_pin_is_0_9() -> None:
+def test_sandbox_and_shuffle_rules_are_classified() -> None:
     assert LINT_RULES["IESC001"] == ("environment", "major")
-    assert LINT_SPEC == "inspect-evals-lint==0.9.0"
+    assert LINT_RULES["IESC002"] == ("environment", "major")
+    assert LINT_RULES["IEBP010"] == LINT_RULES["IEBP011"] == ("environment", "minor")

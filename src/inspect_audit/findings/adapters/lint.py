@@ -42,8 +42,13 @@ LINT_RULES: dict[str, tuple[Dimension, Severity]] = {
     "IEBP007": ("environment", "minor"),
     "IEBP008": ("dataset", "minor"),
     "IEBP009": ("dataset", "minor"),
+    # shuffle_choices_seeded, shuffle_seeded: unseeded shuffles vary samples between builds (F.4)
+    "IEBP010": ("environment", "minor"),
+    "IEBP011": ("environment", "minor"),
     # sandbox_privileges: a compose file granting privileged mode, host mounts or extra capabilities
     "IESC001": ("environment", "major"),
+    # host_code_execution: model-controlled input reaches code run on the host, not in the sandbox
+    "IESC002": ("environment", "major"),
 }
 _DEFAULT: tuple[Dimension, Severity] = ("harness", "minor")
 

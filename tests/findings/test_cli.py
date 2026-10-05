@@ -667,3 +667,16 @@ def test_review_cli_author_falls_back_to_git_config_then_fails(
         [*git, "log", "-1", "--format=%an"], capture_output=True, text=True, check=True
     )
     assert log.stdout.strip() == "Ada"
+
+
+def test_review_cli_malformed_review_file_is_a_usage_error(
+    tmp_path: Path, run: Run, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    (out / "issues.yaml").write_text("- id: [unclosed\n")
+    args = ["review", "suppress", "--out", str(out), "--rule", "IEBP008", "--reason", "r"]
+    assert main([*args, "--author", "Matt Fisher <matt@example.com>"]) == 2
+    assert "issues.yaml" in capsys.readouterr().err

@@ -139,3 +139,61 @@ def test_author_must_carry_an_email(tmp_path: Path, run: Run) -> None:
     with pytest.raises(StoreError, match="Name <email>"):
         store.suppress(rule="IEBP008", author="matt", reason="r")
     assert not (store.root / "suppressions.yaml").exists()
+
+
+def test_relative_paths_commit_in_the_review_dir(
+    tmp_path: Path, run: Run, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path, run)
+    monkeypatch.chdir(tmp_path)
+    relative = Store(Path("findings"))
+    relative.suppress(rule="IEBP008", author=AUTHOR, reason="r")
+    assert _git(store.root, "log", "-1", "--format=%s") == "review: suppress IEBP008 on *"
+    assert _git(store.root, "status", "--porcelain") == ""
+
+
+def test_review_commit_leaves_unrelated_staged_work_alone(tmp_path: Path, run: Run) -> None:
+    store = _store(tmp_path, run)
+    (store.root / "other.txt").write_text("not a review decision\n")
+    _git(store.root, "add", "other.txt")
+    store.suppress(rule="IEBP008", author=AUTHOR, reason="r")
+    committed = _git(store.root, "show", "--name-only", "--format=", "HEAD").splitlines()
+    assert "suppressions.yaml" in committed and "other.txt" not in committed
+    assert _git(store.root, "status", "--porcelain") == "A  other.txt"
+
+
+def test_gitignored_store_dir_is_written_but_not_committed(tmp_path: Path, run: Run) -> None:
+    _git(tmp_path, "init", "-q")
+    (tmp_path / ".gitignore").write_text("out/\n")
+    root = tmp_path / "out"
+    write_outputs(root, {EVAL: [run]})
+    Store(root).suppress(rule="IEBP008", author=AUTHOR, reason="r")
+    assert (root / "suppressions.yaml").is_file()
+    assert _git(tmp_path, "rev-list", "--all", "--count") == "0"
+
+
+def test_a_decision_that_changes_nothing_is_not_an_error(tmp_path: Path, run: Run) -> None:
+    store = _store(tmp_path, run)
+    issue = store.accept(Selection(ids=("lint-1/1",)), title="filter", author=AUTHOR)
+    url = "https://github.com/x/y/issues/1"
+    store.link(issue.id, url, author=AUTHOR)
+    store.link(issue.id, url, author=AUTHOR)  # same again: nothing to commit, no error
+    assert _git(store.root, "rev-list", "--count", "HEAD") == "3"
+
+
+def test_a_failed_commit_reports_what_git_said(tmp_path: Path, run: Run) -> None:
+    store = _store(tmp_path, run)
+    hook = store.root / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\necho 'hook says no'\nexit 1\n")
+    hook.chmod(0o755)
+    with pytest.raises(StoreError, match="hook says no"):
+        store.suppress(rule="IEBP008", author=AUTHOR, reason="r")
+
+
+def test_suppress_refuses_a_rule_with_no_current_observation(tmp_path: Path, run: Run) -> None:
+    store = _store(tmp_path, run)
+    with pytest.raises(StoreError, match="nothing"):
+        store.suppress(rule="IEBP08", author=AUTHOR, reason="typo")
+    with pytest.raises(StoreError, match="nothing"):
+        store.suppress(rule="IEBP008", producer="inspect_dataset", author=AUTHOR, reason="r")
+    assert not (store.root / "suppressions.yaml").exists()

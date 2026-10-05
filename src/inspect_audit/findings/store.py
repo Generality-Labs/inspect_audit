@@ -20,7 +20,7 @@ from .io import read_current
 from .models import Finding, Run
 from .review import IssueEntry, Review, SuppressionRule, load_review, save_review
 
-_AUTHOR = re.compile(r".+ <.+@.+>")
+_AUTHOR = re.compile(r"[^<>]+ <[^<>@\s]+@[^<>@\s]+>")
 
 
 class StoreError(ValueError):
@@ -47,8 +47,8 @@ def _next_issue_id(review: Review) -> str:
 
 class Store:
     def __init__(self, root: Path, review_dir: Path | None = None) -> None:
-        self.root = root
-        self.review_dir = review_dir or root
+        self.root = root.resolve()
+        self.review_dir = (review_dir or root).resolve()
 
     def runs(self) -> list[Run]:
         return read_current(self.root)
@@ -94,6 +94,9 @@ class Store:
             reason=reason,
             since=_today(),
         )
+        if not any(entry.matches(f) for run in self.runs() for f in run.findings):
+            scope = f"rule {rule} on {subject}" + (f" from {producer}" if producer else "")
+            raise StoreError(f"nothing in the current view matches {scope}")
         review = self.review()
         updated = review.model_copy(update={"suppressions": [*review.suppressions, entry]})
         self._save(updated, f"review: suppress {rule} on {subject}", author)
@@ -157,19 +160,25 @@ class Store:
         self._commit(written, message, author)
 
     def _commit(self, paths: list[Path], message: str, author: str) -> None:
-        """Commit the review files when the review dir is inside a git work tree; else do nothing."""
+        """Commit the decision when the review dir is a tracked part of a git work tree.
+
+        Only the review files and the re-rendered tracked outputs under the root go into the
+        commit (`git commit --only`), so whatever else the reviewer has staged stays staged.
+        """
         git = ["git", "-C", str(self.review_dir)]
-        probe = subprocess.run(
-            [*git, "rev-parse", "--is-inside-work-tree"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if probe.stdout.strip() != "true":
+        top = self._git(git, "rev-parse", "--show-toplevel")
+        if (
+            top is None
+            or self._git(git, "check-ignore", "-q", "--", str(self.review_dir)) is not None
+        ):
             return
-        subprocess.run([*git, "add", "--", *map(str, paths)], check=True, capture_output=True)
-        # re-rendered summaries and parquet, when the store tracks them; untracked files stay out
-        subprocess.run([*git, "add", "-u", "--", str(self.root)], check=True, capture_output=True)
+        rendered: list[str] = []
+        if self.root.is_relative_to(top):
+            listed = self._git(git, "ls-files", "-m", "-z", "--full-name", "--", str(self.root))
+            rendered = [str(Path(top) / name) for name in (listed or "").split("\0") if name]
+        targets = [*map(str, paths), *rendered]
+        if self._git(git, "add", "--", *map(str, paths)) is None:
+            raise StoreError(f"git add failed for {', '.join(map(str, paths))}")
         committed = subprocess.run(
             [
                 *git,
@@ -179,14 +188,24 @@ class Store:
                 "user.email=inspect-audit@generality.org",
                 "commit",
                 "-q",
+                "--only",
                 "--author",
                 author,
                 "-m",
                 message,
+                "--",
+                *targets,
             ],
             capture_output=True,
             text=True,
             check=False,
         )
-        if committed.returncode != 0:
-            raise StoreError(f"git commit failed: {committed.stderr.strip()}")
+        output = (committed.stdout + committed.stderr).strip()
+        if committed.returncode != 0 and "nothing to commit" not in output:
+            raise StoreError(f"git commit failed: {output}")
+
+    @staticmethod
+    def _git(git: list[str], *args: str) -> str | None:
+        """Stdout of a git command, or None when it failed."""
+        completed = subprocess.run([*git, *args], capture_output=True, text=True, check=False)
+        return completed.stdout.strip() if completed.returncode == 0 else None

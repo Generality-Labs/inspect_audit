@@ -24,7 +24,7 @@ from .models import Run
 from .producers import ProducerConfig
 from .render import render_eval_summary, render_sweep_summary
 from .review import Review, apply_review, load_review, unmatched_issue_findings
-from .store import Selection, Store, StoreError
+from .store import Selection, Store
 
 EXTERNAL_PRODUCERS: dict[str, Callable[[str, Context], Run]] = {
     "lint": lint_adapter.run,
@@ -341,7 +341,7 @@ def _review(args: argparse.Namespace) -> int:
         else:
             store.link(args.issue, args.url, author=author)
             print(f"linked {args.issue} to {args.url}")
-    except StoreError as ex:
+    except ValueError as ex:  # StoreError, or a malformed review file named by load_review
         print(str(ex), file=sys.stderr)
         return 2
     return 0

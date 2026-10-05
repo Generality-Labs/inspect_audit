@@ -14,29 +14,38 @@ flowchart LR
         ACT[scheduled Action<br/>run producers over every eval]
         RUNS[runs/ + current.json<br/>immutable]
         REVIEW[suppressions.yaml<br/>issues.yaml<br/>cases.yaml]
+        API[Store API<br/>suppress · accept · link · set_status<br/>validates, resolves, commits]
         EXPORT[export step<br/>findings.parquet + per-eval JSON]
         ACT --> RUNS
+        API --> REVIEW
         RUNS --> EXPORT
         REVIEW --> EXPORT
     end
     IE --> ACT
     HAWK -- hawk: addresses --> ACT
-    HAWK -- registers, via adapter PR --> RUNS
+    HAWK -- registers, via adapter --> RUNS
+    CLI[review CLI] --> API
+    WORKER[site review actions<br/>Worker with GitHub auth] --> API
+    MCP[findings MCP server<br/>read: leads, finding, search, issues, inputs<br/>write: set_status, accept, suppress] --> API
+    MCP -- reads --> RUNS
+    AGENTS[investigator and<br/>sample auditor] <--> MCP
     EXPORT --> SITE[audits.generality.org<br/>table site, Cloudflare Pages]
+    SITE --> WORKER
     EXPORT -- data/*.json --> BLOG[generality.org/blog<br/>human-authored Quarto posts]
-    EXPORT --> LEADS[LEADS.md for the investigator<br/>and sample auditor]
-    REVIEW -- accepted issues --> GH[Inspect Evals GitHub issues]
+    API -- promote --> GH[Inspect Evals GitHub issues]
     SITE -.links.-> GH
 ```
 
 Everything that finds problems writes to one store. Everything that shows them reads from it. The two public products are different renderings of the same records, not different data.
+
+The review files are the persistence format, not the interface. Every decision goes through the Store API, which resolves what the reviewer pointed at into fingerprints, validates, writes the files and commits with the reviewer as author. Three clients sit on it: a CLI, review actions on the table site, and an MCP server for the agents.
 
 ## The store
 
 A private GitHub repository, `Generality-Labs/inspect-evals-findings`, holding:
 
 - `runs/` and `current.json` per eval, written by the scheduled run and by investigation imports. Immutable; a sweep appends and moves the pointer. Hundreds of kilobytes per eval per run, which git handles for a long time.
-- `suppressions.yaml` and `issues.yaml`, human-edited through pull requests, so every decision has an author, a reason and blame.
+- `suppressions.yaml` and `issues.yaml`, written by the Store API on behalf of a reviewer or an agent, so every decision has an author, a reason and blame. Nobody edits them by hand or types a fingerprint.
 - `cases.yaml`, the labelled defects the measurement runs against.
 - `export/`, rebuilt on every merge: `findings.parquet`, `runs.parquet`, one JSON per eval, and an index JSON. The export is what leaves the repo.
 
@@ -45,9 +54,9 @@ Why git and not R2 now: the review files want PRs; provenance is free; access co
 ## How it runs
 
 1. **Scheduled run.** A GitHub Action in the findings repo, nightly, checks out Inspect Evals main, runs the deterministic producers over every eval (lint, dataset scans through each eval's task, header checks for the evals whose logs are on Hawk, resolved by `--hawk-task`), writes the runs and `current.json`, and commits. Exit code 1 (a producer skipped) is normal; the run records why.
-2. **Review.** Matt or Tania edits `suppressions.yaml` and `issues.yaml` through PRs. Accepting a candidate assigns an issue id; filing it on Inspect Evals adds the GitHub URL. The export rebuilds on merge.
+2. **Review.** Through the Store API, never by hand. Four operations: suppress (rule, subject, reason), accept (a group or a set of findings, title), link (issue id, GitHub URL), set status (finding, status, reason). Promote is one action: accepting a candidate files the GitHub issue on Inspect Evals and records the link in the same step. Clients: the `review` CLI for us; review actions on the table site for maintainers, behind a small Worker with GitHub auth that commits as a bot (the blog's comments Worker under `review/` is the in-house precedent); the MCP server for agents. A `review-findings` skill drafts suppressions and acceptances with reasons for a sweep and opens the PR for a person to approve, which is the fast path over 130 evals. Writes open PRs at first; suppressions move to direct commits once the pattern is trusted. The export rebuilds on merge.
 3. **Investigations.** Run on Hawk as now, publishing bundles to Hawk's S3. The register adapter imports `findings.json`, `assessments.json` and `coverage.json` into the findings repo as a PR, citing the bundle by address. Where an investigation cited leads by record id, the import writes status history on those observations.
-4. **Leads.** The investigator and sample auditor stage `LEADS.md` from the latest export. The hooks are a separate PR to James.
+4. **Leads, live.** The investigator and sample auditor attach the findings MCP server. Read tools: `leads(eval, sample_id=None)` (what `LEADS.md` renders today), `finding(record_id)`, `search(eval, rule, status, producer)`, `issues(eval)`, `inputs(eval)`. Write tools: `set_status(record_id, status, evidence, reason)`, `accept`, `suppress`, with provenance set to the agent's run id, so confirming or retiring a lead writes status history as it happens instead of being parsed out of a register later. The server records what it served into the run's inputs, so a run's leads are reproducible. `LEADS.md` stays as a cached copy under `/inputs/findings/` for runs that cannot reach the server. Local runs use stdio MCP over the checkout with no network; Hawk runs need the server's host on the egress allowlist and a token scoped to the findings repo in the runner, both James's call. The attach step and skill text are a PR to him.
 5. **Export and deploy.** The export step runs on merge and publishes to the table site. Blog posts pull the JSON they need into their `data/` directories by hand, as the BixBench post already does with `audit_matrix.json`.
 6. **Measurement.** The fortnightly rule-mining track runs `measure` against `cases.yaml` and records the table in the repo. It is not on the site.
 
@@ -73,7 +82,7 @@ Everything active, with provenance as columns, nothing gated behind the investig
 
 The table site over the deterministic producers for every eval, review files applied, accepted issues linked to GitHub, Inputs and freshness per eval, investigator results shown where they exist (SciCode, chess). Blog posts continue and start importing exports. The measurement runs beside it.
 
-In order: the findings repo and its scheduled run; the export; the site; the import of the two existing investigations. The measurement slice follows.
+In order: the Store API and the `review` CLI, since a scheduled run's output is useless without a fast way to review it; the findings repo and its scheduled run; the MCP server, which is thin once the API exists; the export; the site with its review Worker; the import of the two existing investigations, which predate the server. The measurement slice follows.
 
 ## Open decisions
 
@@ -82,3 +91,5 @@ In order: the findings repo and its scheduled run; the export; the site; the imp
 - Site domain: `audits.generality.org` or a path on `generality.org`. A subdomain keeps the deploy independent of the Quarto site.
 - Whether the export is public (the site reads it directly) or the site is built from it privately and only pages are public. Start with pages only; the parquet becomes public when the standard does.
 - Security review of the publication path before the site is public, as the roadmap already requires.
+- Bot writes: PRs for a person to approve, or direct commits. Start with PRs; relax suppressions to direct commits once trusted.
+- Hawk egress for the MCP server's host and the write token's scope, with James.

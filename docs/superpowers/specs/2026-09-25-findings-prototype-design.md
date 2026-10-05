@@ -35,7 +35,8 @@ src/inspect_audit/findings/
   hawk.py           find_eval_sets(task) via the hawk client; download_eval_set / download_artifacts / pull_manifest via the hawk CLI
   render.py         render_eval_summary(runs) and render_sweep_summary(runs) -> markdown
   leads.py          select_leads / render_leads / leads_markdown -> LEADS.md for an agent
-  cli.py            inspect-audit-findings
+  store.py          Store: resolve a selection; suppress / accept / link, written, re-rendered, committed as the reviewer
+  cli.py            inspect-audit-findings (run, summary, hawk-sets, hawk-pull, leads, review)
   schema/
     finding.schema.json
     run.schema.json

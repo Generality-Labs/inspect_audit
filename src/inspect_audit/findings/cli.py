@@ -17,7 +17,7 @@ from .adapters import header as header_adapter
 from .adapters import lint as lint_adapter
 from .config import DEFAULT_CONFIG_PATH, load_config
 from .featured import FEATURED
-from .io import findings_df, read_current, runs_df, update_current, write_parquet, write_run
+from .io import findings_df, read_current, runs_df, write_parquet, write_run
 from .leads import NoRunsError, leads_markdown
 from .models import Run
 from .producers import ProducerConfig
@@ -94,7 +94,7 @@ def _renamed(run: Run, file_id: str) -> Run:
 def write_outputs(
     out: Path, runs_by_eval: Mapping[str, Sequence[Run]], review: Review | None = None
 ) -> None:
-    """Append the new runs, move each eval's `current.json`, then render everything from the current view."""
+    """Append the new runs, then render everything from the current view (newest run per producer)."""
     for target, runs in runs_by_eval.items():
         directory = out / slug(target)
         written: list[Run] = []
@@ -104,12 +104,11 @@ def write_outputs(
             stored = run if file_id == run.id else _renamed(run, file_id)
             write_run(stored, path)
             written.append(stored)
-        update_current(directory, written)
     render_current(out, review)
 
 
 def render_current(out: Path, review: Review | None = None) -> None:
-    """Parquet and summaries from the runs every `current.json` selects, with review decisions applied."""
+    """Parquet and summaries from the current view, with review decisions applied."""
     review = review or Review()
     runs_by_eval: dict[str, list[Run]] = {}
     for run in apply_review(read_current(out), review):
@@ -169,7 +168,7 @@ def _load_review_or_exit(directory: Path, *, explicit: bool) -> Review | None:
 
 def _summaries_from_disk(out: Path, review: Review) -> int:
     if not read_current(out):
-        print(f"no current.json under {out}", file=sys.stderr)
+        print(f"no runs under {out}", file=sys.stderr)
         return 2
     render_current(out, review)
     return 0

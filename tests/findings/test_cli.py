@@ -73,9 +73,7 @@ def test_run_writes_the_layout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         "inspect_dataset",
         "inspect_evals_lint",
     ]
-    current = json.loads((slug_dir / "current.json").read_text())
-    assert sorted(current) == ["inspect_audit_header", "inspect_dataset", "inspect_evals_lint"]
-    assert all((slug_dir / rel).is_file() for rel in current.values())
+    assert not (slug_dir / "current.json").exists()
     assert (slug_dir / "SUMMARY.md").read_text().startswith("# inspect_evals/stereoset")
     assert (out / "SUMMARY.md").read_text().startswith("# Sweep summary")
     findings = pd.read_parquet(out / "findings.parquet")
@@ -365,7 +363,7 @@ def test_reruns_keep_earlier_runs_and_a_partial_sweep_keeps_other_producers_curr
     ]
     assert main([*args, "inspect_evals/stereoset"]) == 0
     slug_dir = out / "inspect-evals-stereoset"
-    first = json.loads((slug_dir / "current.json").read_text())
+    first = pd.read_parquet(out / "runs.parquet").set_index("producer")["run_id"]
     # second sweep, lint only, no logs: the first three run files survive, only lint's pointer moves
     assert (
         main(
@@ -384,16 +382,18 @@ def test_reruns_keep_earlier_runs_and_a_partial_sweep_keeps_other_producers_curr
         )
         == 0
     )
-    second = json.loads((slug_dir / "current.json").read_text())
     assert len(list((slug_dir / "runs").glob("*.run.json"))) == 4
+    runs = pd.read_parquet(out / "runs.parquet")
+    assert len(runs) == 3  # the current view, not every run ever written
+    second = runs.set_index("producer")["run_id"]
     assert second["inspect_dataset"] == first["inspect_dataset"]
     assert second["inspect_audit_header"] == first["inspect_audit_header"]
     assert second["inspect_evals_lint"] != first["inspect_evals_lint"]
-    runs = pd.read_parquet(out / "runs.parquet")
-    assert len(runs) == 3  # the current view, not every run ever written
-    assert set(runs["run_id"]) == {
-        Path(rel).name.removesuffix(".run.json") for rel in second.values()
-    }
+    lint_ids = sorted(
+        p.name.removesuffix(".run.json")
+        for p in (slug_dir / "runs").glob("inspect_evals_lint-*.run.json")
+    )
+    assert second["inspect_evals_lint"] == lint_ids[-1]  # the "-2" collision suffix sorts last
     assert "header.dataset_samples" in (slug_dir / "SUMMARY.md").read_text()
 
 
@@ -476,8 +476,8 @@ def test_review_files_beside_the_out_dir_are_applied(
         "duplicate_questions · 18 observations · false_positive · matt: known duplicates" in summary
     )
     # the run files on disk are untouched
-    current = json.loads((out / "inspect-evals-stereoset" / "current.json").read_text())
-    stored = json.loads((out / "inspect-evals-stereoset" / current["inspect_dataset"]).read_text())
+    (stored_path,) = (out / "inspect-evals-stereoset" / "runs").glob("inspect_dataset-*.run.json")
+    stored = json.loads(stored_path.read_text())
     assert all(f["suppressions"] == [] for f in stored["findings"])
     # an issue linking a fingerprint the sweep produced, plus one it did not
     fingerprint = str(dup.iloc[0]["fingerprint"])

@@ -15,7 +15,7 @@ The first release is smaller than that: a short, reproducible list of maintenanc
 - Auditor uses inspect-evals-lint and inspect-dataset as producers. The codebases are not merged.
 - Findings are records in one envelope schema with the producer's own output kept verbatim. Assessments and coverage are separate records, not findings.
 - A fingerprint identifies an observation. An issue gets its own durable id when a person accepts it, and observations link to it. Review decisions (suppressions, issue links) live in files beside the runs, never inside them.
-- Run files are immutable. A sweep appends runs and moves a per-eval `current.json`; every view renders from that manifest.
+- Run files are immutable. A sweep appends runs; every view renders from the derived current view, the newest run per eval and producer.
 - Unsupported inputs, failed producers and unassessed checks are shown beside findings. A missing finding can mean a defect class we do not cover, and a page must say so.
 - The taxonomy is versioned data, not code. Old reports stay valid under `gl-audit@1`; the pilot renders original identifiers and does not wait on `gl-audit@2` being confirmed.
 - Grades are written by people and are never computed. Nothing changes the state of a contributor issue without a human looking.
@@ -28,7 +28,7 @@ The first release is smaller than that: a short, reproducible list of maintenanc
 
 Done on `findings-prototype` (PR #4 against `dev/integrated-audits`), rebased onto the dev tip on 2026-09-29:
 
-- Envelope schema, fingerprinting, immutable run files with `current.json`, parquet carrying every envelope field.
+- Envelope schema, fingerprinting, immutable run files with a derived current view, parquet carrying every envelope field.
 - Adapters for inspect-evals-lint, inspect-dataset and `.eval` log headers. Header findings carry the log's own revision; the run records the checkout it compared against.
 - Versioned taxonomies `gl-audit@1` and draft `gl-audit@2` with a mapping.
 - Hawk access: `hawk:` log sources, `--hawk-task`, `hawk-sets`, `hawk-pull` over `scripts/hawk-artefacts.yaml`. The chess investigation bundle is on disk.

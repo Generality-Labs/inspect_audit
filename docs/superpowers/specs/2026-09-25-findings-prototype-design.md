@@ -34,6 +34,7 @@ src/inspect_audit/findings/
   featured.py       the 35 Featured eval ids, copied from inspect_evals docs/_templates/evals.ejs
   hawk.py           find_eval_sets(task) via the hawk client; download_eval_set / download_artifacts / pull_manifest via the hawk CLI
   render.py         render_eval_summary(runs) and render_sweep_summary(runs) -> markdown
+  leads.py          select_leads / render_leads / leads_markdown -> LEADS.md for an agent
   cli.py            inspect-audit-findings
   schema/
     finding.schema.json
@@ -177,6 +178,7 @@ inspect-audit-findings summary <out dir>
 - `--producers` selects external producers, default `lint,dataset`. The header producer runs whenever `--logs` was supplied; without logs it is not requested, so a lint-and-dataset sweep can exit 0.
 - `--config PATH` (default: the packaged `findings/pilot.yaml`) declares per eval what to scan and which logs count. A file that fails validation is a usage error naming the file.
 - `--review DIR` (default: `--out`) names the directory holding `suppressions.yaml` and `issues.yaml`; both are applied to copies of the current runs before summaries and parquet are written, and a malformed file is a usage error naming the file. Every `Finding` carries an `id` of the form `<run id>/<n>`, assigned by its run when the producer set none.
+- `leads --out DIR [--review DIR] [--sample ID] [--write PATH] EVAL` renders one eval's reviewed findings as `LEADS.md` for an agent: preamble, inputs, accepted issues, groups capped at three examples with record ids, skipped checks. No runs for the eval is exit 2 naming the eval and the directory. See `docs/leads.md` for the staging contract into the investigator and sample auditor, which is a separate PR.
 - For each target, in order: header, then the selected producers. Each run is written to `<out>/<slug>/runs/<run id>.run.json` and never overwritten (a name collision within one second gets a `-2` suffix). The sweep then rewrites `<out>/<slug>/current.json`, a manifest from producer name to the run file that producer's current view uses; producers that did not run keep their previous entry. `findings.parquet`, `runs.parquet`, `<out>/SUMMARY.md` and each `<out>/<slug>/SUMMARY.md` are rendered from the runs the manifests select, so a partial sweep never mixes fresh and stale results by accident and history is never lost (changed 2026-09-29 after the prototype review).
 - Exit code 0 if every producer ran; 1 if any run was a skip; 2 on a usage error. Findings do not affect the exit code.
 - `summary` re-renders every `SUMMARY.md` and both parquet files from the runs `current.json` selects, without re-running producers. `read_runs` still walks every run file for history.

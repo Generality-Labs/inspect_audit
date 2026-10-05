@@ -200,6 +200,24 @@ def test_sandbox_and_shuffle_rules_are_classified() -> None:
     assert LINT_RULES["IEBP010"] == LINT_RULES["IEBP011"] == ("environment", "minor")
 
 
+def test_parse_0_9_skipped_rules_keep_their_reason_from_outcomes(tmp_path: Path) -> None:
+    # `rules` rows carry no message; `outcomes` rows do for passed and skipped rules
+    _, subject = _subject(tmp_path)
+    data = json.loads((FIXTURES / "lint_0_9.json").read_text())
+    result = parse(data, "inspect_evals/scicode", subject, timestamp=STAMP)
+    skipped = {o.rule: o.message for o in result.outcomes if o.status == "skip"}
+    assert skipped and all(message for message in skipped.values())
+    assert skipped["IEBP008"] is not None and "filter_duplicate_ids" in skipped["IEBP008"]
+
+
+def test_parse_0_9_tolerates_null_outcomes(tmp_path: Path) -> None:
+    _, subject = _subject(tmp_path)
+    data = json.loads((FIXTURES / "lint_0_9.json").read_text())
+    data["packages"][0]["outcomes"] = None
+    result = parse(data, "inspect_evals/scicode", subject, timestamp=STAMP)
+    assert len(result.outcomes) == 28 and len(result.findings) == 2
+
+
 def test_parse_0_10_marks_diagnostics_lint_suppressed_in_source(tmp_path: Path) -> None:
     # a real 0.10.0 run over abstention_bench: two diagnostics silenced by comments in the source,
     # and one warning about a comment without a reason

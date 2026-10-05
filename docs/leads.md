@@ -4,10 +4,13 @@
 
 `--sample ID` narrows to observations whose locations name that sample (dataset sample locations and transcript locations both count), which is what the per-sample auditor wants. `--write PATH` writes the file instead of printing it.
 
-## Staging contract
+## How agents get leads
 
-These hooks live in the investigator and auditor code and land as a separate PR. The leads module does not import them.
+Two paths, same content. The pull path is the target; the staged file is the fallback.
 
-- **Investigator.** `prepare_workspace` gains a `findings` argument naming a findings output directory. It writes `/inputs/findings/LEADS.md` from `leads_markdown(out, task, review)` and copies the eval's current run files to `/inputs/findings/runs/`, then adds `"findings": "/inputs/findings/LEADS.md"` to `seed.json`. The investigating skill gets one paragraph after "Read /inputs/seed.json": read `LEADS.md`, treat each lead as a hypothesis with a location attached, and cite its record id in a register finding's evidence when you confirm or retire it.
-- **Sample auditor.** Where `_item.py` stages `discrepancies.md`, it also stages `leads.md` from `leads_markdown(out, task, review, sample_id=<sample>)` when a findings directory is configured. `prompts/audit.md` gets the sentence it already has for `discrepancies.md`: "If `{root}/leads.md` is present, it is worth a look."
-- **Closing the loop.** The register-to-envelope adapter (the chess import) reads cited record ids from evidence and writes status history on the cited observation: lead confirmed or retired, with provenance.
+- **MCP server (target).** The investigator and sample auditor attach the findings MCP server, which sits on the Store API. `leads(eval, sample_id=None)` returns what `LEADS.md` renders; `finding`, `search`, `issues` and `inputs` let the agent drill in. Write tools `set_status(record_id, status, evidence, reason)`, `accept` and `suppress` let it confirm or retire a lead with provenance set to its run id, so the loop closes live. The server records what it served into the run's inputs for reproducibility. Local runs use stdio MCP over the checkout; Hawk runs need the host on the egress allowlist and a scoped token in the runner. See [v1-architecture.md](v1-architecture.md).
+- **Staged file (fallback).** `prepare_workspace` writes `/inputs/findings/LEADS.md` from `leads_markdown(out, task, review)` and copies the eval's current run files to `/inputs/findings/runs/`, naming it in `seed.json`; `_item.py` stages `/audit/leads.md` for its one sample beside `discrepancies.md`. Used when the server is unreachable, and as the snapshot of what a run saw.
+
+The attach step, the staging, and one paragraph of skill text ("read the leads, treat each as a hypothesis with a location attached, confirm or retire it and record the status with the record id") touch the investigator and auditor code and prompts, and go to James as one PR. The leads module imports nothing from them.
+
+**Closing the loop.** New investigations write status history through the server. The two investigations that predate it (chess, SciCode) are imported by the register adapter, which reads cited record ids from evidence and writes the status history then.

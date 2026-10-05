@@ -106,10 +106,10 @@ Adapters call it once at write time and store the result with `fingerprint_versi
 
 `ProducerConfig` holds, per external producer, a command prefix as a list of strings and a pinned spec. Defaults:
 
-| producer | default prefix                                                                                                                                                        | override                    |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| lint     | `["uvx", "--from", "inspect-evals-lint==0.9.0", "inspect-evals-lint"]`                                                                                                | `INSPECT_AUDIT_LINT_CMD`    |
-| dataset  | `["uvx", "--from", "git+https://github.com/Generality-Labs/inspect_dataset@afbc94c0b509", "inspect-dataset"]` (origin/main on 2026-09-25; the package is not on PyPI) | `INSPECT_AUDIT_DATASET_CMD` |
+| producer | default prefix                                                          | override                    |
+| -------- | ----------------------------------------------------------------------- | --------------------------- |
+| lint     | `["uvx", "--from", "inspect-evals-lint==0.10.0", "inspect-evals-lint"]` | `INSPECT_AUDIT_LINT_CMD`    |
+| dataset  | `["uvx", "--from", "inspect-dataset==0.5.0", "inspect-dataset"]`        | `INSPECT_AUDIT_DATASET_CMD` |
 
 An override is a shell-split string. Each adapter exposes two functions: `parse(...) -> Run` which is pure and tested against fixtures, and `run(target, ctx) -> Run` which invokes the subprocess with a timeout, then calls `parse`. Any failure in `run` (non-zero exit, timeout, missing binary, unparseable output) returns a `Run` with a single `Outcome(rule="<producer>", status="skip", message=<error tail>)` and no findings. Nothing raises past the adapter.
 
@@ -137,10 +137,10 @@ By default the dataset is scanned through the eval's task: the path passed to `i
 
 Command: `<prefix> scan <source> [--config C] [--split S] [--question-field Q --answer-field A --id-field I] -o <tmpdir>`. Static scanners only. Parse:
 
-- `scan_summary.json` fills `subject.dataset` (`path`, `config`, `split`, `revision`) and one `Outcome(rule=scanner, status="pass" if total == 0 else "fail")` per scanner in `by_scanner`.
+- `scan_summary.json` fills `subject.dataset` (`path`, `config`, `split`, `revision`) and one `Outcome` per scanner: `fail` if it has findings in `by_scanner`, `skip` with the scanner's reason if `scanner_status` says `not_applicable`, otherwise `pass`. `by_scanner` has only ever listed scanners with findings, so before `scanner_status` arrived in inspect-dataset 0.5.0 a clean scanner had no outcome; a summary without it is still read from `by_scanner` alone (changed 2026-10-05).
 - Every row in every `<scanner>.json` becomes a `Finding`: primary `sample` location from `sample_id` (falling back to `sample_index`), `dimension` `dataset`, `severity` by `{"low": "none", "medium": "minor", "high": "major"}`, `summary` from `explanation` truncated to 200 characters, `source.record` the row verbatim, `source.format` `inspect_dataset.Finding@<version>` where the version comes from the summary if present else `unknown`.
 - `dataset.revision` stays `None` in the prototype. The gap is recorded under Open gaps.
-- The `answer_length` flood is expected and not filtered here. Suppression is an aggregator concern; the prototype makes the noise visible and the per-eval summary counts it separately so it does not hide the rest.
+- Noisy scanners are not filtered here. Suppression is an aggregator concern; the prototype makes the noise visible and the per-eval summary counts it separately so it does not hide the rest. The `answer_length` flood of the first pass is gone: from inspect-dataset 0.5.0 it runs only under a scorer that compares answer text verbatim, and the replay task a task scan uses carries no scorer, so on task scans it is a skip (updated 2026-10-05).
 
 ### Header
 

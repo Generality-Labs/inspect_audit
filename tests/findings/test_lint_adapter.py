@@ -12,7 +12,7 @@ from inspect_audit.findings.adapters import Context, subject_for
 from inspect_audit.findings.adapters.lint import LINT_RULES, PRODUCER, parse, run
 from inspect_audit.findings.io import runs_df
 from inspect_audit.findings.models import CodeLocation, Subject
-from inspect_audit.findings.producers import LINT_SPEC, ProducerConfig
+from inspect_audit.findings.producers import ProducerConfig
 
 FIXTURES = Path(__file__).parent / "fixtures"
 STAMP = datetime(2026, 9, 25, 4, 20, 50, tzinfo=UTC)
@@ -194,9 +194,10 @@ def test_parse_0_7_document_without_rules_still_uses_outcomes(tmp_path: Path) ->
     assert len(result.outcomes) == 25 and len(result.findings) == 1
 
 
-def test_sandbox_privileges_rule_is_classified_and_the_pin_is_0_9() -> None:
+def test_sandbox_and_shuffle_rules_are_classified() -> None:
     assert LINT_RULES["IESC001"] == ("environment", "major")
-    assert LINT_SPEC == "inspect-evals-lint==0.9.0"
+    assert LINT_RULES["IESC002"] == ("environment", "major")
+    assert LINT_RULES["IEBP010"] == LINT_RULES["IEBP011"] == ("environment", "minor")
 
 
 def test_parse_0_9_skipped_rules_keep_their_reason_from_outcomes(tmp_path: Path) -> None:
@@ -215,3 +216,29 @@ def test_parse_0_9_tolerates_null_outcomes(tmp_path: Path) -> None:
     data["packages"][0]["outcomes"] = None
     result = parse(data, "inspect_evals/scicode", subject, timestamp=STAMP)
     assert len(result.outcomes) == 28 and len(result.findings) == 2
+
+
+def test_parse_0_10_marks_diagnostics_lint_suppressed_in_source(tmp_path: Path) -> None:
+    # a real 0.10.0 run over abstention_bench: two diagnostics silenced by comments in the source,
+    # and one warning about a comment without a reason
+    _, subject = _subject(tmp_path)
+    data = json.loads((FIXTURES / "lint_0_10.json").read_text())
+    result = parse(data, "inspect_evals/abstention_bench", subject, timestamp=STAMP)
+    assert result.producer_version == "0.10.0"
+    suppressed = {f.rule: f.suppressions for f in result.findings if f.suppressions}
+    assert set(suppressed) == {"IECQ004", "IEBP008"}
+    suppression = suppressed["IECQ004"][0]
+    assert suppression.kind == "in_source"
+    assert suppression.provenance.author == PRODUCER
+    assert [f.rule for f in result.findings if not f.suppressions] == ["IECQ005"]
+
+
+def test_a_warning_diagnostic_is_at_most_minor(tmp_path: Path) -> None:
+    _, subject = _subject(tmp_path)
+    data = json.loads((FIXTURES / "lint_0_10.json").read_text())
+    error, warning, _ = data["packages"][0]["diagnostics"]
+    error.update(code="IESC002", status="fail")
+    warning.update(code="IESC002")
+    result = parse(data, "inspect_evals/abstention_bench", subject, timestamp=STAMP)
+    severities = [f.severity for f in result.findings if f.rule == "IESC002"]
+    assert severities == ["major", "minor"]

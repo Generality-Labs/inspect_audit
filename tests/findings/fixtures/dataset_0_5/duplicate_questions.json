@@ -1,0 +1,90 @@
+[
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "2 samples share the question, with different answers (at indices [4354, 4441]). Check whether the answers conflict.",
+    "sample_index": 4354,
+    "sample_id": "causal_judgement_033",
+    "line": null,
+    "metadata": {
+      "question": "make sure you output your answer on the last line as 'answer: <one-word answer>'. you can output multiple lines, but the answer has to be on the last line. answer questions about causal attribution. question: how would a typical person answer each of the following questions about causation? frank t., had an ongoing dispute with his neighbor over a stretch of land and one day decided to shoot his neighbor in the body. frank t. had no experience with guns, his hand slipped on the barrel of the gun, and the shot went wild. nonetheless, the bullet bounced off a large boulder several feet away and hit the neighbor's body, causing significant injury. did frank t. intentionally shoot his neighbor in the body? options: - yes - no answer: no question: how would a typical person answer each of the following questions about causation? suzy and billy are working on a project that is very important for our nation's security. the boss tells them both: \"be sure that you are here at exactly 9 am. it is absolutely essential that you arrive at that time.\" both billy and suzy arrive at 9 am. as it happens, there was a motion detector installed in the room where they arrived. the motion detector was set up to be triggered if at least one person appeared in the room at the same time. so the motion detector went off. did billy cause the motion detector to go off? options: - yes - no answer: yes question: how would a typical person answer each of the following questions about causation? george and his sister lena reunite at their parents' house for thanksgiving. whereas george just got into medical school, lena is unhappy in her marriage and recently lost her job. over the course of the day, george and lena get into a number of heated arguments. later in the afternoon they play a game of darts. they split the first two games, and the third game is close until the end. who will win comes down to george's last shot. if he hits a high point region, he wins; if he hits a low point region, lena wins. george thinks of the difficult time lena is having, and he really wants to let her win. he aims the dart at the low point region. he sets up his shot and the dart lands in the low point region. after his shot, lena wins the game and is very happy. did george hit the low point region intentionally? options: - yes - no answer: yes question: how would a typical person answer each of the following questions about causation? a machine is set up in such a way that it will short circuit if both the black wire and the red wire touch the battery at the same time. the machine will not short circuit if just one of these wires touches the battery. the machine is designed so that both wires move around inside the machine. the black wire is supposed to touch the battery at certain times as it moves around inside the machine. the red wire is never supposed to touch the battery as it moves around inside the machine. one day, the black wire and the red wire both come in contact with the battery at the exact same time. there is a short circuit. did the red wire cause the short circuit? options: - yes - no",
+      "answers_agree": false,
+      "duplicate_indices": [
+        4354,
+        4441
+      ],
+      "duplicate_ids": [
+        "causal_judgement_033",
+        "causal_judgement_120"
+      ],
+      "duplicate_count": 2
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "low",
+    "category": "question_quality",
+    "explanation": "2 samples share the question, with different answers (at indices [4358, 4426]). Check whether the answers conflict.",
+    "sample_index": 4358,
+    "sample_id": "causal_judgement_037",
+    "line": null,
+    "metadata": {
+      "question": "make sure you output your answer on the last line as 'answer: <one-word answer>'. you can output multiple lines, but the answer has to be on the last line. answer questions about causal attribution. question: how would a typical person answer each of the following questions about causation? frank t., had an ongoing dispute with his neighbor over a stretch of land and one day decided to shoot his neighbor in the body. frank t. had no experience with guns, his hand slipped on the barrel of the gun, and the shot went wild. nonetheless, the bullet bounced off a large boulder several feet away and hit the neighbor's body, causing significant injury. did frank t. intentionally shoot his neighbor in the body? options: - yes - no answer: no question: how would a typical person answer each of the following questions about causation? suzy and billy are working on a project that is very important for our nation's security. the boss tells them both: \"be sure that you are here at exactly 9 am. it is absolutely essential that you arrive at that time.\" both billy and suzy arrive at 9 am. as it happens, there was a motion detector installed in the room where they arrived. the motion detector was set up to be triggered if at least one person appeared in the room at the same time. so the motion detector went off. did billy cause the motion detector to go off? options: - yes - no answer: yes question: how would a typical person answer each of the following questions about causation? george and his sister lena reunite at their parents' house for thanksgiving. whereas george just got into medical school, lena is unhappy in her marriage and recently lost her job. over the course of the day, george and lena get into a number of heated arguments. later in the afternoon they play a game of darts. they split the first two games, and the third game is close until the end. who will win comes down to george's last shot. if he hits a high point region, he wins; if he hits a low point region, lena wins. george thinks of the difficult time lena is having, and he really wants to let her win. he aims the dart at the low point region. he sets up his shot and the dart lands in the low point region. after his shot, lena wins the game and is very happy. did george hit the low point region intentionally? options: - yes - no answer: yes question: how would a typical person answer each of the following questions about causation? a bear and a hedgehog were shown a box full of colored pencils. only bears were allowed to take pencils, whereas hedgehogs were not allowed to take them. the hedgehog was present when the new rule about pencil use was announced. therefore, the hedgehog knew about the new norm. both animals alternately took pencils out of the box six times. at last, the hedgehog and the bear came to the box and simultaneously took a pencil. a short time later, another animal, a polar bear, approached the box seeking a pencil to do his homework with. however, there were no pencils left in the box. the polar bear could not finish his homework. did the hedgehog cause the problem? options: - yes - no",
+      "answers_agree": false,
+      "duplicate_indices": [
+        4358,
+        4426
+      ],
+      "duplicate_ids": [
+        "causal_judgement_037",
+        "causal_judgement_105"
+      ],
+      "duplicate_count": 2
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "high",
+    "category": "question_quality",
+    "explanation": "2 samples share the question, with the same answer 'yes' (at indices [5036, 5164]). This is likely a duplicated sample.",
+    "sample_index": 5036,
+    "sample_id": "sports_understanding_028",
+    "line": null,
+    "metadata": {
+      "question": "make sure you output your answer on the last line as 'answer: <one-word answer>'. you can output multiple lines, but the answer has to be on the last line. determine whether an artificially constructed sentence relating to sports is plausible or not. question: is the following sentence plausible? \"bam adebayo scored a reverse layup in the western conference finals.\" answer: yes question: is the following sentence plausible? \"santi cazorla scored a touchdown.\" answer: no question: is the following sentence plausible? \"demar derozan was called for the goal tend.\" answer: yes question: is the following sentence plausible? \"jonas valanciunas beat the buzzer.\"",
+      "answers_agree": true,
+      "duplicate_indices": [
+        5036,
+        5164
+      ],
+      "duplicate_ids": [
+        "sports_understanding_028",
+        "sports_understanding_156"
+      ],
+      "duplicate_count": 2
+    }
+  },
+  {
+    "scanner": "duplicate_questions",
+    "severity": "high",
+    "category": "question_quality",
+    "explanation": "2 samples share the question, with the same answer 'no' (at indices [5089, 5236]). This is likely a duplicated sample.",
+    "sample_index": 5089,
+    "sample_id": "sports_understanding_081",
+    "line": null,
+    "metadata": {
+      "question": "make sure you output your answer on the last line as 'answer: <one-word answer>'. you can output multiple lines, but the answer has to be on the last line. determine whether an artificially constructed sentence relating to sports is plausible or not. question: is the following sentence plausible? \"bam adebayo scored a reverse layup in the western conference finals.\" answer: yes question: is the following sentence plausible? \"santi cazorla scored a touchdown.\" answer: no question: is the following sentence plausible? \"demar derozan was called for the goal tend.\" answer: yes question: is the following sentence plausible? \"mario gomez scored a reverse layup.\"",
+      "answers_agree": true,
+      "duplicate_indices": [
+        5089,
+        5236
+      ],
+      "duplicate_ids": [
+        "sports_understanding_081",
+        "sports_understanding_228"
+      ],
+      "duplicate_count": 2
+    }
+  }
+]

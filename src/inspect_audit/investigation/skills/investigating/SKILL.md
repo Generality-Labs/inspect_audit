@@ -5,8 +5,9 @@ description: Establish a benchmark's measurement claim, prioritise hypotheses an
 
 ## Orient
 
-Before planning, read report/framework/Framework.tex, ScoringCriteria.tex and checks.json.
-These define the scope, meanings and rating rubric. Plan evidence collection against the
+Before planning, read the staged methodology: report/framework/Framework.tex,
+ScoringCriteria.tex and checks.json for the GL report, or report/methodology.md for the
+Epoch review. These define the scope, meanings and rating rubric. Plan evidence collection against the
 actual question for each dimension/check; record what was examined, the result and remaining
 gaps. For example, clustering concerns model-score discrimination, not dataset clustering;
 unequal constraint effects concerns how a constraint binds different models. Related
@@ -75,7 +76,8 @@ The findings register follows report/findings.schema.json. Supported/qualified c
 need evidence; source inspection, historical observations, experiments and audit
 limitations have separate origins. Use the journal for actions and corrections, and
 the register for what is currently supported. Save scripts and tables under
-report/evidence. Read writing before drafting; presentation rules live there.
+report/evidence. Read the writing skill named in seed.json's `report` block (writing for the
+GL report, writing-epoch for the Epoch review) before drafting; presentation rules live there.
 
 ## Focused references
 
@@ -86,8 +88,10 @@ writing skill and supplied report schema define publication.
 
 ## Comprehensive assessment
 
-Use the framework's dimensions and checks as an investigation plan, not headings to
-fill after item audits. Maintain report/assessments.json as work progresses. For each
+Use the report format's structure as an investigation plan, not headings to fill after
+item audits: the GL framework's dimensions and checks, or the Epoch methodology's defect
+classes and quality questions. Maintain report/assessments.json (GL) or report/review.json
+(Epoch) as work progresses. For each
 outstanding check choose an informative next step or record a concrete scope/access
 blocker. Specialist review can strengthen analysis; its absence is not a reason to skip
 an assessment that source, papers, datasets and logs can support.

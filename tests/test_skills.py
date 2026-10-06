@@ -309,9 +309,16 @@ def test_every_prompt_is_a_file_and_every_placeholder_gets_filled() -> None:
         "AUDIT": {"root": "/audit", "items": "- `x`: y", "confidential": "", "notes": ""},
         "AUDIT_CONFIDENTIAL": {"root": "/audit"},
         "AUDIT_NOTES": {"notes": "look at the grader"},
-        "INVESTIGATE": {},
+        "INVESTIGATE": {"publish": "p", "framework": "f", "coverage_plan": "c"},
     }
-    assert set(filled) == set(prompts.__all__)
+    constants = {name for name in prompts.__all__ if name.isupper()}
+    assert set(filled) == constants
+    # the investigator's three per-format paragraphs live in their own files and are
+    # formatted in by investigate_prompt; both formats must render brace-free
+    for report_format in ("gl", "epoch"):
+        assert (prompts.HERE / f"investigate_{report_format}.md").is_file()
+        rendered = prompts.investigate_prompt(report_format)
+        assert "{" not in rendered and "}" not in rendered, report_format
     for name, values in filled.items():
         template = getattr(prompts, name)
         assert (prompts.HERE / f"{name.lower()}.md").is_file(), f"{name} has no markdown file"

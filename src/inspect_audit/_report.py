@@ -93,6 +93,18 @@ class EvidenceRef(BaseModel):
     quote: str | None = None
 
 
+# the nine Generality Labs dimensions, the sections of the default (GL) report format
+GL_SECTIONS: tuple[str, ...] = (
+    "construct",
+    "contentvalidity",
+    "dataset",
+    "scaffold",
+    "harness",
+    "environment",
+    "grading",
+    "resources",
+    "informativeness",
+)
 Section = Literal[
     "construct",
     "contentvalidity",
@@ -105,13 +117,52 @@ Section = Literal[
     "informativeness",
 ]
 
+REPORT_FORMATS = ("gl", "epoch")
+
+
+def report_format(report: Path) -> str:
+    """Which report format a workspace was prepared for; `gl` when it does not say."""
+    marker = report / "format.json"
+    if not marker.is_file():
+        return "gl"
+    value = str(json.loads(marker.read_text()).get("format", "gl"))
+    if value not in REPORT_FORMATS:
+        raise ValueError(f"unknown report format {value!r} in {marker}")
+    return value
+
+
+def allowed_sections(report: Path) -> tuple[str, ...]:
+    """The sections a finding may be filed under, for the workspace's report format."""
+    if report_format(report) == "epoch":
+        from ._epoch import SECTIONS
+
+        return SECTIONS
+    return GL_SECTIONS
+
+
+def check_evidence_path(root: Path, path_text: str) -> None:
+    """An evidence path is bundle-relative or under /inputs, and names an existing file."""
+    report = root / "work/report"
+    path = Path(path_text)
+    if path.is_absolute():
+        if not path.is_relative_to("/inputs"):
+            raise ValueError(f"Evidence must be bundle-relative or under /inputs: {path}")
+        base, relative = root / "inputs", path.relative_to("/inputs")
+    else:
+        base, relative = report, path
+    resolved = (base / relative).resolve()
+    if not resolved.is_relative_to(base.resolve()) or not resolved.is_file():
+        raise ValueError(f"Evidence file is missing or outside its allowed root: {path}")
+
 
 class Finding(BaseModel):
     """One revisable finding; publication snapshots this same register."""
 
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1)
-    section: Section
+    # one of the report format's sections; validated against the workspace in
+    # validate_findings, since the GL and Epoch formats file findings differently
+    section: str = Field(min_length=1)
     claim: str = Field(min_length=1)
     status: Literal["hypothesis", "supported", "qualified", "retracted"]
     origin: Literal["historical", "experiment", "source", "audit_limitation"]
@@ -130,20 +181,16 @@ def validate_findings(root: Path) -> list[Finding]:
     ids = [f.id for f in findings]
     if len(set(ids)) != len(ids):
         raise ValueError("Finding ids must be unique")
+    sections = allowed_sections(report)
     for finding in findings:
+        if finding.section not in sections:
+            raise ValueError(
+                f"{finding.id}: section must be one of {', '.join(sections)}, not {finding.section!r}"
+            )
         if finding.status in ("supported", "qualified") and not finding.evidence:
             raise ValueError(f"{finding.id}: supported/qualified findings require evidence")
         for evidence in finding.evidence:
-            path = Path(evidence.path)
-            if path.is_absolute():
-                if not path.is_relative_to("/inputs"):
-                    raise ValueError(f"Evidence must be bundle-relative or under /inputs: {path}")
-                base, relative = root / "inputs", path.relative_to("/inputs")
-            else:
-                base, relative = report, path
-            resolved = (base / relative).resolve()
-            if not resolved.is_relative_to(base.resolve()) or not resolved.is_file():
-                raise ValueError(f"Evidence file is missing or outside its allowed root: {path}")
+            check_evidence_path(root, evidence.path)
     return findings
 
 
@@ -177,18 +224,29 @@ def save_publication(root: Path) -> Path:
             f"({', '.join(logs[:5])}): cite the log where it lives under /inputs and "
             "publication records its address and checksum"
         )
-    for name in (
-        "report.tex",
-        "Findings.tex",
-        "metadata.tex",
-        "assessments.tex",
-        "report.pdf",
-        "findings.json",
-    ):
+    fmt = report_format(report)
+    required = (
+        ("review.json", "verdict.json", "epoch_review.md", "findings.json")
+        if fmt == "epoch"
+        else (
+            "report.tex",
+            "Findings.tex",
+            "metadata.tex",
+            "assessments.tex",
+            "report.pdf",
+            "findings.json",
+        )
+    )
+    for name in required:
         if not (report / name).is_file():
             raise ValueError(f"Missing report artifact: {name}")
     findings = validate_findings(root)
-    if (report / "framework/auditframework.sty").exists():
+    if fmt == "epoch":
+        from ._epoch import prepare_publication
+
+        # re-derived at publication so the saved verdict cannot lag the records
+        prepare_publication(root, [f.model_dump() for f in findings])
+    if fmt == "gl" and (report / "framework/auditframework.sty").exists():
         from ._assessment import assessment_latex, validate_latex_structure
 
         assessment_latex(report)
@@ -307,6 +365,11 @@ def _prepare_report(root: str) -> None:
 
     report = Path(root) / "work/report"
     findings = validate_findings(Path(root))
+    if report_format(report) == "epoch":
+        from ._epoch import prepare_publication
+
+        prepare_publication(Path(root), [f.model_dump() for f in findings])
+        return
     if (report / "framework/auditframework.sty").exists():
         (report / "assessments.tex").write_text(assessment_latex(report))
         validate_latex_structure(
@@ -328,6 +391,14 @@ def check_report(root: str) -> Tool:
         except (ValueError, OSError, KeyError, TypeError) as ex:
             raise ToolError(f"Report validation failed: {ex}") from ex
         await push_assessments(Path(root))
+        if report_format(Path(root) / "work/report") == "epoch":
+            verdict = json.loads((Path(root) / "work/report/verdict.json").read_text())
+            return (
+                f"Records validated. Derived verdict: {verdict['verdict']} "
+                f"({'; '.join(verdict['reasons'])}). Rendered /workspace/report/epoch_review.md "
+                "and verdict.json from review.json and findings.json; read the markdown and "
+                "fix the records (not the markdown) before publishing."
+            )
         return "Records validated and tables generated. Compile with latexmk -pdf -interaction=nonstopmode -halt-on-error report.tex from /workspace/report. Render all pages with pdftoppm, inspect them with view_image, and fix layout before publishing."
 
     return execute
@@ -353,19 +424,22 @@ def publish_report(root: str, required_coverage: float | None = None) -> Tool:
         except (ValueError, OSError, KeyError, TypeError) as ex:
             raise ToolError(f"Report assessment validation failed: {ex}") from ex
         await push_assessments(Path(root))
-        result = await sandbox().exec(
-            [
-                "latexmk",
-                "-r",
-                "/workspace/report/.latexmkrc",
-                "-cd",
-                "-pdf",
-                "-interaction=nonstopmode",
-                "-halt-on-error",
-                "/workspace/report/report.tex",
-            ],
-            timeout=300,
-        )
+        if report_format(Path(root) / "work/report") == "epoch":
+            result = await sandbox().exec(["true"])
+        else:
+            result = await sandbox().exec(
+                [
+                    "latexmk",
+                    "-r",
+                    "/workspace/report/.latexmkrc",
+                    "-cd",
+                    "-pdf",
+                    "-interaction=nonstopmode",
+                    "-halt-on-error",
+                    "/workspace/report/report.tex",
+                ],
+                timeout=300,
+            )
         if not result.success:
             raise ToolError(f"Report rendering failed:\n{result.stderr}\n{result.stdout}")
         await pull(Path(root))
@@ -376,6 +450,7 @@ def publish_report(root: str, required_coverage: float | None = None) -> Tool:
             destination = save_publication(Path(root))
         except (ValueError, OSError) as ex:
             raise ToolError(str(ex)) from ex
+        deliverable = "epoch_review.md" if report_format(destination) == "epoch" else "report.pdf"
         investigation = store_as(InvestigationState)
         investigation.outcome, investigation.outcome_reasons = record_outcome(
             destination, required_coverage
@@ -389,9 +464,9 @@ def publish_report(root: str, required_coverage: float | None = None) -> Tool:
         if remote_workspace(Path(root)):
             durable = await persist(Path(root), destination, f"published/{destination.name}")
             investigation.published = durable
-            return f"Published {durable}/report.pdf.{shortfall} Give the operator a concise summary and the report path."
+            return f"Published {durable}/{deliverable}.{shortfall} Give the operator a concise summary and the report path."
         investigation.published = str(destination)
-        return f"Published {destination / 'report.pdf'}.{shortfall} Give the operator a concise summary and the report path."
+        return f"Published {destination / deliverable}.{shortfall} Give the operator a concise summary and the report path."
 
     return execute
 

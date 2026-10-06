@@ -315,6 +315,9 @@ def test_task_scan_dumps_in_the_eval_environment_then_scans_the_replay(
     scan = json.loads(scan_record.read_text())
     assert scan["argv"][1:3] == ["scan", f"{REPLAY_SCRIPT}@replay_samples"]  # no uv.lock: no pin
     assert scan["samples"] == dump["argv"][-2]
+    assert scan["scorers"] == "inspect_ai/exact"  # the eval's scorers reach the replay task
+    dataset_inputs = result.inputs["dataset"]
+    assert isinstance(dataset_inputs, dict) and dataset_inputs["scorers"] == ["inspect_ai/exact"]
     assert Path(scan["cwd"]).resolve() == Path(str(result.inputs["scan_dir"])).resolve()
     dump_argv = result.inputs["dump_argv"]
     assert isinstance(dump_argv, list) and dump_argv[1:] == dump["argv"]  # [0] is the interpreter

@@ -244,6 +244,7 @@ DUMP_SCRIPT = Path(__file__).with_name("_dump_task_samples.py")
 REPLAY_SCRIPT = Path(__file__).with_name("_replay_samples.py")
 # names the dumped samples for the replay task; _replay_samples.SAMPLES_ENV must match
 SAMPLES_ENV = "INSPECT_AUDIT_SAMPLES_FILE"
+SCORERS_ENV = "INSPECT_AUDIT_SCORERS"  # _replay_samples.SCORERS_ENV must match
 
 
 def eval_dependency_args(ie_root: Path, package: str) -> list[str]:
@@ -401,9 +402,11 @@ def run(target: str, ctx: Context) -> Run:
             # the dataset as Inspect records it for this task, not whichever asset eval.yaml lists first
             dataset: DatasetRef | None = DatasetRef(path=dataset_identity(meta, path))
             inspect_ai = locked_version(ctx.ie_root, "inspect-ai")
+            scorers = [str(n) for n in meta.get("scorers") or []]
             inputs["dataset"] = {
                 **examined,
                 "samples": meta.get("samples"),
+                "scorers": list[JsonValue](scorers),
                 "inspect_ai": inspect_ai,
             }
             pin = ["--with", f"inspect-ai=={inspect_ai}"] if inspect_ai else []
@@ -415,7 +418,10 @@ def run(target: str, ctx: Context) -> Run:
                 "-o",
                 str(scan_dir),
             ]
-            scan_env: dict[str, str] | None = {SAMPLES_ENV: str(samples)}
+            scan_env: dict[str, str] | None = {
+                SAMPLES_ENV: str(samples),
+                SCORERS_ENV: ",".join(scorers),
+            }
             # the replay needs nothing from the caller's directory, and must not pick up its .env
             scan_cwd: Path | None = scan_dir
         else:

@@ -242,11 +242,16 @@ async def fetch_inputs_files(root: Path, paths: list[str]) -> None:
         host.write_bytes(content)
 
 
+# files the host generates from the agent's records, pushed back so the agent can read them
+GENERATED = ("assessments.tex", "epoch_review.md", "verdict.json")
+
+
 async def push_assessments(root: Path) -> None:
     if remote_workspace(root):
-        path = root / "work/report/assessments.tex"
-        if path.exists():
-            await sandbox().write_file("/workspace/report/assessments.tex", path.read_bytes())
+        for name in GENERATED:
+            path = root / "work/report" / name
+            if path.exists():
+                await sandbox().write_file(f"/workspace/report/{name}", path.read_bytes())
 
 
 def _destination(root: Path, name: str) -> str:

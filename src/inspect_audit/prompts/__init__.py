@@ -35,11 +35,28 @@ AUDIT_CONFIDENTIAL = _read("audit_confidential.md")
 AUDIT_NOTES = _read("audit_notes.md")
 
 # The outer investigator: one benchmark, its logs, its paper, a container and a budget.
+# Three placeholders carry what differs between report formats: `publish` (how the
+# deliverable is produced), `framework` (what the staged methodology files are and how
+# to read them) and `coverage_plan` (what organises the investigation). Each format
+# supplies them as three paragraphs, in that order, in `investigate_<format>.md`.
 INVESTIGATE = _read("investigate.md")
+_PLACEHOLDERS = ("publish", "framework", "coverage_plan")
+
+
+def investigate_prompt(report_format: str = "gl") -> str:
+    """The investigator's system prompt for a report format (`gl` or `epoch`)."""
+    blocks = [b.strip() for b in _read(f"investigate_{report_format}.md").strip().split("\n\n")]
+    if len(blocks) != len(_PLACEHOLDERS):
+        raise ValueError(
+            f"investigate_{report_format}.md must hold exactly {len(_PLACEHOLDERS)} paragraphs"
+        )
+    return INVESTIGATE.format(**dict(zip(_PLACEHOLDERS, blocks, strict=True)))
+
 
 __all__ = [
     "AUDIT",
     "AUDIT_CONFIDENTIAL",
     "AUDIT_NOTES",
     "INVESTIGATE",
+    "investigate_prompt",
 ]

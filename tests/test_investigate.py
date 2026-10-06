@@ -570,10 +570,10 @@ def test_mounted_skills_are_wellformed_and_adapted() -> None:
     keeps its original text and gains an `In this container` section; the container has
     no `uv`, so a stray `uv run` would send the agent down a dead end.
     """
-    from inspect_audit._investigate import ASSETS, INVESTIGATION_SKILLS
+    from inspect_audit._investigate import ASSETS, INVESTIGATION_SKILLS, WRITING_SKILLS
 
-    ours = {"investigating", "writing", "running-jobs", "security-audit-eval"}
-    for name in INVESTIGATION_SKILLS:
+    ours = {"investigating", "writing", "writing-epoch", "running-jobs", "security-audit-eval"}
+    for name in (*INVESTIGATION_SKILLS, *WRITING_SKILLS.values()):
         text = (ASSETS / "skills" / name / "SKILL.md").read_text()
         import yaml
 

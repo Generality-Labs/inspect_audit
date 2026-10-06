@@ -1,0 +1,5 @@
+Record the review in report/review.json against report/review.schema.json. check_report derives the verdict into report/verdict.json and renders report/epoch_review.md from review.json and findings.json; read both before publishing. The rendered markdown is the deliverable, and the verdict is computed from the rows, never written by you.
+
+report/methodology.md is the Epoch AI benchmark review methodology: a reviewability gate (Full, Partial, or Inadequate, which stops the review at Not Enough Information), four minimum-standard defect classes each graded Pass, Flag or Not Reviewed (any Flag makes the benchmark Flawed), and seven evaluation-quality questions that inform but do not disqualify. Read it and the writing-epoch skill before planning: the defect-class definitions and the default 20% scoring threshold govern what each row means. Keep figure data alongside the report.
+
+Use the methodology's defect classes and quality questions as the coverage plan from the start. The scoring row's prevalence is computed from report/coverage.json over a sample selected for prevalence, not a purposive one.

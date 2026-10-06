@@ -110,6 +110,9 @@ INVESTIGATION_SKILLS = (
     "eval-report-workflow",
     "read-eval-logs",
 )
+# the publication skill each report format loads in place of `writing`
+WRITING_SKILLS = {"gl": "writing", "epoch": "writing-epoch"}
+REPORT_ASSETS = {"gl": "report", "epoch": "report-epoch"}
 # compact the investigator's context once it passes this many tokens
 COMPACTION_TOKENS = 200_000
 OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"
@@ -561,6 +564,7 @@ def prepare_workspace(
     target_task: str | None,
     output_dir: str,
     budget_usd: float,
+    report_format: str = "gl",
 ) -> Path:
     """Create a fresh run directory; expose only explicit inputs to the shell."""
     root = Path(output_dir).expanduser().resolve() / uuid4().hex
@@ -608,13 +612,23 @@ def prepare_workspace(
     )
     (inputs / "seed.json").write_text(json.dumps(seed, indent=2))
     shutil.copytree(
-        ASSETS / "report",
+        ASSETS / REPORT_ASSETS[report_format],
         work / "report",
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
-    from ._assessment import prepare_assessments
+    (work / "report" / "format.json").write_text(
+        json.dumps({"format": report_format}, indent=2) + "\n"
+    )
+    if report_format == "epoch":
+        from ._epoch import prepare_review
 
-    prepare_assessments(work / "report")
+        prepare_review(work / "report", target_task or Path(repo).name)
+    else:
+        from ._assessment import prepare_assessments
+
+        prepare_assessments(work / "report")
+    seed["report"] = {"format": report_format, "writing_skill": WRITING_SKILLS[report_format]}
+    (inputs / "seed.json").write_text(json.dumps(seed, indent=2))
     (work / "journal.md").write_text(
         "# Activity journal\n\nAppend actions and corrections with evidence references.\n"
     )
@@ -2061,8 +2075,9 @@ def investigate(
     required_coverage: float | None = None,
     checkpoint: bool | None = None,
     provider: str | None = None,
+    report: str | None = None,
 ) -> Task:
-    """Investigate source and logs on Hawk and publish a GL LaTeX report.
+    """Investigate source and logs on Hawk and publish a report.
 
     Submit this task with Hawk. Explicit execution='local' uses Docker instead.
 
@@ -2121,6 +2136,11 @@ def investigate(
         required_coverage: Fraction of the question population (0-1) the published
             coverage.json must assess for the run to count as complete. A publication
             short of it is scored `published_incomplete`, not success. None sets no bar.
+        report: Report format: 'gl' (default), the nine-dimension Generality Labs LaTeX
+            report, or 'epoch', the Epoch AI benchmark review (reviewability gate,
+            minimum-standard defect classes, quality questions) rendered to markdown
+            with a derived Verified / Flawed / NEI verdict. Fixed for the life of an
+            investigation directory; a resume reads it from the workspace.
         checkpoint: Checkpoint the investigation with Inspect so an interrupted run
             resumes (`hawk eval-set resume`, `inspect eval-retry`) with its conversation,
             workspace, job ledger and spend. Defaults to on for execution='hawk' and off
@@ -2153,6 +2173,7 @@ def investigate(
     worker_models = settings.get("worker_models", worker_models)
     secrets_file = settings.get("secrets_file", secrets_file)
     execution = settings.get("execution", execution) or "hawk"
+    report = settings.get("report", report)
     investigator_image = (
         settings.get("investigator_image", investigator_image) or DEFAULT_INVESTIGATOR_IMAGE
     )
@@ -2167,6 +2188,8 @@ def investigate(
         raise ValueError("required_coverage must be a fraction in (0, 1]")
     if execution not in {"hawk", "local"}:
         raise ValueError("execution must be 'hawk' or 'local'")
+    if report is not None and report not in WRITING_SKILLS:
+        raise ValueError(f"report must be one of {', '.join(WRITING_SKILLS)}")
     if execution == "hawk":
         if not os.environ.get("HAWK_JOB_ID"):
             raise ValueError(
@@ -2195,18 +2218,29 @@ def investigate(
 
     if not math.isfinite(budget_usd) or budget_usd <= 0:
         raise ValueError("budget_usd must be finite and positive")
-    skill_paths = [str(ASSETS / "skills" / name) for name in INVESTIGATION_SKILLS] + [
-        str(SKILLS / name) for name in SUPPORT_SKILLS
-    ]
+    if not repo:
+        raise ValueError("investigate needs a repo: the benchmark to audit, or a config naming one")
+
+    resumed = _resumable(resume) if resume else None
+    if resumed:
+        from ._report import report_format
+
+        fixed = report_format(resumed / "work" / "report")
+        if report is not None and report != fixed:
+            raise ValueError(
+                f"this investigation was prepared for the {fixed!r} report; cannot resume as {report!r}"
+            )
+        report = fixed
+    report = report or "gl"
+    skill_paths = [
+        str(ASSETS / "skills" / (WRITING_SKILLS[report] if name == "writing" else name))
+        for name in INVESTIGATION_SKILLS
+    ] + [str(SKILLS / name) for name in SUPPORT_SKILLS]
     for path in extra_skills or []:
         resolved = Path(path).expanduser().resolve()
         if not (resolved / "SKILL.md").is_file():
             raise ValueError(f"Expected a skill directory containing SKILL.md: {path}")
         skill_paths.append(str(resolved))
-    if not repo:
-        raise ValueError("investigate needs a repo: the benchmark to audit, or a config naming one")
-
-    resumed = _resumable(resume) if resume else None
     if resumed and revision is None:
         # the snapshot is not retaken, so the commit a runner installs is the one that
         # snapshot was taken at, not wherever the checkout has moved to since
@@ -2267,6 +2301,7 @@ def investigate(
         target_task,
         output_dir,
         budget_usd,
+        report,
     )
 
     remote: Remote | None = None
@@ -2391,7 +2426,7 @@ def investigate(
         scorer=investigation_outcome(),
         solver=react(
             name="investigator",
-            prompt=prompts.INVESTIGATE,
+            prompt=prompts.investigate_prompt(report),
             submit=False,
             tools=tools,
             # an absolute threshold: 0.8 of a 1.05M-token context fired at ~840k,
@@ -2412,7 +2447,14 @@ def investigate(
             "investigation_dir": str(root),
             "interactive": interactive,
             "execution": execution,
-            "capabilities": ["repository", "existing_logs", "docs", "latex_report", "acp"]
+            "report": report,
+            "capabilities": [
+                "repository",
+                "existing_logs",
+                "docs",
+                "latex_report" if report == "gl" else "epoch_report",
+                "acp",
+            ]
             + (["hawk_jobs"] if remote else []),
         },
     )

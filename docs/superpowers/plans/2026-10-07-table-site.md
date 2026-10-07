@@ -26,15 +26,15 @@
 
 ## Deviations from the spec, and why
 
-1. **`/health`, not `/healthz`.** The template's handler, its test and its Playwright spec use `/health` returning `{"status":"ok"}`; the deploy smoke test reads whatever `HEALTH_URL` says. Keeping the template's path avoids a conflict on every `copier update`.
-2. **`FINDINGS_ORIGIN` var.** The spec has the dev `FINDINGS_REPO` point at a local stub, but the host is fixed in the URL, so the stub cannot be reached by changing the repo alone. Playwright overrides `FINDINGS_ORIGIN` with `--var`.
-3. **`run_worker_first = ["/data/*", "/health"]`.** With single-page-application fallback, a browser navigation (`Sec-Fetch-Mode: navigate`) to a path with no asset gets `index.html` before the Worker runs, so opening `/data/index.json` in a tab would show the app. The array makes those paths reach the Worker always.
-4. **`vi.spyOn(globalThis, "fetch")`, not `fetchMock`.** `fetchMock` was removed from `cloudflare:test` with the move to Vitest 4.
-5. **The Cache API is a no-op behind Access.** Cloudflare's Cache API docs: "For Workers fronted by Cloudflare Access, the Cache API is not currently available." Until the Access policy comes off, every `/data` request goes to GitHub. That is fine at pilot traffic (a handful of readers, 5 to 20 KB files). The code and tests follow the spec, so caching starts working when the site goes public. KV is the move if it matters sooner, as the spec already says.
-6. **Filtering outside TanStack.** Filters are one pure function (`applyFilters`) over the rows, because it is unit-testable without rendering and the query string is its only state. TanStack Table sorts and renders.
-7. **Native selects.** shadcn's `native-select`, not the Radix `select`: it is accessible, works in jsdom without pointer-capture shims, and a filter needs no more.
-8. **Fixture.** The real export (sweep of 2026-10-07) has no suppressions, no issues, one producer with findings and no empty eval. The fixture is that export plus a small set of additions, listed in `test/fixtures/README.md`, so every page state has data.
-9. **CI bundle check builds first.** `wrangler deploy --dry-run` needs `dist/` to exist, so `ci.yml` passes `bundle-script: check:bundle` (`vite build && wrangler deploy --env production --dry-run`), an input the shared workflow already has.
+01. **`/health`, not `/healthz`.** The template's handler, its test and its Playwright spec use `/health` returning `{"status":"ok"}`; the deploy smoke test reads whatever `HEALTH_URL` says. Keeping the template's path avoids a conflict on every `copier update`.
+02. **`FINDINGS_ORIGIN` var.** The spec has the dev `FINDINGS_REPO` point at a local stub, but the host is fixed in the URL, so the stub cannot be reached by changing the repo alone. Playwright overrides `FINDINGS_ORIGIN` with `--var`.
+03. **`run_worker_first = ["/data/*", "/health"]`.** With single-page-application fallback, a browser navigation (`Sec-Fetch-Mode: navigate`) to a path with no asset gets `index.html` before the Worker runs, so opening `/data/index.json` in a tab would show the app. The array makes those paths reach the Worker always.
+04. **`vi.spyOn(globalThis, "fetch")`, not `fetchMock`.** `fetchMock` was removed from `cloudflare:test` with the move to Vitest 4.
+05. **The Cache API is a no-op behind Access.** Cloudflare's Cache API docs: "For Workers fronted by Cloudflare Access, the Cache API is not currently available." Until the Access policy comes off, every `/data` request goes to GitHub. That is fine at pilot traffic (a handful of readers, 5 to 20 KB files). The code and tests follow the spec, so caching starts working when the site goes public. KV is the move if it matters sooner, as the spec already says.
+06. **Filtering outside TanStack.** Filters are one pure function (`applyFilters`) over the rows, because it is unit-testable without rendering and the query string is its only state. TanStack Table sorts and renders.
+07. **Native selects.** shadcn's `native-select`, not the Radix `select`: it is accessible, works in jsdom without pointer-capture shims, and a filter needs no more.
+08. **Fixture.** The real export (sweep of 2026-10-07) has no suppressions, no issues, one producer with findings and no empty eval. The fixture is that export plus a small set of additions, listed in `test/fixtures/README.md`, so every page state has data.
+09. **CI bundle check builds first.** `wrangler deploy --dry-run` needs `dist/` to exist, so `ci.yml` passes `bundle-script: check:bundle` (`vite build && wrangler deploy --env production --dry-run`), an input the shared workflow already has.
 10. **Reviewed column.** The issue id links to GitHub when `github` is set; an accepted finding whose issue has no GitHub link yet shows the id as plain text, and an unreviewed one is blank. A blank cell on an accepted row would contradict the "accepted" filter.
 11. **The GitHub contents API, not `raw.githubusercontent.com`** (decided in the final review, after the plan's tasks ran). Verified by `curl`: raw answers 404 for a bad, expired or missing token, so an expired `GITHUB_TOKEN` would have read as "no export has been published". `api.github.com/repos/<repo>/contents/export/<path>?ref=<ref>` with `Accept: application/vnd.github.raw` answers 401 for bad credentials (the Worker's 502), 404 only for a missing file, and the raw JSON otherwise. `FINDINGS_ORIGIN` is `https://api.github.com`. Rate limit 5,000 requests an hour per token, which matters only while Access disables the Cache API.
 
@@ -295,8 +295,7 @@ describe("GET /data", () => {
 
 - [ ] **Step 3: Run to see them fail**
 
-Run: `npx vitest run --project worker`
-Expected: the `/data` tests FAIL (404 for every data path); `/health` passes.
+Run: `npx vitest run --project worker` Expected: the `/data` tests FAIL (404 for every data path); `/health` passes.
 
 - [ ] **Step 4: Implement**
 
@@ -385,8 +384,7 @@ export default {
 
 - [ ] **Step 5: Run the tests**
 
-Run: `npm run typecheck && npx vitest run --project worker`
-Expected: all PASS.
+Run: `npm run typecheck && npx vitest run --project worker` Expected: all PASS.
 
 - [ ] **Step 6: Commit**
 
@@ -847,8 +845,7 @@ createRoot(root).render(
 
 - [ ] **Step 7: Run everything**
 
-Run: `npm run typecheck && npm test && npm run build && npx biome check .`
-Expected: all PASS; `dist/index.html` and hashed assets exist; no request in `dist/` points at a third-party host (`grep -rE "https?://" dist | grep -v "w3.org\|reactjs.org\|react.dev"` prints nothing that is loaded).
+Run: `npm run typecheck && npm test && npm run build && npx biome check .` Expected: all PASS; `dist/index.html` and hashed assets exist; no request in `dist/` points at a third-party host (`grep -rE "https?://" dist | grep -v "w3.org\|reactjs.org\|react.dev"` prints nothing that is loaded).
 
 - [ ] **Step 8: Commit**
 
@@ -867,8 +864,11 @@ ______________________________________________________________________
 **Interfaces:**
 
 - Produces (types): `SUPPORTED_SCHEMA = 1`; `Severity`, `Status`, `Revision`, `ProducerRun`, `EvalEntry`, `FindingRow`, `IndexDoc`, `Location`, `Outcome`, `RunEntry`, `GroupFinding`, `Group`, `SuppressedGroup`, `IssueEntry`, `DatasetInput`, `LogEntry`, `Inputs`, `EvalDoc`; `SEVERITY_RANK: Record<Severity, number>`.
+
 - Produces (data): `Loaded<T>` union with states `loading | ready (doc) | not-found | too-new | failed (message)`; `loadDoc<T extends { schema: number }>(path: string): Promise<Loaded<T>>`; `useDoc<T>(path: string): Loaded<T>`; `<LoadState loaded notFound />`.
+
 - Produces (format): `formatTime(iso: string): string` → `"2026-10-07 06:42 UTC"`; `shortCommit(commit: string | null): string`; `locationKeyLabel(key: string): string`; `locationLabel(location: Location): string`.
+
 - Produces (tests): `fixtureIndex(): IndexDoc`, `fixtureEval(slug: string): EvalDoc`, `stubData(overrides?: Record<string, Response>)` in `test/app/fixtures.ts`.
 
 - [ ] **Step 1: Copy the real export and add the fixture rows**
@@ -1380,8 +1380,7 @@ export function LoadState({
 
 - [ ] **Step 6: Run the tests**
 
-Run: `npm run typecheck && npx vitest run --project unit`
-Expected: PASS. Also `npx tsc --noEmit -p tsconfig.app.json` accepts the fixture casts.
+Run: `npm run typecheck && npx vitest run --project unit` Expected: PASS. Also `npx tsc --noEmit -p tsconfig.app.json` accepts the fixture casts.
 
 - [ ] **Step 7: Commit**
 
@@ -1401,6 +1400,7 @@ ______________________________________________________________________
 **Interfaces:**
 
 - Consumes: `useDoc`, `LoadState`, `formatTime`, `locationKeyLabel`, `FindingRow`, `IndexDoc`, `SEVERITY_RANK`; `stubData`, `fixtureIndex`.
+
 - Produces: `Filters`, `NO_FILTERS`, `REVIEWED`, `FACETS`, `Facet`, `NO_CHECK`, `filtersFromParams(params: URLSearchParams): Filters`, `filtersToParams(filters: Filters): URLSearchParams`, `applyFilters(rows: FindingRow[], filters: Filters): FindingRow[]`, `facetOptions(rows: FindingRow[], facet: Facet, selected?: string): string[]`, `defaultOrder(rows: FindingRow[]): FindingRow[]`; `<SeverityBadge value />`, `<StatusBadge value />`; `<FindingsPage />`.
 
 - [ ] **Step 1: Write the failing filter tests**
@@ -2013,8 +2013,7 @@ Drop the `meta: { wide: true }` from `columns.tsx` if TypeScript rejects it (the
 
 - [ ] **Step 5: Run the tests**
 
-Run: `npm run typecheck && npx vitest run --project unit && npx biome check .`
-Expected: PASS.
+Run: `npm run typecheck && npx vitest run --project unit && npx biome check .` Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
@@ -2034,6 +2033,7 @@ ______________________________________________________________________
 **Interfaces:**
 
 - Consumes: `useDoc`, `LoadState`, `formatTime`, `shortCommit`, `locationLabel`, `SeverityBadge`, `StatusBadge`, `EvalDoc`, `RunEntry`; `stubData`, `fixtureEval`; `renderAt` pattern from Task 5.
+
 - Produces: `checkCounts(runs: RunEntry[]): { ran: number; skipped: number }`; `<EvalPage />`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -2458,8 +2458,7 @@ In `app/App.tsx`, route `evals/:slug` to `<EvalPage />`.
 
 - [ ] **Step 3: Run the tests**
 
-Run: `npm run typecheck && npx vitest run --project unit && npx biome check .`
-Expected: PASS.
+Run: `npm run typecheck && npx vitest run --project unit && npx biome check .` Expected: PASS.
 
 - [ ] **Step 4: Commit**
 
@@ -2479,6 +2478,7 @@ ______________________________________________________________________
 **Interfaces:**
 
 - Consumes: the built app, the Worker, `test/fixtures/export/`.
+
 - Produces: `npm run test:e2e` green locally; with `SCREENSHOTS=1`, PNGs under `docs/screenshots/` for the PR.
 
 - [ ] **Step 1: Stub upstream**
@@ -2612,10 +2612,15 @@ ______________________________________________________________________
 Keep the template's sections that still apply. Lead with what the site is, then add:
 
 - **Pages:** `/` findings table, `/evals/<slug>` eval page; data from `export/` in `Generality-Labs/inspect-evals-findings` (written by inspect_audit's `render_current`), via `/data/*`.
+
 - **Local development:** `cp .dev.vars.example .dev.vars` and set `GITHUB_TOKEN`; `npm run build && npm run dev` serves the built site against the real export at `http://127.0.0.1:8787`; `npm run dev:app` runs Vite with hot reload on 5173, proxying `/data` to the wrangler server. `npm run test:e2e` runs Playwright against the fixture export, and `SCREENSHOTS=1 npm run test:e2e` writes `docs/screenshots/`.
+
 - **Access:** a Cloudflare Access application on `audits.generality.org`, policy "Generality Labs Google accounts", created by hand in the Zero Trust dashboard. Removing it is how the site goes public. `/data/*` and the future `/mcp` sit behind the same gate; a script needs an Access service token.
+
 - **Caching:** five-minute Cache API entry per export file; a no-op while Access fronts the Worker (Cloudflare's documented limitation), so pilot traffic goes to GitHub on every request.
+
 - **Secrets and settings:** `GITHUB_TOKEN` (fine-grained PAT, Contents read on `inspect-evals-findings` only, put with `npm run secrets`; **expires: `<date set when created>`**); repo secrets `CLOUDFLARE_API_TOKEN` (Workers Scripts edit, Workers Routes edit, Zone read on `generality.org`) and `CLOUDFLARE_ACCOUNT_ID` (`4dd4a6b03a79f452ebc112658643f02a`); `HEALTH_URL=https://audits.generality.org/health` on the `production` environment, which needs `ACCESS_CLIENT_ID` and `ACCESS_CLIENT_SECRET` (an Access service token allowed by a Service Auth policy) because the smoke test requires a real 200.
+
 - **Schema:** the app reads export schema 1 (`app/lib/types.ts`); a newer export shows an update message.
 
 - [ ] **Step 2: Changelog**

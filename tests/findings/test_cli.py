@@ -618,3 +618,17 @@ def test_leads_subcommand_with_no_runs_is_a_usage_error(
     assert main(["leads", "--out", str(out), "inspect_evals/hle"]) == 2
     err = capsys.readouterr().err
     assert "inspect_evals/hle" in err and str(out) in err
+
+
+def test_render_current_writes_the_export(tmp_path: Path, run: Run) -> None:
+    import json
+
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    index = json.loads((out / "export" / "index.json").read_text())
+    assert index["schema"] == 1
+    assert [e["eval"] for e in index["evals"]] == ["inspect_evals/stereoset"]
+    assert (out / "export" / "evals" / "inspect-evals-stereoset.json").is_file()
+    assert "secret" not in (out / "export" / "index.json").read_text()

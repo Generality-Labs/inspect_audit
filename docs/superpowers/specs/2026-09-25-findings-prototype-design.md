@@ -35,6 +35,7 @@ src/inspect_audit/findings/
   hawk.py           find_eval_sets(task) via the hawk client; download_eval_set / download_artifacts / pull_manifest via the hawk CLI
   render.py         render_eval_summary(runs) and render_sweep_summary(runs) -> markdown
   leads.py          select_leads / render_leads / leads_markdown -> LEADS.md for an agent
+  export.py         index.json + evals/<slug>.json for the table site, from the reviewed current view
   cli.py            inspect-audit-findings
   schema/
     finding.schema.json
@@ -189,6 +190,8 @@ inspect-audit-findings summary <out dir>
 <out>/
   <slug>/runs/<run id>.run.json   one per producer invocation, immutable
   <slug>/current.json             producer -> runs/<run id>.run.json
+  export/index.json               active findings across evals + per-eval roll-ups (table site)
+  export/evals/<slug>.json        one eval's page data
   <slug>/SUMMARY.md
   findings.parquet
   runs.parquet

@@ -68,7 +68,7 @@ Per [v1-architecture.md](v1-architecture.md).
 - A private repository, `Generality-Labs/inspect-evals-findings`, holding `runs/`, `current.json`, `suppressions.yaml`, `issues.yaml`, `cases.yaml` and an `export/` directory.
 - The current view becomes derived (newest run per eval and producer), with `current.json` kept only for explicit pins, so concurrent writers never conflict on a shared file. Producer runs commit directly; review decisions take the review path.
 - A scheduled Action that checks out Inspect Evals main, runs the deterministic producers over every eval (lint, dataset scans through each task, header checks where logs are on Hawk), commits the runs and moves `current.json`.
-- An export step on merge: `findings.parquet`, `runs.parquet`, one JSON per eval, an index JSON. Publication selects what leaves the repo; native producer records stay private until the standard says otherwise.
+- Done 2026-10-07: every render writes `export/index.json` and `export/evals/<slug>.json` ([table site spec](superpowers/specs/2026-10-07-table-site-design.md)). Publication selects what leaves the repo; native producer records stay private until the standard says otherwise.
 
 Done when the Action has run unattended for a week, every eval in the registry has a current view, a `review accept` from the CLI changes the export without anyone opening a YAML file, and an agent can pull leads for an eval over MCP.
 

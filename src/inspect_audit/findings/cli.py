@@ -16,8 +16,17 @@ from .adapters import dataset as dataset_adapter
 from .adapters import header as header_adapter
 from .adapters import lint as lint_adapter
 from .config import DEFAULT_CONFIG_PATH, load_config
+from .export import write_export
 from .featured import FEATURED
-from .io import findings_df, read_current, runs_df, update_current, write_parquet, write_run
+from .io import (
+    findings_df,
+    read_current,
+    read_runs,
+    runs_df,
+    update_current,
+    write_parquet,
+    write_run,
+)
 from .leads import NoRunsError, leads_markdown
 from .models import Run
 from .producers import ProducerConfig
@@ -122,6 +131,7 @@ def render_current(out: Path, review: Review | None = None) -> None:
         all_runs += runs
     write_parquet(findings_df(all_runs), out / "findings.parquet")
     write_parquet(runs_df(all_runs), out / "runs.parquet")
+    write_export(out, runs_by_eval, review, history=read_runs(out))
     (out / "SUMMARY.md").write_text(render_sweep_summary(runs_by_eval))
     for issue_id, fingerprints in sorted(unmatched_issue_findings(review, all_runs).items()):
         print(

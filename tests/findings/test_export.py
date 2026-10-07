@@ -1,6 +1,7 @@
 """The export: the JSON the table site reads, from the reviewed current view."""
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from inspect_audit.findings.models import Outcome, Run, SampleLocation, Source
 from inspect_audit.findings.review import IssueEntry, Review, SuppressionRule, apply_review
@@ -292,3 +293,23 @@ def test_eval_document_empty_but_checked(run: Run) -> None:
     doc = eval_document(EVAL, [clean], Review(), {}, NOW)
     assert doc["groups"] == [] and doc["suppressed"] == [] and doc["issues"] == []
     assert doc["runs"][0]["passing"] == 1 and doc["runs"][0]["outcomes"] == []
+
+
+def test_write_export_writes_both_files_and_is_stable_across_rewrites(
+    tmp_path: Path, run: Run
+) -> None:
+    import json
+
+    from inspect_audit.findings.export import write_export
+
+    reviewed = apply_review([run], Review())
+    written = write_export(tmp_path, {EVAL: reviewed}, Review(), history=reviewed, generated_at=NOW)
+    assert [p.relative_to(tmp_path).as_posix() for p in written] == [
+        "export/index.json",
+        "export/evals/inspect-evals-stereoset.json",
+    ]
+    first = {p: p.read_bytes() for p in written}
+    assert json.loads(written[0].read_text())["schema"] == 1
+    assert written[0].read_text().endswith("\n")
+    write_export(tmp_path, {EVAL: reviewed}, Review(), history=reviewed, generated_at=NOW)
+    assert {p: p.read_bytes() for p in written} == first

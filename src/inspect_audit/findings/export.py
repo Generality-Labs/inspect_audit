@@ -8,9 +8,11 @@ store: suppressed observations are counted and grouped but never rows, producers
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from .adapters import slug
@@ -258,3 +260,31 @@ def eval_document(
         "suppressed": _suppressed_groups(eval_name, runs, review),
         "issues": _issues(eval_name, runs, review),
     }
+
+
+def write_export(
+    out: Path,
+    runs_by_eval: Mapping[str, Sequence[Run]],
+    review: Review,
+    *,
+    history: Sequence[Run],
+    generated_at: datetime | None = None,
+) -> list[Path]:
+    """Write `export/index.json` and `export/evals/<slug>.json` under `out`."""
+    stamp = generated_at or datetime.now(tz=UTC)
+    seen = seen_range(history)
+    export_dir = out / EXPORT_DIR
+    (export_dir / "evals").mkdir(parents=True, exist_ok=True)
+    index_path = export_dir / "index.json"
+    index_path.write_text(_dumps(index_document(runs_by_eval, review, seen, stamp)))
+    written = [index_path]
+    for eval_name in sorted(runs_by_eval):
+        path = export_dir / "evals" / f"{slug(eval_name)}.json"
+        document = eval_document(eval_name, runs_by_eval[eval_name], review, seen, stamp)
+        path.write_text(_dumps(document))
+        written.append(path)
+    return written
+
+
+def _dumps(document: dict[str, Any]) -> str:
+    return json.dumps(document, indent=1, ensure_ascii=False) + "\n"

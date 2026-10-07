@@ -299,3 +299,36 @@ def test_issues_section_lists_current_and_missing_observations(run: Run) -> None
 def test_sweep_summary_counts_active_and_suppressed(run: Run) -> None:
     text = render_sweep_summary({"inspect_evals/stereoset": [_suppressed(run)]})
     assert "inspect_evals_lint: 0 findings, 1 suppressed" in text
+
+
+def test_inputs_data_returns_what_the_lines_are_rendered_from(run: Run) -> None:
+    from inspect_audit.findings.render import inputs_data
+
+    dataset_run = run.model_copy(
+        update={
+            "inputs": {
+                "dataset": {
+                    "path": "McGill-NLP/stereoset",
+                    "mode": "task",
+                    "declared": True,
+                    "samples": 2123,
+                    "scorers": ["inspect_ai/exact"],
+                },
+                "logs": {
+                    "used": [{"path": "a.eval"}],
+                    "excluded": [{"path": "b.eval", "reason": "mock model"}],
+                    "count_excluded": [],
+                },
+                "comparison": {"commit": "abc", "task_version": "3-A"},
+            }
+        }
+    )
+    data = inputs_data([dataset_run])
+    assert data["dataset"]["scorers"] == ["inspect_ai/exact"]
+    assert data["logs"]["excluded"] == [{"path": "b.eval", "reason": "mock model"}]
+    assert data["comparison"]["commit"] == "abc"
+    assert inputs_data([run]) == {
+        "dataset": {},
+        "logs": {"used": [], "excluded": [], "count_excluded": []},
+        "comparison": {},
+    }

@@ -680,3 +680,17 @@ def test_review_cli_malformed_review_file_is_a_usage_error(
     args = ["review", "suppress", "--out", str(out), "--rule", "IEBP008", "--reason", "r"]
     assert main([*args, "--author", "Matt Fisher <matt@example.com>"]) == 2
     assert "issues.yaml" in capsys.readouterr().err
+
+
+def test_render_current_writes_the_export(tmp_path: Path, run: Run) -> None:
+    import json
+
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    index = json.loads((out / "export" / "index.json").read_text())
+    assert index["schema"] == 1
+    assert [e["eval"] for e in index["evals"]] == ["inspect_evals/stereoset"]
+    assert (out / "export" / "evals" / "inspect-evals-stereoset.json").is_file()
+    assert "secret" not in (out / "export" / "index.json").read_text()

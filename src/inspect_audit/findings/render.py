@@ -12,7 +12,7 @@ from .review import IssueEntry
 NOISE_THRESHOLD = 100
 EXAMPLES = 2  # observations shown under a grouped rule
 
-_SEVERITY_ORDER = {"critical": 0, "major": 1, "minor": 2, "none": 3}
+SEVERITY_ORDER = {"critical": 0, "major": 1, "minor": 2, "none": 3}
 
 
 def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
@@ -24,7 +24,7 @@ def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
 
 def sorted_findings(findings: Sequence[Finding]) -> list[Finding]:
     return sorted(
-        findings, key=lambda f: (_SEVERITY_ORDER[f.severity], f.rule, f.primary_location.key())
+        findings, key=lambda f: (SEVERITY_ORDER[f.severity], f.rule, f.primary_location.key())
     )
 
 
@@ -43,12 +43,34 @@ def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
-def inputs_lines(runs: Sequence[Run]) -> list[str]:
-    """What the producers examined, and what they left out, as bullet lines."""
-    lines: list[str] = []
+def inputs_data(runs: Sequence[Run]) -> dict[str, Any]:
+    """The Inputs facts as data: what the dataset scan, the log selection and the header comparison recorded.
+
+    The Markdown Inputs section and the export both read this, so they cannot disagree.
+    """
     dataset = next(
         (_dict(run.inputs.get("dataset")) for run in runs if "dataset" in run.inputs), {}
     )
+    logs = next((_dict(run.inputs.get("logs")) for run in runs if "logs" in run.inputs), {})
+    comparison = next(
+        (_dict(run.inputs.get("comparison")) for run in runs if "comparison" in run.inputs), {}
+    )
+    return {
+        "dataset": dataset,
+        "logs": {
+            "used": _list(logs.get("used")),
+            "excluded": _list(logs.get("excluded")),
+            "count_excluded": _list(logs.get("count_excluded")),
+        },
+        "comparison": comparison,
+    }
+
+
+def inputs_lines(runs: Sequence[Run]) -> list[str]:
+    """What the producers examined, and what they left out, as bullet lines."""
+    data = inputs_data(runs)
+    lines: list[str] = []
+    dataset = data["dataset"]
     if dataset:
         where = (
             "through the task's own loader"
@@ -74,11 +96,10 @@ def inputs_lines(runs: Sequence[Run]) -> list[str]:
             )
     else:
         lines.append("- Dataset: no dataset scan ran.")
-    logs = next((_dict(run.inputs.get("logs")) for run in runs if "logs" in run.inputs), {})
-    if logs:
-        used = _list(logs.get("used"))
-        excluded = _list(logs.get("excluded"))
-        count_excluded = _list(logs.get("count_excluded"))
+    if any("logs" in run.inputs for run in runs):
+        used = data["logs"]["used"]
+        excluded = data["logs"]["excluded"]
+        count_excluded = data["logs"]["count_excluded"]
         lines.append(
             f"- Logs: {len(used)} log(s) used, {len(excluded)} excluded, "
             f"{len(count_excluded)} not compared for sample count."
@@ -91,9 +112,7 @@ def inputs_lines(runs: Sequence[Run]) -> list[str]:
             )
     else:
         lines.append("- Logs: no logs examined.")
-    comparison = next(
-        (_dict(run.inputs.get("comparison")) for run in runs if "comparison" in run.inputs), {}
-    )
+    comparison = data["comparison"]
     if comparison:
         lines.append(
             f"- Header checks compared against "
@@ -192,7 +211,7 @@ def render_eval_summary(runs: Sequence[Run], issues: Sequence[IssueEntry] = ()) 
     dimension_rows = [
         [dimension, severity, str(n)]
         for (dimension, severity), n in sorted(
-            by_dimension.items(), key=lambda kv: (kv[0][0], _SEVERITY_ORDER[kv[0][1]])
+            by_dimension.items(), key=lambda kv: (kv[0][0], SEVERITY_ORDER[kv[0][1]])
         )
     ]
     parts += [

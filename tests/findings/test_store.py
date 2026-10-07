@@ -197,3 +197,15 @@ def test_suppress_refuses_a_rule_with_no_current_observation(tmp_path: Path, run
     with pytest.raises(StoreError, match="nothing"):
         store.suppress(rule="IEBP008", producer="inspect_dataset", author=AUTHOR, reason="r")
     assert not (store.root / "suppressions.yaml").exists()
+
+
+def test_review_commit_includes_export_files_that_were_never_committed(
+    tmp_path: Path, run: Run
+) -> None:
+    store = _store(tmp_path, run)
+    _git(store.root, "rm", "-r", "-q", "--cached", "export")
+    _git(store.root, "-c", "user.name=b", "-c", "user.email=b@x", "commit", "-q", "-m", "untrack")
+    store.suppress(rule="IEBP008", author=AUTHOR, reason="r")
+    committed = _git(store.root, "show", "--name-only", "--format=", "HEAD").splitlines()
+    assert "export/index.json" in committed
+    assert _git(store.root, "status", "--porcelain") == ""

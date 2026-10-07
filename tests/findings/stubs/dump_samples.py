@@ -18,6 +18,7 @@ default = {
     "dataset_name": "McGill-NLP/stereoset",
     "dataset_location": "McGill-NLP/stereoset",
     "samples": 2123,
+    "scorers": ["inspect_ai/exact"],
 }
 if "STUB_NO_META" not in os.environ:
     Path(meta).write_text(os.environ.get("STUB_META", json.dumps(default)))

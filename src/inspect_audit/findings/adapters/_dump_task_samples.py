@@ -30,6 +30,21 @@ def _json_fallback(value: Any) -> Any:
     return str(value)
 
 
+def _scorer_names(task: Any) -> list[str]:
+    """Registry names of the task's scorers, as inspect-dataset would read them off the task itself.
+
+    The replay task declares these names so inspect-dataset's scorer-aware scanners (answer_length,
+    inconsistent_format) judge applicability by the eval's scorer, not by the stand-in's absence of one.
+    """
+    from inspect_ai._util.registry import is_registry_object, registry_info
+
+    scorer = getattr(task, "scorer", None)
+    if scorer is None:
+        return []
+    scorers = scorer if isinstance(scorer, list | tuple) else [scorer]
+    return [registry_info(s).name for s in scorers if is_registry_object(s)]
+
+
 def main(argv: Sequence[str]) -> None:
     spec, samples_path, meta_path = argv
     tasks = load_tasks([spec])
@@ -46,6 +61,7 @@ def main(argv: Sequence[str]) -> None:
         "dataset_name": dataset.name,
         "dataset_location": dataset.location,
         "samples": count,
+        "scorers": _scorer_names(tasks[0]),
     }
     with open(meta_path, "w") as out:
         json.dump(meta, out)

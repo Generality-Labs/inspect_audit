@@ -65,6 +65,13 @@ def inputs_lines(runs: Sequence[Run]) -> list[str]:
         lines.append(
             f"- Dataset scanned: `{dataset.get('path')}`{f' ({where})' if where else ''}, {origin}."
         )
+        if dataset.get("mode") == "task":
+            scorers = dataset.get("scorers") or []
+            lines.append(
+                f"- Scorers the scan assumed: {', '.join(f'`{s}`' for s in scorers)}."
+                if scorers
+                else "- Scorers the scan assumed: none; the task declares no registered scorer."
+            )
     else:
         lines.append("- Dataset: no dataset scan ran.")
     logs = next((_dict(run.inputs.get("logs")) for run in runs if "logs" in run.inputs), {})

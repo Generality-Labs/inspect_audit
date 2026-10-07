@@ -49,6 +49,15 @@ PRODUCER = "inspect_dataset"
 
 SEVERITY: dict[str, Severity] = {"low": "none", "medium": "minor", "high": "major"}
 _SUMMARY_CHARS = 200
+# Sample text a finding keeps: enough to recognise the sample, too little to reproduce it. Some
+# datasets are gated to keep their questions and answers out of training data, so the store and
+# the export hold a marker, and the sample id leads back to the full text.
+_MARKER_CHARS = 32
+# A string literal as repr() writes it, which is how every scanner quotes a sample's text. It
+# must open after a non-word character, so an apostrophe in the prose ("sample's") is not a quote.
+_LITERAL = re.compile(r"""(?<!\w)(?:'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")""")
+# Metadata keys naming samples rather than quoting them; ids and indices are kept whole.
+_ID_KEY = re.compile(r"(?:^|_)(?:ids?|indices|index)$")
 
 
 def hf_asset(data: Mapping[str, Any]) -> str | None:
@@ -133,6 +142,43 @@ def scan_arguments(
     return path, options, examined
 
 
+def _marker(text: str) -> str:
+    return text if len(text) <= _MARKER_CHARS else f"{text[:_MARKER_CHARS]}…"
+
+
+def _cut_quotes(text: str) -> str:
+    """Scanner prose with each quoted sample text cut to a marker; short quotes are the scanner's own."""
+
+    def cut(match: re.Match[str]) -> str:
+        literal = match.group(0)
+        quote, body = literal[0], literal[1:-1]
+        return literal if len(body) <= _MARKER_CHARS else f"{quote}{_marker(body)}{quote}"
+
+    return _LITERAL.sub(cut, text)
+
+
+def _cut_values(value: Any, key: str = "") -> Any:
+    if _ID_KEY.search(key):
+        return value
+    if isinstance(value, str):
+        return _marker(value)
+    if isinstance(value, Mapping):
+        return {k: _cut_values(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_cut_values(v, key) for v in value]
+    return value
+
+
+def _without_sample_text(row: Mapping[str, Any]) -> dict[str, Any]:
+    """The scanner's record with the sample text it quotes cut to markers: the prose and the metadata."""
+    record = dict(row)
+    if isinstance(record.get("explanation"), str):
+        record["explanation"] = _cut_quotes(record["explanation"])
+    if "metadata" in record:
+        record["metadata"] = _cut_values(record["metadata"])
+    return record
+
+
 def _rows(path: Path) -> list[dict[str, Any]]:
     loaded = json.loads(path.read_text())
     rows = loaded.get("findings", []) if isinstance(loaded, dict) else loaded
@@ -201,7 +247,7 @@ def parse(
         path = scan_dir / f"{scanner}.json"
         if not path.is_file():
             continue
-        for row in _rows(path):
+        for row in map(_without_sample_text, _rows(path)):
             sample_id = str(
                 row.get("sample_id")
                 if row.get("sample_id") is not None

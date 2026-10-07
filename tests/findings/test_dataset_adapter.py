@@ -581,3 +581,131 @@ def test_an_hf_scan_runs_from_the_callers_directory(
     )
     run("inspect_evals/stereoset", ctx)
     assert Path(json.loads(record.read_text())["cwd"]).resolve() == caller.resolve()
+
+
+# A question long enough that a whole copy of it in a finding is unmistakable.
+LONG = "A 67-year-old patient presents with fatigue, joint pain and a rash across both cheeks"
+LONG_ID = "live_irrelevance_835-326-0-with-a-long-suffix"
+
+
+def _scan(tmp_path: Path, rows: dict[str, list[dict[str, object]]]) -> Path:
+    scan_dir = tmp_path / "scan"
+    scan_dir.mkdir()
+    summary = {
+        "version": "0.5.0",
+        "dataset_name": "cais/hle",
+        "by_scanner": {name: {"total": len(found)} for name, found in rows.items()},
+        "scanner_status": {name: {"status": "ran"} for name in rows},
+    }
+    (scan_dir / "scan_summary.json").write_text(json.dumps(summary))
+    for name, found in rows.items():
+        (scan_dir / f"{name}.json").write_text(json.dumps(found))
+    return scan_dir
+
+
+def _parsed(tmp_path: Path, rows: dict[str, list[dict[str, object]]]):
+    root = make_root(tmp_path)
+    subject = subject_for("inspect_evals/hle", Context(ie_root=root))
+    return parse(_scan(tmp_path, rows), "inspect_evals/hle", subject, timestamp=STAMP).findings
+
+
+def test_sample_text_is_cut_to_a_marker_in_the_summary_and_the_record(tmp_path: Path) -> None:
+    explanation = (
+        "The question contains non-printable character(s) '\\t'. These are likely data entry "
+        f"errors and may cause silent failures in downstream processing. Value: {LONG!r}"
+    )
+    (finding,) = _parsed(
+        tmp_path,
+        {
+            "encoding_issues": [
+                {
+                    "scanner": "encoding_issues",
+                    "severity": "low",
+                    "explanation": explanation,
+                    "sample_id": "hle_4d1822dc",
+                    "metadata": {"field": "question", "bad_chars": ["'\\t'"], "value": LONG},
+                }
+            ]
+        },
+    )
+    assert LONG not in finding.summary
+    assert LONG not in json.dumps(finding.source.record)
+    assert f"Value: '{LONG[:32]}…'" in finding.summary
+    # short literals are the scanner's own words, kept as they are
+    assert "character(s) '\\t'." in finding.summary
+    record = finding.source.record
+    assert isinstance(record, dict) and isinstance(record["metadata"], dict)
+    assert record["metadata"]["value"] == f"{LONG[:32]}…"
+    assert record["metadata"]["field"] == "question"
+    assert record["sample_id"] == "hle_4d1822dc"
+
+
+def test_a_question_is_cut_and_a_short_answer_kept(tmp_path: Path) -> None:
+    answer = {"a": "True"}
+    explanation = (
+        "Question explicitly offers the answer as one of its options ('...or...'). "
+        f"Question: {LONG!r}  Answer: {str(answer)!r}"
+    )
+    (finding,) = _parsed(
+        tmp_path,
+        {
+            "forced_choice_leakage": [
+                {
+                    "scanner": "forced_choice_leakage",
+                    "severity": "medium",
+                    "explanation": explanation,
+                    "sample_id": "hle_1",
+                    "metadata": {"question": LONG, "answer": str(answer), "options": [LONG, "no"]},
+                }
+            ]
+        },
+    )
+    record = json.dumps(finding.source.record)
+    assert LONG not in finding.summary and LONG not in record
+    assert "('...or...')" in finding.summary
+    assert "Answer: \"{'a': 'True'}\"" in finding.summary
+
+
+def test_sample_ids_and_indices_are_kept_whole(tmp_path: Path) -> None:
+    (finding,) = _parsed(
+        tmp_path,
+        {
+            "duplicate_questions": [
+                {
+                    "scanner": "duplicate_questions",
+                    "severity": "high",
+                    "explanation": "2 samples share the question, with the same answer '' (at indices [3, 9]).",
+                    "sample_id": LONG_ID,
+                    "metadata": {
+                        "question": LONG,
+                        "duplicate_ids": [LONG_ID, "short_id"],
+                        "duplicate_indices": [3, 9],
+                    },
+                }
+            ]
+        },
+    )
+    record = finding.source.record
+    assert isinstance(record, dict) and isinstance(record["metadata"], dict)
+    assert record["metadata"]["duplicate_ids"] == [LONG_ID, "short_id"]
+    assert record["metadata"]["duplicate_indices"] == [3, 9]
+    assert record["sample_id"] == LONG_ID
+    assert LONG not in json.dumps(record)
+
+
+def test_an_apostrophe_in_the_scanners_prose_does_not_open_a_quote(tmp_path: Path) -> None:
+    explanation = f"The sample's question repeats another's verbatim: {LONG!r}"
+    (finding,) = _parsed(
+        tmp_path,
+        {
+            "duplicate_questions": [
+                {
+                    "scanner": "duplicate_questions",
+                    "severity": "low",
+                    "explanation": explanation,
+                    "sample_id": "s1",
+                }
+            ]
+        },
+    )
+    assert finding.summary == f"The sample's question repeats another's verbatim: '{LONG[:32]}…'"

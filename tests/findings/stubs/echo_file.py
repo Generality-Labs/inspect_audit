@@ -2,7 +2,7 @@
 
 For `-o <dir>` style producers, when STUB_OUTPUT_DIR is set, copy that directory's
 contents into the directory following `-o` instead. STUB_SCAN_RECORD, when set, names a file that
-receives argv, the working directory and INSPECT_AUDIT_SAMPLES_FILE.
+receives argv, the working directory, INSPECT_AUDIT_SAMPLES_FILE and INSPECT_AUDIT_SCORERS.
 """
 
 import json
@@ -21,6 +21,7 @@ if "STUB_SCAN_RECORD" in os.environ:
         "argv": sys.argv,
         "cwd": os.getcwd(),
         "samples": os.environ.get("INSPECT_AUDIT_SAMPLES_FILE"),
+        "scorers": os.environ.get("INSPECT_AUDIT_SCORERS"),
     }
     Path(os.environ["STUB_SCAN_RECORD"]).write_text(json.dumps(record))
 sys.exit(int(os.environ.get("STUB_EXIT", "0")))

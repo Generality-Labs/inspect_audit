@@ -40,6 +40,7 @@ def test_dump_writes_every_sample_and_the_dataset_identity(tmp_path: Path) -> No
         "dataset_name": "owner/tiny",
         "dataset_location": "owner/tiny",
         "samples": 2,
+        "scorers": [],
     }
 
 
@@ -136,3 +137,38 @@ def test_dump_and_replay_keep_messages_images_files_and_sandbox(
     assert isinstance(content, list) and content[1].type == "image"
     # values JSON cannot hold are written as their str() rather than failing the whole eval
     assert replayed.metadata == {"count": 3, "thing": "opaque", "subject": "art"}
+
+
+SCORED_TASK_FILE = TASK_FILE.replace(
+    "from inspect_ai import Task, task",
+    "from inspect_ai import Task, task\nfrom inspect_ai.scorer import exact, includes",
+).replace("        )\n    )\n", "        ),\n        scorer=[exact(), includes()],\n    )\n")
+
+
+def test_dump_records_the_scorers_and_the_replay_declares_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_ai._util.registry import registry_info
+
+    task_file = tmp_path / "scored_task.py"
+    task_file.write_text(SCORED_TASK_FILE)
+    samples, meta = tmp_path / "samples.jsonl", tmp_path / "meta.json"
+    _dump_task_samples.main([f"{task_file}@tiny", str(samples), str(meta)])
+    assert json.loads(meta.read_text())["scorers"] == ["inspect_ai/exact", "inspect_ai/includes"]
+    monkeypatch.setenv(_replay_samples.SAMPLES_ENV, str(samples))
+    monkeypatch.setenv(_replay_samples.SCORERS_ENV, "inspect_ai/exact,inspect_evals/custom")
+    replayed = _replay_samples.replay_samples()
+    assert isinstance(replayed.scorer, list)
+    assert [registry_info(s).name for s in replayed.scorer] == [
+        "inspect_ai/exact",
+        "inspect_evals/custom",
+    ]
+
+
+def test_replay_without_scorers_declares_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "samples.jsonl").write_text(Sample(id="a", input="?", target="A").model_dump_json())
+    monkeypatch.setenv(_replay_samples.SAMPLES_ENV, str(tmp_path / "samples.jsonl"))
+    monkeypatch.delenv(_replay_samples.SCORERS_ENV, raising=False)
+    assert _replay_samples.replay_samples().scorer is None

@@ -10,10 +10,14 @@ import json
 import os
 
 from inspect_ai import Task, task
+from inspect_ai._util.registry import RegistryInfo, registry_add
 from inspect_ai.dataset import MemoryDataset, Sample
+from inspect_ai.scorer import Score, Scorer, Target
+from inspect_ai.solver import TaskState
 from inspect_ai.util import SandboxEnvironmentSpec
 
 SAMPLES_ENV = "INSPECT_AUDIT_SAMPLES_FILE"
+SCORERS_ENV = "INSPECT_AUDIT_SCORERS"  # comma-separated registry names of the eval's scorers
 
 
 def _load_sample(line: str) -> Sample:
@@ -30,8 +34,24 @@ def _load_sample(line: str) -> Sample:
     return sample
 
 
+def _stub_scorer(name: str) -> Scorer:
+    """A scorer that never scores, registered under the eval's scorer name.
+
+    inspect-dataset reads scorer names off the task to decide whether its text-comparison scanners
+    apply. The eval's own scorers are not importable here, so the name is all that is carried.
+    """
+
+    async def score(state: TaskState, target: Target) -> Score:
+        raise NotImplementedError(f"{name} is a stand-in for the eval's scorer; it never scores")
+
+    registry_add(score, RegistryInfo(type="scorer", name=name))
+    return score
+
+
 @task
 def replay_samples() -> Task:
     with open(os.environ[SAMPLES_ENV]) as f:
         samples = [_load_sample(line) for line in f if line.strip()]
-    return Task(dataset=MemoryDataset(samples))
+    names = [n for n in os.environ.get(SCORERS_ENV, "").split(",") if n]
+    scorers = [_stub_scorer(name) for name in names] or None
+    return Task(dataset=MemoryDataset(samples), scorer=scorers)

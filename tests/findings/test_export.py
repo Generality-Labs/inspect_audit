@@ -165,3 +165,130 @@ def test_findings_absent_from_the_current_view_are_not_exported(run: Run) -> Non
     )
     doc = index_document({EVAL: [run]}, Review(), seen_range([older, run]), NOW)
     assert [r["fingerprint"] for r in doc["findings"]] == ["sha256:0"]
+
+
+def test_eval_document_has_inputs_runs_groups_suppressed_and_issues(run: Run) -> None:
+    from inspect_audit.findings.export import eval_document, seen_range
+
+    lint = run.model_copy(
+        update={
+            "timestamp": T1,
+            "inputs": {"comparison": {"commit": "abc", "task_version": "3-A"}},
+        }
+    )
+    dataset = _dataset_run(run).model_copy(
+        update={
+            "inputs": {
+                "dataset": {
+                    "path": "McGill-NLP/stereoset",
+                    "mode": "task",
+                    "scorers": ["inspect_ai/exact"],
+                }
+            }
+        }
+    )
+    review = Review(
+        suppressions=[
+            SuppressionRule(
+                rule="duplicate_questions",
+                subject=EVAL,
+                producer="inspect_dataset",
+                author=AUTHOR,
+                reason="known",
+                since=NOW.date(),
+            ),
+            SuppressionRule(
+                rule="nothing_here",
+                subject="*",
+                author=AUTHOR,
+                reason="never matches",
+                since=NOW.date(),
+            ),
+            SuppressionRule(
+                rule="IEBP008",
+                subject="inspect_evals/other",
+                author=AUTHOR,
+                reason="elsewhere",
+                since=NOW.date(),
+            ),
+        ],
+        issues=[
+            IssueEntry(
+                id="ISS-0001",
+                title="shuffle",
+                subject=EVAL,
+                findings=["sha256:0"],
+                author=AUTHOR,
+                opened=NOW.date(),
+                reason="checked",
+                github="https://github.com/x/y/issues/1",
+            )
+        ],
+    )
+    reviewed = apply_review([lint, dataset, _skip_run(run)], review)
+    doc = eval_document(EVAL, reviewed, review, seen_range(reviewed), NOW)
+
+    assert doc["schema"] == 1 and doc["eval"] == EVAL
+    assert doc["slug"] == "inspect-evals-stereoset"
+    assert doc["inputs"]["dataset"]["scorers"] == ["inspect_ai/exact"]
+    assert doc["inputs"]["comparison"] == {"commit": "abc", "task_version": "3-A"}
+    by_producer = {r["producer"]: r for r in doc["runs"]}
+    assert by_producer["inspect_audit_header"]["skipped"] == "no logs matched"
+    assert by_producer["inspect_dataset"]["passing"] == 1
+    assert [o["rule"] for o in by_producer["inspect_dataset"]["outcomes"]] == [
+        "duplicate_questions",
+        "answer_length",
+    ]
+    (group,) = doc["groups"]  # only the active lint finding; the dataset rows are suppressed
+    assert (group["producer"], group["rule"], group["count"]) == (
+        "inspect_evals_lint",
+        "IEBP008",
+        1,
+    )
+    (finding,) = group["findings"]
+    assert finding["locations"] == [
+        {
+            "kind": "code",
+            "role": "primary",
+            "quote": None,
+            "file": "src/inspect_evals/stereoset/stereoset.py",
+            "line": 64,
+            "end_line": None,
+            "column": 15,
+        }
+    ]
+    assert finding["issue"] == "ISS-0001" and "source" not in finding
+    assert doc["suppressed"] == [
+        {
+            "producer": "inspect_dataset",
+            "rule": "duplicate_questions",
+            "count": 2,
+            "kind": "false_positive",
+            "author": "Matt Fisher",
+            "reason": "known",
+            "since": "2026-10-07",
+        }
+    ]
+    assert doc["issues"] == [
+        {
+            "id": "ISS-0001",
+            "title": "shuffle",
+            "author": "Matt Fisher",
+            "opened": "2026-10-07",
+            "reason": "checked",
+            "github": "https://github.com/x/y/issues/1",
+            "current": 1,
+        }
+    ]
+    assert "@" not in str(doc)
+
+
+def test_eval_document_empty_but_checked(run: Run) -> None:
+    from inspect_audit.findings.export import eval_document
+
+    clean = run.model_copy(
+        update={"findings": [], "outcomes": [Outcome(rule="IEBP008", status="pass")]}
+    )
+    doc = eval_document(EVAL, [clean], Review(), {}, NOW)
+    assert doc["groups"] == [] and doc["suppressed"] == [] and doc["issues"] == []
+    assert doc["runs"][0]["passing"] == 1 and doc["runs"][0]["outcomes"] == []

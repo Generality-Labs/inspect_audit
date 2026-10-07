@@ -31,8 +31,15 @@ def iso(dt: datetime) -> str:
 
 
 def display_author(author: str) -> str:
-    """The name part of `Name <email>`; emails do not leave the store."""
-    return author.split("<", 1)[0].strip() or author
+    """The name part of `Name <email>`; emails do not leave the store.
+
+    A bare address, which hand-written review files may hold, exports as its local part.
+    """
+    name = author.split("<", 1)[0].strip()
+    if name and "@" not in name:
+        return name
+    rest = author.strip("<> ")
+    return rest.split("@", 1)[0].strip("<> ") or rest
 
 
 def is_skipped(run: Run) -> bool:
@@ -281,9 +288,30 @@ def write_export(
     for eval_name in sorted(runs_by_eval):
         path = export_dir / "evals" / f"{slug(eval_name)}.json"
         document = eval_document(eval_name, runs_by_eval[eval_name], review, seen, stamp)
-        path.write_text(_dumps(document))
+        if not _same_but_for_stamp(path, document):
+            path.write_text(_dumps(document))
         written.append(path)
     return written
+
+
+def _same_but_for_stamp(path: Path, document: dict[str, Any]) -> bool:
+    """Whether the file already holds this document apart from `generated_at`.
+
+    An eval file's stamp then means "when this eval's data last changed", and a review of one
+    eval does not rewrite every other eval's file.
+    """
+    if not path.is_file():
+        return False
+    try:
+        existing = json.loads(path.read_text())
+    except ValueError:
+        return False
+    if not isinstance(existing, dict):
+        return False
+    stamp = "generated_at"
+    return {k: v for k, v in existing.items() if k != stamp} == {
+        k: v for k, v in document.items() if k != stamp
+    }
 
 
 def _dumps(document: dict[str, Any]) -> str:

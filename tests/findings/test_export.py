@@ -313,3 +313,28 @@ def test_write_export_writes_both_files_and_is_stable_across_rewrites(
     assert written[0].read_text().endswith("\n")
     write_export(tmp_path, {EVAL: reviewed}, Review(), history=reviewed, generated_at=NOW)
     assert {p: p.read_bytes() for p in written} == first
+
+
+def test_eval_files_are_left_alone_when_only_the_stamp_would_change(
+    tmp_path: Path, run: Run
+) -> None:
+    from inspect_audit.findings.export import write_export
+
+    reviewed = apply_review([run], Review())
+    index, eval_file = write_export(
+        tmp_path, {EVAL: reviewed}, Review(), history=reviewed, generated_at=NOW
+    )
+    before = eval_file.read_bytes()
+    later = datetime(2026, 10, 8, tzinfo=UTC)
+    write_export(tmp_path, {EVAL: reviewed}, Review(), history=reviewed, generated_at=later)
+    assert eval_file.read_bytes() == before  # a review of another eval must not churn this file
+    assert "2026-10-08" in index.read_text()
+
+
+def test_display_author_never_exports_an_email() -> None:
+    from inspect_audit.findings.export import display_author
+
+    assert display_author("Matt Fisher <m@x.org>") == "Matt Fisher"
+    assert display_author("matt@x.org") == "matt"
+    assert display_author("<m@x.org>") == "m"
+    assert display_author("matt") == "matt"

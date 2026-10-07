@@ -98,8 +98,8 @@ Suppressed observations are counted in the index and listed as groups on the eva
   "task_version": "3-A",
   "inputs": {
     "dataset": {"path": "McGill-NLP/stereoset", "mode": "task", "declared": true, "samples": 2123, "scorers": ["inspect_evals/multiple_choice_scorer", "inspect_evals/stereoset_scorer"]},
-    "logs": {"used": [{"path": "hawk:…", "model": "…"}], "excluded": [{"path": "…", "reason": "mock model"}]},
-    "comparison": {"revision": "dbd3dd25e"}
+    "logs": {"used": ["hawk:…/logs/2026-10-01T…eval"], "excluded": [{"path": "…", "reason": "mock model"}], "count_excluded": []},
+    "comparison": {"commit": "dbd3dd25e", "package_version": "0.22.0", "task_version": "3-A"}
   },
   "runs": [
     {"run_id": "…", "producer": "inspect_dataset", "producer_version": "0.5.0", "timestamp": "…", "duration_s": 61.2, "skipped": null,
@@ -118,7 +118,7 @@ Suppressed observations are counted in the index and listed as groups on the eva
 }
 ```
 
-`inputs` is the structured form of what `render.inputs_lines` prints today; the renderer gains a data-returning function that both the Markdown and the export use, so the two cannot disagree. `outcomes` lists only non-pass outcomes, as the summary table does, with a `passing` count beside them. `groups` carries every active finding with its full `locations`. `suppressed` has one row per suppression rule that applies to the eval, with the number of observations it matched in the current view. The author shown is the name part of `Name <email>`; emails are not exported. `issues[*].current` is the number of current observations linked to the issue.
+`inputs` is the structured form of what `render.inputs_lines` prints today, with the shapes the adapters record (`logs.used` is a list of log paths; `comparison` is the revision the header checks compared against); the renderer gains a data-returning function that both the Markdown and the export use, so the two cannot disagree. `outcomes` lists only non-pass outcomes, as the summary table does, with a `passing` count beside them. `groups` carries every active finding with its full `locations`. `suppressed` has one row per suppression rule that applies to the eval, with the number of observations it matched in the current view. The author shown is the name part of `Name <email>`; emails are not exported. `issues[*].current` is the number of current observations linked to the issue.
 
 ### Versioning
 

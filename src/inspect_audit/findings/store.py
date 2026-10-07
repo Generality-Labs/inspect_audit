@@ -16,6 +16,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from .export import EXPORT_DIR
 from .io import read_current
 from .models import Finding, Run
 from .review import IssueEntry, Review, SuppressionRule, load_review, save_review
@@ -176,6 +177,10 @@ class Store:
         if self.root.is_relative_to(top):
             listed = self._git(git, "ls-files", "-m", "-z", "--full-name", "--", str(self.root))
             rendered = [str(Path(top) / name) for name in (listed or "").split("\0") if name]
+            # the export is what the site reads; new or never-committed files go in with the decision
+            export_dir = self.root / EXPORT_DIR
+            if export_dir.is_dir() and self._git(git, "add", "--", str(export_dir)) is not None:
+                rendered += [str(p) for p in sorted(export_dir.rglob("*.json"))]
         targets = [*map(str, paths), *rendered]
         if self._git(git, "add", "--", *map(str, paths)) is None:
             raise StoreError(f"git add failed for {', '.join(map(str, paths))}")

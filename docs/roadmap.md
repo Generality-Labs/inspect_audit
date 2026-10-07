@@ -15,7 +15,7 @@ The first release is smaller than that: a short, reproducible list of maintenanc
 - Auditor uses inspect-evals-lint and inspect-dataset as producers. The codebases are not merged.
 - Findings are records in one envelope schema with the producer's own output kept verbatim. Assessments and coverage are separate records, not findings.
 - A fingerprint identifies an observation. An issue gets its own durable id when a person accepts it, and observations link to it. Review decisions (suppressions, issue links) live in files beside the runs, never inside them.
-- Run files are immutable. A sweep appends runs and moves a per-eval `current.json`; every view renders from that manifest.
+- Run files are immutable. A sweep appends runs; every view renders from the derived current view, the newest run per eval and producer.
 - Unsupported inputs, failed producers and unassessed checks are shown beside findings. A missing finding can mean a defect class we do not cover, and a page must say so.
 - The taxonomy is versioned data, not code. Old reports stay valid under `gl-audit@1`; the pilot renders original identifiers and does not wait on `gl-audit@2` being confirmed.
 - Grades are written by people and are never computed. Nothing changes the state of a contributor issue without a human looking.
@@ -28,7 +28,7 @@ The first release is smaller than that: a short, reproducible list of maintenanc
 
 Done on `findings-prototype` (PR #4 against `dev/integrated-audits`), rebased onto the dev tip on 2026-09-29:
 
-- Envelope schema, fingerprinting, immutable run files with `current.json`, parquet carrying every envelope field.
+- Envelope schema, fingerprinting, immutable run files with a derived current view, parquet carrying every envelope field.
 - Adapters for inspect-evals-lint, inspect-dataset and `.eval` log headers. Header findings carry the log's own revision; the run records the checkout it compared against.
 - Versioned taxonomies `gl-audit@1` and draft `gl-audit@2` with a mapping.
 - Hawk access: `hawk:` log sources, `--hawk-task`, `hawk-sets`, `hawk-pull` over `scripts/hawk-artefacts.yaml`. The chess investigation bundle is on disk.
@@ -63,11 +63,11 @@ Done when those numbers exist against criteria agreed with maintainers beforehan
 
 Per [v1-architecture.md](v1-architecture.md).
 
-- A `Store` API with four operations (suppress, accept, link, set status) that resolves what a reviewer points at into fingerprints, validates, writes `suppressions.yaml` and `issues.yaml`, and commits with the reviewer as author. A `review` CLI on it, and a promote action that files the GitHub issue and records the link in one step. Nobody edits the review files by hand.
+- Done 2026-10-05 (first pass): a `Store` with suppress, accept and link that resolves what a reviewer points at (eval and rule, or record ids) into fingerprints, validates, writes `suppressions.yaml` and `issues.yaml`, re-renders, and commits with the reviewer as author; a `review` CLI on it. Nobody edits the review files by hand. Deferred until a client needs them: `set_status` as a third review file keyed by fingerprint; `promote`, filing the GitHub issue and recording the link in one step; the `review-findings` skill that drafts a sweep's decisions for approval.
 - A findings MCP server on the same API: read tools `leads`, `finding`, `search`, `issues`, `inputs`; write tools `set_status`, `accept`, `suppress` with the agent's run id as provenance. `leads` runs the producers lazily when the store has no current view for the eval at the requested revision. Local stdio mode first; the Hawk egress and token questions go to James with the attach PR.
-- A private repository, `Generality-Labs/inspect-evals-findings`, holding `runs/`, `current.json`, `suppressions.yaml`, `issues.yaml`, `cases.yaml` and an `export/` directory.
-- The current view becomes derived (newest run per eval and producer), with `current.json` kept only for explicit pins, so concurrent writers never conflict on a shared file. Producer runs commit directly; review decisions take the review path.
-- A scheduled Action that checks out Inspect Evals main, runs the deterministic producers over every eval (lint, dataset scans through each task, header checks where logs are on Hawk), commits the runs and moves `current.json`.
+- A private repository, `Generality-Labs/inspect-evals-findings`, holding `runs/`, `suppressions.yaml`, `issues.yaml`, `cases.yaml` and an `export/` directory.
+- Done 2026-10-05: the current view is derived (newest run per eval and producer, ties to the later run id); `current.json` is gone, so concurrent writers never conflict on a shared file. Pins can return if a rollback is ever needed. Producer runs commit directly; review decisions take the review path.
+- A scheduled Action that checks out Inspect Evals main, runs the deterministic producers over every eval (lint, dataset scans through each task, header checks where logs are on Hawk), commits the runs.
 - An export step on merge: `findings.parquet`, `runs.parquet`, one JSON per eval, an index JSON. Publication selects what leaves the repo; native producer records stay private until the standard says otherwise.
 
 Done when the Action has run unattended for a week, every eval in the registry has a current view, a `review accept` from the CLI changes the export without anyone opening a YAML file, and an agent can pull leads for an eval over MCP.

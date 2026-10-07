@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
 from .models import Run
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 FINDING_COLUMNS: tuple[str, ...] = (
     "id",
@@ -52,7 +55,7 @@ FINDING_COLUMNS: tuple[str, ...] = (
     "effect",
 )
 
-CURRENT_FILE = "current.json"
+RUN_SUFFIX = ".run.json"
 
 RUN_COLUMNS: tuple[str, ...] = (
     "run_id",
@@ -82,33 +85,26 @@ def read_run(path: Path) -> Run:
 
 def read_runs(root: Path) -> list[Run]:
     """Every `*.run.json` under `root`, sorted by path: the whole history, not just the current view."""
-    return [read_run(path) for path in sorted(root.rglob("*.run.json"))]
-
-
-def update_current(eval_dir: Path, runs: Sequence[Run]) -> dict[str, str]:
-    """Point `current.json` at these runs' files, leaving producers that did not run where they were.
-
-    Run files are immutable and named by run id; this manifest is the only thing a sweep rewrites,
-    so a partial sweep never silently mixes stale and fresh results and history is never lost.
-    """
-    manifest_path = eval_dir / CURRENT_FILE
-    current: dict[str, str] = (
-        json.loads(manifest_path.read_text()) if manifest_path.is_file() else {}
-    )
-    for run in runs:
-        current[run.producer] = f"runs/{run.id}.run.json"
-    eval_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(json.dumps(dict(sorted(current.items())), indent=1) + "\n")
-    return current
+    return [read_run(path) for path in sorted(root.rglob(f"*{RUN_SUFFIX}"))]
 
 
 def read_current(root: Path) -> list[Run]:
-    """The runs every `current.json` under `root` selects."""
-    runs: list[Run] = []
-    for manifest_path in sorted(root.rglob(CURRENT_FILE)):
-        current: dict[str, str] = json.loads(manifest_path.read_text())
-        runs += [read_run(manifest_path.parent / rel) for rel in current.values()]
-    return runs
+    """The current view: per eval and producer, the newest run by timestamp, then run id.
+
+    Derived rather than recorded, so two writers appending runs at once never contend for a
+    shared manifest. Ties on timestamp go to the later run id, so a rerun written in the same
+    second (its file carries a `-2` suffix) is the current one.
+    """
+    current: list[Run] = []
+    for runs_dir in sorted(root.glob("*/runs")):
+        newest: dict[str, tuple[tuple[datetime, str], Run]] = {}
+        for path in sorted(runs_dir.glob(f"*{RUN_SUFFIX}")):
+            run = read_run(path)
+            key = (run.timestamp, path.name.removesuffix(RUN_SUFFIX))
+            if run.producer not in newest or key > newest[run.producer][0]:
+                newest[run.producer] = (key, run)
+        current.extend(newest[producer][1] for producer in sorted(newest))
+    return current
 
 
 def _json_or_none(value: Any) -> str | None:

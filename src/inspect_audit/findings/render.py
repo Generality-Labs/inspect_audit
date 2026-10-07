@@ -12,7 +12,7 @@ from .review import IssueEntry
 NOISE_THRESHOLD = 100
 EXAMPLES = 2  # observations shown under a grouped rule
 
-_SEVERITY_ORDER = {"critical": 0, "major": 1, "minor": 2, "none": 3}
+SEVERITY_ORDER = {"critical": 0, "major": 1, "minor": 2, "none": 3}
 
 
 def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
@@ -24,7 +24,7 @@ def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
 
 def sorted_findings(findings: Sequence[Finding]) -> list[Finding]:
     return sorted(
-        findings, key=lambda f: (_SEVERITY_ORDER[f.severity], f.rule, f.primary_location.key())
+        findings, key=lambda f: (SEVERITY_ORDER[f.severity], f.rule, f.primary_location.key())
     )
 
 
@@ -211,7 +211,7 @@ def render_eval_summary(runs: Sequence[Run], issues: Sequence[IssueEntry] = ()) 
     dimension_rows = [
         [dimension, severity, str(n)]
         for (dimension, severity), n in sorted(
-            by_dimension.items(), key=lambda kv: (kv[0][0], _SEVERITY_ORDER[kv[0][1]])
+            by_dimension.items(), key=lambda kv: (kv[0][0], SEVERITY_ORDER[kv[0][1]])
         )
     ]
     parts += [

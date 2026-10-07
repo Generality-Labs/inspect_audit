@@ -170,6 +170,22 @@ Production route: `audits.generality.org` as a custom domain under `[env.product
 
 Review actions on the site; the MCP endpoint; the evals overview page; KV or R2; staging; a public site; Assessment and Coverage sections for investigated evals (SciCode, chess), which arrive with the investigation import; the nightly Action.
 
+## Implementation notes
+
+What an implementer needs that is not in the sections above. Written 2026-10-07 after the export landed (inspect_audit #30).
+
+**The export shapes.** The examples above are illustrative; `src/inspect_audit/findings/export.py` on `feat/findings` is the source of truth, and real files carry more than the examples show: `inputs.logs.count_excluded`; dataset keys such as `config`, `split`, `revision`, `task` and `inspect_ai` when the adapter recorded them; `quote` and `end_line` as null on code locations; `runs[*].passing`; `issues[*].reason`; `suppressed[*].producer` may be null. Build the app against real files. The first committed export is on `main` of `Generality-Labs/inspect-evals-findings` (sweep of 2026-10-07: StereoSet with lint and dataset, SciCode and HLE with lint), and copying it into `test/fixtures/export/` is the fixture.
+
+**Cloudflare.** Account `4dd4a6b03a79f452ebc112658643f02a` (Generality Labs), the account `llm-prices` deploys to; the custom domain is a route under `[env.production]` on the `generality.org` zone, the way `llm-prices.generality.org` is declared. The Access application is created by hand in the Zero Trust dashboard on `audits.generality.org` with a policy allowing Generality Labs Google accounts; record in the README that it exists. Repo secrets the template's deploy needs: `CLOUDFLARE_API_TOKEN` (Workers Scripts edit, Workers Routes edit, Zone read on `generality.org`) and `CLOUDFLARE_ACCOUNT_ID`; a `HEALTH_URL` variable on the GitHub environment for the deploy smoke test. The Worker's `GITHUB_TOKEN` is a fine-grained PAT with Contents read on `inspect-evals-findings` only, put with `scripts/put-secrets.sh`; note its expiry date in the README. Matt holds all of these.
+
+**The template.** `Generality-Labs/cloudflare-worker-template`, private, Copier, tagged `v1.0.0` at the time of writing; the scaffold's CI and deploy call its shared `worker-ci` and `worker-deploy` workflows at `@v1`. Read its README before scaffolding: the top level of `wrangler.toml` is local only and every deploy targets a named environment; secrets go through `scripts/put-secrets.sh`; `scripts/setup-repo.sh` applies the repo settings and rulesets; actions are SHA-pinned and zizmor runs in pre-commit; Biome formats TypeScript. The scaffold's vitest config has two projects, `unit` in Node and `worker` in workerd; the app's jsdom tests join the `unit` project with their own `environment`, and `test/worker.test.ts` stays the only file in the worker pool. Creating the repo needs org admin, and the agent's `gh` identity must be able to read the private template.
+
+**In-house reference.** `Generality-Labs/llm-prices` is a Worker on this account with `[assets]` plus a `fetch` handler and a remote MCP endpoint. It is not the template and its vanilla UI is not the pattern here, but its `wrangler.toml` and `src/index.ts` show the assets and MCP wiring on this account.
+
+**Brand.** Colours from inspect_evals `docs/_brand.yml` on main; the hex values are quoted in "The React app". Geist from `@fontsource-variable/geist`. No other font, no third-party request.
+
+**Conventions.** UI pull requests carry before-and-after screenshots taken with Playwright. Commit messages and PR bodies end with the attribution lines in effect for the session. Each slice is a plan from this spec, executed with tests first, followed by a fresh reviewer on the whole branch whose minors are re-graded by effect.
+
 ## Open items
 
 - Repository name `audits-site` and who else gets write access. Proposed: Matt and Tania.

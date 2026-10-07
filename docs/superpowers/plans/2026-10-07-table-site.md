@@ -36,6 +36,7 @@
 8. **Fixture.** The real export (sweep of 2026-10-07) has no suppressions, no issues, one producer with findings and no empty eval. The fixture is that export plus a small set of additions, listed in `test/fixtures/README.md`, so every page state has data.
 9. **CI bundle check builds first.** `wrangler deploy --dry-run` needs `dist/` to exist, so `ci.yml` passes `bundle-script: check:bundle` (`vite build && wrangler deploy --env production --dry-run`), an input the shared workflow already has.
 10. **Reviewed column.** The issue id links to GitHub when `github` is set; an accepted finding whose issue has no GitHub link yet shows the id as plain text, and an unreviewed one is blank. A blank cell on an accepted row would contradict the "accepted" filter.
+11. **The GitHub contents API, not `raw.githubusercontent.com`** (decided in the final review, after the plan's tasks ran). Verified by `curl`: raw answers 404 for a bad, expired or missing token, so an expired `GITHUB_TOKEN` would have read as "no export has been published". `api.github.com/repos/<repo>/contents/export/<path>?ref=<ref>` with `Accept: application/vnd.github.raw` answers 401 for bad credentials (the Worker's 502), 404 only for a missing file, and the raw JSON otherwise. `FINDINGS_ORIGIN` is `https://api.github.com`. Rate limit 5,000 requests an hour per token, which matters only while Access disables the Cache API.
 
 ## Review Focus
 

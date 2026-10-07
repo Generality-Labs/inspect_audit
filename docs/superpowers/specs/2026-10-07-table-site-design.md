@@ -14,6 +14,7 @@ One filterable, sortable table of every active finding across every eval, and a 
 | How the site gets data                  | The Worker fetches `export/*.json` from the private findings repo over `raw.githubusercontent.com` with a read token and caches at the edge                                                       | No data in the site repo, no Cloudflare credentials in the findings repo, no second workflow                                     |
 | Cache                                   | The Cache API (`caches.default`), five-minute TTL                                                                                                                                                 | Zero configuration; KV is the move if GitHub availability or cold fetches ever matter                                            |
 | Rendering                               | Vite + React 19 client app served as Worker static assets; no server rendering                                                                                                                    | The table is client state; the Worker stays a few routes                                                                         |
+| Styling                                 | Tailwind CSS v4 and shadcn/ui, dark theme by default with a light toggle                                                                                                                          | Polished table, selects and badges without owning a design system; the site will grow pages and controls                         |
 | Router                                  | Plain `fetch` handler, no framework                                                                                                                                                               | Three branches do not need Hono; the MCP SDK brings its own handler later                                                        |
 | Access                                  | Cloudflare Access on `audits.generality.org` for Generality Labs Google accounts                                                                                                                  | Pilot data about named evals stays internal until reviewed and the security review is done; going public is deleting the policy  |
 | Staging                                 | None in this slice                                                                                                                                                                                | Production is gated, so it is the staging site; add via `copier update` with `use_staging` when the policy comes off             |
@@ -138,7 +139,9 @@ Access is a Cloudflare Access application on `audits.generality.org`, policy "Ge
 
 ## The React app
 
-Vite, React 19, TypeScript strict, React Router, TanStack Table (headless), plain CSS in one stylesheet. No component library, no state library. Source under `app/`, built to `dist/`.
+Vite, React 19, TypeScript strict, React Router, TanStack Table (headless), Tailwind CSS v4 through its Vite plugin, and shadcn/ui components copied into `app/components/ui/` for the table shell, selects, inputs and badges. No state library. Source under `app/`, built to `dist/`.
+
+Dark theme by default, through shadcn's CSS-variable theme with the `dark` class on the root. A header toggle switches to light and remembers the choice in `localStorage`; the first visit follows `prefers-color-scheme`. Severity and status badges use colours that read on both themes.
 
 Routes:
 
@@ -152,14 +155,14 @@ No pagination: the index is held in memory and TanStack Table filters it. If row
 
 `Generality-Labs/audits-site`, private, scaffolded with `uvx copier copy gh:Generality-Labs/cloudflare-worker-template` and these answers: no staging, no D1, no R2, no KV, no cron, Playwright yes, typos no, template-update yes, Node as the template defaults.
 
-Additions to the scaffold: Vite and React dependencies; `app/` with its own `tsconfig.app.json` targeting the DOM; `vite.config.ts`; the npm scripts `build` (`vite build`), `dev:app` (`vite`), and `deploy` changed to `vite build && wrangler deploy --env production`; `typecheck` extended to run `tsc --noEmit -p tsconfig.app.json` as well. The template's shared CI runs install, typecheck, tests and pre-commit unchanged; the deploy workflow runs the `deploy` script on push to main, then smoke-tests `/healthz` on `https://audits.generality.org`. `dist/` is gitignored.
+Additions to the scaffold: Vite, React, Tailwind and the shadcn dependencies (`components.json` checked in); `app/` with its own `tsconfig.app.json` targeting the DOM; `vite.config.ts`; the npm scripts `build` (`vite build`), `dev:app` (`vite`), and `deploy` changed to `vite build && wrangler deploy --env production`; `typecheck` extended to run `tsc --noEmit -p tsconfig.app.json` as well. The template's shared CI runs install, typecheck, tests and pre-commit unchanged; the deploy workflow runs the `deploy` script on push to main, then smoke-tests `/healthz` on `https://audits.generality.org`. `dist/` is gitignored.
 
 Production route: `audits.generality.org` as a custom domain under `[env.production]`. Secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` on the repo, as the template requires.
 
 ## Testing
 
 - Worker, in workerd through the template's vitest pool, with the upstream GitHub fetch stubbed via `fetchMock` from `cloudflare:test`: a miss fetches once and stores; a second request within the TTL does not fetch; a slug outside the allowed pattern is 404 without an upstream call; an upstream 404 is 404; an upstream 500 is 502; the token is in the upstream request and in no response header; `/healthz` is 200.
-- App, in Node with jsdom and Testing Library, over a fixture export under `test/fixtures/export/` (two evals, a dozen findings, one suppression, one issue): each filter narrows the rows; sort flips; the query string round-trips; the eval page renders each section; the empty-but-checked state; the unknown slug; the newer-schema message.
+- App, in Node with jsdom and Testing Library, over a fixture export under `test/fixtures/export/` (two evals, a dozen findings, one suppression, one issue): each filter narrows the rows; sort flips; the query string round-trips; the eval page renders each section; the empty-but-checked state; the unknown slug; the newer-schema message; the theme toggle sets the `dark` class and persists.
 - Playwright against `wrangler dev` serving the built app with the fixture export in place of GitHub (the dev `FINDINGS_REPO` points at a local stub route): one flow through the table to an eval page, and the screenshots for pull requests.
 - The export, in inspect_audit's suite: `render_current` writes both files; the index excludes suppressed rows and counts them; `source` is absent everywhere; first and last seen come from the history, not the current view; the eval file's `inputs` equals what the Markdown Inputs section says; `schema` is 1.
 

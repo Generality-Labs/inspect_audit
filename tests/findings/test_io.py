@@ -12,7 +12,6 @@ from inspect_audit.findings.io import (
     read_run,
     read_runs,
     runs_df,
-    update_current,
     write_parquet,
     write_run,
 )
@@ -135,23 +134,22 @@ def test_findings_df_carries_review_and_effect_columns(run: Run) -> None:
     assert bool(plain["suppressed"]) is False and plain["effect"] is None
 
 
-def test_current_runs_follow_the_manifest(tmp_path: Path, run: Run) -> None:
+def test_current_view_is_the_newest_run_per_producer(tmp_path: Path, run: Run) -> None:
     eval_dir = tmp_path / "inspect-evals-stereoset"
-    first = write_run(run, eval_dir / "runs" / "lint-1.run.json")
-    second = write_run(
-        run.model_copy(update={"id": "lint-2"}), eval_dir / "runs" / "lint-2.run.json"
-    )
-    other = write_run(
-        run.model_copy(update={"id": "dataset-1", "producer": "inspect_dataset"}),
-        eval_dir / "runs" / "dataset-1.run.json",
-    )
-    update_current(eval_dir, [read_run(first), read_run(other)])
-    update_current(eval_dir, [read_run(second)])  # a later partial sweep replaces only its producer
-    manifest = eval_dir / "current.json"
-    assert manifest.is_file()
-    current = read_current(tmp_path)
-    assert sorted(r.id for r in current) == ["dataset-1", "lint-2"]
+    older = run.model_copy(update={"id": "lint-1"})
+    newer = run.model_copy(update={"id": "lint-2", "timestamp": datetime(2026, 9, 26, tzinfo=UTC)})
+    other = run.model_copy(update={"id": "dataset-1", "producer": "inspect_dataset"})
+    for r in (newer, older, other):
+        write_run(r, eval_dir / "runs" / f"{r.id}.run.json")
+    assert sorted(r.id for r in read_current(tmp_path)) == ["dataset-1", "lint-2"]
     assert sorted(r.id for r in read_runs(tmp_path)) == ["dataset-1", "lint-1", "lint-2"]
+
+
+def test_current_view_breaks_timestamp_ties_by_file_name(tmp_path: Path, run: Run) -> None:
+    eval_dir = tmp_path / "inspect-evals-stereoset"
+    write_run(run, eval_dir / "runs" / "lint-1.run.json")
+    write_run(run.model_copy(update={"id": "lint-1-2"}), eval_dir / "runs" / "lint-1-2.run.json")
+    assert [r.id for r in read_current(tmp_path)] == ["lint-1-2"]
 
 
 def test_findings_df_has_record_id_and_issue_columns(run: Run) -> None:

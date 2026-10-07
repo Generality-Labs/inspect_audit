@@ -73,9 +73,7 @@ def test_run_writes_the_layout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         "inspect_dataset",
         "inspect_evals_lint",
     ]
-    current = json.loads((slug_dir / "current.json").read_text())
-    assert sorted(current) == ["inspect_audit_header", "inspect_dataset", "inspect_evals_lint"]
-    assert all((slug_dir / rel).is_file() for rel in current.values())
+    assert not (slug_dir / "current.json").exists()
     assert (slug_dir / "SUMMARY.md").read_text().startswith("# inspect_evals/stereoset")
     assert (out / "SUMMARY.md").read_text().startswith("# Sweep summary")
     findings = pd.read_parquet(out / "findings.parquet")
@@ -365,7 +363,7 @@ def test_reruns_keep_earlier_runs_and_a_partial_sweep_keeps_other_producers_curr
     ]
     assert main([*args, "inspect_evals/stereoset"]) == 0
     slug_dir = out / "inspect-evals-stereoset"
-    first = json.loads((slug_dir / "current.json").read_text())
+    first = pd.read_parquet(out / "runs.parquet").set_index("producer")["run_id"]
     # second sweep, lint only, no logs: the first three run files survive, only lint's pointer moves
     assert (
         main(
@@ -384,16 +382,18 @@ def test_reruns_keep_earlier_runs_and_a_partial_sweep_keeps_other_producers_curr
         )
         == 0
     )
-    second = json.loads((slug_dir / "current.json").read_text())
     assert len(list((slug_dir / "runs").glob("*.run.json"))) == 4
+    runs = pd.read_parquet(out / "runs.parquet")
+    assert len(runs) == 3  # the current view, not every run ever written
+    second = runs.set_index("producer")["run_id"]
     assert second["inspect_dataset"] == first["inspect_dataset"]
     assert second["inspect_audit_header"] == first["inspect_audit_header"]
     assert second["inspect_evals_lint"] != first["inspect_evals_lint"]
-    runs = pd.read_parquet(out / "runs.parquet")
-    assert len(runs) == 3  # the current view, not every run ever written
-    assert set(runs["run_id"]) == {
-        Path(rel).name.removesuffix(".run.json") for rel in second.values()
-    }
+    lint_ids = sorted(
+        p.name.removesuffix(".run.json")
+        for p in (slug_dir / "runs").glob("inspect_evals_lint-*.run.json")
+    )
+    assert second["inspect_evals_lint"] == lint_ids[-1]  # the "-2" collision suffix sorts last
     assert "header.dataset_samples" in (slug_dir / "SUMMARY.md").read_text()
 
 
@@ -476,8 +476,8 @@ def test_review_files_beside_the_out_dir_are_applied(
         "duplicate_questions · 18 observations · false_positive · matt: known duplicates" in summary
     )
     # the run files on disk are untouched
-    current = json.loads((out / "inspect-evals-stereoset" / "current.json").read_text())
-    stored = json.loads((out / "inspect-evals-stereoset" / current["inspect_dataset"]).read_text())
+    (stored_path,) = (out / "inspect-evals-stereoset" / "runs").glob("inspect_dataset-*.run.json")
+    stored = json.loads(stored_path.read_text())
     assert all(f["suppressions"] == [] for f in stored["findings"])
     # an issue linking a fingerprint the sweep produced, plus one it did not
     fingerprint = str(dup.iloc[0]["fingerprint"])
@@ -618,6 +618,68 @@ def test_leads_subcommand_with_no_runs_is_a_usage_error(
     assert main(["leads", "--out", str(out), "inspect_evals/hle"]) == 2
     err = capsys.readouterr().err
     assert "inspect_evals/hle" in err and str(out) in err
+
+
+def test_review_cli_suppress_accept_link(
+    tmp_path: Path, run: Run, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from inspect_audit.findings.cli import write_outputs
+    from inspect_audit.findings.review import load_review
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    common = ["--out", str(out), "--author", "Matt Fisher <matt@example.com>"]
+    eval_rule = ["--eval", "inspect_evals/stereoset", "--rule", "IEBP008"]
+    assert main(["review", "suppress", *common, *eval_rule, "--reason", "struct answers"]) == 0
+    assert load_review(out).suppressions[0].reason == "struct answers"
+    assert main(["review", "accept", *common, *eval_rule, "--title", "dup filter"]) == 0
+    issue = load_review(out).issues[0]
+    assert issue.id == "ISS-0001" and issue.findings == ["sha256:0"]
+    assert "ISS-0001" in capsys.readouterr().out
+    url = "https://github.com/x/y/issues/1"
+    assert main(["review", "link", *common, "ISS-0001", url]) == 0
+    assert load_review(out).issues[0].github == url
+    # a conflict is a usage error carrying the Store's message, not a traceback
+    assert main(["review", "accept", *common, "--id", "lint-1/1", "--title", "again"]) == 2
+    assert "ISS-0001" in capsys.readouterr().err
+
+
+def test_review_cli_author_falls_back_to_git_config_then_fails(
+    tmp_path: Path, run: Run, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import subprocess
+
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "none"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    args = ["review", "suppress", "--out", str(out), "--rule", "IEBP008", "--reason", "r"]
+    assert main(args) == 2
+    assert "author" in capsys.readouterr().err
+    git = ["git", "-C", str(out)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "config", "user.name", "Ada"], check=True)
+    subprocess.run([*git, "config", "user.email", "ada@example.com"], check=True)
+    assert main(args) == 0
+    log = subprocess.run(
+        [*git, "log", "-1", "--format=%an"], capture_output=True, text=True, check=True
+    )
+    assert log.stdout.strip() == "Ada"
+
+
+def test_review_cli_malformed_review_file_is_a_usage_error(
+    tmp_path: Path, run: Run, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    (out / "issues.yaml").write_text("- id: [unclosed\n")
+    args = ["review", "suppress", "--out", str(out), "--rule", "IEBP008", "--reason", "r"]
+    assert main([*args, "--author", "Matt Fisher <matt@example.com>"]) == 2
+    assert "issues.yaml" in capsys.readouterr().err
 
 
 def test_render_current_writes_the_export(tmp_path: Path, run: Run) -> None:

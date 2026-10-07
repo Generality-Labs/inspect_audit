@@ -36,7 +36,8 @@ src/inspect_audit/findings/
   render.py         render_eval_summary(runs) and render_sweep_summary(runs) -> markdown
   leads.py          select_leads / render_leads / leads_markdown -> LEADS.md for an agent
   export.py         index.json + evals/<slug>.json for the table site, from the reviewed current view
-  cli.py            inspect-audit-findings
+  store.py          Store: resolve a selection; suppress / accept / link, written, re-rendered, committed as the reviewer
+  cli.py            inspect-audit-findings (run, summary, hawk-sets, hawk-pull, leads, review)
   schema/
     finding.schema.json
     run.schema.json
@@ -180,16 +181,15 @@ inspect-audit-findings summary <out dir>
 - `--config PATH` (default: the packaged `findings/pilot.yaml`) declares per eval what to scan and which logs count. A file that fails validation is a usage error naming the file.
 - `--review DIR` (default: `--out`) names the directory holding `suppressions.yaml` and `issues.yaml`; both are applied to copies of the current runs before summaries and parquet are written, and a malformed file is a usage error naming the file. Every `Finding` carries an `id` of the form `<run id>/<n>`, assigned by its run when the producer set none.
 - `leads --out DIR [--review DIR] [--sample ID] [--write PATH] EVAL` renders one eval's reviewed findings as `LEADS.md` for an agent: preamble, inputs, accepted issues, groups capped at three examples with record ids, skipped checks. No runs for the eval is exit 2 naming the eval and the directory. See `docs/leads.md` for the staging contract into the investigator and sample auditor, which is a separate PR.
-- For each target, in order: header, then the selected producers. Each run is written to `<out>/<slug>/runs/<run id>.run.json` and never overwritten (a name collision within one second gets a `-2` suffix). The sweep then rewrites `<out>/<slug>/current.json`, a manifest from producer name to the run file that producer's current view uses; producers that did not run keep their previous entry. `findings.parquet`, `runs.parquet`, `<out>/SUMMARY.md` and each `<out>/<slug>/SUMMARY.md` are rendered from the runs the manifests select, so a partial sweep never mixes fresh and stale results by accident and history is never lost (changed 2026-09-29 after the prototype review).
+- For each target, in order: header, then the selected producers. Each run is written to `<out>/<slug>/runs/<run id>.run.json` and never overwritten (a name collision within one second gets a `-2` suffix). The current view is derived: per eval and producer, the newest run by timestamp, then run id. Producers that did not run keep their previous run current. Nothing shared is rewritten, so concurrent sweeps cannot conflict. `findings.parquet`, `runs.parquet`, `<out>/SUMMARY.md` and each `<out>/<slug>/SUMMARY.md` are rendered from the current view, so a partial sweep never mixes fresh and stale results by accident and history is never lost (changed 2026-09-29 after the prototype review).
 - Exit code 0 if every producer ran; 1 if any run was a skip; 2 on a usage error. Findings do not affect the exit code.
-- `summary` re-renders every `SUMMARY.md` and both parquet files from the runs `current.json` selects, without re-running producers. `read_runs` still walks every run file for history.
+- `summary` re-renders every `SUMMARY.md` and both parquet files from the current view, without re-running producers. `read_runs` still walks every run file for history.
 
 ## Outputs
 
 ```text
 <out>/
   <slug>/runs/<run id>.run.json   one per producer invocation, immutable
-  <slug>/current.json             producer -> runs/<run id>.run.json
   export/index.json               active findings across evals + per-eval roll-ups (table site)
   export/evals/<slug>.json        one eval's page data
   <slug>/SUMMARY.md

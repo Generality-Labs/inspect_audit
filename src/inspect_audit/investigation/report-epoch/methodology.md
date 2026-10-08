@@ -59,7 +59,7 @@ Review date), then a Summary of at most 150 words and a Methodology of at most 1
 A Verified review continues with Interpretation, Task Analysis and Elicitation and
 Scaffolding (each at most 300 words) and bullet-point Limitations. A Flawed review
 continues with Representative Errors: bullets and a table of examples with columns Task,
-Error type, Notes and Affected logs. The rubric tables
-follow, with notes of at most eighty words each, and a compact evidence list closes the
-document. Sentences are short, paragraphs are at most five sentences, and the language
+Error type, Notes and Affected logs. Both end with Recommendations as bullets. The rubric
+tables follow in Epoch's form (every row and option printed, the chosen one in bold,
+notes of at most eighty words each), and a Disclaimer closes the document. Sentences are short, paragraphs are at most five sentences, and the language
 avoids jargon; the audience is scientifically literate but not evaluation specialists.

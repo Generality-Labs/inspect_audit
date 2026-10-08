@@ -83,6 +83,95 @@ QUALITY_FIELDS: dict[str, tuple[str, ...]] = {
     "statistical_adequacy": ("runs_per_model",),
 }
 
+# the fixed text of Epoch's rubric form, rendered on every review so the tables read
+# exactly as the form does; only Status and Notes vary per review
+REVIEWABILITY_LEVELS: dict[str, tuple[str, str]] = {
+    "Full": (
+        "All tasks and scoring logic inspectable, and harness/API settings used for each "
+        "model (reasoning effort, token/time limits, tool access, system prompts) are fully "
+        "disclosed",
+        "[proceed to 2]",
+    ),
+    "Partial": (
+        "A representative sample of tasks and scoring logic inspectable, with full "
+        "harness/API settings disclosed",
+        "[proceed to 2]",
+    ),
+    "Inadequate": (
+        "Limited, biased, or no inspectable tasks or scoring logic, harness/API settings "
+        "undisclosed",
+        "[stop → NEI]",
+    ),
+}
+MINIMUM_STANDARD_FORM: dict[str, tuple[list[str], str]] = {
+    "scoring": (
+        [
+            "Essentially impossible to correctly answer as written (e.g. underspecified "
+            "task, hidden requirement, missing file/tool)",
+            "False Negative (e.g. overly strict scorer, stale/incorrect ground truth, "
+            "dependent on live external state that can drift, sandbox failure independent "
+            "of the agent)",
+            "False Positive (e.g. lax scorer, reward-hackable environment, stated skill can "
+            "be bypassed via a shortcut such as exploiting an error in the scoring logic or "
+            "retrieving the answer from the harness/web)",
+            "Task egregiously doesn't measure the claimed capability",
+        ],
+        "≥20% of inspected sample contains errors or issue that corrupts grading at scale",
+    ),
+    "consistency": (
+        ["Scorer, instructions, or ground truth changed without a version bump"],
+        "Leaderboard has incomparable results from different versions",
+    ),
+    "elicitation": (
+        [
+            "Model elicitation is extremely constraining and is not the focus of the benchmark:",
+            "Under-resourced relative to task size (token/turn/time limit, sandbox resources)",
+            "Poor context management",
+            "Lack of agentic environment where one would be natural to provide",
+            "Excessive non-voluntary termination for agentic benchmarks",
+        ],
+        "Substantially reduced performance compared to reasonable alternatives for the tasks",
+    ),
+    "bias": (
+        [
+            "Uneven compute/token budgets",
+            "Unfair scaffold choice (e.g. only a subset of models optimized)",
+        ],
+        "Material model-specific advantage found",
+    ),
+}
+MINIMUM_STATUS_FORM = ("Pass", "Flag [stop → Flawed]", "Not Reviewed")
+QUALITY_QUESTIONS: dict[str, str] = {
+    "resource_adequacy": (
+        "Elicitation and resource adequacy: Are the resources given to models (reasoning "
+        "token/turn budget, tool access, etc.) sufficient for them to perform near their "
+        "ceiling?"
+    ),
+    "scaffold_fairness": "Scaffold fairness: What scaffold does the leaderboard report?",
+    "contamination": "Is there evidence/risk of contamination?",
+    "human_completability": "Has human completability been assessed?",
+    "score_range": "Score range (if possible to estimate)",
+    "statistical_adequacy": (
+        "Statistical adequacy: How many runs/model (≥ 5 recommended for error bars)"
+    ),
+    "construct_validity": "Construct validity",
+}
+RUBRIC_VERSION_LINE = (
+    "Rubric v1. We expect future revisions to account for new types of benchmark flaws."
+)
+SCORING_INTRO = (
+    "This is the minimum standard required to be Verified; failing any of these items "
+    "results in a Flawed verdict."
+)
+QUALITY_INTRO = (
+    "This is the standard we would like all benchmarks to meet, but it is not necessarily "
+    "disqualifying to omit or fail these items."
+)
+DISCLAIMER = (
+    "We undertook this audit without requesting additional information from {creator} to "
+    "provide impartial feedback."
+)
+
 # where a finding lives: the gate, a defect class, or a quality question
 SECTIONS: tuple[str, ...] = ("reviewability", *MINIMUM_STANDARD, *QUALITY)
 
@@ -284,6 +373,8 @@ class Review(BaseModel):
     task_analysis: str = ""
     elicitation_and_scaffolding: str = ""
     limitations: list[str] = Field(default_factory=list)
+    # what the benchmark's creator should change, as bullets
+    recommendations: list[str] = Field(default_factory=list)
     # Flawed: what went wrong, as bullets and as a table of examples.
     representative_errors: list[str] = Field(default_factory=list)
     error_examples: list[ErrorExample] = Field(default_factory=list)
@@ -312,6 +403,7 @@ class Review(BaseModel):
         for name, limit in WORD_LIMITS.items():
             _check_prose(name, getattr(self, name), max_words=limit)
         _check_bullets("limitations", self.limitations)
+        _check_bullets("recommendations", self.recommendations)
         _check_bullets("representative_errors", self.representative_errors)
         return self
 
@@ -451,9 +543,10 @@ def required_narrative(verdict: str) -> list[str]:
             "task_analysis",
             "elicitation_and_scaffolding",
             "limitations",
+            "recommendations",
         ]
     if verdict == "Flawed":
-        return [*base, "representative_errors", "error_examples"]
+        return [*base, "representative_errors", "error_examples", "recommendations"]
     return [*base, "limitations"]
 
 
@@ -489,29 +582,69 @@ def ordinal_date(iso: str) -> str:
 
 
 def _cell(text: str) -> str:
-    return " ".join(text.split()).replace("|", "\\|") or "—"
+    """One table cell: paragraphs become line breaks, pipes are escaped."""
+    text = text.strip()
+    if not text:
+        return ""
+    paras = [" ".join(p.split()) for p in re.split(r"\n\s*\n|\n", text) if p.strip()]
+    return "<br>".join(paras).replace("|", "\\|")
+
+
+def _options(options: list[str], chosen: str | None) -> str:
+    """The form's option list in one cell, the chosen option in bold."""
+    return "<br>".join(f"**{o}**" if o == chosen else o for o in options)
+
+
+def _bullets(items: list[str]) -> str:
+    return "<br>".join(f"• {i}" for i in items)
 
 
 def _value(v: Any) -> str:
     return "___" if v is None else str(v)
 
 
-def _status_text(row: QualityRow) -> str:
+def _quality_options(row: QualityRow) -> str:
+    """The quality row's Status cell: every option, with the blanks filled and the choice bold."""
     f = row.fields
-    if row.id == "contamination" and row.status == "Assessed":
-        return (
-            f"As of {_value(f.get('as_of'))}: {_value(f.get('tasks_public_pct'))}% of tasks public, "
-            f"{_value(f.get('solutions_public_pct'))}% of solutions public"
+    if row.id == "contamination":
+        filled = row.status == "Assessed"
+        line = (
+            f"As of {_value(f.get('as_of'))}: {_value(f.get('tasks_public_pct'))}% of tasks "
+            f"public<br>{_value(f.get('solutions_public_pct'))}% of solutions public"
         )
-    if row.id == "score_range" and row.status == "Estimated":
-        return f"{_value(f.get('floor'))} floor, {_value(f.get('ceiling'))} ceiling"
-    if row.id == "statistical_adequacy" and row.status == "Known":
-        return f"{_value(f.get('runs_per_model'))} runs/model"
-    return row.status
+        return _options([line, "Not Reviewed"], line if filled else "Not Reviewed")
+    if row.id == "score_range":
+        filled = row.status == "Estimated"
+        line = f"{_value(f.get('floor'))} floor<br>{_value(f.get('ceiling'))} ceiling"
+        return _options([line, "Not Reviewed"], line if filled else "Not Reviewed")
+    if row.id == "statistical_adequacy":
+        line = f"{_value(f.get('runs_per_model'))} runs/model"
+        chosen = {"Known": line, "Unknown": "Unknown", "Not Reviewed": "Not Reviewed"}[row.status]
+        return _options([line, "Unknown", "Not Reviewed"], chosen)
+    options = list(QUALITY[row.id][1])
+    if row.id == "human_completability":
+        options = [
+            "All tasks",
+            "Representative set of tasks",
+            "Poor implementation (Unrepresentative set of tasks, unreasonable set of participants)",
+            "Not established",
+            "Not reviewed",
+        ]
+        chosen = {
+            "Poor implementation": options[2],
+            "Not Reviewed": "Not reviewed",
+        }.get(row.status, row.status)
+        return _options(options, chosen)
+    return _options(options, row.status)
 
 
 def render_markdown(review: Review, derived: dict[str, Any]) -> str:
-    """The deliverable, rendered from the records so it cannot drift from them."""
+    """The deliverable, rendered from the records so it cannot drift from them.
+
+    The layout follows Epoch's review form: header, narrative sections chosen by the
+    verdict, then the three rubric tables with every row and option printed and the
+    applicable one in bold, and the disclaimer.
+    """
     verdict = derived["verdict"]
     prev = derived["scoring_prevalence"]
     out: list[str] = [f"# {review.benchmark} Review", ""]
@@ -549,66 +682,69 @@ def render_markdown(review: Review, derived: dict[str, Any]) -> str:
     else:
         out += ["## Limitations", "", UNRESOLVED_LEAD, ""]
         out += [f"- {b.strip()}" for b in review.limitations] + [""]
+    if review.recommendations:
+        out += ["## Recommendations", ""]
+        out += [f"- {b.strip()}" for b in review.recommendations] + [""]
 
-    out += ["## Review Rubric", ""]
-    out += [
-        "### 1. Reviewability",
-        "",
-        "| Level | Notes |",
-        "|---|---|",
-        f"| {review.reviewability.level} | {_cell(review.reviewability.notes)} |",
-        "",
-    ]
-    out += ["### 2. Minimum standard", "", "Failing any item results in a Flawed verdict.", ""]
+    out += ["## Benchmark Review Rubric", "", RUBRIC_VERSION_LINE, ""]
+
+    out += ["### 1. Reviewability", "", "| Level | Meaning | Status | Notes |", "|---|---|---|---|"]
+    for level, (meaning, branch) in REVIEWABILITY_LEVELS.items():
+        chosen = level == review.reviewability.level
+        notes = _cell(review.reviewability.notes) if chosen else ""
+        out.append(f"| {f'**{level}**' if chosen else level} | {meaning} | {branch} | {notes} |")
+    out.append("")
+
+    out += ["### 2. Scoring", "", SCORING_INTRO, ""]
     if prev["rate"] is not None:
         line = (
-            f"Scoring prevalence: {prev['with_defect']} of {prev['inspected']} inspected questions "
-            f"({prev['rate']:.0%}); threshold {prev['threshold']:.0%}."
+            f"Scoring prevalence: {prev['with_defect']} of {prev['inspected']} inspected "
+            f"questions ({prev['rate']:.0%}); threshold {prev['threshold']:.0%}."
         )
         if prev.get("unresolved") or prev.get("not_assessed"):
             line += (
-                f" Unresolved {prev.get('unresolved', 0)}, not assessed {prev.get('not_assessed', 0)} "
-                f"of {prev.get('population', 0)}."
+                f" Unresolved {prev.get('unresolved', 0)}, not assessed "
+                f"{prev.get('not_assessed', 0)} of {prev.get('population', 0)}."
             )
         scoring = review.row("scoring")
         if scoring.threshold_override_reason:
             line += f" Threshold overridden: {scoring.threshold_override_reason}"
         out += [line, ""]
-    out += ["| Defect class | Status | Notes |", "|---|---|---|"]
     out += [
-        f"| {MINIMUM_STANDARD[r.id]} | {r.status} | {_cell(r.notes)} |"
-        for r in review.minimum_standard
+        "| Defect Class | Examples | Default Threshold for Flawed | Status | Notes |",
+        "|---|---|---|---|---|",
     ]
+    for r in review.minimum_standard:
+        examples, threshold = MINIMUM_STANDARD_FORM[r.id]
+        chosen = {"Pass": "Pass", "Flag": "Flag [stop → Flawed]", "Not Reviewed": "Not Reviewed"}[
+            r.status
+        ]
+        out.append(
+            f"| {MINIMUM_STANDARD[r.id]} | {_bullets(examples)} | {threshold} | "
+            f"{_options(list(MINIMUM_STATUS_FORM), chosen)} | {_cell(r.notes)} |"
+        )
     out.append("")
+
     out += [
-        "### 3. Evaluation quality",
+        "### 3. Evaluation Quality",
         "",
-        "The standard all benchmarks should meet; omitting or failing these is not disqualifying.",
+        QUALITY_INTRO,
         "",
         "| Question | Status | Notes |",
         "|---|---|---|",
     ]
     out += [
-        f"| {QUALITY[r.id][0]} | {_cell(_status_text(r))} | {_cell(r.notes)} |"
+        f"| {QUALITY_QUESTIONS[r.id]} | {_quality_options(r)} | {_cell(r.notes)} |"
         for r in review.quality
     ]
     out.append("")
 
-    # evidence lives in the records; the rendered review lists it once, compactly, with
-    # each location clipped so a verbose description cannot swell the list
-    def clip(text: str, limit: int = 12) -> str:
-        parts = text.split()
-        return _cell(" ".join(parts[:limit]) + (" …" if len(parts) > limit else ""))
-
-    refs: list[tuple[str, list[EvidenceRef]]] = [("Reviewability", review.reviewability.evidence)]
-    refs += [(MINIMUM_STANDARD[r.id], r.evidence) for r in review.minimum_standard]
-    refs += [(QUALITY[r.id][0], r.evidence) for r in review.quality]
-    cited = [(name, ev) for name, ev in refs if ev]
-    if cited:
-        out += ["## Evidence", ""]
-        for name, ev in cited:
-            out.append(f"- {name}: " + "; ".join(f"`{e.path}` ({clip(e.location)})" for e in ev))
-        out.append("")
+    out += [
+        "## Disclaimer",
+        "",
+        DISCLAIMER.format(creator=review.benchmark_creator or "the benchmark's creator"),
+        "",
+    ]
     return "\n".join(out)
 
 

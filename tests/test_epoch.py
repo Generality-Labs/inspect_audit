@@ -7,13 +7,19 @@ import pytest
 
 from inspect_audit import _epoch
 from inspect_audit._epoch import (
+    ERRORS_LEAD,
+    LIMITATIONS_LEAD,
     MINIMUM_STANDARD,
     QUALITY,
     SECTIONS,
+    WORD_LIMITS,
     Review,
+    check_narrative,
     derive_verdict,
+    ordinal_date,
     prepare_publication,
     prepare_review,
+    sentences,
     skeleton,
 )
 from inspect_audit._report import save_publication, validate_findings
@@ -24,13 +30,23 @@ def evidence(path: str = "/inputs/header.json") -> list[dict[str, str]]:
 
 
 def filled(**overrides) -> dict:
-    """A complete review that passes every row, to be bent by each test."""
-    review = skeleton("Chess Puzzles")
-    review["reviewability"] = {"level": "Full", "notes": "logs + gist", "evidence": evidence()}
+    """A complete Verified review, to be bent by each test."""
+    review = skeleton("bench/Chess Puzzles")
+    review["benchmark_creator"] = "Epoch AI"
+    review["review_date"] = "2026-10-06"
+    review["reviewability"] = {"level": "Full", "notes": "Logs and gist.", "evidence": evidence()}
     for row in review["minimum_standard"]:
-        row.update(status="Pass", notes="checked", evidence=evidence())
+        row.update(status="Pass", notes="Checked.", evidence=evidence())
     for row in review["quality"]:
         row.update(status="Not Reviewed")
+    review.update(
+        summary="One move per position. Exact match.",
+        methodology="Read 188 logs. Ran 100 item audits.",
+        interpretation="The number is the share of positions solved.",
+        task_analysis="Positions come from engine games.",
+        elicitation_and_scaffolding="One prompt, no tools.",
+        limitations=["Single run per model.", "No human baseline."],
+    )
     review.update(overrides)
     return review
 
@@ -41,7 +57,7 @@ def workspace(tmp_path: Path, review: dict, coverage: dict | None = None) -> Pat
     report.mkdir(parents=True)
     inputs.mkdir()
     (inputs / "header.json").write_text("{}")
-    prepare_review(report, "Chess Puzzles")
+    prepare_review(report, "bench/Chess Puzzles")
     (report / "review.json").write_text(json.dumps(review))
     (report / "findings.json").write_text("[]")
     if coverage is not None:
@@ -63,7 +79,8 @@ def coverage_of(defect: int, clean: int, unresolved: int = 0, not_assessed: int 
 
 
 def test_skeleton_has_every_row_unassessed_and_validates() -> None:
-    review = Review.model_validate(skeleton("Chess Puzzles"))
+    review = Review.model_validate(skeleton("bench/Chess Puzzles"))
+    assert review.benchmark == "Chess Puzzles"
     assert [r.id for r in review.minimum_standard] == list(MINIMUM_STANDARD)
     assert [r.id for r in review.quality] == list(QUALITY)
     assert review.reviewability.level == "Not Reviewed"
@@ -146,6 +163,7 @@ def test_rows_are_closed_vocabularies_with_evidence() -> None:
         ),
         lambda r: r["reviewability"].update(evidence=[]),
         lambda r: r.update(extra="field"),
+        lambda r: r.update(review_date="6 October 2026"),
     ]:
         review = filled()
         change(review)
@@ -197,49 +215,145 @@ def test_findings_are_filed_under_review_rows_in_the_epoch_format(tmp_path: Path
         validate_findings(root)
 
 
-def test_publication_renders_markdown_from_the_records(tmp_path: Path) -> None:
+def test_length_budgets_are_enforced_on_the_records() -> None:
     review = filled()
-    review["minimum_standard"][0].update(status="Flag")
+    review["minimum_standard"][0]["notes"] = " ".join(["word"] * 81)
+    with pytest.raises(ValueError, match="scoring notes: 81 words"):
+        Review.model_validate(review)
+    for name, limit in WORD_LIMITS.items():
+        review = filled()
+        review[name] = " ".join(["word"] * (limit + 1))
+        with pytest.raises(ValueError, match=f"{name}: {limit + 1} words"):
+            Review.model_validate(review)
+    review = filled()
+    review["summary"] = "One. Two. Three. Four. Five. Six."
+    with pytest.raises(ValueError, match="paragraph 1 has 6 sentences"):
+        Review.model_validate(review)
+    review = filled()
+    review["summary"] = "One. Two. Three.\n\nFour. Five. Six."  # two paragraphs are fine
+    Review.model_validate(review)
+    review = filled()
+    review["limitations"] = ["One. Two. Three. Four."]
+    with pytest.raises(ValueError, match="limitations: bullet 1 has 4 sentences"):
+        Review.model_validate(review)
+    assert sentences("Scores range from 0.54 to 0.72. The e.g. case is fine.") == 2
+
+
+def flawed_narrative() -> dict:
+    return {
+        "interpretation": "",
+        "task_analysis": "",
+        "elicitation_and_scaffolding": "",
+        "limitations": [],
+        "representative_errors": ["The answer-reading model changed within one version."],
+        "error_examples": [
+            {
+                "item": "86",
+                "defect": "False negative",
+                "what_happened": "Prefix kept in the extracted answer.",
+                "effect": "Correct move marked wrong.",
+            }
+        ],
+    }
+
+
+def test_the_narrative_follows_the_verdict() -> None:
+    review = Review.model_validate(filled())
+    check_narrative(review, "Verified")
+    with pytest.raises(ValueError, match="representative errors belong to a Flawed review"):
+        check_narrative(Review.model_validate(filled(representative_errors=["Oops."])), "Verified")
+    with pytest.raises(ValueError, match="missing or empty: interpretation"):
+        check_narrative(Review.model_validate(filled(interpretation="")), "Verified")
+    with pytest.raises(ValueError, match="benchmark_creator is empty"):
+        check_narrative(Review.model_validate(filled(benchmark_creator="")), "Verified")
+    with pytest.raises(ValueError, match="representative_errors, error_examples"):
+        check_narrative(review, "Flawed")
+    check_narrative(Review.model_validate(filled(**flawed_narrative())), "Flawed")
+    mixed = filled(**{**flawed_narrative(), "interpretation": "Kept by mistake."})
+    with pytest.raises(ValueError, match="move interpretation"):
+        check_narrative(Review.model_validate(mixed), "Flawed")
+    check_narrative(
+        Review.model_validate(
+            filled(interpretation="", task_analysis="", elicitation_and_scaffolding="")
+        ),
+        "NEI",
+    )
+
+
+def test_a_verified_review_renders_the_reader_sections(tmp_path: Path) -> None:
+    review = filled()
     review["quality"][2].update(
         status="Assessed",
         fields={"as_of": "2026-10-06", "tasks_public_pct": 100, "solutions_public_pct": 0},
         evidence=evidence(),
     )
     review["quality"][5].update(status="Known", fields={"runs_per_model": 1}, evidence=evidence())
-    review["summary"] = "The extractor changed mid-series."
-    review["limitations"] = "One epoch per model."
-    root = workspace(
-        tmp_path, review, coverage_of(defect=6, clean=14, unresolved=2, not_assessed=78)
-    )
-    finding = {
-        "id": "F1",
-        "section": "scoring",
-        "claim": "Six of twenty inspected puzzles have a defect",
-        "status": "supported",
-        "origin": "historical",
-        "evidence": evidence(),
-        "reproduce": "export_coverage",
-        "limitations": "",
-    }
-    (root / "work/report/findings.json").write_text(json.dumps([finding]))
-    derived = prepare_publication(root, [finding])
-    assert derived["verdict"] == "Flawed"
-    markdown = (root / "work/report/epoch_review.md").read_text()
-    assert "**Verdict: Flawed**" in markdown
-    assert "6/20 inspected questions (30.0%)" in markdown
-    assert "Unresolved 2, not assessed 78 of 100" in markdown
-    assert "As of 2026-10-06: 100% of tasks public, 0% of solutions public" in markdown
-    assert "1 runs/model" in markdown
-    assert "| F1 | scoring | supported |" in markdown
-    assert "The extractor changed mid-series." in markdown and "One epoch per model." in markdown
-
+    root = workspace(tmp_path, review, coverage_of(defect=6, clean=94))
+    derived = prepare_publication(root, [])
+    assert derived["verdict"] == "Verified"
+    md = (root / "work/report/epoch_review.md").read_text()
+    head = md.splitlines()[:6]
+    assert head[0] == "# Chess Puzzles Review"
+    assert head[2].startswith("Benchmark: Chess Puzzles")
+    assert head[3].startswith("Benchmark creator: Epoch AI")
+    assert head[4].startswith("Verdict: Verified")
+    assert head[5].startswith("Review date: 6th October 2026")
+    for heading in (
+        "## Summary",
+        "## Methodology",
+        "## Interpretation",
+        "## Task Analysis",
+        "## Elicitation and Scaffolding",
+        "## Limitations",
+        "## Review Rubric",
+        "## Evidence",
+    ):
+        assert heading in md, heading
+    assert "## Representative Errors" not in md
+    assert LIMITATIONS_LEAD in md and "- Single run per model." in md
+    assert "Scoring prevalence: 6 of 100 inspected questions (6%); threshold 20%." in md
+    assert "As of 2026-10-06: 100% of tasks public, 0% of solutions public" in md
+    assert "1 runs/model" in md
+    assert "| Full | Logs and gist. |" in md  # evidence is not inside the tables
+    assert "- Scoring: `/inputs/header.json` (eval.model_generate_config)" in md
     destination = save_publication(root)
     assert (destination / "epoch_review.md").is_file()
-    assert json.loads((destination / "verdict.json").read_text())["verdict"] == "Flawed"
+    assert json.loads((destination / "verdict.json").read_text())["verdict"] == "Verified"
     assert not (destination / "report.pdf").exists()
-    # the bundle carries the cited input, as the GL path does
-    saved = json.loads((destination / "findings.json").read_text())
-    assert (destination / saved[0]["evidence"][0]["path"]).is_file()
+
+
+def test_a_flawed_review_renders_representative_errors(tmp_path: Path) -> None:
+    review = filled(**flawed_narrative())
+    review["minimum_standard"][1]["status"] = "Flag"
+    root = workspace(tmp_path, review, coverage_of(defect=8, clean=92))
+    derived = prepare_publication(
+        root, [{"id": "F1", "section": "consistency", "status": "supported"}]
+    )
+    assert derived["verdict"] == "Flawed"
+    assert derived["findings"] == [{"id": "F1", "section": "consistency", "status": "supported"}]
+    md = (root / "work/report/epoch_review.md").read_text()
+    assert "Verdict: Flawed" in md and ERRORS_LEAD in md
+    assert (
+        "| 86 | False negative | Prefix kept in the extracted answer. | Correct move marked wrong. |"
+        in md
+    )
+    assert "## Interpretation" not in md and "## Limitations" not in md
+
+
+def test_publication_fills_the_date_and_refuses_the_wrong_narrative(tmp_path: Path) -> None:
+    root = workspace(tmp_path, filled(review_date=""))
+    prepare_publication(root, [])
+    assert json.loads((root / "work/report/review.json").read_text())["review_date"]
+    root = workspace(tmp_path / "b", filled(interpretation=""))
+    with pytest.raises(ValueError, match="missing or empty: interpretation"):
+        prepare_publication(root, [])
+
+
+def test_ordinal_dates() -> None:
+    assert ordinal_date("2026-10-06") == "6th October 2026"
+    assert ordinal_date("2026-10-01") == "1st October 2026"
+    assert ordinal_date("2026-10-22") == "22nd October 2026"
+    assert ordinal_date("2026-10-13") == "13th October 2026"
 
 
 def test_publication_refuses_a_verdict_that_disagrees_with_the_numbers(tmp_path: Path) -> None:
@@ -314,3 +428,12 @@ def test_methodology_names_every_row_the_code_knows() -> None:
     for _, statuses in QUALITY.values():
         for status in statuses:
             assert status in text, status
+    for heading in (
+        "Summary",
+        "Methodology",
+        "Interpretation",
+        "Task Analysis",
+        "Limitations",
+        "Representative Errors",
+    ):
+        assert heading in text, heading

@@ -51,3 +51,14 @@ disagrees with the computed threshold needs a written `threshold_override_reason
 - **Verified**: reviewability is Full or Partial and every minimum-standard class passes.
 - **Incomplete**: the review stopped short of a verdict (a gate or defect class is Not
   Reviewed). Not an Epoch outcome; it records that the work is unfinished.
+
+## Report structure
+
+The rendered review opens with a header (title, Benchmark, Benchmark creator, Verdict,
+Review date), then a Summary of at most 150 words and a Methodology of at most 125 words.
+A Verified review continues with Interpretation, Task Analysis and Elicitation and
+Scaffolding (each at most 300 words) and bullet-point Limitations. A Flawed review
+continues with Representative Errors: bullets and a table of examples. The rubric tables
+follow, with notes of at most eighty words each, and a compact evidence list closes the
+document. Sentences are short, paragraphs are at most five sentences, and the language
+avoids jargon; the audience is scientifically literate but not evaluation specialists.

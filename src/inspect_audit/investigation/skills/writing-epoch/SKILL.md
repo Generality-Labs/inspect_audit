@@ -1,73 +1,118 @@
 ---
 name: writing-epoch
-description: Fill the Epoch AI benchmark review (reviewability gate, minimum-standard defect classes, evaluation-quality questions) from evidence; the verdict is derived, not chosen. Read before recording any review row.
+description: Write the Epoch AI benchmark review for readers with a scientific background. Short sections with word limits, plain language, a verdict derived from the rubric rows. Read before recording any review row or narrative.
 ---
+
+## Who reads this, and how
+
+The review is read by people with a scientific background who do not work on model
+evaluations. They want to know what the benchmark measures, whether its number can be
+trusted, and what to keep in mind when they quote it. They will not read a long document.
+Every section has a word limit and the limits are enforced when you publish.
+
+Write plainly. Short sentences, one idea each. No paragraph longer than five sentences.
+No jargon: say "the model that reads the answer out of the response" rather than
+"the extractor", say "a reference answer" rather than "gold", and expand any acronym the
+first time. Prefer numbers with their denominators over adjectives. Lead with the
+conclusion, then the evidence. Do not narrate your own process, and keep execution
+details, costs and pipeline errors out of the review; they belong in the journal.
 
 ## Contract
 
-The deliverable is `report/epoch_review.md`, rendered by `check_report` and
-`publish_report` from two records you maintain: `report/review.json` (the review rows,
-schema in `report/review.schema.json`) and `report/findings.json` (the evidence
-register). Edit the records, never the rendered markdown. `report/methodology.md`
-defines every row; read it before planning. Do not substitute a thematic essay, a GL
-nine-dimension report or any other format.
+You maintain two records: `report/review.json` (schema in `report/review.schema.json`)
+and `report/findings.json` (the evidence register). `check_report` validates them,
+derives the verdict into `report/verdict.json` and renders `report/epoch_review.md`.
+Edit the records, never the rendered markdown. `report/methodology.md` defines every
+rubric row; read it before planning. Do not substitute any other report format.
 
-## The procedure is ordered
+The rubric rows decide the verdict. Fill them first, run `check_report` to learn the
+derived verdict, then write the narrative that verdict calls for. Writing the narrative
+before the verdict is known produces sections that will be rejected.
 
-Work the stages in order and respect the stop rules.
+## The header
 
-1. **Reviewability** first. Establish what can be inspected: tasks, scoring logic, and
-   the harness and API settings each model ran with (reasoning effort, token and time
-   limits, tool access, system prompts). Read these from log headers and source, not
-   from documentation alone. Inadequate stops the review: record the level with
-   evidence, leave the other rows Not Reviewed, explain in `limitations`, and publish.
-   Spending the budget on a benchmark that cannot be reviewed is a waste.
-2. **Minimum standard** next. Each of the four defect classes is Pass, Flag or Not
-   Reviewed, with evidence. A Flag anywhere makes the benchmark Flawed; keep working the
-   remaining classes anyway, since the report must say what else was found.
-3. **Evaluation quality** last. These inform the reader and do not change the verdict.
-   A question you did not examine is Not Reviewed; do not infer an answer from silence.
+`benchmark` is the benchmark's name as a reader knows it ("Chess Puzzles", not a registry
+path). `benchmark_creator` is the organisation that published it. `review_date` is the
+publication date in ISO form and is filled in for you if left empty. The rendered header
+reads: title, Benchmark, Benchmark creator, Verdict, Review date.
+
+## The sections, by verdict
+
+Every review has:
+
+- **Summary** (at most 150 words). How the task works and what it tries to measure, what
+  the best score is, and the key observations that decided the verdict. A reader who stops
+  here should know the verdict and why.
+- **Methodology** (at most 125 words). What you did: which logs and source you read, what
+  you computed, which per-item audits ran and on how many items, what you did not do.
+
+A **Verified** review adds, in this order:
+
+- **Interpretation** (at most 300 words). What the benchmark measures, how its headline
+  number is made (what is scored, how, and how results are aggregated), and how a reader
+  should and should not interpret that number.
+- **Task Analysis** (at most 300 words). How the tasks work, how they were created,
+  whether they are reasonable, and how they are graded. Name any issue that matters to the
+  score, with its count and denominator.
+- **Elicitation and Scaffolding** (at most 300 words). The harness, prompting and tools
+  the model is given; limits on tokens, turns or time; cost and resources where known;
+  whether these settings let models show what they can do.
+- **Limitations**. Bullet points only, each at most three sentences. The lead sentence is
+  rendered for you ("While none of these limitations cross our threshold for a Flawed
+  verdict, they do inform how a reader should characterize this benchmark."), so the
+  bullets start straight on the point.
+
+A **Flawed** review adds instead:
+
+- **Representative Errors**. Bullet points, each at most three sentences, explaining the
+  errors that crossed the threshold, followed by a table of concrete examples with
+  columns Item, Defect, What happened, Effect on score. Keep every cell under thirty
+  words. Do not write Interpretation, Task Analysis or Elicitation sections for a Flawed
+  review; the rubric notes carry what the reader needs on those.
+
+An **NEI** or **Incomplete** review adds Limitations, saying what could not be reviewed
+and why.
+
+## The rubric notes
+
+Each rubric row carries a short note: at most eighty words and four sentences. State the
+conclusion and the one or two facts that support it, with numbers and denominators. Do not
+list evidence paths, scripts or file names in the notes; put the references in the row's
+`evidence` list, which is rendered separately. A Pass or clean row says in one clause what
+was checked.
 
 ## The scoring row and the 20% threshold
 
 Prevalence must come from a sample selected for prevalence. Choose the questions for the
-question-labels auditors with a recorded random seed, not because they looked suspicious;
-a purposive set can establish that a defect exists but not how common it is. Record the
-selection method and seed in the scoring row's notes. The prevalence is computed from
-`report/coverage.json`: DEFECT over resolved labels, with unresolved and unassessed
-counts beside it. `check_report` refuses a Pass or Flag that contradicts the computed
-threshold unless `threshold_override_reason` says why (for example an issue below 20%
-that still corrupts grading at scale, which the methodology also counts as a Flag).
-Without a coverage file, give `inspected` and `with_defect` on the row and say how they
-were obtained. A question-level defect is not automatically a misgraded submission.
+question-labels auditors with a recorded random seed, or label the whole population; a
+purposive set can establish that a defect exists but not how common it is. The prevalence
+is computed from `report/coverage.json`: questions labelled DEFECT over questions with a
+resolved label, with unresolved and unassessed counts beside it. `check_report` refuses a
+Pass or Flag that contradicts the computed threshold unless `threshold_override_reason`
+says why. Without a coverage file, give `inspected` and `with_defect` on the row and say
+how they were obtained. A question-level defect is not automatically a misgraded
+submission, and an attack you authored against the current grader is not a historical
+score error; say which kind each defect is.
 
 ## Benchmark-wide rows need benchmark-wide evidence
 
 Consistency, elicitation and bias are not answered by item audits. Consistency compares
-scorer, instructions and ground truth across the logs' recorded versions, grader models
-and task arguments against what the leaderboard presents as one series. Elicitation
-compares the recorded limits and resources with what the tasks need and with reasonable
-alternatives. Bias looks for budgets or scaffolds that differ by model. Each needs its
-own evidence references; a verdict on one item is not evidence for a row.
+the scorer, instructions and reference answers across the logs' recorded versions and
+grading models against what the leaderboard presents as one series. Elicitation compares
+the recorded limits and settings with what the tasks need and with reasonable
+alternatives. Bias looks for budgets or scaffolds that differ by model. Each needs its own
+evidence references.
 
-## Evidence and notes
+## Evidence
 
-Every assessed row carries at least one evidence reference: a path under `/inputs` or
-in the report bundle, a location within it, and a quotation where it helps. Notes state
-what was examined, the result, and what it changes about reading the score. Put
-numerator, denominator and selection method beside every number. Distinguish measured
-effects from hypothesised consequences. Clean rows still say what was checked.
-
-The findings register follows `report/findings.schema.json`; `section` names the review
-row a finding supports (`reviewability`, a defect class, or a quality question). Each
-supported or qualified finding should be cited from its row's notes.
+Every assessed row carries at least one evidence reference: a path under `/inputs` or in
+the report bundle, a location within it, and a quotation where it helps. Two references
+per row is usually enough; the register in `findings.json` carries the rest. `section`
+on a finding names the rubric row it supports.
 
 ## Publication
 
-Call `check_report`. It validates both records, derives the verdict into
-`report/verdict.json` and renders `report/epoch_review.md`. Read the markdown and fix
-the records until the derived verdict and the prevalence line say what the evidence
-supports. Figures go under `report/evidence/` with their data tables and are referenced
-from notes. Then call `publish_report`, which re-derives and saves the bundle. Never
-write the verdict yourself, never invent an overall grade, and never leave `summary`
-claiming more than the rows show.
+Call `check_report`. Read the rendered markdown as the intended reader would, and fix
+the records until it is short, plain and supported. Then call `publish_report`. Never
+write the verdict yourself, never invent an overall grade, and never let the summary claim
+more than the rows show.

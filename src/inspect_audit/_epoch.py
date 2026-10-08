@@ -245,17 +245,17 @@ class ErrorExample(BaseModel):
     """One row of the representative-errors table in a Flawed review."""
 
     model_config = ConfigDict(extra="forbid")
-    item: str = Field(min_length=1)
-    defect: str = Field(min_length=1)
-    what_happened: str = Field(min_length=1)
-    effect: str = Field(min_length=1)
+    task: str = Field(min_length=1)
+    error_type: str = Field(min_length=1)
+    notes: str = Field(min_length=1)
+    affected_logs: str = Field(min_length=1)
 
     @model_validator(mode="after")
     def _short(self) -> "ErrorExample":
-        for name in ("item", "defect", "what_happened", "effect"):
+        for name in ("task", "error_type", "notes", "affected_logs"):
             if words(getattr(self, name)) > EXAMPLE_CELL_WORDS:
                 raise ValueError(
-                    f"error example {self.item}: {name} over {EXAMPLE_CELL_WORDS} words"
+                    f"error example {self.task}: {name} over {EXAMPLE_CELL_WORDS} words"
                 )
         return self
 
@@ -540,9 +540,9 @@ def render_markdown(review: Review, derived: dict[str, Any]) -> str:
         out += ["## Representative Errors", "", ERRORS_LEAD, ""]
         out += [f"- {b.strip()}" for b in review.representative_errors] + [""]
         if review.error_examples:
-            out += ["| Item | Defect | What happened | Effect on score |", "|---|---|---|---|"]
+            out += ["| Task | Error type | Notes | Affected logs |", "|---|---|---|---|"]
             out += [
-                f"| {_cell(e.item)} | {_cell(e.defect)} | {_cell(e.what_happened)} | {_cell(e.effect)} |"
+                f"| {_cell(e.task)} | {_cell(e.error_type)} | {_cell(e.notes)} | {_cell(e.affected_logs)} |"
                 for e in review.error_examples
             ]
             out.append("")

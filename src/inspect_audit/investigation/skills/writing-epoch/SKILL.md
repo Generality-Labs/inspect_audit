@@ -66,8 +66,9 @@ A **Flawed** review adds instead:
 
 - **Representative Errors**. Bullet points, each at most three sentences, explaining the
   errors that crossed the threshold, followed by a table of concrete examples with
-  columns Item, Defect, What happened, Effect on score. Keep every cell under thirty
-  words. Do not write Interpretation, Task Analysis or Elicitation sections for a Flawed
+  columns Task, Error type, Notes, Affected logs. Task names the item or run; Error type
+  is the defect class in a few words; Notes says what happened; Affected logs names the
+  runs or models the error touches, with a count. Keep every cell under thirty words. Do not write Interpretation, Task Analysis or Elicitation sections for a Flawed
   review; the rubric notes carry what the reader needs on those.
 
 An **NEI** or **Incomplete** review adds Limitations, saying what could not be reviewed

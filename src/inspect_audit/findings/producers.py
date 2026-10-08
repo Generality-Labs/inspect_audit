@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 LINT_SPEC = "inspect-evals-lint==0.10.0"
-DATASET_VERSION = "0.5.0"
+DATASET_VERSION = "0.6.0"
 DATASET_SPEC = f"inspect-dataset=={DATASET_VERSION}"
 # task scans load a replay task, which needs inspect-dataset's inspect_ai extra
 DATASET_TASK_SPEC = f"inspect-dataset[inspect]=={DATASET_VERSION}"

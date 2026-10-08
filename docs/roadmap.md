@@ -1,6 +1,6 @@
 # Inspect Auditor roadmap, Q4 2026
 
-Owner: Matt Fisher. Last revised 2026-10-05, re-cutting milestones 3 to 5 around the v1 architecture; 2026-10-01 added the rule-mining track from the PR triages; 2026-09-29 the [prototype review](findings-prototype-review.md) narrowed the first release. This is the working plan for Outcome 3 of the GL Q4 plan: moving Inspect Evals maintenance onto Inspect Auditor. Prose reports, scorecards and the exhaustive audits (Outcomes 1 and 2) stay with James and Laurence; this doc covers only where their outputs meet ours.
+Owner: Matt Fisher. Last revised 2026-10-08, after the table site went live and the first sweep of the whole registry; 2026-10-05 re-cut milestones 3 to 5 around the v1 architecture; 2026-10-01 added the rule-mining track from the PR triages; 2026-09-29 the [prototype review](findings-prototype-review.md) narrowed the first release. This is the working plan for Outcome 3 of the GL Q4 plan: moving Inspect Evals maintenance onto Inspect Auditor. Prose reports, scorecards and the exhaustive audits (Outcomes 1 and 2) stay with James and Laurence; this doc covers only where their outputs meet ours.
 
 Revise this doc when a milestone lands or a decision below is made. Implementation detail belongs in the [design spec](superpowers/specs/2026-09-25-findings-prototype-design.md) and the [schema doc](finding-schema-envelope.md), not here.
 
@@ -25,6 +25,15 @@ The first release is smaller than that: a short, reproducible list of maintenanc
 - Audit outputs and agent working notes are private until published. Nothing under `agent_artefacts/` or `artefacts/` enters this repo.
 
 ## Where we are
+
+As of 2026-10-08:
+
+- The findings repository holds a current view for 121 of the 129 evals in Inspect Evals: lint and a dataset scan for each, at inspect_evals `cef701f55`. The sweep ran one eval at a time with a time and disk budget; most evals take 10 to 20 seconds. Eight could not be swept locally because building the task downloads gigabytes: cybergym, cti_realm, docvqa, livecodebench_pro, mind2web, mmiu, mmmu and usaco. cti_realm writes its download into the package directory (inspect_evals #2638).
+- Of the 121 dataset scans, 110 ran, nine of them only once the dump gave tasks a stand-in model (#34). Eleven skip, for reasons now recorded as one line: an extra the eval does not declare (abstention_bench, bold, kernelbench), an optional install by design (livebench, mle_bench, cve_bench), credentials or acknowledgement (tac, mlrc_bench, cybench), an empty dataset (core_bench), and an inspect-dataset crash on a sample containing `[/ANSWER]` (macbench).
+- The sweep produced about 11,000 findings, most of them from a few inspect-dataset rules on a few evals. Several are scanner misfires to fix in inspect-dataset rather than suppress: tabs counted as non-printable, `Å³` read as mojibake, forced-choice leakage on reading comprehension, answer-length on F1-scored tasks. Some are real: sciknoweval's backspace and form-feed characters from LaTeX read as JSON escapes, and its genuine mojibake.
+- The table site is live at `audits.generality.org` behind Cloudflare Access (one-time PIN for `@generality.org`), from `Generality-Labs/audits-site`. Dataset findings keep at most a 32-character marker of any sample text (#33), so gated datasets such as HLE can be swept.
+
+Before 2026-10-08:
 
 Done on `findings-prototype` (PR #4 against `dev/integrated-audits`), rebased onto the dev tip on 2026-09-29:
 
@@ -65,18 +74,18 @@ Per [v1-architecture.md](v1-architecture.md).
 
 - Done 2026-10-05 (first pass): a `Store` with suppress, accept and link that resolves what a reviewer points at (eval and rule, or record ids) into fingerprints, validates, writes `suppressions.yaml` and `issues.yaml`, re-renders, and commits with the reviewer as author; a `review` CLI on it. Nobody edits the review files by hand. Deferred until a client needs them: `set_status` as a third review file keyed by fingerprint; `promote`, filing the GitHub issue and recording the link in one step; the `review-findings` skill that drafts a sweep's decisions for approval.
 - A findings MCP server on the same API: read tools `leads`, `finding`, `search`, `issues`, `inputs`; write tools `set_status`, `accept`, `suppress` with the agent's run id as provenance. `leads` runs the producers lazily when the store has no current view for the eval at the requested revision. Local stdio mode first; the Hawk egress and token questions go to James with the attach PR.
-- A private repository, `Generality-Labs/inspect-evals-findings`, holding `runs/`, `suppressions.yaml`, `issues.yaml`, `cases.yaml` and an `export/` directory.
+- Done 2026-10-06: a private repository, `Generality-Labs/inspect-evals-findings`, holding `runs/`, `suppressions.yaml`, `issues.yaml`, `cases.yaml` and an `export/` directory.
 - Done 2026-10-05: the current view is derived (newest run per eval and producer, ties to the later run id); `current.json` is gone, so concurrent writers never conflict on a shared file. Pins can return if a rollback is ever needed. Producer runs commit directly; review decisions take the review path.
-- A scheduled Action that checks out Inspect Evals main, runs the deterministic producers over every eval (lint, dataset scans through each task, header checks where logs are on Hawk), commits the runs.
+- A scheduled Action that checks out Inspect Evals main, runs the deterministic producers over every eval (lint, dataset scans through each task, header checks where logs are on Hawk), commits the runs. The 2026-10-08 local sweep is the dry run: about an hour for the registry one eval at a time, with a per-eval time and disk budget. A GitHub runner has about 14 GB free, so the evals whose task construction downloads gigabytes need either a declared HuggingFace scan or an exclusion list.
 - Done 2026-10-07: every render writes `export/index.json` and `export/evals/<slug>.json` ([table site spec](superpowers/specs/2026-10-07-table-site-design.md)). Publication selects what leaves the repo; native producer records stay private until the standard says otherwise.
 
 Done when the Action has run unattended for a week, every eval in the registry has a current view, a `review accept` from the CLI changes the export without anyone opening a YAML file, and an agent can pull leads for an eval over MCP.
 
 ### 4. The table site
 
-- A static site at `audits.generality.org` in its own repository, deployed with Cloudflare Pages from the worker template, separate from the Quarto blog.
-- An index of findings across every eval, filterable and sortable on eval, producer, dimension, check, severity, status and reviewed; a second index of evals with counts, accepted issues and last successful run.
-- A page per eval: Inputs, grouped findings, Suppressed, Issues, Assessment and Coverage where an investigation exists, links to bundles and GitHub issues. No grade.
+- Done 2026-10-07: a Worker at `audits.generality.org` in `Generality-Labs/audits-site`, from the worker template, behind Cloudflare Access. It reads the export from the findings repository through the GitHub contents API.
+- Done 2026-10-07: an index of findings across every eval, filterable and sortable on eval, producer, dimension, check, severity, status and reviewed, with filters in the query string. Still to do: a second index of evals with counts, accepted issues and last successful run, which is also how an eval checked with nothing found is reached; and virtualised rows or grouping before the registry's export (about 11,000 rows) is published.
+- A page per eval: Inputs, grouped findings, Suppressed, Issues, Assessment and Coverage where an investigation exists, links to bundles and GitHub issues. No grade. Done 2026-10-07 except Assessment, Coverage and bundle links; each run lists its skipped checks and why.
 - Review actions on the eval page (suppress, accept, promote) through a Worker with GitHub auth that calls the Store API and commits as a bot, opening PRs at first.
 - Voting through reactions on the promoted GitHub issues. No custom service.
 - Before it is public, re-read the security review that removed the frontend from the dev branch, and review the publication path.
@@ -108,7 +117,7 @@ Rendering the GL LaTeX report from the findings store, with lint and dataset fin
 - Pilot evals and acceptance criteria, agreed with Tania. First.
 - Land `dev/integrated-audits` on `main`, or keep working from it. James's `core/changes` is heading into dev; both our PRs target dev.
 - Backlog shape (GitHub issues plus findings database, or GitHub Projects) and any custom voting. v1 uses `issues.yaml` plus GitHub issues with reactions; revisit after the site has run.
-- Findings repo name and write access; nightly or weekly schedule; site domain; whether the export itself is public. Proposals in v1-architecture.md.
+- Nightly or weekly schedule; whether the export itself is public. (Settled 2026-10-07: the repository is `Generality-Labs/inspect-evals-findings` and the site `audits.generality.org`, both writable by the `core` team, the org owners.)
 - Whether the view files issues automatically or only drafts them. Drafts. Auto-closing needs a confidence field and a QA step; neither exists.
 - Total cost of rollout. Milestone 2 turns it into a number for Justin.
 - Whether `gl-audit@2` is final. Confirm with Laurence separately; the pilot does not depend on it.

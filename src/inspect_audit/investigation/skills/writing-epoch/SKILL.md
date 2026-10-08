@@ -61,6 +61,9 @@ A **Verified** review adds, in this order:
   rendered for you ("While none of these limitations cross our threshold for a Flawed
   verdict, they do inform how a reader should characterize this benchmark."), so the
   bullets start straight on the point.
+- **Recommendations**. Bullet points, each at most three sentences, addressed to the
+  benchmark's creator: what to change, publish or document. One recommendation per
+  limitation or error is the usual shape.
 
 A **Flawed** review adds instead:
 
@@ -68,13 +71,22 @@ A **Flawed** review adds instead:
   errors that crossed the threshold, followed by a table of concrete examples with
   columns Task, Error type, Notes, Affected logs. Task names the item or run; Error type
   is the defect class in a few words; Notes says what happened; Affected logs names the
-  runs or models the error touches, with a count. Keep every cell under thirty words. Do not write Interpretation, Task Analysis or Elicitation sections for a Flawed
-  review; the rubric notes carry what the reader needs on those.
+  runs or models the error touches, with a count. Keep every cell under thirty words. Then Recommendations, as above. Do not write Interpretation, Task Analysis or
+  Elicitation sections for a Flawed review; the rubric notes carry what the reader needs
+  on those.
 
 An **NEI** or **Incomplete** review adds Limitations, saying what could not be reviewed
 and why.
 
-## The rubric notes
+## The rubric
+
+The rendered rubric reproduces Epoch's form: every level, defect class and question is
+printed with its fixed meaning, examples and threshold, every status option is listed and
+the one you chose is shown in bold. You supply only the status, the numbers the form asks
+for, and the notes. The Reviewability notes appear on the level you chose; the other
+levels stay blank, as on the form. A disclaimer that the review used public information
+without asking the creator closes the document; if that is not true of your review, say
+so in Methodology.
 
 Each rubric row carries a short note: at most eighty words and four sentences. State the
 conclusion and the one or two facts that support it, with numbers and denominators. Do not

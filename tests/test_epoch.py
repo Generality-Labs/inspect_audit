@@ -46,6 +46,7 @@ def filled(**overrides) -> dict:
         task_analysis="Positions come from engine games.",
         elicitation_and_scaffolding="One prompt, no tools.",
         limitations=["Single run per model.", "No human baseline."],
+        recommendations=["Publish the engine version."],
     )
     review.update(overrides)
     return review
@@ -245,6 +246,7 @@ def flawed_narrative() -> dict:
         "task_analysis": "",
         "elicitation_and_scaffolding": "",
         "limitations": [],
+        "recommendations": ["Bump the version when the grader changes."],
         "representative_errors": ["The answer-reading model changed within one version."],
         "error_examples": [
             {
@@ -268,6 +270,8 @@ def test_the_narrative_follows_the_verdict() -> None:
         check_narrative(Review.model_validate(filled(benchmark_creator="")), "Verified")
     with pytest.raises(ValueError, match="representative_errors, error_examples"):
         check_narrative(review, "Flawed")
+    with pytest.raises(ValueError, match="missing or empty: recommendations"):
+        check_narrative(Review.model_validate(filled(recommendations=[])), "Verified")
     check_narrative(Review.model_validate(filled(**flawed_narrative())), "Flawed")
     mixed = filled(**{**flawed_narrative(), "interpretation": "Kept by mistake."})
     with pytest.raises(ValueError, match="move interpretation"):
@@ -305,17 +309,35 @@ def test_a_verified_review_renders_the_reader_sections(tmp_path: Path) -> None:
         "## Task Analysis",
         "## Elicitation and Scaffolding",
         "## Limitations",
-        "## Review Rubric",
-        "## Evidence",
+        "## Recommendations",
+        "## Benchmark Review Rubric",
+        "### 1. Reviewability",
+        "### 2. Scoring",
+        "### 3. Evaluation Quality",
+        "## Disclaimer",
     ):
         assert heading in md, heading
-    assert "## Representative Errors" not in md
+    assert "## Representative Errors" not in md and "## Evidence" not in md
     assert LIMITATIONS_LEAD in md and "- Single run per model." in md
+    assert "- Publish the engine version." in md
     assert "Scoring prevalence: 6 of 100 inspected questions (6%); threshold 20%." in md
-    assert "As of 2026-10-06: 100% of tasks public, 0% of solutions public" in md
-    assert "1 runs/model" in md
-    assert "| Full | Logs and gist. |" in md  # evidence is not inside the tables
-    assert "- Scoring: `/inputs/header.json` (eval.model_generate_config)" in md
+    # the form: every level row printed, notes only on the chosen one, choice in bold
+    assert "| **Full** | All tasks and scoring logic inspectable" in md
+    assert "| Partial | A representative sample" in md and "| Inadequate | Limited, biased" in md
+    assert md.count("Logs and gist.") == 1
+    # every status option printed, the chosen one bold
+    assert "**Pass**<br>Flag [stop → Flawed]<br>Not Reviewed" in md
+    assert (
+        "Sufficient<br>Constraining<br>Unreasonably constraining<br>Unknown<br>**Not Reviewed**"
+        in md
+    )
+    assert (
+        "**As of 2026-10-06: 100% of tasks public<br>0% of solutions public**<br>Not Reviewed" in md
+    )
+    assert "**1 runs/model**<br>Unknown<br>Not Reviewed" in md
+    assert "| Defect Class | Examples | Default Threshold for Flawed | Status | Notes |" in md
+    assert "• Scorer, instructions, or ground truth changed without a version bump" in md
+    assert "additional information from Epoch AI to provide impartial feedback" in md
     destination = save_publication(root)
     assert (destination / "epoch_review.md").is_file()
     assert json.loads((destination / "verdict.json").read_text())["verdict"] == "Verified"
@@ -333,6 +355,7 @@ def test_a_flawed_review_renders_representative_errors(tmp_path: Path) -> None:
     assert derived["findings"] == [{"id": "F1", "section": "consistency", "status": "supported"}]
     md = (root / "work/report/epoch_review.md").read_text()
     assert "Verdict: Flawed" in md and ERRORS_LEAD in md
+    assert "**Flag [stop → Flawed]**" in md and "- Bump the version when the grader changes." in md
     assert (
         "| Puzzle 86 | False negative | Prefix kept in the extracted answer. | 1 run (GPT-5.4 high) |"
         in md
@@ -434,6 +457,8 @@ def test_methodology_names_every_row_the_code_knows() -> None:
         "Interpretation",
         "Task Analysis",
         "Limitations",
+        "Recommendations",
         "Representative Errors",
+        "Disclaimer",
     ):
         assert heading in text, heading

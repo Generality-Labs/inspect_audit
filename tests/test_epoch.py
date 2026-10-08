@@ -248,10 +248,10 @@ def flawed_narrative() -> dict:
         "representative_errors": ["The answer-reading model changed within one version."],
         "error_examples": [
             {
-                "item": "86",
-                "defect": "False negative",
-                "what_happened": "Prefix kept in the extracted answer.",
-                "effect": "Correct move marked wrong.",
+                "task": "Puzzle 86",
+                "error_type": "False negative",
+                "notes": "Prefix kept in the extracted answer.",
+                "affected_logs": "1 run (GPT-5.4 high)",
             }
         ],
     }
@@ -334,7 +334,7 @@ def test_a_flawed_review_renders_representative_errors(tmp_path: Path) -> None:
     md = (root / "work/report/epoch_review.md").read_text()
     assert "Verdict: Flawed" in md and ERRORS_LEAD in md
     assert (
-        "| 86 | False negative | Prefix kept in the extracted answer. | Correct move marked wrong. |"
+        "| Puzzle 86 | False negative | Prefix kept in the extracted answer. | 1 run (GPT-5.4 high) |"
         in md
     )
     assert "## Interpretation" not in md and "## Limitations" not in md

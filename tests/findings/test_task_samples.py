@@ -172,3 +172,42 @@ def test_replay_without_scorers_declares_none(
     monkeypatch.setenv(_replay_samples.SAMPLES_ENV, str(tmp_path / "samples.jsonl"))
     monkeypatch.delenv(_replay_samples.SCORERS_ENV, raising=False)
     assert _replay_samples.replay_samples().scorer is None
+
+
+MODEL_TASK_FILE = """
+from inspect_ai import Task, task
+from inspect_ai.dataset import MemoryDataset, Sample
+from inspect_ai.model import get_model
+
+
+@task
+def graded() -> Task:
+    grader = get_model()
+    other = get_model("nosuchprovider/judge")
+    return Task(
+        dataset=MemoryDataset([Sample(id="a", input=grader.name + " " + other.name)]),
+    )
+"""
+
+
+def test_dump_gives_a_task_that_resolves_models_while_it_is_built_a_stand_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("INSPECT_EVAL_MODEL", raising=False)
+    task_file = tmp_path / "graded_task.py"
+    task_file.write_text(MODEL_TASK_FILE)
+    samples, meta = tmp_path / "samples.jsonl", tmp_path / "meta.json"
+    _dump_task_samples.main([f"{task_file}@graded", str(samples), str(meta)])
+    (line,) = samples.read_text().splitlines()
+    assert Sample.model_validate_json(line).input == "model model"
+
+
+def test_dump_leaves_get_model_as_it_found_it(tmp_path: Path) -> None:
+    import inspect_ai.model
+    import inspect_ai.model._model
+
+    before = (inspect_ai.model.get_model, inspect_ai.model._model.get_model)
+    task_file = tmp_path / "tiny_task.py"
+    task_file.write_text(TASK_FILE)
+    _dump_task_samples.main([f"{task_file}@tiny", str(tmp_path / "s"), str(tmp_path / "m")])
+    assert (inspect_ai.model.get_model, inspect_ai.model._model.get_model) == before

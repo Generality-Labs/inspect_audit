@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from typing import Any
 
 from inspect_ai._eval.loader import load_tasks
@@ -45,17 +46,40 @@ def _scorer_names(task: Any) -> list[str]:
     return [registry_info(s).name for s in scorers if is_registry_object(s)]
 
 
+@contextmanager
+def _stand_in_models() -> Generator[None]:
+    """Every model the task resolves while it is built is mockllm, for the length of the dump.
+
+    The dump reads samples and never generates, so a task that picks a grader when it is built,
+    with no model configured or from a provider whose package or key is missing, still loads.
+    """
+    import inspect_ai.model
+    import inspect_ai.model._model
+
+    originals = (inspect_ai.model.get_model, inspect_ai.model._model.get_model)
+
+    def stand_in(*_args: Any, **_kwargs: Any) -> Any:
+        return originals[1]("mockllm/model")
+
+    inspect_ai.model.get_model = inspect_ai.model._model.get_model = stand_in
+    try:
+        yield
+    finally:
+        inspect_ai.model.get_model, inspect_ai.model._model.get_model = originals
+
+
 def main(argv: Sequence[str]) -> None:
     spec, samples_path, meta_path = argv
-    tasks = load_tasks([spec])
-    if len(tasks) != 1:
-        raise SystemExit(f"{spec!r} matched {len(tasks)} tasks; name exactly one")
-    dataset = tasks[0].dataset
-    count = 0
-    with open(samples_path, "w") as out:
-        for sample in dataset:
-            out.write(sample.model_dump_json(fallback=_json_fallback) + "\n")
-            count += 1
+    with _stand_in_models():
+        tasks = load_tasks([spec])
+        if len(tasks) != 1:
+            raise SystemExit(f"{spec!r} matched {len(tasks)} tasks; name exactly one")
+        dataset = tasks[0].dataset
+        count = 0
+        with open(samples_path, "w") as out:
+            for sample in dataset:
+                out.write(sample.model_dump_json(fallback=_json_fallback) + "\n")
+                count += 1
     meta = {
         "task": spec,
         "dataset_name": dataset.name,

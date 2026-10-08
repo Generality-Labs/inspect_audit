@@ -363,6 +363,26 @@ def _output_tail(result: CommandResult) -> str:
     return (result.stderr or result.stdout)[-1500:]
 
 
+# The rich markup Inspect wraps prerequisite errors in: lowercase style names such as [bold] or
+# [/blue]. A bracketed upper-case word, such as a dataset's own [/ANSWER] tag, is left alone.
+_MARKUP = re.compile(r"\[/?[a-z][a-z ]*\]")
+_EXCEPTION_LINE = re.compile(r"^(?:\w+\.)*(\w+(?:Error|Exception|Exit|Interrupt)): ?(.*)$")
+
+
+def failure_reason(output: str) -> str:
+    """The line that says why a command failed: a traceback's last exception, else the last line.
+
+    The skip reason is what a reader sees beside the eval, so it is one line; the run's inputs
+    keep the output's tail for whoever needs the traceback.
+    """
+    lines = [line for line in (_MARKUP.sub("", raw).strip() for raw in output.splitlines()) if line]
+    for line in reversed(lines):
+        match = _EXCEPTION_LINE.match(line)
+        if match:
+            return f"{match.group(1)}: {match.group(2)}"
+    return lines[-1] if lines else "no output"
+
+
 def run(target: str, ctx: Context) -> Run:
     """Scan the eval's dataset with static scanners into a temporary directory, then parse it.
 
@@ -425,11 +445,13 @@ def run(target: str, ctx: Context) -> Run:
             except ProducerError as ex:
                 return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp, inputs=inputs)
             if dumped.returncode != 0 or not meta_path.is_file():
+                inputs["dump_output"] = _output_tail(dumped)
                 return skip_run(
                     PRODUCER,
                     target,
                     ctx,
-                    f"sample dump exit {dumped.returncode}: {_output_tail(dumped)}",
+                    f"sample dump exit {dumped.returncode}: "
+                    f"{failure_reason(dumped.stderr or dumped.stdout)}",
                     timestamp=timestamp,
                     inputs=inputs,
                 )
@@ -486,11 +508,13 @@ def run(target: str, ctx: Context) -> Run:
             return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp, inputs=inputs)
     duration = time.monotonic() - started
     if result.returncode != 0 or not (scan_dir / "scan_summary.json").is_file():
+        inputs["scan_output"] = _output_tail(result)
         return skip_run(
             PRODUCER,
             target,
             ctx,
-            f"inspect-dataset exit {result.returncode}: {_output_tail(result)}",
+            f"inspect-dataset exit {result.returncode}: "
+            f"{failure_reason(result.stderr or result.stdout)}",
             timestamp=timestamp,
             inputs=inputs,
         )

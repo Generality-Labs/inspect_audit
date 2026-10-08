@@ -709,3 +709,38 @@ def test_an_apostrophe_in_the_scanners_prose_does_not_open_a_quote(tmp_path: Pat
         },
     )
     assert finding.summary == f"The sample's question repeats another's verbatim: '{LONG[:32]}…'"
+
+
+TRACEBACK = """Traceback (most recent call last):
+  File "/x/inspect_ai/model/_model.py", line 1, in get_model
+    raise pip_dependency_error(FEATURE, [PACKAGE])
+inspect_ai._util.error.PrerequisiteError: [bold]ERROR[/bold]: OpenAI API requires optional dependencies. Install with:
+
+[bold]pip install openai[/bold]
+"""
+
+
+def test_a_failure_reason_is_the_exception_line_without_markup() -> None:
+    from inspect_audit.findings.adapters.dataset import failure_reason
+
+    assert failure_reason(TRACEBACK) == (
+        "PrerequisiteError: ERROR: OpenAI API requires optional dependencies. Install with:"
+    )
+
+
+def test_a_failure_reason_keeps_brackets_that_are_not_markup() -> None:
+    from inspect_audit.findings.adapters.dataset import failure_reason
+
+    text = "rich.errors.MarkupError: closing tag '[/ANSWER]' at position 1067 doesn't match\n"
+    assert (
+        failure_reason(text)
+        == "MarkupError: closing tag '[/ANSWER]' at position 1067 doesn't match"
+    )
+
+
+def test_a_failure_reason_without_an_exception_is_the_last_line() -> None:
+    from inspect_audit.findings.adapters.dataset import failure_reason
+
+    assert failure_reason("loading...\nSet CYBENCH_ACKNOWLEDGE_RISKS=1 to proceed.\n\n") == (
+        "Set CYBENCH_ACKNOWLEDGE_RISKS=1 to proceed."
+    )

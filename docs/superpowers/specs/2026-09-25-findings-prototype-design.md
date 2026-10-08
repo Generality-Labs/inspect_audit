@@ -111,7 +111,7 @@ Adapters call it once at write time and store the result with `fingerprint_versi
 | producer | default prefix                                                          | override                    |
 | -------- | ----------------------------------------------------------------------- | --------------------------- |
 | lint     | `["uvx", "--from", "inspect-evals-lint==0.10.0", "inspect-evals-lint"]` | `INSPECT_AUDIT_LINT_CMD`    |
-| dataset  | `["uvx", "--from", "inspect-dataset==0.5.0", "inspect-dataset"]`        | `INSPECT_AUDIT_DATASET_CMD` |
+| dataset  | `["uvx", "--from", "inspect-dataset==0.6.0", "inspect-dataset"]`        | `INSPECT_AUDIT_DATASET_CMD` |
 
 An override is a shell-split string. Each adapter exposes two functions: `parse(...) -> Run` which is pure and tested against fixtures, and `run(target, ctx) -> Run` which invokes the subprocess with a timeout, then calls `parse`. Any failure in `run` (non-zero exit, timeout, missing binary, unparseable output) returns a `Run` with a single `Outcome(rule="<producer>", status="skip", message=<error tail>)` and no findings. Nothing raises past the adapter.
 

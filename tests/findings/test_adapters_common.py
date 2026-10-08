@@ -75,7 +75,7 @@ def test_default_prefixes_pin_the_specs() -> None:
     assert config.lint == ("uvx", "--from", LINT_SPEC, "inspect-evals-lint")
     assert config.dataset == ("uvx", "--from", DATASET_SPEC, "inspect-dataset")
     assert LINT_SPEC == "inspect-evals-lint==0.10.0"
-    assert DATASET_SPEC == "inspect-dataset==0.5.0"
+    assert DATASET_SPEC == "inspect-dataset==0.6.0"
 
 
 def test_env_overrides_are_shell_split() -> None:
@@ -102,7 +102,7 @@ def test_task_scans_dump_in_the_eval_project_and_scan_in_inspect_datasets_own_en
         "{inspect_ai}",
         "inspect-dataset",
     )
-    assert DATASET_TASK_SPEC == "inspect-dataset[inspect]==0.5.0"
+    assert DATASET_TASK_SPEC == "inspect-dataset[inspect]==0.6.0"
     assert config.eval_env is None
 
 

@@ -12,10 +12,10 @@ import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from .adapters import slug
+from .fs import StoreFS
 from .models import Finding, Run
 from .render import SEVERITY_ORDER, inputs_data, sorted_findings
 from .review import Review
@@ -270,40 +270,38 @@ def eval_document(
 
 
 def write_export(
-    out: Path,
+    fs: StoreFS,
     runs_by_eval: Mapping[str, Sequence[Run]],
     review: Review,
     *,
     history: Sequence[Run],
     generated_at: datetime | None = None,
-) -> list[Path]:
-    """Write `export/index.json` and `export/evals/<slug>.json` under `out`."""
+) -> list[str]:
+    """Write `export/index.json` and `export/evals/<slug>.json` into the store; returns their keys."""
     stamp = generated_at or datetime.now(tz=UTC)
     seen = seen_range(history)
-    export_dir = out / EXPORT_DIR
-    (export_dir / "evals").mkdir(parents=True, exist_ok=True)
-    index_path = export_dir / "index.json"
-    index_path.write_text(_dumps(index_document(runs_by_eval, review, seen, stamp)))
-    written = [index_path]
+    index_key = f"{EXPORT_DIR}/index.json"
+    fs.write_text(index_key, _dumps(index_document(runs_by_eval, review, seen, stamp)))
+    written = [index_key]
     for eval_name in sorted(runs_by_eval):
-        path = export_dir / "evals" / f"{slug(eval_name)}.json"
+        key = f"{EXPORT_DIR}/evals/{slug(eval_name)}.json"
         document = eval_document(eval_name, runs_by_eval[eval_name], review, seen, stamp)
-        if not _same_but_for_stamp(path, document):
-            path.write_text(_dumps(document))
-        written.append(path)
+        if not _same_but_for_stamp(fs, key, document):
+            fs.write_text(key, _dumps(document))
+        written.append(key)
     return written
 
 
-def _same_but_for_stamp(path: Path, document: dict[str, Any]) -> bool:
-    """Whether the file already holds this document apart from `generated_at`.
+def _same_but_for_stamp(fs: StoreFS, key: str, document: dict[str, Any]) -> bool:
+    """Whether the object already holds this document apart from `generated_at`.
 
     An eval file's stamp then means "when this eval's data last changed", and a review of one
     eval does not rewrite every other eval's file.
     """
-    if not path.is_file():
+    if not fs.is_file(key):
         return False
     try:
-        existing = json.loads(path.read_text())
+        existing = json.loads(fs.read_text(key))
     except ValueError:
         return False
     if not isinstance(existing, dict):

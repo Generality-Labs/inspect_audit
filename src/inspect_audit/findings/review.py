@@ -1,25 +1,43 @@
-"""Review decisions: suppressions and accepted issues, kept beside the runs and applied to copies.
+"""Review decisions: an append-only log of objects under `review/`, folded into the view applied to copies.
 
-Producer run files are never edited. A person records a decision here, with a reason and a
-date, and rendering applies it: matching observations gain a suppression, matching
-fingerprints gain an issue id. Rerunning a producer cannot lose a decision.
+Producer run files are never edited. A decision is one object, written once, carrying its
+author, time and reason: suppress a rule, accept findings as an issue, link an issue, set a
+status, or retract an earlier decision. The fold applies the log in time order and yields the
+`Review` that rendering applies: matching observations gain a suppression, matching
+fingerprints gain an issue id or a status. `suppressions.yaml` and `issues.yaml` are derived
+from the log for reading; nothing writes them directly.
 """
 
 from __future__ import annotations
 
+import hashlib
 from collections import Counter
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+from uuid import uuid4
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
 
-from .models import Finding, Provenance, Run, Suppression
+from .fs import StoreFS, as_store_fs
+from .models import Finding, Provenance, Run, Status, StatusChange, Suppression
 
 SUPPRESSIONS_FILE = "suppressions.yaml"
 ISSUES_FILE = "issues.yaml"
+REVIEW_PREFIX = "review"
+DERIVED_HEADER = "# derived from review/; do not edit\n"
+
+Kind = Literal["suppress", "accept", "link", "status", "retract"]
 
 
 class SuppressionRule(BaseModel):
@@ -57,9 +75,13 @@ class IssueEntry(BaseModel):
 
 
 class Review(BaseModel):
+    """The folded view of the decision log: what rendering applies to the current runs."""
+
     model_config = ConfigDict(extra="forbid")
     suppressions: list[SuppressionRule] = Field(default_factory=list)
     issues: list[IssueEntry] = Field(default_factory=list)
+    statuses: dict[str, Status] = Field(default_factory=dict)
+    status_provenance: dict[str, Provenance] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _issues_are_distinct(self) -> Review:
@@ -82,41 +104,296 @@ _SUPPRESSIONS = TypeAdapter(list[SuppressionRule])
 _ISSUES = TypeAdapter(list[IssueEntry])
 
 
-def _load_list(path: Path, adapter: TypeAdapter[Any]) -> list[Any]:
-    """The file as a validated list, or an empty list when the file is absent. Errors name the file."""
-    if not path.is_file():
-        return []
-    try:
-        loaded = yaml.safe_load(path.read_text())
-    except yaml.YAMLError as ex:
-        raise ValueError(f"{path}: {ex}") from ex
-    if loaded is None:
-        return []
-    if not isinstance(loaded, list):
-        raise ValueError(f"{path} must be a YAML list")
-    try:
-        return adapter.validate_python(loaded)
-    except ValidationError as ex:
-        raise ValueError(f"{path}: {ex}") from ex
+class SuppressPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rule: str
+    subject: str = "*"
+    producer: str | None = None
+    kind: str = "false_positive"
 
 
-def load_review(directory: Path) -> Review:
-    """`suppressions.yaml` and `issues.yaml` under `directory`; a missing file is an empty list."""
-    return Review(
-        suppressions=_load_list(directory / SUPPRESSIONS_FILE, _SUPPRESSIONS),
-        issues=_load_list(directory / ISSUES_FILE, _ISSUES),
+class AcceptPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    issue: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    subject: str
+    fingerprints: list[str] = Field(min_length=1)
+
+
+class LinkPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    issue: str
+    url: str
+
+
+class StatusPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    fingerprints: list[str] = Field(min_length=1)
+    status: Status
+
+
+class RetractPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: str
+
+
+class Decision(BaseModel):
+    """One review decision, stored as its own object under review/; the log is append-only."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1)
+    at: AwareDatetime
+    author: str
+    kind: Kind
+    reason: str | None = None
+    suppress: SuppressPayload | None = None
+    accept: AcceptPayload | None = None
+    link: LinkPayload | None = None
+    status: StatusPayload | None = None
+    retract: RetractPayload | None = None
+
+    @model_validator(mode="after")
+    def _one_payload(self) -> Decision:
+        kinds: tuple[Kind, ...] = ("suppress", "accept", "link", "status", "retract")
+        present = [k for k in kinds if getattr(self, k) is not None]
+        if present != [self.kind]:
+            raise ValueError(
+                f"a {self.kind} decision needs exactly the {self.kind} payload, "
+                f"got {', '.join(present) or 'none'}"
+            )
+        return self
+
+    def key(self) -> str:
+        return f"{REVIEW_PREFIX}/{_stamp(self.at)}-{self.id}.json"
+
+
+def _stamp(at: datetime) -> str:
+    return at.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+
+def new_decision_id(at: datetime) -> str:
+    """`dec-<stamp>-<microsecond><random>`: keys sort by time within a second, not by chance."""
+    return f"dec-{_stamp(at)}-{at.microsecond:06d}{uuid4().hex[:3]}"
+
+
+def unmigrated_review_files(fs: StoreFS) -> list[str]:
+    """Hand-written `suppressions.yaml` or `issues.yaml` still present: a store from before the log."""
+    found: list[str] = []
+    for name in (SUPPRESSIONS_FILE, ISSUES_FILE):
+        if fs.is_file(name) and not fs.read_text(name).startswith(DERIVED_HEADER):
+            found.append(name)
+    return found
+
+
+def load_decisions(fs: StoreFS, *, allow_unmigrated: bool = False) -> list[Decision]:
+    """Every decision in the log, in key order (time, then id). A malformed object names itself.
+
+    A store that still holds hand-written review files is refused until `migrate` has run, so
+    no render can overwrite them with the derived views.
+    """
+    if not allow_unmigrated:
+        pending = unmigrated_review_files(fs)
+        if pending:
+            raise ValueError(
+                f"hand-written {', '.join(pending)} found under {fs.locator}; "
+                "run `inspect-audit-findings review migrate` first"
+            )
+    decisions: list[Decision] = []
+    for key in fs.glob(f"{REVIEW_PREFIX}/*.json"):
+        try:
+            decisions.append(Decision.model_validate_json(fs.read_text(key)))
+        except (ValueError, ValidationError) as ex:
+            raise ValueError(f"{key}: {ex}") from ex
+    return decisions
+
+
+def write_decision(fs: StoreFS, decision: Decision) -> str:
+    return fs.write_text(
+        decision.key(), decision.model_dump_json(indent=1, exclude_none=True) + "\n"
     )
 
 
-def save_review(directory: Path, review: Review) -> list[Path]:
-    """Write both review files. Comments are not preserved: the Store API is the editor."""
-    directory.mkdir(parents=True, exist_ok=True)
-    written: list[Path] = []
+class Fold(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    review: Review
+    warnings: list[str] = Field(default_factory=list)
+
+
+def fold(decisions: Sequence[Decision]) -> Fold:
+    """Apply the log in key order into the view rendering uses.
+
+    Suppressions accumulate, acceptances create issues, the latest link and status win, a
+    retraction removes the effect of the decision it names, and a fingerprint accepted twice
+    goes to the later acceptance with a warning naming both.
+    """
+    ordered = sorted(decisions, key=lambda d: d.key())
+    dead: set[str] = set()  # a retraction that is itself retracted has no effect
+    for d in reversed(ordered):
+        if d.retract is not None and d.id not in dead:
+            dead.add(d.retract.decision)
+    live = [d for d in ordered if d.id not in dead and d.retract is None]
+    suppressions: list[SuppressionRule] = []
+    issues: dict[str, IssueEntry] = {}
+    owner: dict[str, tuple[str, str]] = {}  # fingerprint -> (issue id, decision id)
+    accepted_by: dict[str, str] = {}  # issue id -> decision id
+    statuses: dict[str, Status] = {}
+    status_provenance: dict[str, Provenance] = {}
+    warnings: list[str] = []
+    for d in live:
+        if d.suppress is not None:
+            suppressions.append(
+                SuppressionRule(
+                    rule=d.suppress.rule,
+                    subject=d.suppress.subject,
+                    producer=d.suppress.producer,
+                    kind=d.suppress.kind,
+                    author=d.author,
+                    reason=d.reason or "",
+                    since=d.at.date(),
+                )
+            )
+        elif d.accept is not None:
+            if d.accept.issue in issues:
+                warnings.append(
+                    f"{d.accept.issue} accepted by {accepted_by[d.accept.issue]} and again by "
+                    f"{d.id}; the later wins"
+                )
+                owner = {fp: o for fp, o in owner.items() if o[0] != d.accept.issue}
+            accepted_by[d.accept.issue] = d.id
+            for fp in d.accept.fingerprints:
+                if fp in owner:
+                    previous_issue, previous_decision = owner[fp]
+                    warnings.append(
+                        f"{fp} accepted by {previous_decision} ({previous_issue}) and again by "
+                        f"{d.id} ({d.accept.issue}); the later wins"
+                    )
+                    kept = [f for f in issues[previous_issue].findings if f != fp]
+                    issues[previous_issue] = issues[previous_issue].model_copy(
+                        update={"findings": kept}
+                    )
+                owner[fp] = (d.accept.issue, d.id)
+            issues[d.accept.issue] = IssueEntry(
+                id=d.accept.issue,
+                title=d.accept.title,
+                subject=d.accept.subject,
+                findings=list(d.accept.fingerprints),
+                author=d.author,
+                opened=d.at.date(),
+                reason=d.reason,
+            )
+        elif d.link is not None:
+            if d.link.issue in issues:
+                issues[d.link.issue] = issues[d.link.issue].model_copy(
+                    update={"github": d.link.url}
+                )
+            else:
+                warnings.append(f"{d.id} links unknown issue {d.link.issue}")
+        elif d.status is not None:
+            for fp in d.status.fingerprints:
+                statuses[fp] = d.status.status
+                status_provenance[fp] = Provenance(timestamp=d.at, author=d.author, reason=d.reason)
+    kept_issues = [issue for issue in issues.values() if issue.findings]
+    review = Review(
+        suppressions=suppressions,
+        issues=kept_issues,
+        statuses=statuses,
+        status_provenance=status_provenance,
+    )
+    return Fold(review=review, warnings=warnings)
+
+
+def load_review(store: StoreFS | str | Path) -> Review:
+    """The folded view of the store's decision log."""
+    return fold(load_decisions(as_store_fs(store))).review
+
+
+def write_review_views(fs: StoreFS, review: Review) -> list[str]:
+    """The derived `suppressions.yaml` and `issues.yaml`, for reading only."""
+    written: list[str] = []
     for name, rows in ((SUPPRESSIONS_FILE, review.suppressions), (ISSUES_FILE, review.issues)):
-        path = directory / name
         rows_json = [row.model_dump(mode="json", exclude_none=True) for row in rows]
-        path.write_text(yaml.safe_dump(rows_json, sort_keys=False, allow_unicode=True))
-        written.append(path)
+        body = yaml.safe_dump(rows_json, sort_keys=False, allow_unicode=True)
+        written.append(fs.write_text(name, DERIVED_HEADER + body))
+    return written
+
+
+def _load_yaml_list(fs: StoreFS, key: str, adapter: TypeAdapter[Any]) -> list[Any]:
+    """A YAML file as a validated list, or an empty list when absent or derived. Errors name the file."""
+    if not fs.is_file(key):
+        return []
+    text = fs.read_text(key)
+    if text.startswith(DERIVED_HEADER):
+        return []
+    try:
+        loaded = yaml.safe_load(text)
+    except yaml.YAMLError as ex:
+        raise ValueError(f"{key}: {ex}") from ex
+    if loaded is None:
+        return []
+    if not isinstance(loaded, list):
+        raise ValueError(f"{key} must be a YAML list")
+    try:
+        return adapter.validate_python(loaded)
+    except ValidationError as ex:
+        raise ValueError(f"{key}: {ex}") from ex
+
+
+def _midnight(day: date) -> datetime:
+    return datetime.combine(day, datetime.min.time(), tzinfo=UTC)
+
+
+def _migrated(
+    index: int, at: datetime, author: str, reason: str | None, kind: Kind, payload: BaseModel
+) -> Decision:
+    """A decision with a deterministic id: file position, then a digest of the whole entry."""
+    entry = f"{index}|{author}|{reason}|{payload.model_dump_json()}"
+    digest = hashlib.sha1(entry.encode()).hexdigest()[:4]
+    return Decision.model_validate(
+        {
+            "id": f"dec-{_stamp(at)}-{index:06d}{digest}",
+            "at": at,
+            "author": author,
+            "kind": kind,
+            "reason": reason,
+            kind: payload.model_dump(),
+        }
+    )
+
+
+def migrate_review_files(fs: StoreFS, *, now: datetime) -> list[Decision]:
+    """Turn hand-written `suppressions.yaml` and `issues.yaml` into decisions, once.
+
+    Ids are deterministic (file position and a digest of the entry) and links take their issue's
+    `opened` date, so running it again writes nothing. `now` is kept for callers that log when
+    the migration happened.
+    """
+    rules: list[SuppressionRule] = _load_yaml_list(fs, SUPPRESSIONS_FILE, _SUPPRESSIONS)
+    issues: list[IssueEntry] = _load_yaml_list(fs, ISSUES_FILE, _ISSUES)
+    candidates: list[Decision] = []
+    for rule in rules:
+        payload = SuppressPayload(
+            rule=rule.rule, subject=rule.subject, producer=rule.producer, kind=rule.kind
+        )
+        at = _midnight(rule.since)
+        candidates.append(
+            _migrated(len(candidates), at, rule.author, rule.reason, "suppress", payload)
+        )
+    for issue in issues:
+        accept = AcceptPayload(
+            issue=issue.id, title=issue.title, subject=issue.subject, fingerprints=issue.findings
+        )
+        at = _midnight(issue.opened)
+        candidates.append(
+            _migrated(len(candidates), at, issue.author, issue.reason, "accept", accept)
+        )
+        if issue.github:
+            link = LinkPayload(issue=issue.id, url=issue.github)
+            candidates.append(_migrated(len(candidates), at, issue.author, None, "link", link))
+    written = [d for d in candidates if not fs.exists(d.key())]
+    for decision in written:
+        write_decision(fs, decision)
+    # the hand-written files become derived views, so the log is readable again
+    write_review_views(fs, fold(load_decisions(fs, allow_unmigrated=True)).review)
     return written
 
 
@@ -143,6 +420,13 @@ def apply_review(runs: Sequence[Run], review: Review) -> list[Run]:
                     )
             if finding.fingerprint in issue_of:
                 finding.issue = issue_of[finding.fingerprint]
+            if finding.fingerprint in review.statuses:
+                status = review.statuses[finding.fingerprint]
+                finding.status = status
+                provenance = review.status_provenance.get(finding.fingerprint) or Provenance(
+                    timestamp=datetime.now(tz=UTC), author="review", reason=None
+                )
+                finding.history.append(StatusChange(status=status, provenance=provenance))
         applied.append(copy)
     return applied
 

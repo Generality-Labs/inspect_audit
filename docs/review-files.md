@@ -1,36 +1,38 @@
-# Review files
+# Review decisions
 
-Producer run files are never edited. A person's decisions live in two YAML files beside the output, are applied when summaries and parquet are rendered, and survive every rerun. The files are written through `inspect-audit-findings review suppress|accept|link`, which resolves what you point at, validates the whole set, re-renders and commits with you as author; nobody edits them by hand, and comments in them are not preserved. Pass `--review DIR` to `run`, `summary` or `review`; the default is the `--out` directory.
+Producer run files are never edited. A review decision is one object under `review/` in the store, written once and never changed: who decided what, when, and why. Rendering folds the log in time order into the view it applies to copies of the current runs: matching observations gain a suppression, matching fingerprints gain an issue id or a status. Rerunning a producer cannot lose a decision, and two writers never edit the same object, so the store works the same on a directory, S3 or R2.
 
-## suppressions.yaml
+Decisions are written through `inspect-audit-findings review suppress|accept|link|status|retract`, which resolves what you point at against the current view, refuses what the fold would refuse, writes the object and re-renders. Nobody writes the objects by hand.
 
-A list. Each entry rules out every observation of one rule, on one eval or all of them, optionally for one producer. Suppressed observations stay in the run files and the parquet with `suppressed` true; they leave the Findings section and the counts and appear under Suppressed with the reason.
+## One decision
 
-```yaml
-- rule: answer_length
-  subject: inspect_evals/stereoset     # or "*" for every eval
-  producer: inspect_dataset            # optional
-  kind: false_positive                 # free text; false_positive, accepted_risk, duplicate
-  author: matt
-  reason: StereoSet answers are structs; the scanner measures their repr
-  since: 2026-09-30
+```json
+{
+  "id": "dec-20261009T041210Z-0412107f3",
+  "at": "2026-10-09T04:12:10.412107Z",
+  "author": "Matt Fisher <matt@generality.org>",
+  "kind": "suppress",
+  "reason": "struct-typed answers; inspect_dataset#26",
+  "suppress": {"rule": "answer_length", "subject": "inspect_evals/stereoset", "producer": "inspect_dataset", "kind": "false_positive"}
+}
 ```
 
-## issues.yaml
+The object key is `review/<at as YYYYMMDDTHHMMSSZ>-<id>.json`, so a listing is in time order. `kind` names the one payload present:
 
-A list. Each entry is a problem a person has accepted. It links the observations that evidence it by fingerprint, so a rerun that observes the same thing keeps the link. A fingerprint may belong to one issue only.
+- `suppress`: `rule`, `subject` (`"*"` or an eval), `producer` or null, `kind` (free text: `false_positive`, `accepted_risk`, `duplicate`). Rules out every observation of the rule on the subject.
+- `accept`: `issue` (`ISS-NNNN`, the next after the highest), `title`, `subject`, `fingerprints`. A problem a person has accepted, linked to the observations that evidence it by fingerprint so a rerun that observes the same thing keeps the link.
+- `link`: `issue`, `url`. The latest link wins.
+- `status`: `fingerprints`, `status` (`hypothesis`, `supported`, `qualified`, `retracted`). The latest status per fingerprint wins; the observation's history records who set it and why.
+- `retract`: `decision`, the id of an earlier decision this one withdraws. A mistaken suppression or acceptance is undone without deleting history.
 
-```yaml
-- id: ISS-0001
-  title: strong_reject records 313 samples where eval.yaml declares 324
-  subject: inspect_evals/strong_reject
-  findings: [sha256:3f9c…]             # fingerprints, resolved by `review accept`
-  author: matt
-  opened: 2026-09-30
-  reason: confirmed against the dataset on HuggingFace
-  github: https://github.com/UKGovernmentBEIS/inspect_evals/issues/0000   # once filed
-```
+Authors are stored in full as `Name <email>`; the export shows names only.
 
-The Issues section of an eval's summary lists each issue with the number of current observations linked to it. An issue whose fingerprints no longer appear is shown with "no current observation" and a warning is printed; that is a prompt to re-check, not evidence of a fix.
+## The fold
 
-You never type a fingerprint. `review accept` takes `--eval` and `--rule` (every current observation of that rule on that eval) or `--id` record ids (`<run id>/<n>`, as shown in `LEADS.md` and the summaries) and records the fingerprints, which match observations across runs. Issue ids are assigned as `ISS-NNNN`, the next after the highest in the file.
+Suppressions accumulate. An acceptance creates an issue; a fingerprint accepted a second time moves to the later issue and the renderer prints a warning naming both decisions, which is how a race between two writers on object storage surfaces. A link to an unknown issue is a warning; so is a link whose timestamp sorts before its acceptance, which a writer with a slow clock can produce, since the fold is strictly in key order. An issue whose fingerprints have all moved elsewhere disappears. The Issues section of an eval's summary lists each issue with the number of current observations linked to it; an issue whose fingerprints no longer appear is shown with "no current observation" and a warning is printed, a prompt to re-check rather than evidence of a fix.
+
+## Derived views
+
+`suppressions.yaml` and `issues.yaml` are written from the fold on every render as read-only views; their first line is `# derived from review/; do not edit`. A store that still has hand-written versions of those files converts them once with `inspect-audit-findings review migrate --store LOCATOR`, which writes one decision per entry with the recorded author and date, in file order, and is safe to run again. Until that has run, every other command refuses the store rather than overwrite the files with the derived views, so nothing is lost by upgrading in the wrong order.
+
+You never type a fingerprint. `review accept` and `review status` take `--eval` and `--rule` (every current observation of that rule on that eval), `--id` record ids (`<run id>/<n>`, as shown in `LEADS.md` and the summaries) or `--fingerprint`, and record the fingerprints, which match observations across runs.

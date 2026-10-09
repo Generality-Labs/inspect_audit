@@ -1,6 +1,6 @@
 # Leads
 
-`inspect-audit-findings leads --out DIR EVAL` renders one eval's current findings as `LEADS.md`: hypotheses with a location attached, for an agent to confirm or retire. It is the same current view the summaries use, with the review files applied. Suppressed observations are dropped and counted; accepted issues are listed first; groups are capped at three examples with a pointer to the run file for the rest; checks that skipped are listed so absence is not read as clean. Every example carries its record id (`<run id>/<n>`), which is what an agent should cite when a register finding rests on a lead.
+`inspect-audit-findings leads --store LOCATOR EVAL` renders one eval's current findings as `LEADS.md`: hypotheses with a location attached, for an agent to confirm or retire. It is the same current view the summaries use, with the review decisions applied. Suppressed observations are dropped and counted; accepted issues are listed first; groups are capped at three examples with a pointer to the run file for the rest; checks that skipped are listed so absence is not read as clean. Every example carries its record id (`<run id>/<n>`), which is what an agent should cite when a register finding rests on a lead.
 
 `--sample ID` narrows to observations whose locations name that sample (dataset sample locations and transcript locations both count), which is what the per-sample auditor wants. `--write PATH` writes the file instead of printing it.
 

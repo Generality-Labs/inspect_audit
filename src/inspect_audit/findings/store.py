@@ -17,6 +17,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from .export import EXPORT_DIR
+from .fs import as_store_fs
 from .io import read_current
 from .models import Finding, Run
 from .review import IssueEntry, Review, SuppressionRule, load_review, save_review
@@ -52,7 +53,7 @@ class Store:
         self.review_dir = (review_dir or root).resolve()
 
     def runs(self) -> list[Run]:
-        return read_current(self.root)
+        return read_current(as_store_fs(self.root))
 
     def review(self) -> Review:
         return load_review(self.review_dir)

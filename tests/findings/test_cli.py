@@ -11,6 +11,7 @@ from test_header_adapter import _log
 
 from inspect_audit.findings.cli import collect_logs, main
 from inspect_audit.findings.featured import FEATURED
+from inspect_audit.findings.fs import StoreFS
 from inspect_audit.findings.models import Run
 from inspect_audit.findings.producers import ProducerConfig
 
@@ -527,8 +528,9 @@ def test_a_renamed_run_file_carries_its_own_record_ids(tmp_path: Path, run: Run)
     write_outputs(out, {"inspect_evals/stereoset": [run]})
     write_outputs(out, {"inspect_evals/stereoset": [run]})  # same run id within one second
     runs_dir = out / "inspect-evals-stereoset" / "runs"
-    first = read_run(runs_dir / "lint-1.run.json")
-    second = read_run(runs_dir / "lint-1-2.run.json")
+    fs = StoreFS.from_locator(out)
+    first = read_run(fs, "inspect-evals-stereoset/runs/lint-1.run.json")
+    second = read_run(fs, "inspect-evals-stereoset/runs/lint-1-2.run.json")
     assert [f.id for f in first.findings] == ["lint-1/1"]
     assert second.id == "lint-1-2"
     assert [f.id for f in second.findings] == ["lint-1-2/1"]

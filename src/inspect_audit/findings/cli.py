@@ -19,6 +19,7 @@ from .adapters import lint as lint_adapter
 from .config import DEFAULT_CONFIG_PATH, load_config
 from .export import write_export
 from .featured import FEATURED
+from .fs import StoreFS, as_store_fs
 from .io import findings_df, read_current, read_runs, runs_df, write_parquet, write_run
 from .leads import NoRunsError, leads_markdown
 from .models import Run
@@ -70,14 +71,14 @@ def sweep(
     return runs_by_eval
 
 
-def _run_path(directory: Path, run: Run) -> Path:
-    """`runs/<run id>.run.json`, never reusing a name: two sweeps in one second get distinct files."""
-    path = directory / "runs" / f"{run.id}.run.json"
+def _run_key(fs: StoreFS, slug_dir: str, run: Run) -> str:
+    """`<slug>/runs/<run id>.run.json`, never reusing a name: two sweeps in one second get distinct objects."""
+    key = f"{slug_dir}/runs/{run.id}.run.json"
     counter = 2
-    while path.exists():
-        path = directory / "runs" / f"{run.id}-{counter}.run.json"
+    while fs.exists(key):
+        key = f"{slug_dir}/runs/{run.id}-{counter}.run.json"
         counter += 1
-    return path
+    return key
 
 
 def _renamed(run: Run, file_id: str) -> Run:
@@ -95,37 +96,35 @@ def _renamed(run: Run, file_id: str) -> Run:
 
 
 def write_outputs(
-    out: Path, runs_by_eval: Mapping[str, Sequence[Run]], review: Review | None = None
+    store: StoreFS | str | Path,
+    runs_by_eval: Mapping[str, Sequence[Run]],
+    review: Review | None = None,
 ) -> None:
     """Append the new runs, then render everything from the current view (newest run per producer)."""
+    fs = as_store_fs(store)
     for target, runs in runs_by_eval.items():
-        directory = out / slug(target)
-        written: list[Run] = []
         for run in runs:
-            path = _run_path(directory, run)
-            file_id = path.name.removesuffix(".run.json")
-            stored = run if file_id == run.id else _renamed(run, file_id)
-            write_run(stored, path)
-            written.append(stored)
-    render_current(out, review)
+            key = _run_key(fs, slug(target), run)
+            file_id = key.rsplit("/", 1)[-1].removesuffix(".run.json")
+            write_run(run if file_id == run.id else _renamed(run, file_id), fs, key)
+    render_current(fs, review)
 
 
-def render_current(out: Path, review: Review | None = None) -> None:
-    """Parquet and summaries from the current view, with review decisions applied."""
+def render_current(store: StoreFS | str | Path, review: Review | None = None) -> None:
+    """Parquet, summaries and export from the current view, with review decisions applied."""
+    fs = as_store_fs(store)
     review = review or Review()
     runs_by_eval: dict[str, list[Run]] = {}
-    for run in apply_review(read_current(out), review):
+    for run in apply_review(read_current(fs), review):
         runs_by_eval.setdefault(run.subject.eval, []).append(run)
     all_runs: list[Run] = []
     for target, runs in runs_by_eval.items():
-        (out / slug(target) / "SUMMARY.md").write_text(
-            render_eval_summary(runs, issues=review.issues)
-        )
+        fs.write_text(f"{slug(target)}/SUMMARY.md", render_eval_summary(runs, issues=review.issues))
         all_runs += runs
-    write_parquet(findings_df(all_runs), out / "findings.parquet")
-    write_parquet(runs_df(all_runs), out / "runs.parquet")
-    write_export(out, runs_by_eval, review, history=read_runs(out))
-    (out / "SUMMARY.md").write_text(render_sweep_summary(runs_by_eval))
+    write_parquet(findings_df(all_runs), fs, "findings.parquet")
+    write_parquet(runs_df(all_runs), fs, "runs.parquet")
+    write_export(fs, runs_by_eval, review, history=read_runs(fs))
+    fs.write_text("SUMMARY.md", render_sweep_summary(runs_by_eval))
     for issue_id, fingerprints in sorted(unmatched_issue_findings(review, all_runs).items()):
         print(
             f"warning: issue {issue_id} lists {len(fingerprints)} fingerprint(s) with no current "
@@ -171,10 +170,11 @@ def _load_review_or_exit(directory: Path, *, explicit: bool) -> Review | None:
 
 
 def _summaries_from_disk(out: Path, review: Review) -> int:
-    if not read_current(out):
-        print(f"no runs under {out}", file=sys.stderr)
+    fs = as_store_fs(out)
+    if not read_current(fs):
+        print(f"no runs under {fs.locator}", file=sys.stderr)
         return 2
-    render_current(out, review)
+    render_current(fs, review)
     return 0
 
 

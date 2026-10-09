@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import json
 from collections.abc import Sequence
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from .fs import StoreFS
 from .models import Run
 
 if TYPE_CHECKING:
@@ -72,37 +73,38 @@ RUN_COLUMNS: tuple[str, ...] = (
 )
 
 
-def write_run(run: Run, path: Path) -> Path:
-    """Write one run as indented JSON, creating parent directories."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(run.model_dump_json(indent=1) + "\n")
-    return path
+def write_run(run: Run, fs: StoreFS, key: str) -> str:
+    """Write one run as indented JSON at `key`, creating parents."""
+    return fs.write_text(key, run.model_dump_json(indent=1) + "\n")
 
 
-def read_run(path: Path) -> Run:
-    return Run.model_validate_json(path.read_text())
+def read_run(fs: StoreFS, key: str) -> Run:
+    return Run.model_validate_json(fs.read_text(key))
 
 
-def read_runs(root: Path) -> list[Run]:
-    """Every `*.run.json` under `root`, sorted by path: the whole history, not just the current view."""
-    return [read_run(path) for path in sorted(root.rglob(f"*{RUN_SUFFIX}"))]
+def read_runs(fs: StoreFS) -> list[Run]:
+    """Every run under `<slug>/runs/`, sorted by key: the whole history, not just the current view."""
+    return [read_run(fs, key) for key in fs.glob(f"*/runs/*{RUN_SUFFIX}")]
 
 
-def read_current(root: Path) -> list[Run]:
+def read_current(fs: StoreFS) -> list[Run]:
     """The current view: per eval and producer, the newest run by timestamp, then run id.
 
     Derived rather than recorded, so two writers appending runs at once never contend for a
     shared manifest. Ties on timestamp go to the later run id, so a rerun written in the same
     second (its file carries a `-2` suffix) is the current one.
     """
+    by_eval_dir: dict[str, list[str]] = {}
+    for key in fs.glob(f"*/runs/*{RUN_SUFFIX}"):
+        by_eval_dir.setdefault(key.split("/", 1)[0], []).append(key)
     current: list[Run] = []
-    for runs_dir in sorted(root.glob("*/runs")):
+    for eval_dir in sorted(by_eval_dir):
         newest: dict[str, tuple[tuple[datetime, str], Run]] = {}
-        for path in sorted(runs_dir.glob(f"*{RUN_SUFFIX}")):
-            run = read_run(path)
-            key = (run.timestamp, path.name.removesuffix(RUN_SUFFIX))
-            if run.producer not in newest or key > newest[run.producer][0]:
-                newest[run.producer] = (key, run)
+        for key in by_eval_dir[eval_dir]:
+            run = read_run(fs, key)
+            order = (run.timestamp, key.rsplit("/", 1)[-1].removesuffix(RUN_SUFFIX))
+            if run.producer not in newest or order > newest[run.producer][0]:
+                newest[run.producer] = (order, run)
         current.extend(newest[producer][1] for producer in sorted(newest))
     return current
 
@@ -203,7 +205,7 @@ def runs_df(runs: Sequence[Run]) -> pd.DataFrame:
     return pd.DataFrame.from_records(records, columns=list(RUN_COLUMNS))
 
 
-def write_parquet(frame: pd.DataFrame, path: Path) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(path, index=False)
-    return path
+def write_parquet(frame: pd.DataFrame, fs: StoreFS, key: str) -> str:
+    buffer = io.BytesIO()
+    frame.to_parquet(buffer, index=False)
+    return fs.write_bytes(key, buffer.getvalue())

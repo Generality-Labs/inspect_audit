@@ -1,5 +1,6 @@
 """End to end over a temporary inspect_evals root with stubbed producers."""
 
+import io
 import json
 import sys
 from pathlib import Path
@@ -769,8 +770,61 @@ def test_render_is_identical_on_a_directory_and_in_memory(tmp_path: Path, run: R
         "issues.yaml",
     ]
     outputs: list[dict[str, str]] = []
+    frames: list[list[pd.DataFrame]] = []
     for fs in stores:
         write_outputs(fs, {"inspect_evals/stereoset": [run]})
         Store(fs).accept(Selection(ids=("lint-1/1",)), title="t", author="Matt Fisher <m@x>")
         outputs.append({k: _without_clock_lines(fs.read_text(k)) for k in keys})
+        frames.append(
+            [
+                pd.read_parquet(io.BytesIO(fs.read_bytes(k)))
+                for k in ("findings.parquet", "runs.parquet")
+            ]
+        )
     assert outputs[0] == outputs[1]
+    assert all(a.equals(b) for a, b in zip(frames[0], frames[1], strict=True))
+
+
+def test_hand_written_review_files_must_be_migrated_first(
+    tmp_path: Path, run: Run, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import yaml
+
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    legacy = [
+        {
+            "rule": "IEBP008",
+            "subject": "*",
+            "author": "old <o@x>",
+            "reason": "legacy",
+            "since": "2026-09-30",
+        }
+    ]
+    (out / "suppressions.yaml").write_text(yaml.safe_dump(legacy))
+    assert main(["summary", str(out)]) == 2
+    assert "migrate" in capsys.readouterr().err
+    assert (out / "suppressions.yaml").read_text().startswith("- ")  # untouched
+    suppress = ["review", "suppress", "--store", str(out), "--rule", "IEBP008", "--reason", "r"]
+    assert main([*suppress, "--author", "Matt Fisher <matt@example.com>"]) == 2
+    assert "migrate" in capsys.readouterr().err
+    assert StoreFS.from_locator(out).glob("review/*.json") == []
+    assert main(["review", "migrate", "--store", str(out)]) == 0
+    assert main(["summary", str(out)]) == 0
+    assert (out / "suppressions.yaml").read_text().startswith("# derived from review/")
+    assert "IEBP008" in (out / "suppressions.yaml").read_text()
+
+
+def test_summary_positional_beats_the_environment_store(
+    tmp_path: Path, run: Run, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    monkeypatch.setenv("INSPECT_AUDIT_STORE", str(tmp_path / "nonexistent"))
+    assert main(["summary", str(out)]) == 0
+    assert main(["summary", "--store", str(out)]) == 0
+    assert main(["summary"]) == 2

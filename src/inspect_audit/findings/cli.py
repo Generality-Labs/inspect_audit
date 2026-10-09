@@ -197,14 +197,14 @@ def _store_arg(parser: argparse.ArgumentParser) -> None:
         "--store",
         "--out",
         dest="store",
-        default=os.environ.get("INSPECT_AUDIT_STORE"),
+        default=None,
         help="the store: a directory or an fsspec locator such as s3://bucket/prefix "
         "(default: $INSPECT_AUDIT_STORE)",
     )
 
 
 def _resolve_store(args: argparse.Namespace) -> StoreFS | None:
-    locator = args.store or getattr(args, "out", None)
+    locator = getattr(args, "out", None) or args.store or os.environ.get("INSPECT_AUDIT_STORE")
     if not locator:
         print("no store: pass --store LOCATOR or set INSPECT_AUDIT_STORE", file=sys.stderr)
         return None

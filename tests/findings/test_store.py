@@ -150,3 +150,11 @@ def test_store_works_on_a_memory_locator(run: Run) -> None:
     store = Store(fs)
     store.suppress(rule="IEBP008", author=AUTHOR, reason="r")
     assert len(store.fs.glob("review/*.json")) == 1 and store.review().suppressions
+
+
+def test_issue_ids_are_never_reused_after_a_retraction(tmp_path: Path, run: Run) -> None:
+    store = _store(tmp_path, run)
+    first = store.accept(Selection(ids=("lint-1/1",)), title="t", author=AUTHOR)
+    store.retract(first.id, author=AUTHOR, reason="wrong")
+    second = store.accept(Selection(ids=("lint-1/1",)), title="t again", author=AUTHOR)
+    assert second.accept is not None and second.accept.issue == "ISS-0002"

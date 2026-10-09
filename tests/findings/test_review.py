@@ -239,3 +239,66 @@ def test_a_malformed_decision_object_names_itself(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="becuase"):
         load_decisions(fs)
+
+
+def test_retracting_a_retraction_restores_the_decision() -> None:
+    sup = _dec("suppress", T1, rule="noise", subject="e")
+    r1 = _dec("retract", T2, decision=sup.id)
+    r2 = _dec("retract", T3, decision=r1.id)
+    assert fold([sup, r1]).review.suppressions == []
+    assert [s.rule for s in fold([sup, r1, r2]).review.suppressions] == ["noise"]
+
+
+def test_two_acceptances_of_one_issue_id_keep_the_later_and_warn() -> None:
+    first = _dec("accept", T1, issue="ISS-0005", title="x", subject="e", fingerprints=["fp1"])
+    second = _dec("accept", T2, issue="ISS-0005", title="y", subject="e", fingerprints=["fp2"])
+    folded = fold([first, second])
+    assert [(i.id, i.title, i.findings) for i in folded.review.issues] == [
+        ("ISS-0005", "y", ["fp2"])
+    ]
+    (warning,) = folded.warnings
+    assert first.id in warning and second.id in warning and "ISS-0005" in warning
+
+
+def test_migrate_keeps_file_order_distinguishes_twins_and_dates_links_deterministically(
+    tmp_path: Path,
+) -> None:
+    fs = StoreFS.from_locator(tmp_path)
+    rules = [
+        _rule(rule="ZZZ", reason="first in the file"),
+        _rule(rule="AAA", reason="second in the file"),
+        _rule(rule="AAA", reason="same payload, another reason"),
+    ]
+    issues = [
+        _issue(id="ISS-0002", findings=["sha256:b"], github="https://x/2"),
+        _issue(id="ISS-0001", findings=["sha256:a"]),
+    ]
+    fs.write_text(
+        "suppressions.yaml",
+        yaml.safe_dump([r.model_dump(mode="json", exclude_none=True) for r in rules]),
+    )
+    fs.write_text(
+        "issues.yaml",
+        yaml.safe_dump([i.model_dump(mode="json", exclude_none=True) for i in issues]),
+    )
+    created = migrate_review_files(fs, now=T3)
+    assert len(created) == 6 and len(fs.glob("review/*.json")) == 6
+    review = load_review(fs)
+    assert [(s.rule, s.reason) for s in review.suppressions] == [(r.rule, r.reason) for r in rules]
+    assert [i.id for i in review.issues] == ["ISS-0002", "ISS-0001"]
+    assert review.issues[0].github == "https://x/2"
+    link = next(d for d in created if d.link is not None)
+    assert link.at.date() == issues[0].opened  # not `now`, so a rerun is a no-op
+    assert migrate_review_files(fs, now=datetime(2026, 12, 1, tzinfo=UTC)) == []
+
+
+def test_hand_written_review_files_block_reading_until_migrated(tmp_path: Path) -> None:
+    fs = StoreFS.from_locator(tmp_path)
+    fs.write_text(
+        "issues.yaml", yaml.safe_dump([_issue().model_dump(mode="json", exclude_none=True)])
+    )
+    with pytest.raises(ValueError, match="migrate"):
+        load_decisions(fs)
+    migrate_review_files(fs, now=T3)
+    write_review_views(fs, load_review(fs))
+    assert [d.kind for d in load_decisions(fs)] == ["accept"]

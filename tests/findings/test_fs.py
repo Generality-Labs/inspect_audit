@@ -43,3 +43,17 @@ def test_as_store_fs_accepts_paths_strings_and_instances(tmp_path: Path) -> None
     a = as_store_fs(tmp_path)
     assert as_store_fs(str(tmp_path)).locator == a.locator
     assert as_store_fs(a) is a
+
+
+def test_writes_do_not_create_directories_on_object_stores() -> None:
+    from fsspec.implementations.memory import MemoryFileSystem
+
+    class Bucketish(MemoryFileSystem):
+        protocol = "bucketish"
+
+        def makedirs(self, path: str, exist_ok: bool = False) -> None:
+            raise PermissionError("a bucket-scoped token may not create buckets")
+
+    fs = StoreFS(Bucketish(), "bucket/prefix")
+    assert fs.write_text("a/b/c.json", "{}") == "a/b/c.json"
+    assert fs.read_text("a/b/c.json") == "{}"

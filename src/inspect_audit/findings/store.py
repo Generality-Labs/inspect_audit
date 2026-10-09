@@ -9,6 +9,7 @@ directory, S3 or R2.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +30,7 @@ from .review import (
     load_decisions,
     load_review,
     new_decision_id,
+    unmigrated_review_files,
     write_decision,
 )
 
@@ -49,8 +51,13 @@ class Selection:
     fingerprints: tuple[str, ...] = ()
 
 
-def _next_issue_id(review: Review) -> str:
-    numbers = [int(m.group(1)) for i in review.issues if (m := re.fullmatch(r"ISS-(\d+)", i.id))]
+def _next_issue_id(decisions: Sequence[Decision]) -> str:
+    """The next `ISS-NNNN` after every acceptance ever written, retracted ones included."""
+    numbers = [
+        int(m.group(1))
+        for d in decisions
+        if d.accept is not None and (m := re.fullmatch(r"ISS-(\d+)", d.accept.issue))
+    ]
     return f"ISS-{max(numbers, default=0) + 1:04d}"
 
 
@@ -146,7 +153,7 @@ class Store:
         if taken:
             raise StoreError(f"already accepted into another issue: {', '.join(taken)}")
         payload = AcceptPayload(
-            issue=_next_issue_id(review),
+            issue=_next_issue_id(load_decisions(self.fs)),
             title=title,
             subject=subjects[0],
             fingerprints=sorted({f.fingerprint for f in findings}),
@@ -210,6 +217,12 @@ class Store:
 
         if not _AUTHOR.fullmatch(decision.author):
             raise StoreError(f"author must be 'Name <email>', got {decision.author!r}")
+        pending = unmigrated_review_files(self.fs)
+        if pending:
+            raise StoreError(
+                f"hand-written {', '.join(pending)} found under {self.fs.locator}; "
+                "run `inspect-audit-findings review migrate` first"
+            )
         write_decision(self.fs, decision)
         render_current(self.fs)
         return decision

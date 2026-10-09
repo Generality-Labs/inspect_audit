@@ -67,7 +67,8 @@ class StoreFS:
 
     def write_bytes(self, key: str, data: bytes) -> str:
         full = self._full(key)
-        self.fs.makedirs(full.rsplit("/", 1)[0], exist_ok=True)
+        if self.protocol == "file":  # object stores have no directories to create
+            self.fs.makedirs(full.rsplit("/", 1)[0], exist_ok=True)
         with self.fs.open(full, "wb") as handle:
             cast("Any", handle).write(data)
         return key

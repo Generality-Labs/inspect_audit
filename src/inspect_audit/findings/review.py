@@ -176,8 +176,28 @@ def new_decision_id(at: datetime) -> str:
     return f"dec-{_stamp(at)}-{at.microsecond:06d}{uuid4().hex[:3]}"
 
 
-def load_decisions(fs: StoreFS) -> list[Decision]:
-    """Every decision in the log, in key order (time, then id). A malformed object names itself."""
+def unmigrated_review_files(fs: StoreFS) -> list[str]:
+    """Hand-written `suppressions.yaml` or `issues.yaml` still present: a store from before the log."""
+    found: list[str] = []
+    for name in (SUPPRESSIONS_FILE, ISSUES_FILE):
+        if fs.is_file(name) and not fs.read_text(name).startswith(DERIVED_HEADER):
+            found.append(name)
+    return found
+
+
+def load_decisions(fs: StoreFS, *, allow_unmigrated: bool = False) -> list[Decision]:
+    """Every decision in the log, in key order (time, then id). A malformed object names itself.
+
+    A store that still holds hand-written review files is refused until `migrate` has run, so
+    no render can overwrite them with the derived views.
+    """
+    if not allow_unmigrated:
+        pending = unmigrated_review_files(fs)
+        if pending:
+            raise ValueError(
+                f"hand-written {', '.join(pending)} found under {fs.locator}; "
+                "run `inspect-audit-findings review migrate` first"
+            )
     decisions: list[Decision] = []
     for key in fs.glob(f"{REVIEW_PREFIX}/*.json"):
         try:
@@ -206,11 +226,16 @@ def fold(decisions: Sequence[Decision]) -> Fold:
     retraction removes the effect of the decision it names, and a fingerprint accepted twice
     goes to the later acceptance with a warning naming both.
     """
-    retracted = {d.retract.decision for d in decisions if d.retract is not None}
-    live = [d for d in sorted(decisions, key=lambda d: d.key()) if d.id not in retracted]
+    ordered = sorted(decisions, key=lambda d: d.key())
+    dead: set[str] = set()  # a retraction that is itself retracted has no effect
+    for d in reversed(ordered):
+        if d.retract is not None and d.id not in dead:
+            dead.add(d.retract.decision)
+    live = [d for d in ordered if d.id not in dead and d.retract is None]
     suppressions: list[SuppressionRule] = []
     issues: dict[str, IssueEntry] = {}
     owner: dict[str, tuple[str, str]] = {}  # fingerprint -> (issue id, decision id)
+    accepted_by: dict[str, str] = {}  # issue id -> decision id
     statuses: dict[str, Status] = {}
     status_provenance: dict[str, Provenance] = {}
     warnings: list[str] = []
@@ -228,6 +253,13 @@ def fold(decisions: Sequence[Decision]) -> Fold:
                 )
             )
         elif d.accept is not None:
+            if d.accept.issue in issues:
+                warnings.append(
+                    f"{d.accept.issue} accepted by {accepted_by[d.accept.issue]} and again by "
+                    f"{d.id}; the later wins"
+                )
+                owner = {fp: o for fp, o in owner.items() if o[0] != d.accept.issue}
+            accepted_by[d.accept.issue] = d.id
             for fp in d.accept.fingerprints:
                 if fp in owner:
                     previous_issue, previous_decision = owner[fp]
@@ -311,12 +343,14 @@ def _midnight(day: date) -> datetime:
 
 
 def _migrated(
-    at: datetime, author: str, reason: str | None, kind: Kind, payload: BaseModel
+    index: int, at: datetime, author: str, reason: str | None, kind: Kind, payload: BaseModel
 ) -> Decision:
-    digest = hashlib.sha1(payload.model_dump_json().encode()).hexdigest()[:4]
+    """A decision with a deterministic id: file position, then a digest of the whole entry."""
+    entry = f"{index}|{author}|{reason}|{payload.model_dump_json()}"
+    digest = hashlib.sha1(entry.encode()).hexdigest()[:4]
     return Decision.model_validate(
         {
-            "id": f"dec-{_stamp(at)}-{digest}",
+            "id": f"dec-{_stamp(at)}-{index:06d}{digest}",
             "at": at,
             "author": author,
             "kind": kind,
@@ -329,8 +363,9 @@ def _migrated(
 def migrate_review_files(fs: StoreFS, *, now: datetime) -> list[Decision]:
     """Turn hand-written `suppressions.yaml` and `issues.yaml` into decisions, once.
 
-    Ids are deterministic, so running it again writes nothing. `now` dates link decisions, which
-    the files never recorded a date for.
+    Ids are deterministic (file position and a digest of the entry) and links take their issue's
+    `opened` date, so running it again writes nothing. `now` is kept for callers that log when
+    the migration happened.
     """
     rules: list[SuppressionRule] = _load_yaml_list(fs, SUPPRESSIONS_FILE, _SUPPRESSIONS)
     issues: list[IssueEntry] = _load_yaml_list(fs, ISSUES_FILE, _ISSUES)
@@ -339,22 +374,26 @@ def migrate_review_files(fs: StoreFS, *, now: datetime) -> list[Decision]:
         payload = SuppressPayload(
             rule=rule.rule, subject=rule.subject, producer=rule.producer, kind=rule.kind
         )
+        at = _midnight(rule.since)
         candidates.append(
-            _migrated(_midnight(rule.since), rule.author, rule.reason, "suppress", payload)
+            _migrated(len(candidates), at, rule.author, rule.reason, "suppress", payload)
         )
     for issue in issues:
         accept = AcceptPayload(
             issue=issue.id, title=issue.title, subject=issue.subject, fingerprints=issue.findings
         )
+        at = _midnight(issue.opened)
         candidates.append(
-            _migrated(_midnight(issue.opened), issue.author, issue.reason, "accept", accept)
+            _migrated(len(candidates), at, issue.author, issue.reason, "accept", accept)
         )
         if issue.github:
             link = LinkPayload(issue=issue.id, url=issue.github)
-            candidates.append(_migrated(now, issue.author, None, "link", link))
+            candidates.append(_migrated(len(candidates), at, issue.author, None, "link", link))
     written = [d for d in candidates if not fs.exists(d.key())]
     for decision in written:
         write_decision(fs, decision)
+    # the hand-written files become derived views, so the log is readable again
+    write_review_views(fs, fold(load_decisions(fs, allow_unmigrated=True)).review)
     return written
 
 

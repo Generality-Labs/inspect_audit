@@ -526,7 +526,6 @@ def test_a_renamed_run_file_carries_its_own_record_ids(tmp_path: Path, run: Run)
     out = tmp_path / "out"
     write_outputs(out, {"inspect_evals/stereoset": [run]})
     write_outputs(out, {"inspect_evals/stereoset": [run]})  # same run id within one second
-    runs_dir = out / "inspect-evals-stereoset" / "runs"
     fs = StoreFS.from_locator(out)
     first = read_run(fs, "inspect-evals-stereoset/runs/lint-1.run.json")
     second = read_run(fs, "inspect-evals-stereoset/runs/lint-1-2.run.json")
@@ -746,3 +745,32 @@ def test_render_current_writes_the_export(tmp_path: Path, run: Run) -> None:
     assert [e["eval"] for e in index["evals"]] == ["inspect_evals/stereoset"]
     assert (out / "export" / "evals" / "inspect-evals-stereoset.json").is_file()
     assert "secret" not in (out / "export" / "index.json").read_text()
+
+
+def _without_clock_lines(text: str) -> str:
+    """Lines carrying wall-clock time or a time-derived id, which differ between two renders."""
+    return "\n".join(
+        line
+        for line in text.splitlines()
+        if "generated_at" not in line and "opened" not in line and "dec-" not in line
+    )
+
+
+def test_render_is_identical_on_a_directory_and_in_memory(tmp_path: Path, run: Run) -> None:
+    from inspect_audit.findings.cli import write_outputs
+    from inspect_audit.findings.store import Selection, Store
+
+    stores = [StoreFS.from_locator(tmp_path / "a"), StoreFS.from_locator("memory://parity")]
+    keys = [
+        "SUMMARY.md",
+        "inspect-evals-stereoset/SUMMARY.md",
+        "export/index.json",
+        "export/evals/inspect-evals-stereoset.json",
+        "issues.yaml",
+    ]
+    outputs: list[dict[str, str]] = []
+    for fs in stores:
+        write_outputs(fs, {"inspect_evals/stereoset": [run]})
+        Store(fs).accept(Selection(ids=("lint-1/1",)), title="t", author="Matt Fisher <m@x>")
+        outputs.append({k: _without_clock_lines(fs.read_text(k)) for k in keys})
+    assert outputs[0] == outputs[1]

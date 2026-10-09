@@ -230,7 +230,7 @@ def test_migrate_turns_the_yaml_files_into_decisions_once(tmp_path: Path) -> Non
 def test_a_malformed_decision_object_names_itself(tmp_path: Path) -> None:
     fs = StoreFS.from_locator(tmp_path)
     fs.write_text("review/20261009T040000Z-dec-bad.json", "{not json")
-    with pytest.raises(ValueError, match="review/20261009T040000Z-dec-bad.json"):
+    with pytest.raises(ValueError, match=r"review/20261009T040000Z-dec-bad\.json"):
         load_decisions(fs)
     fs.write_text(
         "review/20261009T040000Z-dec-bad.json",

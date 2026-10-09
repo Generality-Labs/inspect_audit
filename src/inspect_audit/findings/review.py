@@ -200,9 +200,11 @@ class Fold(BaseModel):
 
 
 def fold(decisions: Sequence[Decision]) -> Fold:
-    """Apply the log in key order: suppressions accumulate, acceptances create issues, the latest
-    link and status win, a retraction removes the effect of the decision it names, and a
-    fingerprint accepted twice goes to the later acceptance with a warning naming both.
+    """Apply the log in key order into the view rendering uses.
+
+    Suppressions accumulate, acceptances create issues, the latest link and status win, a
+    retraction removes the effect of the decision it names, and a fingerprint accepted twice
+    goes to the later acceptance with a warning naming both.
     """
     retracted = {d.retract.decision for d in decisions if d.retract is not None}
     live = [d for d in sorted(decisions, key=lambda d: d.key()) if d.id not in retracted]

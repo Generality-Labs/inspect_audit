@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 from inspect_ai.log import list_eval_logs
@@ -25,7 +27,15 @@ from .leads import NoRunsError, leads_markdown
 from .models import Run
 from .producers import ProducerConfig
 from .render import render_eval_summary, render_sweep_summary
-from .review import Review, apply_review, load_review, unmatched_issue_findings
+from .review import (
+    Review,
+    apply_review,
+    fold,
+    load_decisions,
+    migrate_review_files,
+    unmatched_issue_findings,
+    write_review_views,
+)
 from .store import Selection, Store
 
 EXTERNAL_PRODUCERS: dict[str, Callable[[str, Context], Run]] = {
@@ -111,9 +121,17 @@ def write_outputs(
 
 
 def render_current(store: StoreFS | str | Path, review: Review | None = None) -> None:
-    """Parquet, summaries and export from the current view, with review decisions applied."""
+    """Derived views, summaries, parquet and export from the current view with the review applied.
+
+    Without an explicit review, the decision log is folded and its warnings printed.
+    """
     fs = as_store_fs(store)
-    review = review or Review()
+    if review is None:
+        folded = fold(load_decisions(fs))
+        review = folded.review
+        for warning in folded.warnings:
+            print(f"warning: {warning}", file=sys.stderr)
+    write_review_views(fs, review)
     runs_by_eval: dict[str, list[Run]] = {}
     for run in apply_review(read_current(fs), review):
         runs_by_eval.setdefault(run.subject.eval, []).append(run)
@@ -154,28 +172,43 @@ def render_current(store: StoreFS | str | Path, review: Review | None = None) ->
             )
 
 
-def _load_review_or_exit(directory: Path, *, explicit: bool) -> Review | None:
-    """The review files under `directory`, or None after printing why they could not be loaded.
-
-    A directory the operator named must exist: a typo would otherwise silently apply nothing.
-    """
-    if explicit and not directory.is_dir():
-        print(f"--review {directory} is not a directory", file=sys.stderr)
-        return None
+def _fold_or_exit(fs: StoreFS) -> Review | None:
+    """The folded decision log, or None after printing why it could not be read."""
     try:
-        return load_review(directory)
+        folded = fold(load_decisions(fs))
     except (OSError, ValueError) as ex:
-        print(f"could not load review files under {directory}: {ex}", file=sys.stderr)
+        print(f"could not read the review decisions under {fs.locator}: {ex}", file=sys.stderr)
         return None
+    for warning in folded.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    return folded.review
 
 
-def _summaries_from_disk(out: Path, review: Review) -> int:
-    fs = as_store_fs(out)
+def _summaries_from_disk(fs: StoreFS, review: Review) -> int:
     if not read_current(fs):
         print(f"no runs under {fs.locator}", file=sys.stderr)
         return 2
     render_current(fs, review)
     return 0
+
+
+def _store_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--store",
+        "--out",
+        dest="store",
+        default=os.environ.get("INSPECT_AUDIT_STORE"),
+        help="the store: a directory or an fsspec locator such as s3://bucket/prefix "
+        "(default: $INSPECT_AUDIT_STORE)",
+    )
+
+
+def _resolve_store(args: argparse.Namespace) -> StoreFS | None:
+    locator = args.store or getattr(args, "out", None)
+    if not locator:
+        print("no store: pass --store LOCATOR or set INSPECT_AUDIT_STORE", file=sys.stderr)
+        return None
+    return as_store_fs(locator)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -207,7 +240,7 @@ def _parser() -> argparse.ArgumentParser:
         default=hawk.DEFAULT_CACHE,
         help="where Hawk downloads are kept between runs",
     )
-    run_p.add_argument("--out", required=True, type=Path)
+    _store_arg(run_p)
     run_p.add_argument(
         "--producers",
         default="lint,dataset",
@@ -224,22 +257,11 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_CONFIG_PATH,
         help="per-eval declaration of what to scan and which logs count (default: the packaged pilot.yaml)",
     )
-    run_p.add_argument(
-        "--review",
-        type=Path,
-        default=None,
-        help="directory holding suppressions.yaml and issues.yaml (default: --out)",
-    )
     run_p.add_argument("--featured", action="store_true", help="add the 35 Featured evals")
     run_p.add_argument("targets", nargs="*", help="registry names, e.g. inspect_evals/stereoset")
-    sum_p = sub.add_parser("summary", help="re-render summaries from existing run files")
-    sum_p.add_argument("out", type=Path)
-    sum_p.add_argument(
-        "--review",
-        type=Path,
-        default=None,
-        help="directory holding suppressions.yaml and issues.yaml (default: the out dir)",
-    )
+    sum_p = sub.add_parser("summary", help="re-render views, summaries and export from the store")
+    sum_p.add_argument("out", nargs="?", default=None, help="the store (or use --store)")
+    _store_arg(sum_p)
     sets_p = sub.add_parser("hawk-sets", help="list the Hawk eval sets that ran a task")
     sets_p.add_argument("task", help="registry name, e.g. inspect_evals/scicode")
     pull_p = sub.add_parser(
@@ -249,13 +271,7 @@ def _parser() -> argparse.ArgumentParser:
     pull_p.add_argument("--manifest", type=Path, default=Path("scripts/hawk-artefacts.yaml"))
     pull_p.add_argument("--dest", type=Path, default=None, help="override the manifest's dest")
     leads_p = sub.add_parser("leads", help="one eval's reviewed findings as leads for an agent")
-    leads_p.add_argument("--out", required=True, type=Path, help="the findings output directory")
-    leads_p.add_argument(
-        "--review",
-        type=Path,
-        default=None,
-        help="directory holding suppressions.yaml and issues.yaml (default: --out)",
-    )
+    _store_arg(leads_p)
     leads_p.add_argument(
         "--sample", default=None, help="only leads whose locations name this sample id"
     )
@@ -265,17 +281,11 @@ def _parser() -> argparse.ArgumentParser:
     leads_p.add_argument("eval", help="registry name, e.g. inspect_evals/scicode")
 
     shared = argparse.ArgumentParser(add_help=False)
-    shared.add_argument("--out", required=True, type=Path, help="the findings output directory")
-    shared.add_argument(
-        "--review",
-        type=Path,
-        default=None,
-        help="directory holding suppressions.yaml and issues.yaml (default: --out)",
-    )
+    _store_arg(shared)
     shared.add_argument(
         "--author",
         default=None,
-        help="'Name <email>' recorded on the decision and its commit (default: git config)",
+        help="'Name <email>' recorded on the decision (default: $INSPECT_AUDIT_AUTHOR, then git config)",
     )
     review_p = sub.add_parser("review", help="record a review decision through the Store")
     verbs = review_p.add_subparsers(dest="verb", required=True)
@@ -294,6 +304,24 @@ def _parser() -> argparse.ArgumentParser:
     link_p = verbs.add_parser("link", parents=[shared], help="record an issue's GitHub URL")
     link_p.add_argument("issue", help="store issue id, e.g. ISS-0001")
     link_p.add_argument("url", help="GitHub issue URL")
+    status_p = verbs.add_parser("status", parents=[shared], help="set observations' status")
+    status_p.add_argument("--eval", default=None, help="the eval the findings belong to")
+    status_p.add_argument("--rule", default=None, help="every current finding of this rule")
+    status_p.add_argument("--id", action="append", default=None, help="record id; repeatable")
+    status_p.add_argument(
+        "--fingerprint", action="append", default=None, help="fingerprint; repeatable"
+    )
+    status_p.add_argument(
+        "status", choices=["hypothesis", "supported", "qualified", "retracted"], help="new status"
+    )
+    status_p.add_argument("--reason", required=True, help="the evidence for the change")
+    retract_p = verbs.add_parser("retract", parents=[shared], help="withdraw an earlier decision")
+    retract_p.add_argument("decision", help="decision id, e.g. dec-20261009T041210Z-7f3a")
+    retract_p.add_argument("--reason", required=True, help="why the decision was wrong")
+    migrate_p = verbs.add_parser(
+        "migrate", help="turn hand-written suppressions.yaml and issues.yaml into decisions"
+    )
+    _store_arg(migrate_p)
     return parser
 
 
@@ -307,27 +335,51 @@ def _git_config(directory: Path, key: str) -> str | None:
     return completed.stdout.strip() or None
 
 
-def _author(review_dir: Path, explicit: str | None) -> str | None:
+def _author(explicit: str | None) -> str | None:
     if explicit:
         return explicit
-    name = _git_config(review_dir, "user.name")
-    email = _git_config(review_dir, "user.email")
+    from_env = os.environ.get("INSPECT_AUDIT_AUTHOR")
+    if from_env:
+        return from_env
+    name = _git_config(Path.cwd(), "user.name")
+    email = _git_config(Path.cwd(), "user.email")
     return f"{name} <{email}>" if name and email else None
 
 
+def _selection(args: argparse.Namespace) -> Selection:
+    return Selection(
+        eval=args.eval,
+        rule=args.rule,
+        ids=tuple(args.id or ()),
+        fingerprints=tuple(getattr(args, "fingerprint", None) or ()),
+    )
+
+
 def _review(args: argparse.Namespace) -> int:
-    review_dir: Path = args.review or args.out
-    store = Store(args.out, review_dir)
-    author = _author(review_dir, args.author)
+    fs = _resolve_store(args)
+    if fs is None:
+        return 2
+    if args.verb == "migrate":
+        try:
+            created = migrate_review_files(fs, now=datetime.now(tz=UTC))
+            render_current(fs)
+        except (OSError, ValueError) as ex:
+            print(str(ex), file=sys.stderr)
+            return 2
+        print(f"migrated {len(created)} decision(s)")
+        return 0
+    store = Store(fs)
+    author = _author(args.author)
     if author is None:
         print(
-            "no author: pass --author 'Name <email>' or set git user.name and user.email",
+            "no author: pass --author 'Name <email>', set INSPECT_AUDIT_AUTHOR, "
+            "or configure git user.name and user.email",
             file=sys.stderr,
         )
         return 2
     try:
         if args.verb == "suppress":
-            entry = store.suppress(
+            decision = store.suppress(
                 rule=args.rule,
                 subject=args.eval or "*",
                 producer=args.producer,
@@ -335,30 +387,44 @@ def _review(args: argparse.Namespace) -> int:
                 author=author,
                 reason=args.reason,
             )
-            print(f"suppressed {entry.rule} on {entry.subject}")
+            print(f"suppressed {args.rule} on {args.eval or '*'} ({decision.id})")
         elif args.verb == "accept":
-            selection = Selection(eval=args.eval, rule=args.rule, ids=tuple(args.id or ()))
-            issue = store.accept(selection, title=args.title, author=author, reason=args.reason)
-            print(f"accepted {issue.id}: {issue.title} ({len(issue.findings)} observation(s))")
+            decision = store.accept(
+                _selection(args), title=args.title, author=author, reason=args.reason
+            )
+            assert decision.accept is not None
+            print(
+                f"accepted {decision.accept.issue}: {decision.accept.title} "
+                f"({len(decision.accept.fingerprints)} observation(s), {decision.id})"
+            )
+        elif args.verb == "link":
+            decision = store.link(args.issue, args.url, author=author)
+            print(f"linked {args.issue} to {args.url} ({decision.id})")
+        elif args.verb == "status":
+            decision = store.set_status(
+                _selection(args), status=args.status, author=author, reason=args.reason
+            )
+            assert decision.status is not None
+            print(
+                f"{args.status}: {len(decision.status.fingerprints)} observation(s) ({decision.id})"
+            )
         else:
-            store.link(args.issue, args.url, author=author)
-            print(f"linked {args.issue} to {args.url}")
-    except ValueError as ex:  # StoreError, or a malformed review file named by load_review
+            decision = store.retract(args.decision, author=author, reason=args.reason)
+            print(f"retracted {args.decision} ({decision.id})")
+    except ValueError as ex:  # StoreError, or a malformed decision object named by the loader
         print(str(ex), file=sys.stderr)
         return 2
     return 0
 
 
-def _leads(
-    out: Path, review_dir: Path | None, eval: str, sample: str | None, write: Path | None
-) -> int:
-    review = _load_review_or_exit(review_dir or out, explicit=review_dir is not None)
+def _leads(fs: StoreFS, eval: str, sample: str | None, write: Path | None) -> int:
+    review = _fold_or_exit(fs)
     if review is None:
         return 2
     try:
-        text = leads_markdown(out, eval, review, sample_id=sample)
+        text = leads_markdown(fs, eval, review, sample_id=sample)
     except NoRunsError as ex:
-        print(f"{ex} under {out}", file=sys.stderr)
+        print(f"{ex} under {fs.locator}", file=sys.stderr)
         return 2
     if write is not None:
         write.parent.mkdir(parents=True, exist_ok=True)
@@ -408,16 +474,22 @@ def _hawk_sets(task: str) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "summary":
-        review = _load_review_or_exit(args.review or args.out, explicit=args.review is not None)
+        fs = _resolve_store(args)
+        if fs is None:
+            return 2
+        review = _fold_or_exit(fs)
         if review is None:
             return 2
-        return _summaries_from_disk(args.out, review)
+        return _summaries_from_disk(fs, review)
     if args.command == "hawk-sets":
         return _hawk_sets(args.task)
     if args.command == "hawk-pull":
         return _hawk_pull(args.manifest, args.dest)
     if args.command == "leads":
-        return _leads(args.out, args.review, args.eval, args.sample, args.write)
+        fs = _resolve_store(args)
+        if fs is None:
+            return 2
+        return _leads(fs, args.eval, args.sample, args.write)
     if args.command == "review":
         return _review(args)
 
@@ -455,7 +527,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError, ValidationError) as ex:
         print(f"could not load {args.config}: {ex}", file=sys.stderr)
         return 2
-    review = _load_review_or_exit(args.review or args.out, explicit=args.review is not None)
+    fs = _resolve_store(args)
+    if fs is None:
+        return 2
+    out_dir = fs.local_path("")
+    if out_dir is None:
+        print(
+            f"run needs a local store in this release ({fs.locator} is remote); "
+            "summary, leads and review work on any store",
+            file=sys.stderr,
+        )
+        return 2
+    review = _fold_or_exit(fs)
     if review is None:
         return 2
     producers_config = ProducerConfig.from_env()
@@ -467,7 +550,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ctx = Context(
         ie_root=args.root.resolve(),
         logs=logs,
-        out_dir=args.out.resolve(),
+        out_dir=out_dir,
         producers=producers_config,
         resolve=bool(args.resolve),
         config=config,
@@ -475,7 +558,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # the header producer needs logs; with no log sources it is not requested rather than skipped,
     # so a lint-and-dataset sweep exits 0 when its producers all ran
     runs_by_eval = sweep(targets, ctx, producers, header=bool(sources))
-    write_outputs(args.out, runs_by_eval, review)
+    write_outputs(fs, runs_by_eval, review)
     skipped = any(
         run.outcomes and all(outcome.status == "skip" for outcome in run.outcomes)
         for runs in runs_by_eval.values()

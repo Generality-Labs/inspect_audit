@@ -172,7 +172,8 @@ def _stamp(at: datetime) -> str:
 
 
 def new_decision_id(at: datetime) -> str:
-    return f"dec-{_stamp(at)}-{uuid4().hex[:4]}"
+    """`dec-<stamp>-<microsecond><random>`: keys sort by time within a second, not by chance."""
+    return f"dec-{_stamp(at)}-{at.microsecond:06d}{uuid4().hex[:3]}"
 
 
 def load_decisions(fs: StoreFS) -> list[Decision]:
@@ -280,12 +281,6 @@ def write_review_views(fs: StoreFS, review: Review) -> list[str]:
         body = yaml.safe_dump(rows_json, sort_keys=False, allow_unicode=True)
         written.append(fs.write_text(name, DERIVED_HEADER + body))
     return written
-
-
-def save_review(directory: Path, review: Review) -> list[Path]:
-    """Transitional: write the derived views to a directory. Removed when the Store writes decisions."""
-    fs = as_store_fs(directory)
-    return [directory / key for key in write_review_views(fs, review)]
 
 
 def _load_yaml_list(fs: StoreFS, key: str, adapter: TypeAdapter[Any]) -> list[Any]:

@@ -30,7 +30,7 @@ inspect_audit defines three things: the store format (runs, decisions, export), 
 
 A store is named by one string, resolved by fsspec: `/path/to/store`, `file:///…`, `s3://bucket/prefix`, or `s3://bucket/prefix` with `AWS_ENDPOINT_URL` set for R2 and other S3-compatible services. Credentials come from the environment the same way Inspect's `--log-dir s3://…` finds them: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL`, or a profile. The CLI takes `--store LOCATOR`; `INSPECT_AUDIT_STORE` is the default when the flag is absent. `--out` remains as the name of the same argument for `run` and `summary` for one release, then goes.
 
-Bucket versioning is recommended for rollback; the package does not depend on it.
+The package does not depend on bucket versioning, and R2 does not offer it (S3's `PutBucketVersioning` is unimplemented there). Nothing needs it: runs and decisions are never overwritten, and every other file is rebuilt by the next render.
 
 ### Layout
 
@@ -39,6 +39,7 @@ Unchanged for runs and export, new for decisions:
 ```
 audit.toml                       deployment configuration (see below)
 <slug>/runs/<run id>.run.json    immutable producer runs; newest per producer is current
+<slug>/scans/<run id>/           a dataset run's scan output, written once; the run's inputs.scan_dir
 review/<at>-<id>.json            one decision each, append-only
 suppressions.yaml                derived from review/, for reading only
 issues.yaml                      derived from review/, for reading only
@@ -142,7 +143,7 @@ The GitHub contents-API mode is removed once Generality's store moves to R2. The
 
 Documented in `docs/deployments/generality.md`, not in the architecture:
 
-- Store: an R2 bucket in the Generality Labs Cloudflare account, locator `s3://inspect-evals-findings` with the account's S3 endpoint; versioning on. Credentials: an R2 API token scoped to that bucket, in the nightly workflow's secrets and in operators' environments.
+- Store: an R2 bucket in the Generality Labs Cloudflare account, locator `s3://inspect-evals-findings` with the account's S3 endpoint. Credentials: an R2 API token scoped to that bucket, in the nightly workflow's secrets and in operators' environments.
 - `Generality-Labs/inspect-evals-findings` becomes the deployment repository: `audit.toml`, `pilot.yaml`, `cases.yaml`, the Hawk artefact manifest, and the nightly workflow that checks out Inspect Evals, runs the producers with `--store` pointing at the bucket, and exits. Its git history stops carrying runs.
 - Site: `audits-site` reads the bucket through an R2 binding; Access stays until the security review.
 - Tracker: `github` on `UKGovernmentBEIS/inspect_evals`.
@@ -158,7 +159,7 @@ Each step leaves the system working.
 
 1. `StoreFS` over fsspec with the local directory as the only backend used; `--store` accepted as a synonym for `--out`. No behaviour change.
 2. The decision log and the fold; `review migrate` converts the two YAML files; the YAML files become derived. The Store loses its git commit.
-3. The R2 bucket and token; one sweep writes to `s3://…`; the nightly workflow, when it lands, points there.
+3. The R2 bucket and token; one sweep writes to `s3://…`; the nightly workflow, when it lands, points there. (Code done 2026-10-12: `run` works on any store and dataset scan directories are keyed by run. The bucket, the token and the first remote sweep are the deployment's.)
 4. The site's R2 binding mode; the contents-API mode removed.
 5. `audit.toml`, the tracker configuration behind `promote`, the `s3://` log scheme, the Hawk manifest moved to the deployment repository.
 6. The doc split and the findings repository's history trimmed to configuration (a fresh repository or a rewrite; either is fine, the runs are in the bucket).

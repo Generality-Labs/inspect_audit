@@ -1,10 +1,13 @@
 """Audit taxonomies as versioned data.
 
-A finding names the taxonomy its `dimension` and `check` come from (`gl-audit@1`), so the
+A finding names the taxonomy its `dimension` and `check` come from (`inspect-audit@1`), so the
 list of dimensions is not baked into the schema and two taxonomies can coexist while one
-replaces the other. `gl-audit@1` is the nine-dimension framework in the LaTeX class and a
-test asserts the two stay equal; `gl-audit@2` is the strategy document's proposal and is a
-draft until that class follows it. Mappings between versions are data too.
+replaces the other. `inspect-audit@1` is the nine-dimension framework in the LaTeX class and a
+test asserts the two stay equal; `inspect-audit@2` is the strategy document's proposal and is
+a draft until that class follows it. Mappings between versions are data too.
+
+The taxonomy was called `gl-audit` until 2026-10-12. Records written under that name are still
+read: the old id is an alias, and a record keeps the string it was written with.
 """
 
 from __future__ import annotations
@@ -19,14 +22,21 @@ from pydantic import BaseModel, ConfigDict, Field
 TAXONOMY_DIR = Path(__file__).parent / "taxonomies"
 
 TAXONOMIES: dict[str, str] = {
-    "gl-audit@1": "gl-audit-1.json",
-    "gl-audit@2": "gl-audit-2.json",
+    "inspect-audit@1": "inspect-audit-1.json",
+    "inspect-audit@2": "inspect-audit-2.json",
 }
-DEFAULT_TAXONOMY = "gl-audit@1"
+DEFAULT_TAXONOMY = "inspect-audit@1"
+ALIASES: dict[str, str] = {"gl-audit": "inspect-audit"}  # former ids, by taxonomy id
 
 _MAPPINGS: dict[tuple[str, str], str] = {
-    ("gl-audit@1", "gl-audit@2"): "gl-audit-1-to-2.json",
+    ("inspect-audit@1", "inspect-audit@2"): "inspect-audit-1-to-2.json",
 }
+
+
+def canonical_ref(ref: str) -> str:
+    """`id@version` with a former id replaced by its current one."""
+    taxonomy_id, _, version = ref.partition("@")
+    return f"{ALIASES.get(taxonomy_id, taxonomy_id)}@{version}"
 
 
 class Contribution(BaseModel):
@@ -84,7 +94,8 @@ class TaxonomyMapping(BaseModel):
 
 @cache
 def load_taxonomy(ref: str) -> Taxonomy:
-    """The taxonomy named `id@version`, from its data file."""
+    """The taxonomy named `id@version`, from its data file. A former id resolves to the current one."""
+    ref = canonical_ref(ref)
     name = TAXONOMIES.get(ref)
     if name is None:
         raise ValueError(f"unknown taxonomy {ref!r}; known: {', '.join(sorted(TAXONOMIES))}")
@@ -96,6 +107,7 @@ def load_taxonomy(ref: str) -> Taxonomy:
 
 @cache
 def load_mapping(source: str, target: str) -> TaxonomyMapping:
+    source, target = canonical_ref(source), canonical_ref(target)
     name = _MAPPINGS.get((source, target))
     if name is None:
         raise ValueError(f"no mapping from {source} to {target}")

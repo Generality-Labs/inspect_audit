@@ -20,7 +20,7 @@ from inspect_audit.findings.taxonomy import (
 def test_v1_matches_the_pinned_latex_framework() -> None:
     report = Path(inspect_audit.__file__).parent / "investigation" / "report"
     defs = framework_definitions(report)
-    tax = load_taxonomy("gl-audit@1")
+    tax = load_taxonomy("inspect-audit@1")
     assert tax.status == "pinned"
     assert {d.id for d in tax.dimensions} == {v["dimension"] for v in defs.values()}
     assert tax.check_ids() == {k for k in defs if "." in k}
@@ -31,7 +31,7 @@ def test_v1_matches_the_pinned_latex_framework() -> None:
 
 
 def test_v2_is_the_strategy_taxonomy_and_still_a_draft() -> None:
-    tax = load_taxonomy("gl-audit@2")
+    tax = load_taxonomy("inspect-audit@2")
     assert tax.status == "draft"
     assert [d.id for d in tax.dimensions] == [
         "implementation",
@@ -54,20 +54,23 @@ def test_v2_is_the_strategy_taxonomy_and_still_a_draft() -> None:
 
 
 def test_every_v1_dimension_and_check_maps_to_v2() -> None:
-    v1, v2 = load_taxonomy("gl-audit@1"), load_taxonomy("gl-audit@2")
-    mapping = load_mapping("gl-audit@1", "gl-audit@2")
+    v1, v2 = load_taxonomy("inspect-audit@1"), load_taxonomy("inspect-audit@2")
+    mapping = load_mapping("inspect-audit@1", "inspect-audit@2")
     assert set(mapping.dimensions) == v1.dimension_ids()
     assert set(mapping.dimensions.values()) <= v2.dimension_ids()
     assert set(mapping.checks) == v1.check_ids()
     assert set(mapping.checks.values()) <= v2.check_ids()
-    assert map_dimension("dataset", "gl-audit@1", "gl-audit@2") == "implementation"
-    assert map_check("C.1", "gl-audit@1", "gl-audit@2") == "implementation.task_specification"
+    assert map_dimension("dataset", "inspect-audit@1", "inspect-audit@2") == "implementation"
+    assert (
+        map_check("C.1", "inspect-audit@1", "inspect-audit@2")
+        == "implementation.task_specification"
+    )
 
 
 def test_unknown_taxonomy_ref_is_an_error() -> None:
     with pytest.raises(ValueError, match="unknown taxonomy"):
-        load_taxonomy("gl-audit@9")
-    assert set(TAXONOMIES) == {"gl-audit@1", "gl-audit@2"}
+        load_taxonomy("inspect-audit@9")
+    assert set(TAXONOMIES) == {"inspect-audit@1", "inspect-audit@2"}
 
 
 def _finding(**overrides: object) -> Finding:
@@ -89,18 +92,26 @@ def _finding(**overrides: object) -> Finding:
 
 
 def test_finding_defaults_to_v1_and_validates_dimension_against_it() -> None:
-    assert _finding().taxonomy == "gl-audit@1"
-    with pytest.raises(ValidationError, match="not a dimension of gl-audit@1"):
+    assert _finding().taxonomy == "inspect-audit@1"
+    with pytest.raises(ValidationError, match="not a dimension of inspect-audit@1"):
         _finding(dimension="implementation")
-    with pytest.raises(ValidationError, match="not a check of gl-audit@1"):
+    with pytest.raises(ValidationError, match="not a check of inspect-audit@1"):
         _finding(check="Z.9")
     assert _finding(check="C.1").check == "C.1"
 
 
 def test_finding_can_use_v2_ids() -> None:
     finding = _finding(
-        taxonomy="gl-audit@2", dimension="implementation", check="implementation.grading"
+        taxonomy="inspect-audit@2", dimension="implementation", check="implementation.grading"
     )
     assert finding.check == "implementation.grading"
-    with pytest.raises(ValidationError, match="not a dimension of gl-audit@2"):
-        _finding(taxonomy="gl-audit@2", dimension="dataset")
+    with pytest.raises(ValidationError, match="not a dimension of inspect-audit@2"):
+        _finding(taxonomy="inspect-audit@2", dimension="dataset")
+
+
+def test_the_old_organisation_name_still_resolves_for_records_already_written() -> None:
+    assert load_taxonomy("gl-audit@1").ref == "inspect-audit@1"
+    assert load_taxonomy("gl-audit@2").ref == "inspect-audit@2"
+    assert map_dimension("dataset", "gl-audit@1", "gl-audit@2") == "implementation"
+    old = _finding(taxonomy="gl-audit@1", dimension="dataset", check="C.1")
+    assert old.taxonomy == "gl-audit@1"  # the record keeps what it was written with

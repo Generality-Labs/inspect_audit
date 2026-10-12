@@ -1019,7 +1019,7 @@
       "type": "array"
     },
     "taxonomy": {
-      "default": "gl-audit@1",
+      "default": "inspect-audit@1",
       "title": "Taxonomy",
       "type": "string"
     }

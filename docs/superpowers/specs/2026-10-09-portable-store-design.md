@@ -21,7 +21,7 @@ inspect_audit defines three things: the store format (runs, decisions, export), 
 | MCP                            | A Python server over stdio and a store locator ships with the package; hosted variants are deployment                                                                                  | The read tools are queries over the store; where they run is not the product's concern                                                                     |
 | Issue tracker                  | A configured target; `promote` exists only when one is configured, otherwise `link` records a URL                                                                                      | Not every organisation files issues on GitHub, or anywhere                                                                                                 |
 | Logs on Hawk                   | `hawk:` stays as one log-source scheme; the artefact manifest moves out of the package                                                                                                 | Hawk is a tool anyone may run; our manifest is ours                                                                                                        |
-| Taxonomy name                  | Open: rename `gl-audit` to a neutral name before the next sweep (see Open items)                                                                                                       | The name is in every record; a rename later needs a mapping and a version bump in every organisation's data                                                |
+| Taxonomy name                  | Open: rename `inspect-audit` to a neutral name before the next sweep (see Open items)                                                                                                  | The name is in every record; a rename later needs a mapping and a version bump in every organisation's data                                                |
 | Eval profile (registry layout) | Out of scope here; `audit.toml` reserves `profile = "inspect_evals"` for it                                                                                                            | The real portability work for targets outside the Inspect Evals registry needs its own design                                                              |
 
 ## The store
@@ -179,6 +179,6 @@ The eval profile for targets outside the Inspect Evals registry; a hosted MCP tr
 
 ## Open items
 
-- Taxonomy name: `gl-audit@1` to `inspect-audit@1` (or similar) now, as a one-sweep rename, or keep the name. Recommended: rename before the next registry sweep.
+- Taxonomy name: `inspect-audit@1` to `inspect-audit@1` (or similar) now, as a one-sweep rename, or keep the name. Recommended: rename before the next registry sweep.
 - Whether derived `suppressions.yaml` and `issues.yaml` are worth keeping once nothing reads them but people. Recommended: keep for one release, then decide.
 - The bucket's name and whether one bucket holds the store and the export or the export gets a public bucket of its own.

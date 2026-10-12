@@ -1,6 +1,6 @@
 {
-  "source": "gl-audit@1",
-  "target": "gl-audit@2",
+  "source": "inspect-audit@1",
+  "target": "inspect-audit@2",
   "dimensions": {
     "construct": "construct_validity",
     "contentvalidity": "content_validity",

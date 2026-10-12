@@ -35,7 +35,7 @@ checks:
       inspectable or settings are undisclosed.
     scale: [full, partial, inadequate]
     evidence: [source, documentation]
-    taxonomy: {gl-audit@2: [practical_reproducibility]}
+    taxonomy: {inspect-audit@2: [practical_reproducibility]}
 
   - id: scoring_integrity
     section: 2. Scoring (minimum standard)
@@ -48,7 +48,7 @@ checks:
     scale: [pass, pass_with_flag, fail]
     threshold: {measure: sampled_defect_rate, fail_when: ">= 0.20"}
     evidence: [coverage, findings]
-    taxonomy: {gl-audit@2: [implementation.task_specification, implementation.grading]}
+    taxonomy: {inspect-audit@2: [implementation.task_specification, implementation.grading]}
 
   - id: benchmark_consistency
     section: 2. Scoring (minimum standard)
@@ -59,7 +59,7 @@ checks:
       and estimate their effect on scores.
     scale: [pass, pass_with_flag, fail]
     evidence: [source, documentation]
-    taxonomy: {gl-audit@2: [comparability.identity]}
+    taxonomy: {inspect-audit@2: [comparability.identity]}
 
   - id: elicitation_adequacy
     section: 2. Scoring (minimum standard)
@@ -71,7 +71,7 @@ checks:
       when the constraint is the point of the benchmark.
     scale: [pass, pass_with_flag, fail]
     evidence: [logs, source]
-    taxonomy: {gl-audit@2: [sensitivity.token_limits, implementation.scaffolding]}
+    taxonomy: {inspect-audit@2: [sensitivity.token_limits, implementation.scaffolding]}
 
   - id: evaluation_bias
     section: 2. Scoring (minimum standard)
@@ -82,7 +82,7 @@ checks:
       scaffolds or prompts are a flag or a failure depending on their effect.
     scale: [pass, pass_with_flag, fail]
     evidence: [logs, source]
-    taxonomy: {gl-audit@2: [comparability.audited_implementation]}
+    taxonomy: {inspect-audit@2: [comparability.audited_implementation]}
 
   - id: resource_adequacy
     section: 3. Evaluation quality
@@ -102,7 +102,7 @@ checks:
     question: Are tasks or solutions public, and is there evidence of training exposure?
     scale: [no_risk_identified, risk_identified, contaminated, not_established]
     evidence: [documentation, findings]
-    taxonomy: {gl-audit@2: [content.contamination]}
+    taxonomy: {inspect-audit@2: [content.contamination]}
   - id: human_completability
     section: 3. Evaluation quality
     name: Human task completability
@@ -115,7 +115,7 @@ checks:
     question: What are the floor and the ceiling, and what limits the ceiling?
     scale: [stated]
     evidence: [logs, findings]
-    taxonomy: {gl-audit@2: [informativeness.floor_ceiling]}
+    taxonomy: {inspect-audit@2: [informativeness.floor_ceiling]}
   - id: statistical_adequacy
     section: 3. Evaluation quality
     name: Statistical adequacy
@@ -123,11 +123,11 @@ checks:
     guidance: Five or more runs per model is the recommended standard.
     scale: [adequate, marginal, inadequate, not_established]
     evidence: [logs]
-    taxonomy: {gl-audit@2: [sensitivity.rollouts]}
+    taxonomy: {inspect-audit@2: [sensitivity.rollouts]}
   - id: construct_validity
     section: 3. Evaluation quality
     name: Construct validity
     question: Does the score measure the capability the benchmark claims?
     scale: [measures, partially_measures, does_not_measure, not_established]
     evidence: [findings, documentation]
-    taxonomy: {gl-audit@2: [construct]}
+    taxonomy: {inspect-audit@2: [construct]}

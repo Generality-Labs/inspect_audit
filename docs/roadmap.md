@@ -17,7 +17,7 @@ The first release is smaller than that: a short, reproducible list of maintenanc
 - A fingerprint identifies an observation. An issue gets its own durable id when a person accepts it, and observations link to it. Review decisions (suppressions, issue links) live in files beside the runs, never inside them.
 - Run files are immutable. A sweep appends runs; every view renders from the derived current view, the newest run per eval and producer.
 - Unsupported inputs, failed producers and unassessed checks are shown beside findings. A missing finding can mean a defect class we do not cover, and a page must say so.
-- The taxonomy is versioned data, not code. Old reports stay valid under `gl-audit@1`; the pilot renders original identifiers and does not wait on `gl-audit@2` being confirmed.
+- The taxonomy is versioned data, not code. Old reports stay valid under `inspect-audit@1`; the pilot renders original identifiers and does not wait on `inspect-audit@2` being confirmed.
 - Grades are written by people and are never computed. Nothing changes the state of a contributor issue without a human looking.
 - Inspect Auditor is an installable Inspect package whose behaviour lives in skills. It has no GUI. The hosted site is a separate static thing that reads the findings.
 - One owner for the finding schema: Matt. Report formats read from it.
@@ -39,7 +39,7 @@ Done on `findings-prototype` (PR #4 against `dev/integrated-audits`), rebased on
 
 - Envelope schema, fingerprinting, immutable run files with a derived current view, parquet carrying every envelope field.
 - Adapters for inspect-evals-lint, inspect-dataset and `.eval` log headers. Header findings carry the log's own revision; the run records the checkout it compared against.
-- Versioned taxonomies `gl-audit@1` and draft `gl-audit@2` with a mapping.
+- Versioned taxonomies `inspect-audit@1` and draft `inspect-audit@2` with a mapping.
 - Hawk access: `hawk:` log sources, `--hawk-task`, `hawk-sets`, `hawk-pull` over `scripts/hawk-artefacts.yaml`. The chess investigation bundle is on disk.
 - An acceptance sweep over six evals. Its lesson: without input selection, three of five header checks are dominated by mock and variant runs, and five of six dataset scans skipped.
 
@@ -124,7 +124,7 @@ Rendering the GL LaTeX report from the findings store, with lint and dataset fin
 - Nightly or weekly schedule; whether the export itself is public. (Settled 2026-10-07: the repository is `Generality-Labs/inspect-evals-findings` and the site `audits.generality.org`, both writable by the `core` team, the org owners.)
 - Whether the view files issues automatically or only drafts them. Drafts. Auto-closing needs a confidence field and a QA step; neither exists.
 - Total cost of rollout. Milestone 2 turns it into a number for Justin.
-- Whether `gl-audit@2` is final. Confirm with Laurence separately; the pilot does not depend on it.
+- Whether `inspect-audit@2` is final. Confirm with Laurence separately; the pilot does not depend on it.
 - Where `cases.yaml` lives (findings output beside the review files, or Inspect Evals `tests/cases/`), and how a merged PR gets its defect class without asking the contributor. See maintenance-loop.md.
 
 ## Dependencies on other people

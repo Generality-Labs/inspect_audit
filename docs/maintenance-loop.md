@@ -73,7 +73,7 @@ One table, regenerated every fortnight. Held-out cases are reported separately. 
 
 ## Cluster to taxonomy mapping
 
-So that rule-level recall rolls up into dimension-level coverage. Under `gl-audit@1`; the v2 mapping file carries these to Implementation's contributions.
+So that rule-level recall rolls up into dimension-level coverage. Under `inspect-audit@1`; the v2 mapping file carries these to Implementation's contributions.
 
 | Cluster (class id)                                                      | Check                                                                          | Notes                                                                                |
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |

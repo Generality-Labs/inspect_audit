@@ -176,6 +176,7 @@ def test_no_targets_is_a_usage_error(tmp_path: Path) -> None:
 
 
 def test_featured_flag_expands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "src" / "inspect_evals").mkdir(parents=True)  # a checkout, as far as run checks
     from inspect_audit.findings import cli
 
     seen: list[list[str]] = []
@@ -230,6 +231,7 @@ def test_hawk_logs_source_is_downloaded_into_the_cache(
 def test_hawk_task_flag_resolves_sets_by_task(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    (tmp_path / "src" / "inspect_evals").mkdir(parents=True)  # a checkout, as far as run checks
     from inspect_audit.findings import cli, hawk
     from inspect_audit.findings.hawk import EvalSetInfo
 
@@ -991,6 +993,212 @@ def test_render_reads_and_writes_the_store_in_batches(
     assert calls.get("read_bytes", 0) == 0
     assert calls.get("is_file", 0) + calls.get("exists", 0) == 0
     assert fs.read_text("inspect-evals-e5/SUMMARY.md").startswith("# inspect_evals/e5")
+
+
+def test_run_takes_its_root_from_audit_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.chdir(tmp_path)  # a relative root resolves against the current directory
+    (store / "audit.toml").write_text(f'[evals]\nroot = "{root.relative_to(tmp_path)}"\n')
+    args = ["run", "--config", str(PILOT), "--store", str(store), "--producers", "lint"]
+    assert main([*args, "inspect_evals/stereoset"]) == 0
+    assert list((store / "inspect-evals-stereoset" / "runs").glob("inspect_evals_lint-*.run.json"))
+
+
+def test_root_on_the_command_line_beats_audit_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "audit.toml").write_text('[evals]\nroot = "/nowhere/at/all"\n')
+    args = ["run", "--config", str(PILOT), "--root", str(root), "--store", str(store)]
+    assert main([*args, "--producers", "lint", "inspect_evals/stereoset"]) == 0
+
+
+def test_run_without_a_root_anywhere_is_a_usage_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["run", "--store", str(tmp_path / "store"), "inspect_evals/x"]) == 2
+    err = capsys.readouterr().err
+    assert "--root" in err and "audit.toml" in err
+
+
+def test_run_uses_the_stores_pilot_when_no_config_is_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit.findings.io import read_run
+
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "pilot.yaml").write_text(
+        PILOT.read_text()
+    )  # declares StereoSet's intersentence config
+    args = ["run", "--root", str(root), "--store", str(store), "--producers", "dataset"]
+    assert main([*args, "inspect_evals/stereoset"]) == 0
+    fs = StoreFS.from_locator(store)
+    (key,) = fs.glob("inspect-evals-stereoset/runs/inspect_dataset-*.run.json")
+    dataset = read_run(fs, key).inputs["dataset"]
+    assert isinstance(dataset, dict) and dataset.get("config") == "intersentence"
+
+
+def test_a_malformed_audit_toml_is_a_usage_error_before_anything_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "audit.toml").write_text("[evals\n")
+    args = ["run", "--root", str(root), "--store", str(store), "inspect_evals/stereoset"]
+    assert main(args) == 2
+    assert "audit.toml" in capsys.readouterr().err
+    assert not (store / "inspect-evals-stereoset").exists()
+
+
+def _remote_log_dir(tmp_path: Path, url: str) -> Path:
+    """A real .eval written locally, copied into an fsspec location as a remote log source."""
+    from fsspec.core import url_to_fs
+
+    local = _log(tmp_path / "made")
+    fs, root = url_to_fs(url)
+    fs.makedirs(f"{root}/nested", exist_ok=True)
+    fs.put(str(local), f"{root}/nested/{local.name}")
+    return local
+
+
+def test_logs_from_an_fsspec_location_are_fetched_once_into_the_cache(tmp_path: Path) -> None:
+    from fsspec.core import url_to_fs
+
+    local = _remote_log_dir(tmp_path, "memory://remote-logs-a")
+    cache = tmp_path / "cache"
+    paths = collect_logs(["memory://remote-logs-a"], remote_cache=cache)
+    assert [p.name for p in paths] == [local.name]
+    assert paths[0].is_file() and paths[0].is_relative_to(cache)
+    assert paths[0].read_bytes() == local.read_bytes()
+    fs, _ = url_to_fs("memory://remote-logs-a")
+    fetched: list[str] = []
+    inner_get = fs.get_file
+
+    def counting_get(rpath: str, lpath: str, **kwargs: object) -> None:
+        fetched.append(rpath)
+        inner_get(rpath, lpath, **kwargs)
+
+    fs.get_file = counting_get  # type: ignore[method-assign]
+    try:
+        again = collect_logs(["memory://remote-logs-a"], remote_cache=cache)
+    finally:
+        fs.get_file = inner_get  # type: ignore[method-assign]
+    assert again == paths and fetched == []
+
+
+def test_a_remote_log_source_with_no_logs_names_itself(tmp_path: Path) -> None:
+    from fsspec.core import url_to_fs
+
+    from inspect_audit.findings.adapters import ProducerError
+
+    fs, root = url_to_fs("memory://remote-logs-empty")
+    fs.pipe(f"{root}/notes.txt", b"not a log")
+    with pytest.raises(ProducerError, match="memory://remote-logs-empty"):
+        collect_logs(["memory://remote-logs-empty"], remote_cache=tmp_path / "cache")
+
+
+def test_run_reads_header_logs_from_a_remote_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    _remote_log_dir(tmp_path, "memory://remote-logs-run")
+    cache, store = tmp_path / "log-cache", tmp_path / "store"
+    args = ["run", "--config", str(PILOT), "--root", str(root), "--store", str(store)]
+    args += ["--logs", "memory://remote-logs-run", "--log-cache", str(cache), "--producers", "lint"]
+    assert main([*args, "inspect_evals/stereoset"]) == 0
+    assert list(cache.rglob("*.eval"))
+    assert list(
+        (store / "inspect-evals-stereoset" / "runs").glob("inspect_audit_header-*.run.json")
+    )
+
+
+def test_hawk_pull_needs_an_explicit_manifest() -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["hawk-pull"])
+    assert exit_info.value.code == 2
+
+
+def test_the_findings_package_names_no_organisation() -> None:
+    import re
+
+    package = Path(__file__).parents[2]
+    pattern = re.compile(
+        r"generality|4dd4a6b0|inspect-evals-findings|audits\.generality", re.IGNORECASE
+    )
+    hits = [
+        f"{path.relative_to(package)}:{n}"
+        for folder in ("src/inspect_audit/findings", "scripts")
+        for path in sorted((package / folder).rglob("*"))
+        if path.is_file()
+        and path.suffix in {".py", ".yaml", ".yml", ".toml", ".json", ".md", ".sh"}
+        and "taxonomies" not in path.parts  # credit where a framework came from: provenance
+        for n, line in enumerate(path.read_text(errors="ignore").splitlines(), 1)
+        if pattern.search(line)
+    ]
+    assert hits == []
+
+
+def test_a_single_remote_log_file_keeps_its_name(tmp_path: Path) -> None:
+    from fsspec.core import url_to_fs
+
+    local = _log(tmp_path / "made")
+    fs, root = url_to_fs("memory://single-log")
+    fs.put(str(local), f"{root}/{local.name}")
+    (path,) = collect_logs([f"memory://single-log/{local.name}"], remote_cache=tmp_path / "cache")
+    assert path.name == local.name and path.read_bytes() == local.read_bytes()
+
+
+@pytest.mark.parametrize("url", ["nosuch://bucket/logs", "memory://listing-fails"])
+def test_a_remote_log_source_that_cannot_be_listed_is_a_producer_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    from fsspec.implementations.memory import MemoryFileSystem
+
+    from inspect_audit.findings.adapters import ProducerError
+
+    def denied(*_args: object, **_kwargs: object) -> object:
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(MemoryFileSystem, "find", denied)
+    with pytest.raises(ProducerError, match=url.split("://")[0]):
+        collect_logs([url], remote_cache=tmp_path / "cache")
+
+
+def test_a_prefix_with_only_non_log_json_has_no_logs(tmp_path: Path) -> None:
+    from fsspec.core import url_to_fs
+
+    from inspect_audit.findings.adapters import ProducerError
+
+    fs, root = url_to_fs("memory://only-eval-set-json")
+    fs.pipe(f"{root}/eval-set.json", b"{}")
+    with pytest.raises(ProducerError, match=r"no \.eval or \.json logs"):
+        collect_logs(["memory://only-eval-set-json"], remote_cache=tmp_path / "cache")
+
+
+def test_a_root_that_is_not_an_inspect_evals_checkout_stops_the_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "audit.toml").write_text('[evals]\nroot = "../nowhere"\n')
+    assert main(["run", "--store", str(store), "--producers", "lint", "inspect_evals/x"]) == 2
+    err = capsys.readouterr().err
+    assert "nowhere" in err and "audit.toml" in err
+    assert not any(store.glob("*/runs"))
 
 
 def test_a_remote_sweep_uploads_only_the_scan_summary(

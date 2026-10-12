@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import shutil
 import subprocess
@@ -11,9 +12,11 @@ import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
+from fsspec.core import url_to_fs
 from inspect_ai.log import list_eval_logs
-from pydantic import ValidationError
+from inspect_ai.log._file import is_log_file  # the rule Inspect uses to list logs
 
 from . import hawk
 from .adapters import Context, ProducerError, slug
@@ -22,6 +25,7 @@ from .adapters import header as header_adapter
 from .adapters import lint as lint_adapter
 from .adapters.dataset import scan_key
 from .config import DEFAULT_CONFIG_PATH, load_config
+from .deployment import load_deployment, store_pilot, unknown_tables
 from .export import export_texts
 from .featured import FEATURED
 from .fs import StoreFS, as_store_fs
@@ -55,18 +59,28 @@ EXTERNAL_PRODUCERS: dict[str, Callable[[str, Context], Run]] = {
 }
 
 
+REMOTE_LOG_CACHE = Path.home() / ".cache" / "inspect_audit" / "logs"
+
+
 def collect_logs(
     sources: Sequence[str],
     *,
     hawk_cache: Path = hawk.DEFAULT_CACHE,
+    remote_cache: Path = REMOTE_LOG_CACHE,
     producers: ProducerConfig | None = None,
 ) -> list[Path]:
-    """Local files and directories, plus `hawk:<eval-set-id>` sets pulled into the cache, as log paths."""
+    """Log paths from local files and directories, `hawk:<eval-set-id>` sets, and any fsspec URL.
+
+    Remote logs are fetched into a cache, as Hawk sets are, so the producers read local files.
+    """
     config = producers or ProducerConfig.from_env()
     paths: list[Path] = []
     for source in sources:
         if source.startswith("hawk:"):
             paths += hawk.download_eval_set(source.removeprefix("hawk:"), hawk_cache, config)
+            continue
+        if "://" in source and not source.startswith("file://"):
+            paths += _fetch_remote_logs(source, remote_cache)
             continue
         path = Path(source.removeprefix("file://"))
         if path.is_file():
@@ -77,6 +91,41 @@ def collect_logs(
                 for info in list_eval_logs(str(path), recursive=True)
             ]
     return sorted(set(paths))
+
+
+def _fetch_remote_logs(url: str, cache: Path) -> list[Path]:
+    """The Inspect logs at `url` (a file or a prefix), copied into `cache/<hash of url>/`.
+
+    A log already cached at the same size is not fetched again. Anything that stops the logs
+    being listed or fetched is a `ProducerError` naming the URL, like a failed Hawk download.
+    """
+    try:
+        fs, root = url_to_fs(url)
+        root = str(root).rstrip("/")
+        if fs.isfile(root):  # one log named directly: keep its own name
+            listed = {root: cast("dict[str, Any]", fs.info(root))}
+            base = root.rsplit("/", 1)[0]
+        else:
+            listed = cast("dict[str, dict[str, Any]]", fs.find(root, detail=True))
+            base = root
+        # Inspect's own rule: any .eval, and .json only with a log's timestamped name
+        logs = {path: info for path, info in listed.items() if is_log_file(path, [".json"])}
+        if not logs:
+            raise ProducerError(f"no .eval or .json logs at {url}")
+        target = cache / hashlib.sha1(url.encode()).hexdigest()[:12]
+        local_paths: list[Path] = []
+        for path in sorted(logs):
+            local = target / path[len(base) :].lstrip("/")
+            size = logs[path].get("size")
+            if not (local.is_file() and size is not None and local.stat().st_size == size):
+                local.parent.mkdir(parents=True, exist_ok=True)
+                fs.get_file(path, str(local))
+            local_paths.append(local)
+    except ProducerError:
+        raise
+    except Exception as ex:  # unknown protocol, access denied, missing bucket, network
+        raise ProducerError(f"could not read logs at {url}: {type(ex).__name__}: {ex}") from ex
+    return local_paths
 
 
 def sweep(
@@ -275,12 +324,17 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="inspect-audit-findings")
     sub = parser.add_subparsers(dest="command", required=True)
     run_p = sub.add_parser("run", help="run the producers over evals")
-    run_p.add_argument("--root", required=True, type=Path, help="inspect_evals checkout")
+    run_p.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="inspect_evals checkout (default: [evals] root in the store's audit.toml)",
+    )
     run_p.add_argument(
         "--logs",
         action="append",
         default=[],
-        help="log dir, .eval file, or hawk:<eval-set-id>; repeatable",
+        help="log dir, .eval file, hawk:<eval-set-id>, or an fsspec URL such as s3://bucket/logs; repeatable",
     )
     run_p.add_argument(
         "--hawk-task",
@@ -302,6 +356,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     _store_arg(run_p)
     run_p.add_argument(
+        "--log-cache",
+        type=Path,
+        default=REMOTE_LOG_CACHE,
+        help="where logs from s3:// and other remote --logs sources are kept between runs",
+    )
+    run_p.add_argument(
         "--producers",
         default="lint,dataset",
         help="external producers to run; the header producer runs whenever --logs is given",
@@ -314,8 +374,9 @@ def _parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--config",
         type=Path,
-        default=DEFAULT_CONFIG_PATH,
-        help="per-eval declaration of what to scan and which logs count (default: the packaged pilot.yaml)",
+        default=None,
+        help="per-eval declaration of what to scan and which logs count "
+        "(default: the store's pilot.yaml, else the packaged one)",
     )
     run_p.add_argument("--featured", action="store_true", help="add the 35 Featured evals")
     run_p.add_argument("targets", nargs="*", help="registry names, e.g. inspect_evals/stereoset")
@@ -328,7 +389,12 @@ def _parser() -> argparse.ArgumentParser:
         "hawk-pull",
         help="fetch the logs and artifact bundles a manifest names into its gitignored dest",
     )
-    pull_p.add_argument("--manifest", type=Path, default=Path("scripts/hawk-artefacts.yaml"))
+    pull_p.add_argument(
+        "--manifest",
+        type=Path,
+        required=True,
+        help="YAML naming the eval sets and bundles to pull; a deployment keeps its own",
+    )
     pull_p.add_argument("--dest", type=Path, default=None, help="override the manifest's dest")
     leads_p = sub.add_parser("leads", help="one eval's reviewed findings as leads for an agent")
     _store_arg(leads_p)
@@ -567,6 +633,40 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    # the store and its configuration first, so a bad file stops the run before any network work
+    fs = _resolve_store(args)
+    if fs is None:
+        return 2
+    try:
+        deployment = load_deployment(fs)
+        if args.config is not None:
+            config = load_config(args.config)
+        else:
+            config = store_pilot(fs) or load_config(DEFAULT_CONFIG_PATH)
+    except (OSError, ValueError) as ex:
+        print(f"could not load the configuration: {ex}", file=sys.stderr)
+        return 2
+    for table in unknown_tables(deployment):
+        print(f"warning: audit.toml has [{table}], which this version ignores", file=sys.stderr)
+    root: Path | None = args.root
+    origin = "--root"
+    if root is None and deployment.evals.root is not None:
+        root = Path(deployment.evals.root).expanduser()  # relative to here: the store may be remote
+        origin = f"[evals] root in audit.toml under {fs.locator}"
+    if root is None:
+        print(
+            "no evals root: pass --root, or set [evals] root in the store's audit.toml",
+            file=sys.stderr,
+        )
+        return 2
+    # a wrong root would sweep anyway and write skip runs that become the current view
+    if not (root / "src" / "inspect_evals").is_dir():
+        print(
+            f"{root.resolve()} (from {origin}) is not an Inspect Evals checkout: "
+            "it has no src/inspect_evals",
+            file=sys.stderr,
+        )
+        return 2
     sources = list(args.logs)
     for task in args.hawk_task:
         try:
@@ -582,20 +682,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         sources += [f"hawk:{entry.eval_set_id}" for entry in found]
-    try:
-        config = load_config(args.config)
-    except (OSError, ValueError, ValidationError) as ex:
-        print(f"could not load {args.config}: {ex}", file=sys.stderr)
-        return 2
-    fs = _resolve_store(args)
-    if fs is None:
-        return 2
     review = _fold_or_exit(fs)
     if review is None:
         return 2
     producers_config = ProducerConfig.from_env()
     try:
-        logs = collect_logs(sources, hawk_cache=args.hawk_cache, producers=producers_config)
+        logs = collect_logs(
+            sources,
+            hawk_cache=args.hawk_cache,
+            remote_cache=args.log_cache,
+            producers=producers_config,
+        )
     except ProducerError as ex:
         print(str(ex), file=sys.stderr)
         return 2
@@ -604,7 +701,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="inspect_audit_run_") as scratch:
         work_dir = fs.local_path("") or Path(scratch)
         ctx = Context(
-            ie_root=args.root.resolve(),
+            ie_root=root.resolve(),
             logs=logs,
             out_dir=work_dir,
             producers=producers_config,

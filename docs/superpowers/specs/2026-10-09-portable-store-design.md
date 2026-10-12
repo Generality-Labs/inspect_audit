@@ -1,6 +1,6 @@
 # Portable store design
 
-Written 2026-10-09. Other organisations are going to run inspect_audit, so the package must not assume Generality Labs' repositories, hosts or accounts. This spec draws the line between the product and a deployment, moves the store from a git repository to object storage behind a filesystem abstraction, and turns review decisions into an append-only log so that object storage needs no locking. Generality's own instance becomes one documented reference deployment. It supersedes "The store" and the hosting paragraphs of [v1-architecture.md](../../v1-architecture.md); the rest of that document stands until the doc split below.
+Written 2026-10-09. Other organisations are going to run inspect_audit, so the package must not assume Generality Labs' repositories, hosts or accounts. This spec draws the line between the product and a deployment, moves the store from a git repository to object storage behind a filesystem abstraction, and turns review decisions into an append-only log so that object storage needs no locking. Generality's own instance becomes one documented reference deployment. It supersedes "The store" and the hosting paragraphs of [architecture.md](../../architecture.md), which replaced `v1-architecture.md`; the rest of that document stands until the doc split below.
 
 ## Principle
 
@@ -151,7 +151,7 @@ Documented in `docs/deployments/generality.md`, not in the architecture:
 
 ## Doc split
 
-`v1-architecture.md` is rewritten as `architecture.md`: the product only, with the store section replaced by a pointer to this spec, and no organisation names. The deployment facts (account id, bucket, domain, Access, secrets, tracker, Hawk manifest) move to `docs/deployments/generality.md`, including the implementation notes section of the table site spec. The roadmap's milestone 3 and 4 entries are reworded to the product terms with a "Generality" note where our instance differs. The findings-store proposal and standard drafts in the private artefacts are unaffected.
+Done 2026-10-12: `v1-architecture.md` was rewritten as `architecture.md`: the product only, with the store section replaced by a pointer to this spec, and no organisation names. The deployment facts (account id, bucket, domain, Access, secrets, tracker, Hawk manifest) move to `docs/deployments/generality.md`, including the implementation notes section of the table site spec. The roadmap's milestone 3 and 4 entries are reworded to the product terms with a "Generality" note where our instance differs. The findings-store proposal and standard drafts in the private artefacts are unaffected.
 
 ## Migration plan
 

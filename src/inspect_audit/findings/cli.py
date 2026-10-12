@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +20,7 @@ from .adapters import Context, ProducerError, slug
 from .adapters import dataset as dataset_adapter
 from .adapters import header as header_adapter
 from .adapters import lint as lint_adapter
+from .adapters.dataset import scan_key
 from .config import DEFAULT_CONFIG_PATH, load_config
 from .export import write_export
 from .featured import FEATURED
@@ -105,18 +108,53 @@ def _renamed(run: Run, file_id: str) -> Run:
     return run.model_copy(update={"id": file_id, "findings": findings})
 
 
+def _place_scan(fs: StoreFS, work_dir: Path, staged: str, final: str, *, uploading: bool) -> None:
+    """Give a staged scan directory its final key: upload it, or rename it within a local store.
+
+    A leftover directory at the final key belongs to no run (the run key was free), so it is
+    replaced rather than merged into.
+    """
+    source = work_dir / staged
+    if uploading:
+        fs.put_tree(source, final)
+        return
+    target = fs.local_path(final)
+    if target is None or source.resolve() == target.resolve():
+        return
+    if target.exists():
+        shutil.rmtree(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source.rename(target)
+
+
 def write_outputs(
     store: StoreFS | str | Path,
     runs_by_eval: Mapping[str, Sequence[Run]],
     review: Review | None = None,
+    *,
+    work_dir: Path | None = None,
 ) -> None:
-    """Append the new runs, then render everything from the current view (newest run per producer)."""
+    """Append the new runs and what the producers left in `work_dir`, then render the current view.
+
+    `work_dir` is where producers wrote. For a local store it is the store root and nothing is
+    copied; for any other store each run's scan directory is uploaded under the run's final key.
+    """
     fs = as_store_fs(store)
+    local_root = fs.local_path("")
+    uploading = work_dir is not None and (
+        local_root is None or work_dir.resolve() != local_root.resolve()
+    )
     for target, runs in runs_by_eval.items():
         for run in runs:
             key = _run_key(fs, slug(target), run)
             file_id = key.rsplit("/", 1)[-1].removesuffix(".run.json")
-            write_run(run if file_id == run.id else _renamed(run, file_id), fs, key)
+            stored = run if file_id == run.id else _renamed(run, file_id)
+            staged = run.inputs.get("scan_dir")
+            if work_dir is not None and isinstance(staged, str) and (work_dir / staged).is_dir():
+                final = scan_key(target, file_id)
+                _place_scan(fs, work_dir, staged, final, uploading=uploading)
+                stored = stored.model_copy(update={"inputs": {**stored.inputs, "scan_dir": final}})
+            write_run(stored, fs, key)
     render_current(fs, review)
 
 
@@ -530,14 +568,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     fs = _resolve_store(args)
     if fs is None:
         return 2
-    out_dir = fs.local_path("")
-    if out_dir is None:
-        print(
-            f"run needs a local store in this release ({fs.locator} is remote); "
-            "summary, leads and review work on any store",
-            file=sys.stderr,
-        )
-        return 2
     review = _fold_or_exit(fs)
     if review is None:
         return 2
@@ -547,18 +577,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ProducerError as ex:
         print(str(ex), file=sys.stderr)
         return 2
-    ctx = Context(
-        ie_root=args.root.resolve(),
-        logs=logs,
-        out_dir=out_dir,
-        producers=producers_config,
-        resolve=bool(args.resolve),
-        config=config,
-    )
-    # the header producer needs logs; with no log sources it is not requested rather than skipped,
-    # so a lint-and-dataset sweep exits 0 when its producers all ran
-    runs_by_eval = sweep(targets, ctx, producers, header=bool(sources))
-    write_outputs(fs, runs_by_eval, review)
+    # producers write to a local directory: the store itself when it is local, else scratch space
+    # that is uploaded and removed, so a remote sweep leaves nothing behind
+    with tempfile.TemporaryDirectory(prefix="inspect_audit_run_") as scratch:
+        work_dir = fs.local_path("") or Path(scratch)
+        ctx = Context(
+            ie_root=args.root.resolve(),
+            logs=logs,
+            out_dir=work_dir,
+            producers=producers_config,
+            resolve=bool(args.resolve),
+            config=config,
+        )
+        # the header producer needs logs; with no log sources it is not requested rather than
+        # skipped, so a lint-and-dataset sweep exits 0 when its producers all ran
+        runs_by_eval = sweep(targets, ctx, producers, header=bool(sources))
+        try:
+            write_outputs(fs, runs_by_eval, review, work_dir=work_dir)
+        except Exception as ex:  # a failed store write must not read as "a producer skipped"
+            print(f"could not write to the store {fs.locator}: {ex}", file=sys.stderr)
+            return 2
     skipped = any(
         run.outcomes and all(outcome.status == "skip" for outcome in run.outcomes)
         for runs in runs_by_eval.values()

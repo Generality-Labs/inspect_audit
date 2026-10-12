@@ -84,6 +84,14 @@ class StoreFS:
         matches = cast("list[str]", self.fs.glob(self._full(pattern)))
         return sorted(self._rel(p) for p in matches)
 
+    def put_tree(self, local_dir: Path, prefix: str) -> list[str]:
+        """Upload every file under `local_dir` to `prefix/<relative path>`; returns the keys, sorted."""
+        keys: list[str] = []
+        for path in sorted(p for p in local_dir.rglob("*") if p.is_file()):
+            key = self.key(prefix, path.relative_to(local_dir).as_posix())
+            keys.append(self.write_bytes(key, path.read_bytes()))
+        return keys
+
     def local_path(self, key: str) -> Path | None:
         return Path(self._full(key)) if self.protocol == "file" else None
 

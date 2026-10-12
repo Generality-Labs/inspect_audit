@@ -269,6 +269,37 @@ def eval_document(
     }
 
 
+def export_texts(
+    fs: StoreFS,
+    runs_by_eval: Mapping[str, Sequence[Run]],
+    review: Review,
+    *,
+    history: Sequence[Run],
+    generated_at: datetime | None = None,
+) -> tuple[list[str], dict[str, str]]:
+    """The export's keys, and the texts that need writing.
+
+    The index is always written; an eval file only when its content apart from `generated_at`
+    changed. Existing eval files are read in one batch.
+    """
+    stamp = generated_at or datetime.now(tz=UTC)
+    seen = seen_range(history)
+    index_key = f"{EXPORT_DIR}/index.json"
+    keys = [index_key]
+    texts = {index_key: _dumps(index_document(runs_by_eval, review, seen, stamp))}
+    existing_keys = set(fs.glob(f"{EXPORT_DIR}/evals/*.json"))
+    documents: dict[str, dict[str, Any]] = {}
+    for eval_name in sorted(runs_by_eval):
+        key = f"{EXPORT_DIR}/evals/{slug(eval_name)}.json"
+        keys.append(key)
+        documents[key] = eval_document(eval_name, runs_by_eval[eval_name], review, seen, stamp)
+    existing = fs.read_texts([key for key in documents if key in existing_keys])
+    for key, document in documents.items():
+        if not _same_but_for_stamp(existing.get(key), document):
+            texts[key] = _dumps(document)
+    return keys, texts
+
+
 def write_export(
     fs: StoreFS,
     runs_by_eval: Mapping[str, Sequence[Run]],
@@ -278,30 +309,21 @@ def write_export(
     generated_at: datetime | None = None,
 ) -> list[str]:
     """Write `export/index.json` and `export/evals/<slug>.json` into the store; returns their keys."""
-    stamp = generated_at or datetime.now(tz=UTC)
-    seen = seen_range(history)
-    index_key = f"{EXPORT_DIR}/index.json"
-    fs.write_text(index_key, _dumps(index_document(runs_by_eval, review, seen, stamp)))
-    written = [index_key]
-    for eval_name in sorted(runs_by_eval):
-        key = f"{EXPORT_DIR}/evals/{slug(eval_name)}.json"
-        document = eval_document(eval_name, runs_by_eval[eval_name], review, seen, stamp)
-        if not _same_but_for_stamp(fs, key, document):
-            fs.write_text(key, _dumps(document))
-        written.append(key)
-    return written
+    keys, texts = export_texts(fs, runs_by_eval, review, history=history, generated_at=generated_at)
+    fs.write_texts(texts)
+    return keys
 
 
-def _same_but_for_stamp(fs: StoreFS, key: str, document: dict[str, Any]) -> bool:
-    """Whether the object already holds this document apart from `generated_at`.
+def _same_but_for_stamp(existing_text: str | None, document: dict[str, Any]) -> bool:
+    """Whether the stored text already holds this document apart from `generated_at`.
 
     An eval file's stamp then means "when this eval's data last changed", and a review of one
     eval does not rewrite every other eval's file.
     """
-    if not fs.is_file(key):
+    if existing_text is None:
         return False
     try:
-        existing = json.loads(fs.read_text(key))
+        existing = json.loads(existing_text)
     except ValueError:
         return False
     if not isinstance(existing, dict):

@@ -6,6 +6,8 @@ depends on the order a backend enumerates objects.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -21,9 +23,13 @@ class StoreFS:
     @classmethod
     def from_locator(cls, locator: str | Path) -> StoreFS:
         text = str(locator)
+        options: dict[str, Any] = {}
         if "://" not in text:
             text = Path(text).expanduser().resolve().as_posix()
-        fs, root = url_to_fs(text)
+        elif text.startswith(("s3://", "s3a://")):
+            # botocore's default pool of 10 connections serialises a batch read of hundreds of runs
+            options["config_kwargs"] = {"max_pool_connections": 64}
+        fs, root = url_to_fs(text, **options)
         return cls(fs, str(root))
 
     @property
@@ -62,6 +68,19 @@ class StoreFS:
         with self.fs.open(self._full(key), "rb") as handle:
             return bytes(cast("Any", handle).read())
 
+    def read_texts(self, keys: Sequence[str]) -> dict[str, str]:
+        """Several objects in one call, which object stores fetch concurrently. Missing keys raise."""
+        if not keys:
+            return {}
+        fulls = {self._full(key): key for key in keys}
+        fetched = cast("dict[str, bytes]", self.fs.cat(list(fulls)))
+        by_key = {self._rel(path): data for path, data in fetched.items()}
+        return {key: by_key[key].decode("utf-8") for key in keys}
+
+    def write_texts(self, items: Mapping[str, str]) -> list[str]:
+        """Several objects in one call, which object stores write concurrently; returns the keys, sorted."""
+        return self.write_many({key: text.encode("utf-8") for key, text in items.items()})
+
     def write_text(self, key: str, text: str) -> str:
         return self.write_bytes(key, text.encode("utf-8"))
 
@@ -81,19 +100,52 @@ class StoreFS:
         return sorted(self._rel(p) for p in entries)
 
     def glob(self, pattern: str) -> list[str]:
-        matches = cast("list[str]", self.fs.glob(self._full(pattern)))
-        return sorted(self._rel(p) for p in matches)
+        """Keys matching `pattern`, where `*` and `?` stay within one path segment; sorted.
+
+        On an object store this is one recursive listing matched locally: expanding a leading
+        wildcard prefix by prefix costs one round trip per eval, which on R2 took minutes.
+        """
+        if self.protocol == "file":
+            matches = cast("list[str]", self.fs.glob(self._full(pattern)))
+            return sorted(self._rel(p) for p in matches)
+        regex = _segment_regex(pattern)
+        listed = cast("list[str]", self.fs.find(self.root))
+        return sorted(key for key in (self._rel(p) for p in listed) if regex.fullmatch(key))
 
     def put_tree(self, local_dir: Path, prefix: str) -> list[str]:
-        """Upload every file under `local_dir` to `prefix/<relative path>`; returns the keys, sorted."""
-        keys: list[str] = []
-        for path in sorted(p for p in local_dir.rglob("*") if p.is_file()):
-            key = self.key(prefix, path.relative_to(local_dir).as_posix())
-            keys.append(self.write_bytes(key, path.read_bytes()))
-        return keys
+        """Upload every file under `local_dir` to `prefix/<relative path>` in one batch; returns the keys, sorted."""
+        files = {
+            self.key(prefix, path.relative_to(local_dir).as_posix()): path.read_bytes()
+            for path in sorted(p for p in local_dir.rglob("*") if p.is_file())
+        }
+        return self.write_many(files)
+
+    def write_many(self, items: Mapping[str, bytes]) -> list[str]:
+        """Several objects in one call, which object stores write concurrently; returns the keys, sorted."""
+        if not items:
+            return []
+        fulls = {self._full(key): data for key, data in items.items()}
+        if self.protocol == "file":
+            for parent in {full.rsplit("/", 1)[0] for full in fulls}:
+                self.fs.makedirs(parent, exist_ok=True)
+        self.fs.pipe(fulls)
+        return sorted(items)
 
     def local_path(self, key: str) -> Path | None:
         return Path(self._full(key)) if self.protocol == "file" else None
+
+
+def _segment_regex(pattern: str) -> re.Pattern[str]:
+    """A glob pattern as a regex whose wildcards never cross a `/`."""
+    parts: list[str] = []
+    for char in pattern:
+        if char == "*":
+            parts.append("[^/]*")
+        elif char == "?":
+            parts.append("[^/]")
+        else:
+            parts.append(re.escape(char))
+    return re.compile("".join(parts))
 
 
 def as_store_fs(value: StoreFS | str | Path) -> StoreFS:

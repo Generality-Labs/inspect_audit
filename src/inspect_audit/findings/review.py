@@ -178,11 +178,9 @@ def new_decision_id(at: datetime) -> str:
 
 def unmigrated_review_files(fs: StoreFS) -> list[str]:
     """Hand-written `suppressions.yaml` or `issues.yaml` still present: a store from before the log."""
-    found: list[str] = []
-    for name in (SUPPRESSIONS_FILE, ISSUES_FILE):
-        if fs.is_file(name) and not fs.read_text(name).startswith(DERIVED_HEADER):
-            found.append(name)
-    return found
+    present = [name for name in fs.glob("*.yaml") if name in (SUPPRESSIONS_FILE, ISSUES_FILE)]
+    texts = fs.read_texts(present)
+    return [name for name in present if not texts[name].startswith(DERIVED_HEADER)]
 
 
 def load_decisions(fs: StoreFS, *, allow_unmigrated: bool = False) -> list[Decision]:
@@ -199,9 +197,11 @@ def load_decisions(fs: StoreFS, *, allow_unmigrated: bool = False) -> list[Decis
                 "run `inspect-audit-findings review migrate` first"
             )
     decisions: list[Decision] = []
-    for key in fs.glob(f"{REVIEW_PREFIX}/*.json"):
+    keys = fs.glob(f"{REVIEW_PREFIX}/*.json")
+    texts = fs.read_texts(keys)
+    for key in keys:
         try:
-            decisions.append(Decision.model_validate_json(fs.read_text(key)))
+            decisions.append(Decision.model_validate_json(texts[key]))
         except (ValueError, ValidationError) as ex:
             raise ValueError(f"{key}: {ex}") from ex
     return decisions
@@ -307,14 +307,22 @@ def load_review(store: StoreFS | str | Path) -> Review:
     return fold(load_decisions(as_store_fs(store))).review
 
 
-def write_review_views(fs: StoreFS, review: Review) -> list[str]:
-    """The derived `suppressions.yaml` and `issues.yaml`, for reading only."""
-    written: list[str] = []
+def review_view_texts(review: Review) -> dict[str, str]:
+    """The derived `suppressions.yaml` and `issues.yaml`, for reading only, by key."""
+    texts: dict[str, str] = {}
     for name, rows in ((SUPPRESSIONS_FILE, review.suppressions), (ISSUES_FILE, review.issues)):
         rows_json = [row.model_dump(mode="json", exclude_none=True) for row in rows]
-        body = yaml.safe_dump(rows_json, sort_keys=False, allow_unicode=True)
-        written.append(fs.write_text(name, DERIVED_HEADER + body))
-    return written
+        texts[name] = DERIVED_HEADER + yaml.safe_dump(
+            rows_json, sort_keys=False, allow_unicode=True
+        )
+    return texts
+
+
+def write_review_views(fs: StoreFS, review: Review) -> list[str]:
+    """Write the derived views; returns their keys in file order."""
+    texts = review_view_texts(review)
+    fs.write_texts(texts)
+    return list(texts)
 
 
 def _load_yaml_list(fs: StoreFS, key: str, adapter: TypeAdapter[Any]) -> list[Any]:

@@ -828,3 +828,26 @@ def test_summary_positional_beats_the_environment_store(
     assert main(["summary", str(out)]) == 0
     assert main(["summary", "--store", str(out)]) == 0
     assert main(["summary"]) == 2
+
+
+def test_a_renamed_run_takes_its_scan_directory_with_it(tmp_path: Path, run: Run) -> None:
+    from inspect_audit.findings.cli import write_outputs
+    from inspect_audit.findings.io import read_run
+
+    out = tmp_path / "out"
+    key = "inspect-evals-stereoset/scans/lint-1"
+    with_scan = run.model_copy(update={"inputs": {"scan_dir": key}})
+    (out / key).mkdir(parents=True)
+    (out / key / "scan_summary.json").write_text("{}")
+    write_outputs(out, {"inspect_evals/stereoset": [with_scan]})
+    assert (out / key / "scan_summary.json").is_file()  # same id: nothing moves
+    # a rerun in the same second: the producer wrote under the same id again
+    (out / key).mkdir(exist_ok=True)
+    (out / key / "second.json").write_text("{}")
+    write_outputs(out, {"inspect_evals/stereoset": [with_scan]})
+    fs = StoreFS.from_locator(out)
+    second = read_run(fs, "inspect-evals-stereoset/runs/lint-1-2.run.json")
+    assert second.inputs["scan_dir"] == "inspect-evals-stereoset/scans/lint-1-2"
+    assert (out / "inspect-evals-stereoset/scans/lint-1-2/second.json").is_file()
+    first = read_run(fs, "inspect-evals-stereoset/runs/lint-1.run.json")
+    assert first.inputs["scan_dir"] == key

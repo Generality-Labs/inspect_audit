@@ -102,7 +102,22 @@ def _renamed(run: Run, file_id: str) -> Run:
         )
         for n, finding in enumerate(run.findings, 1)
     ]
-    return run.model_copy(update={"id": file_id, "findings": findings})
+    inputs = dict(run.inputs)
+    scan = inputs.get("scan_dir")
+    if isinstance(scan, str) and scan.endswith(f"/{run.id}"):
+        inputs["scan_dir"] = scan[: -len(run.id)] + file_id
+    return run.model_copy(update={"id": file_id, "findings": findings, "inputs": inputs})
+
+
+def _move_scan_dir(fs: StoreFS, before: Run, after: Run) -> None:
+    """A renamed local run's scan directory follows it; remote uploads use the new key directly."""
+    old, new = before.inputs.get("scan_dir"), after.inputs.get("scan_dir")
+    if not (isinstance(old, str) and isinstance(new, str) and old != new):
+        return
+    source, target = fs.local_path(old), fs.local_path(new)
+    if source is not None and target is not None and source.is_dir():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.rename(target)
 
 
 def write_outputs(
@@ -116,7 +131,10 @@ def write_outputs(
         for run in runs:
             key = _run_key(fs, slug(target), run)
             file_id = key.rsplit("/", 1)[-1].removesuffix(".run.json")
-            write_run(run if file_id == run.id else _renamed(run, file_id), fs, key)
+            stored = run if file_id == run.id else _renamed(run, file_id)
+            if stored is not run:
+                _move_scan_dir(fs, run, stored)
+            write_run(stored, fs, key)
     render_current(fs, review)
 
 

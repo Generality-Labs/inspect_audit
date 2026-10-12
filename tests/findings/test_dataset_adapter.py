@@ -318,7 +318,8 @@ def test_task_scan_dumps_in_the_eval_environment_then_scans_the_replay(
     assert scan["scorers"] == "inspect_ai/exact"  # the eval's scorers reach the replay task
     dataset_inputs = result.inputs["dataset"]
     assert isinstance(dataset_inputs, dict) and dataset_inputs["scorers"] == ["inspect_ai/exact"]
-    assert Path(scan["cwd"]).resolve() == Path(str(result.inputs["scan_dir"])).resolve()
+    scan_dir = tmp_path / "out" / str(result.inputs["scan_dir"])  # a key under the work dir
+    assert Path(scan["cwd"]).resolve() == scan_dir.resolve()
     dump_argv = result.inputs["dump_argv"]
     assert isinstance(dump_argv, list) and dump_argv[1:] == dump["argv"]  # [0] is the interpreter
 
@@ -516,6 +517,8 @@ def test_a_failed_dump_leaves_no_scan_dir_and_records_the_dump(
     result = run("inspect_evals/stereoset", ctx)
     assert result.outcomes[0].status == "skip"
     assert not list(ctx.out_dir.glob("inspect_dataset_*"))
+    assert not (ctx.out_dir / "inspect-evals-stereoset" / "scans").exists()
+    assert "scan_dir" not in result.inputs
     dump_argv = result.inputs["dump_argv"]
     assert isinstance(dump_argv, list) and "inspect_evals/stereoset" in dump_argv
 
@@ -744,3 +747,16 @@ def test_a_failure_reason_without_an_exception_is_the_last_line() -> None:
     assert failure_reason("loading...\nSet CYBENCH_ACKNOWLEDGE_RISKS=1 to proceed.\n\n") == (
         "Set CYBENCH_ACKNOWLEDGE_RISKS=1 to proceed."
     )
+
+
+def test_scan_directory_lives_under_the_runs_key_and_is_recorded_relatively(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    monkeypatch.setenv("STUB_OUTPUT_DIR", str(TASK_FIXTURE))
+    ctx = _task_ctx(root, tmp_path)
+    result = run("inspect_evals/stereoset", ctx)
+    key = result.inputs["scan_dir"]
+    assert key == f"inspect-evals-stereoset/scans/{result.id}"
+    assert (ctx.out_dir / str(key) / "scan_summary.json").is_file()
+    assert not list(ctx.out_dir.glob("inspect_dataset_*"))

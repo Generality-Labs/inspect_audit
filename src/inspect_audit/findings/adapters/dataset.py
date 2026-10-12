@@ -288,6 +288,13 @@ def parse(
 
 DUMP_SCRIPT = Path(__file__).with_name("_dump_task_samples.py")
 REPLAY_SCRIPT = Path(__file__).with_name("_replay_samples.py")
+
+
+def scan_key(target: str, run_id: str) -> str:
+    """Where a dataset run's scan directory lives in the store: beside its run, named by it."""
+    return f"{slug(target)}/scans/{run_id}"
+
+
 # names the dumped samples for the replay task; _replay_samples.SAMPLES_ENV must match
 SAMPLES_ENV = "INSPECT_AUDIT_SAMPLES_FILE"
 SCORERS_ENV = "INSPECT_AUDIT_SCORERS"  # _replay_samples.SCORERS_ENV must match
@@ -390,6 +397,7 @@ def run(target: str, ctx: Context) -> Run:
     them in inspect-dataset's, so neither sees the other's dependencies.
     """
     timestamp = utcnow()
+    run_id = new_run_id(PRODUCER, target, timestamp)
     declared = ctx.config.for_eval(target).dataset
     yaml_data = eval_yaml(ctx.ie_root, target)
     path, options, examined = scan_arguments(target, yaml_data, declared)
@@ -478,7 +486,8 @@ def run(target: str, ctx: Context) -> Run:
                 "inspect_ai": inspect_ai,
             }
             pin = ["--with", f"inspect-ai=={inspect_ai}"] if inspect_ai else []
-            scan_dir = Path(tempfile.mkdtemp(prefix="inspect_dataset_", dir=ctx.out_dir))
+            scan_dir = ctx.out_dir / scan_key(target, run_id)
+            scan_dir.mkdir(parents=True, exist_ok=True)
             argv = [
                 *_expand(ctx.producers.dataset_task, ctx.ie_root, {"{inspect_ai}": pin}),
                 "scan",
@@ -493,7 +502,8 @@ def run(target: str, ctx: Context) -> Run:
             # the replay needs nothing from the caller's directory, and must not pick up its .env
             scan_cwd: Path | None = scan_dir
         else:
-            scan_dir = Path(tempfile.mkdtemp(prefix="inspect_dataset_", dir=ctx.out_dir))
+            scan_dir = ctx.out_dir / scan_key(target, run_id)
+            scan_dir.mkdir(parents=True, exist_ok=True)
             argv = [*ctx.producers.dataset, "scan", path, *options, "-o", str(scan_dir)]
             dataset = None
             scan_env = None
@@ -501,7 +511,7 @@ def run(target: str, ctx: Context) -> Run:
             # relative dataset path from the caller's directory, as it did before task scans
             scan_cwd = None
         inputs["argv"] = list(argv)
-        inputs["scan_dir"] = str(scan_dir)
+        inputs["scan_dir"] = scan_key(target, run_id)
         try:
             result = run_command(argv, timeout=ctx.producers.timeout_s, cwd=scan_cwd, env=scan_env)
         except ProducerError as ex:

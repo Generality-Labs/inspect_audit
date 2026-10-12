@@ -1134,7 +1134,9 @@ def test_the_findings_package_names_no_organisation() -> None:
     import re
 
     package = Path(__file__).parents[2]
-    pattern = re.compile(r"generality|4dd4a6b0|inspect-evals-findings|audits\.generality", re.I)
+    pattern = re.compile(
+        r"generality|4dd4a6b0|inspect-evals-findings|audits\.generality", re.IGNORECASE
+    )
     hits = [
         f"{path.relative_to(package)}:{n}"
         for folder in ("src/inspect_audit/findings", "scripts")

@@ -47,7 +47,7 @@ Known and worth a person's time now: strong_reject records 313 samples where the
 
 ## Milestones
 
-Five. Milestones 3 to 5 were re-cut on 2026-10-05 around [v1-architecture.md](v1-architecture.md); the measurement in milestone 2 runs beside them rather than ahead. Dates follow once the pilot evals and acceptance criteria are agreed with Tania.
+Five. Milestones 3 to 5 were re-cut on 2026-10-05 around [architecture.md](architecture.md); the measurement in milestone 2 runs beside them rather than ahead. Dates follow once the pilot evals and acceptance criteria are agreed with Tania.
 
 ### 1. A usable local pilot
 
@@ -70,7 +70,7 @@ Done when those numbers exist against criteria agreed with maintainers beforehan
 
 ### 3. Stand up the store, the review API and the scheduled run
 
-Per [v1-architecture.md](v1-architecture.md).
+Per [architecture.md](architecture.md).
 
 - Done 2026-10-12: `run` works on any store; dataset scan directories are keyed by run (`<slug>/scans/<run id>/`) and uploaded with their runs; a failed scan leaves nothing. Remaining for Generality's instance: the R2 bucket, a sweep token, and the first remote sweep.
 - Done 2026-10-09: the store is an fsspec locator (a directory, `s3://`, R2) and review decisions are an append-only log of objects folded into the view ([portable store spec](superpowers/specs/2026-10-09-portable-store-design.md)); the Store no longer commits to git; `review status`, `review retract` and `review migrate` added. `run` still needs a local store; remote `run` is the next slice.

@@ -1,6 +1,6 @@
 # Table site design
 
-Written 2026-10-07 after the brainstorm with Matt. This is the design for the first deploy of the findings table site described in [v1-architecture.md](../../v1-architecture.md) ("The table site") and for the export that feeds it. Two repositories are involved: `inspect_audit` gains the export; a new `Generality-Labs/audits-site` holds the Worker and the React app. The export ships first, so the site is built against real data.
+Written 2026-10-07 after the brainstorm with Matt. This is the design for the first deploy of the findings table site described in [architecture.md](../../architecture.md) ("The table site") and for the export that feeds it. Two repositories are involved: `inspect_audit` gains the export; a new `Generality-Labs/audits-site` holds the Worker and the React app. The export ships first, so the site is built against real data.
 
 ## Purpose
 
@@ -19,7 +19,7 @@ One filterable, sortable table of every active finding across every eval, and a 
 | Access                                  | Cloudflare Access on `audits.generality.org` for Generality Labs Google accounts                                                                                                                  | Pilot data about named evals stays internal until reviewed and the security review is done; going public is deleting the policy  |
 | Staging                                 | None in this slice                                                                                                                                                                                | Production is gated, so it is the staging site; add via `copier update` with `use_staging` when the policy comes off             |
 | Pages                                   | Findings table and eval page                                                                                                                                                                      | The evals overview waits until there are more than a handful of evals                                                            |
-| Hosting of the Store API and MCP server | Store API: Python, run locally and in the findings repo's Actions; hosted writes arrive as `repository_dispatch`. MCP: Python stdio locally; hosted read tools in this Worker, writes by dispatch | Recorded in v1-architecture.md with this spec                                                                                    |
+| Hosting of the Store API and MCP server | Store API: Python, run locally and in the findings repo's Actions; hosted writes arrive as `repository_dispatch`. MCP: Python stdio locally; hosted read tools in this Worker, writes by dispatch | Recorded in architecture.md (then v1-architecture.md) with this spec                                                             |
 
 ## The export
 
@@ -172,19 +172,7 @@ Review actions on the site; the MCP endpoint; the evals overview page; KV or R2;
 
 ## Implementation notes
 
-What an implementer needs that is not in the sections above. Written 2026-10-07 after the export landed (inspect_audit #30).
-
-**The export shapes.** The examples above are illustrative; `src/inspect_audit/findings/export.py` on `feat/findings` is the source of truth, and real files carry more than the examples show: `inputs.logs.count_excluded`; dataset keys such as `config`, `split`, `revision`, `task` and `inspect_ai` when the adapter recorded them; `quote` and `end_line` as null on code locations; `runs[*].passing`; `issues[*].reason`; `suppressed[*].producer` may be null. Build the app against real files. The first committed export is on `main` of `Generality-Labs/inspect-evals-findings` (sweep of 2026-10-07: StereoSet with lint and dataset, SciCode and HLE with lint), and copying it into `test/fixtures/export/` is the fixture.
-
-**Cloudflare.** Account `4dd4a6b03a79f452ebc112658643f02a` (Generality Labs), the account `llm-prices` deploys to; the custom domain is a route under `[env.production]` on the `generality.org` zone, the way `llm-prices.generality.org` is declared. The Access application is created by hand in the Zero Trust dashboard on `audits.generality.org` with a policy allowing Generality Labs Google accounts; record in the README that it exists. Repo secrets the template's deploy needs: `CLOUDFLARE_API_TOKEN` (Workers Scripts edit, Workers Routes edit, Zone read on `generality.org`) and `CLOUDFLARE_ACCOUNT_ID`; a `HEALTH_URL` variable on the GitHub environment for the deploy smoke test. The Worker's `GITHUB_TOKEN` is a fine-grained PAT with Contents read on `inspect-evals-findings` only, put with `scripts/put-secrets.sh`; note its expiry date in the README. Matt holds all of these.
-
-**The template.** `Generality-Labs/cloudflare-worker-template`, private, Copier, tagged `v1.0.0` at the time of writing; the scaffold's CI and deploy call its shared `worker-ci` and `worker-deploy` workflows at `@v1`. Read its README before scaffolding: the top level of `wrangler.toml` is local only and every deploy targets a named environment; secrets go through `scripts/put-secrets.sh`; `scripts/setup-repo.sh` applies the repo settings and rulesets; actions are SHA-pinned and zizmor runs in pre-commit; Biome formats TypeScript. The scaffold's vitest config has two projects, `unit` in Node and `worker` in workerd; the app's jsdom tests join the `unit` project with their own `environment`, and `test/worker.test.ts` stays the only file in the worker pool. Creating the repo needs org admin, and the agent's `gh` identity must be able to read the private template.
-
-**In-house reference.** `Generality-Labs/llm-prices` is a Worker on this account with `[assets]` plus a `fetch` handler and a remote MCP endpoint. It is not the template and its vanilla UI is not the pattern here, but its `wrangler.toml` and `src/index.ts` show the assets and MCP wiring on this account.
-
-**Brand.** Colours from inspect_evals `docs/_brand.yml` on main; the hex values are quoted in "The React app". Geist from `@fontsource-variable/geist`. No other font, no third-party request.
-
-**Conventions.** UI pull requests carry before-and-after screenshots taken with Playwright. Commit messages and PR bodies end with the attribution lines in effect for the session. Each slice is a plan from this spec, executed with tests first, followed by a fresh reviewer on the whole branch whose minors are re-graded by effect.
+Moved on 2026-10-12 to [deployments/generality.md](../../deployments/generality.md#building-audits-site), with the facts updated for the R2 binding.
 
 ## Open items
 

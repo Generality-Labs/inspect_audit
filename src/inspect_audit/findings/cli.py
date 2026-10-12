@@ -368,7 +368,12 @@ def _parser() -> argparse.ArgumentParser:
         "hawk-pull",
         help="fetch the logs and artifact bundles a manifest names into its gitignored dest",
     )
-    pull_p.add_argument("--manifest", type=Path, default=Path("scripts/hawk-artefacts.yaml"))
+    pull_p.add_argument(
+        "--manifest",
+        type=Path,
+        required=True,
+        help="YAML naming the eval sets and bundles to pull; a deployment keeps its own",
+    )
     pull_p.add_argument("--dest", type=Path, default=None, help="override the manifest's dest")
     leads_p = sub.add_parser("leads", help="one eval's reviewed findings as leads for an agent")
     _store_arg(leads_p)

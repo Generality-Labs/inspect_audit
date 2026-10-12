@@ -1122,3 +1122,27 @@ def test_run_reads_header_logs_from_a_remote_source(
     assert list(
         (store / "inspect-evals-stereoset" / "runs").glob("inspect_audit_header-*.run.json")
     )
+
+
+def test_hawk_pull_needs_an_explicit_manifest() -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["hawk-pull"])
+    assert exit_info.value.code == 2
+
+
+def test_the_findings_package_names_no_organisation() -> None:
+    import re
+
+    package = Path(__file__).parents[2]
+    pattern = re.compile(r"generality|4dd4a6b0|inspect-evals-findings|audits\.generality", re.I)
+    hits = [
+        f"{path.relative_to(package)}:{n}"
+        for folder in ("src/inspect_audit/findings", "scripts")
+        for path in sorted((package / folder).rglob("*"))
+        if path.is_file()
+        and path.suffix in {".py", ".yaml", ".yml", ".toml", ".json", ".md", ".sh"}
+        and "taxonomies" not in path.parts  # credit where a framework came from: provenance
+        for n, line in enumerate(path.read_text(errors="ignore").splitlines(), 1)
+        if pattern.search(line)
+    ]
+    assert hits == []

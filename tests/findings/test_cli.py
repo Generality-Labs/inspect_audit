@@ -991,3 +991,49 @@ def test_render_reads_and_writes_the_store_in_batches(
     assert calls.get("read_bytes", 0) == 0
     assert calls.get("is_file", 0) + calls.get("exists", 0) == 0
     assert fs.read_text("inspect-evals-e5/SUMMARY.md").startswith("# inspect_evals/e5")
+
+
+def test_a_remote_sweep_uploads_only_the_scan_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scan directories hold raw dataset samples, gated ones included; they stay on the sweeping machine."""
+    from inspect_audit.findings.io import read_run
+
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    monkeypatch.setenv("STUB_OUTPUT_DIR", str(_scan_with_samples(tmp_path)))
+    args = ["run", "--config", str(PILOT), "--root", str(root), "--store", "memory://summary-only"]
+    assert main([*args, "--producers", "dataset", "inspect_evals/stereoset"]) == 0
+    fs = StoreFS.from_locator("memory://summary-only")
+    (key,) = fs.glob("inspect-evals-stereoset/runs/inspect_dataset-*.run.json")
+    scan = str(read_run(fs, key).inputs["scan_dir"])
+    uploaded = [k.removeprefix(f"{scan}/") for k in fs.fs.find(f"{fs.root}/{scan}")]
+    assert [k.rsplit("/", 1)[-1] for k in uploaded] == ["scan_summary.json"]
+
+
+def test_a_local_store_keeps_the_whole_scan_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit.findings.io import read_run
+
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    monkeypatch.setenv("STUB_OUTPUT_DIR", str(_scan_with_samples(tmp_path)))
+    store = tmp_path / "store"
+    args = ["run", "--config", str(PILOT), "--root", str(root), "--store", str(store)]
+    assert main([*args, "--producers", "dataset", "inspect_evals/stereoset"]) == 0
+    fs = StoreFS.from_locator(store)
+    (key,) = fs.glob("inspect-evals-stereoset/runs/inspect_dataset-*.run.json")
+    scan = store / str(read_run(fs, key).inputs["scan_dir"])
+    assert (scan / "samples.json").is_file() and (scan / "scan_summary.json").is_file()
+
+
+def _scan_with_samples(tmp_path: Path) -> Path:
+    """The dataset fixture plus a raw samples file, as inspect-dataset writes."""
+    import shutil
+
+    scan = tmp_path / "scan-fixture"
+    shutil.copytree(FIXTURES / "dataset", scan)
+    (scan / "samples.json").write_text('[{"id": "1", "question": "raw text", "answer": "a"}]')
+    (scan / "REPORT.md").write_text("# report quoting raw text\n")
+    return scan

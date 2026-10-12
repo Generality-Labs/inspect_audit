@@ -22,10 +22,18 @@ from .adapters import header as header_adapter
 from .adapters import lint as lint_adapter
 from .adapters.dataset import scan_key
 from .config import DEFAULT_CONFIG_PATH, load_config
-from .export import write_export
+from .export import export_texts
 from .featured import FEATURED
 from .fs import StoreFS, as_store_fs
-from .io import findings_df, read_current, read_runs, runs_df, write_parquet, write_run
+from .io import (
+    current_of,
+    findings_df,
+    read_current,
+    read_history,
+    runs_df,
+    write_parquet,
+    write_run,
+)
 from .leads import NoRunsError, leads_markdown
 from .models import Run
 from .producers import ProducerConfig
@@ -36,8 +44,8 @@ from .review import (
     fold,
     load_decisions,
     migrate_review_files,
+    review_view_texts,
     unmatched_issue_findings,
-    write_review_views,
 )
 from .store import Selection, Store
 
@@ -169,18 +177,23 @@ def render_current(store: StoreFS | str | Path, review: Review | None = None) ->
         review = folded.review
         for warning in folded.warnings:
             print(f"warning: {warning}", file=sys.stderr)
-    write_review_views(fs, review)
+    # one read of the run history, one batch write of everything derived: on object storage
+    # each object is a round trip, and those are what a render costs
+    history = read_history(fs)
+    texts = review_view_texts(review)
     runs_by_eval: dict[str, list[Run]] = {}
-    for run in apply_review(read_current(fs), review):
+    for run in apply_review(current_of(history), review):
         runs_by_eval.setdefault(run.subject.eval, []).append(run)
     all_runs: list[Run] = []
     for target, runs in runs_by_eval.items():
-        fs.write_text(f"{slug(target)}/SUMMARY.md", render_eval_summary(runs, issues=review.issues))
+        texts[f"{slug(target)}/SUMMARY.md"] = render_eval_summary(runs, issues=review.issues)
         all_runs += runs
+    texts["SUMMARY.md"] = render_sweep_summary(runs_by_eval)
+    _, export = export_texts(fs, runs_by_eval, review, history=[run for _, run in history])
+    texts.update(export)
+    fs.write_texts(texts)
     write_parquet(findings_df(all_runs), fs, "findings.parquet")
     write_parquet(runs_df(all_runs), fs, "runs.parquet")
-    write_export(fs, runs_by_eval, review, history=read_runs(fs))
-    fs.write_text("SUMMARY.md", render_sweep_summary(runs_by_eval))
     for issue_id, fingerprints in sorted(unmatched_issue_findings(review, all_runs).items()):
         print(
             f"warning: issue {issue_id} lists {len(fingerprints)} fingerprint(s) with no current "

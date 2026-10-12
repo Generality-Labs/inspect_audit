@@ -956,3 +956,38 @@ def test_a_store_write_failure_is_a_usage_error_not_a_skip(
     monkeypatch.setattr(cli, "write_outputs", failing)
     assert _remote_sweep(tmp_path, monkeypatch, "memory://remote-fails") == 2
     assert "connection reset by bucket" in capsys.readouterr().err
+
+
+def test_render_reads_and_writes_the_store_in_batches(
+    tmp_path: Path, run: Run, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On object storage every per-object call is a round trip; rendering must batch them."""
+    from inspect_audit.findings.cli import render_current, write_outputs
+    from inspect_audit.findings.store import Store
+
+    fs = StoreFS.from_locator("memory://batched-render")
+    evals = [f"inspect_evals/e{i}" for i in range(6)]
+    write_outputs(
+        fs,
+        {
+            e: [run.model_copy(update={"subject": run.subject.model_copy(update={"eval": e})})]
+            for e in evals
+        },
+    )
+    Store(fs).suppress(rule="IEBP008", author="Matt Fisher <m@x>", reason="r")
+    calls: dict[str, int] = {}
+    for name in ("read_text", "read_bytes", "write_text", "is_file", "exists"):
+        original = getattr(StoreFS, name)
+
+        def counted(
+            self: StoreFS, *args: object, _name: str = name, _f: object = original, **kw: object
+        ) -> object:
+            calls[_name] = calls.get(_name, 0) + 1
+            return _f(self, *args, **kw)  # type: ignore[operator]
+
+        monkeypatch.setattr(StoreFS, name, counted)
+    render_current(fs)
+    assert calls.get("read_text", 0) == 0 and calls.get("write_text", 0) == 0
+    assert calls.get("read_bytes", 0) == 0
+    assert calls.get("is_file", 0) + calls.get("exists", 0) == 0
+    assert fs.read_text("inspect-evals-e5/SUMMARY.md").startswith("# inspect_evals/e5")

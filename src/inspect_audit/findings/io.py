@@ -82,31 +82,38 @@ def read_run(fs: StoreFS, key: str) -> Run:
     return Run.model_validate_json(fs.read_text(key))
 
 
-def read_runs(fs: StoreFS) -> list[Run]:
-    """Every run under `<slug>/runs/`, sorted by key: the whole history, not just the current view."""
-    return [read_run(fs, key) for key in fs.glob(f"*/runs/*{RUN_SUFFIX}")]
+def read_history(fs: StoreFS) -> list[tuple[str, Run]]:
+    """Every run under `<slug>/runs/` with its key, sorted by key, read in one batch."""
+    keys = fs.glob(f"*/runs/*{RUN_SUFFIX}")
+    texts = fs.read_texts(keys)
+    return [(key, Run.model_validate_json(texts[key])) for key in keys]
 
 
-def read_current(fs: StoreFS) -> list[Run]:
-    """The current view: per eval and producer, the newest run by timestamp, then run id.
+def current_of(history: Sequence[tuple[str, Run]]) -> list[Run]:
+    """The current view of a history: per eval and producer, the newest run by timestamp, then run id.
 
     Derived rather than recorded, so two writers appending runs at once never contend for a
     shared manifest. Ties on timestamp go to the later run id, so a rerun written in the same
     second (its file carries a `-2` suffix) is the current one.
     """
-    by_eval_dir: dict[str, list[str]] = {}
-    for key in fs.glob(f"*/runs/*{RUN_SUFFIX}"):
-        by_eval_dir.setdefault(key.split("/", 1)[0], []).append(key)
-    current: list[Run] = []
-    for eval_dir in sorted(by_eval_dir):
-        newest: dict[str, tuple[tuple[datetime, str], Run]] = {}
-        for key in by_eval_dir[eval_dir]:
-            run = read_run(fs, key)
-            order = (run.timestamp, key.rsplit("/", 1)[-1].removesuffix(RUN_SUFFIX))
-            if run.producer not in newest or order > newest[run.producer][0]:
-                newest[run.producer] = (order, run)
-        current.extend(newest[producer][1] for producer in sorted(newest))
-    return current
+    newest: dict[tuple[str, str], tuple[tuple[datetime, str], Run]] = {}
+    for key, run in history:
+        eval_dir = key.split("/", 1)[0]
+        order = (run.timestamp, key.rsplit("/", 1)[-1].removesuffix(RUN_SUFFIX))
+        slot = (eval_dir, run.producer)
+        if slot not in newest or order > newest[slot][0]:
+            newest[slot] = (order, run)
+    return [newest[slot][1] for slot in sorted(newest)]
+
+
+def read_runs(fs: StoreFS) -> list[Run]:
+    """Every run under `<slug>/runs/`, sorted by key: the whole history, not just the current view."""
+    return [run for _, run in read_history(fs)]
+
+
+def read_current(fs: StoreFS) -> list[Run]:
+    """The current view of the store; see `current_of`."""
+    return current_of(read_history(fs))
 
 
 def _json_or_none(value: Any) -> str | None:

@@ -67,3 +67,74 @@ def test_put_tree_uploads_every_file_under_a_prefix(tmp_path: Path) -> None:
     keys = fs.put_tree(tmp_path / "scan", "e/scans/run-1")
     assert keys == ["e/scans/run-1/deep/rows.json", "e/scans/run-1/scan_summary.json"]
     assert fs.read_text("e/scans/run-1/scan_summary.json") == "{}"
+
+
+def test_read_texts_and_write_texts_round_trip_in_one_call_each(fs: StoreFS) -> None:
+    keys = fs.write_texts({"a/runs/x.json": "1", "b/deep/y.json": "2", "c.json": "3"})
+    assert keys == ["a/runs/x.json", "b/deep/y.json", "c.json"]
+    assert fs.read_texts(["c.json", "a/runs/x.json"]) == {"c.json": "3", "a/runs/x.json": "1"}
+    assert fs.read_texts([]) == {} and fs.write_texts({}) == []
+
+
+def test_glob_wildcards_stay_within_one_path_segment(fs: StoreFS) -> None:
+    fs.write_texts(
+        {
+            "a/runs/x.run.json": "1",
+            "a/deep/runs/y.run.json": "2",  # one level too deep: not a run of the store
+            "b/runs/notes.json": "3",
+            "review/dec-1.json": "4",
+            "suppressions.yaml": "5",
+        }
+    )
+    assert fs.glob("*/runs/*.run.json") == ["a/runs/x.run.json"]
+    assert fs.glob("review/*.json") == ["review/dec-1.json"]
+    assert fs.glob("*.yaml") == ["suppressions.yaml"]
+    assert fs.glob("missing/*.json") == []
+
+
+def test_glob_on_an_object_store_lists_once_instead_of_per_prefix() -> None:
+    fs = StoreFS.from_locator("memory://glob-once")
+    fs.write_texts({f"e{i}/runs/r.run.json": "{}" for i in range(5)})
+    calls = {"glob": 0, "find": 0}
+    inner_glob, inner_find = fs.fs.glob, fs.fs.find
+
+    def counting_glob(*args: object, **kwargs: object) -> object:
+        calls["glob"] += 1
+        return inner_glob(*args, **kwargs)
+
+    def counting_find(*args: object, **kwargs: object) -> object:
+        calls["find"] += 1
+        return inner_find(*args, **kwargs)
+
+    fs.fs.glob, fs.fs.find = counting_glob, counting_find  # type: ignore[method-assign]
+    try:
+        assert len(fs.glob("*/runs/*.run.json")) == 5
+    finally:
+        fs.fs.glob, fs.fs.find = inner_glob, inner_find  # type: ignore[method-assign]
+    assert calls == {"glob": 0, "find": 1}
+
+
+def test_put_tree_uploads_in_one_batch(tmp_path: Path) -> None:
+    fs = StoreFS.from_locator("memory://put-tree-batch")
+    for i in range(5):
+        (tmp_path / "scan" / f"{i}.json").parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "scan" / f"{i}.json").write_text(str(i))
+    calls = {"pipe": 0, "open": 0}
+    inner_pipe, inner_open = fs.fs.pipe, fs.fs.open
+
+    def counting_pipe(*args: object, **kwargs: object) -> object:
+        calls["pipe"] += 1
+        return inner_pipe(*args, **kwargs)
+
+    def counting_open(*args: object, **kwargs: object) -> object:
+        calls["open"] += 1
+        return inner_open(*args, **kwargs)
+
+    fs.fs.pipe, fs.fs.open = counting_pipe, counting_open  # type: ignore[method-assign]
+    try:
+        keys = fs.put_tree(tmp_path / "scan", "e/scans/r")
+    finally:
+        fs.fs.pipe, fs.fs.open = inner_pipe, inner_open  # type: ignore[method-assign]
+    # one batch call; the memory backend implements it with an open per file, s3fs concurrently
+    assert len(keys) == 5 and calls["pipe"] == 1
+    assert fs.read_text("e/scans/r/3.json") == "3"

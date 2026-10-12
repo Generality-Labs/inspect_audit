@@ -24,6 +24,17 @@ judge, prompt, budget and metric configurations from log headers. Reproduce repo
 numbers where the necessary evidence exists. An unexplained discrepancy remains a
 limitation until you can establish its cause or bound its effect.
 
+When the seed names `leads`, read /inputs/findings/LEADS.md early. It lists what the
+deterministic checks (inspect-evals-lint, inspect-dataset, log-header checks) observed in
+this eval, grouped by rule, each example with a record id such as
+`inspect_evals_lint-20261012T042931Z-inspect-evals-stereoset/1`, and the checks that
+skipped. Treat every lead as a hypothesis with a location attached, not a finding: confirm
+it against code, data or transcripts, or retire it with the reason. Leads are cheap
+starting points, not a checklist; a lead that does not affect how the score is read can be
+retired in one line. When a register entry rests on a lead, add an evidence ref with path
+`/inputs/findings/LEADS.md` and the record id as its location, so the store can link the
+two. A skipped check is missing coverage, not a clean result.
+
 Inventory the population with sample summaries before loading whole transcripts.
 Separate items, epochs, models and selected subsets. Count attempted/completed cases,
 errors, unscored records, empty outputs and limit hits with explicit denominators.

@@ -225,6 +225,17 @@ def _stage_docs(docs: list[str], inputs: Path) -> list[str]:
     return staged
 
 
+def _stage_leads(leads: str, inputs: Path) -> str:
+    """Copy a LEADS.md of deterministic findings to inputs/findings/LEADS.md."""
+    path = Path(leads).expanduser().resolve()
+    if not path.is_file():
+        raise ValueError(f"leads file does not exist: {leads}")
+    dest = inputs / "findings" / "LEADS.md"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(path, dest)
+    return "/inputs/findings/LEADS.md"
+
+
 def _link_or_copy(src: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -561,6 +572,7 @@ def prepare_workspace(
     target_task: str | None,
     output_dir: str,
     budget_usd: float,
+    leads: str | None = None,
 ) -> Path:
     """Create a fresh run directory; expose only explicit inputs to the shell."""
     root = Path(output_dir).expanduser().resolve() / uuid4().hex
@@ -598,11 +610,13 @@ def prepare_workspace(
             )
     staged_paper = _fetch_paper(paper, inputs) if paper else None
     staged_docs = _stage_docs(docs, inputs)
+    staged_leads = _stage_leads(leads, inputs) if leads else None
     seed.update(
         task=target_task,
         overview=overview,
         paper=staged_paper,
         docs=staged_docs,
+        leads=staged_leads,
         logs=log_index,
         budget_usd=budget_usd,
     )
@@ -2037,6 +2051,7 @@ def investigate(
     logs: list[str] | None = None,
     paper: str | None = None,
     docs: list[str] | None = None,
+    leads: str | None = None,
     overview: str | None = None,
     target_task: str | None = None,
     revision: str | None = None,
@@ -2074,6 +2089,11 @@ def investigate(
         paper: Local file or URL; a URL is downloaded now (arXiv abs -> pdf). Defaults to
             the paper the eval names in its own metadata.
         docs: Documentation directories to mount read-only (inspect docs, Hawk docs).
+        leads: A LEADS.md of deterministic findings for this eval, as
+            `inspect-audit-findings leads --store <store> <eval> --write LEADS.md` renders it.
+            Staged read-only at /inputs/findings/LEADS.md and named in the seed; the agent
+            treats each lead as a hypothesis with a location attached and cites its record
+            id. A local file, so for execution='hawk' it must exist on the runner.
         overview: Benchmark-specific context, supplied-evidence context and operator questions.
             Execution settings belong in the corresponding arguments; reporting rules
             are supplied by the package, not repeated in this overview.
@@ -2139,6 +2159,7 @@ def investigate(
     target_task = settings.get("target_task", target_task)
     revision = settings.get("revision", revision)
     paths = settings.get("paths", paths)
+    leads = settings.get("leads", leads)
     output_dir = settings.get("output_dir", output_dir)
     resume = settings.get("resume", resume)
     budget_usd = settings.get("budget_usd", budget_usd)
@@ -2267,6 +2288,7 @@ def investigate(
         target_task,
         output_dir,
         budget_usd,
+        leads=leads,
     )
 
     remote: Remote | None = None

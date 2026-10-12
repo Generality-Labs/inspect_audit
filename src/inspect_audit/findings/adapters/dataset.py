@@ -297,6 +297,17 @@ def _discard_scan(scan_dir: Path, inputs: dict[str, Any]) -> None:
     inputs.pop("scan_dir", None)
 
 
+def _staging_dir(out_dir: Path, target: str, run_id: str) -> Path:
+    """A scan directory no other run shares, even one started in the same second.
+
+    It is hidden and named after the run; `write_outputs` gives it its final key, `scan_key`,
+    once the run's file id is known.
+    """
+    parent = out_dir / slug(target) / "scans"
+    parent.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=f".{run_id}.", dir=parent))
+
+
 def scan_key(target: str, run_id: str) -> str:
     """Where a dataset run's scan directory lives in the store: beside its run, named by it."""
     return f"{slug(target)}/scans/{run_id}"
@@ -493,8 +504,7 @@ def run(target: str, ctx: Context) -> Run:
                 "inspect_ai": inspect_ai,
             }
             pin = ["--with", f"inspect-ai=={inspect_ai}"] if inspect_ai else []
-            scan_dir = ctx.out_dir / scan_key(target, run_id)
-            scan_dir.mkdir(parents=True, exist_ok=True)
+            scan_dir = _staging_dir(ctx.out_dir, target, run_id)
             argv = [
                 *_expand(ctx.producers.dataset_task, ctx.ie_root, {"{inspect_ai}": pin}),
                 "scan",
@@ -509,8 +519,7 @@ def run(target: str, ctx: Context) -> Run:
             # the replay needs nothing from the caller's directory, and must not pick up its .env
             scan_cwd: Path | None = scan_dir
         else:
-            scan_dir = ctx.out_dir / scan_key(target, run_id)
-            scan_dir.mkdir(parents=True, exist_ok=True)
+            scan_dir = _staging_dir(ctx.out_dir, target, run_id)
             argv = [*ctx.producers.dataset, "scan", path, *options, "-o", str(scan_dir)]
             dataset = None
             scan_env = None
@@ -518,7 +527,7 @@ def run(target: str, ctx: Context) -> Run:
             # relative dataset path from the caller's directory, as it did before task scans
             scan_cwd = None
         inputs["argv"] = list(argv)
-        inputs["scan_dir"] = scan_key(target, run_id)
+        inputs["scan_dir"] = scan_dir.relative_to(ctx.out_dir).as_posix()
         try:
             result = run_command(argv, timeout=ctx.producers.timeout_s, cwd=scan_cwd, env=scan_env)
         except ProducerError as ex:
@@ -550,10 +559,12 @@ def run(target: str, ctx: Context) -> Run:
     except (
         Exception
     ) as ex:  # a producer whose output we cannot read is a skipped producer, not a dead sweep
+        _discard_scan(scan_dir, inputs)
         return skip_run(
             PRODUCER,
             target,
             ctx,
             f"could not parse {PRODUCER} output: {type(ex).__name__}: {ex}",
             timestamp=timestamp,
+            inputs=inputs,
         )

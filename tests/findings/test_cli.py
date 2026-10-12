@@ -881,24 +881,78 @@ def test_summary_positional_beats_the_environment_store(
     assert main(["summary"]) == 2
 
 
-def test_a_renamed_run_takes_its_scan_directory_with_it(tmp_path: Path, run: Run) -> None:
+def test_write_outputs_names_a_staged_scan_directory_after_its_run(
+    tmp_path: Path, run: Run
+) -> None:
     from inspect_audit.findings.cli import write_outputs
     from inspect_audit.findings.io import read_run
 
     out = tmp_path / "out"
-    key = "inspect-evals-stereoset/scans/lint-1"
-    with_scan = run.model_copy(update={"inputs": {"scan_dir": key}})
-    (out / key).mkdir(parents=True)
-    (out / key / "scan_summary.json").write_text("{}")
-    write_outputs(out, {"inspect_evals/stereoset": [with_scan]})
-    assert (out / key / "scan_summary.json").is_file()  # same id: nothing moves
-    # a rerun in the same second: the producer wrote under the same id again
-    (out / key).mkdir(exist_ok=True)
-    (out / key / "second.json").write_text("{}")
-    write_outputs(out, {"inspect_evals/stereoset": [with_scan]})
     fs = StoreFS.from_locator(out)
-    second = read_run(fs, "inspect-evals-stereoset/runs/lint-1-2.run.json")
-    assert second.inputs["scan_dir"] == "inspect-evals-stereoset/scans/lint-1-2"
-    assert (out / "inspect-evals-stereoset/scans/lint-1-2/second.json").is_file()
-    first = read_run(fs, "inspect-evals-stereoset/runs/lint-1.run.json")
-    assert first.inputs["scan_dir"] == key
+    keys = []
+    for name in ("one", "two"):  # two runs with the same id: the second file gets -2
+        staged = f"inspect-evals-stereoset/scans/.lint-1.{name}"
+        (out / staged).mkdir(parents=True)
+        (out / staged / f"{name}.json").write_text("{}")
+        with_scan = run.model_copy(update={"inputs": {"scan_dir": staged}})
+        write_outputs(out, {"inspect_evals/stereoset": [with_scan]}, work_dir=out)
+        assert not (out / staged).exists()
+    for file_id, name in (("lint-1", "one"), ("lint-1-2", "two")):
+        stored = read_run(fs, f"inspect-evals-stereoset/runs/{file_id}.run.json")
+        assert stored.inputs["scan_dir"] == f"inspect-evals-stereoset/scans/{file_id}"
+        assert (out / str(stored.inputs["scan_dir"]) / f"{name}.json").is_file()
+        keys.append(stored.inputs["scan_dir"])
+    assert keys[0] != keys[1]
+
+
+def test_a_leftover_scan_directory_with_no_run_is_replaced(tmp_path: Path, run: Run) -> None:
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    (out / "inspect-evals-stereoset/scans/lint-1").mkdir(parents=True)
+    (out / "inspect-evals-stereoset/scans/lint-1/stale.json").write_text("{}")  # a crash's orphan
+    staged = "inspect-evals-stereoset/scans/.lint-1.new"
+    (out / staged).mkdir(parents=True)
+    (out / staged / "fresh.json").write_text("{}")
+    with_scan = run.model_copy(update={"inputs": {"scan_dir": staged}})
+    write_outputs(out, {"inspect_evals/stereoset": [with_scan]}, work_dir=out)
+    final = out / "inspect-evals-stereoset/scans/lint-1"
+    assert (final / "fresh.json").is_file() and not (final / "stale.json").exists()
+
+
+def test_local_same_second_sweeps_keep_both_scan_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit.findings.adapters import dataset as dataset_adapter
+    from inspect_audit.findings.io import read_run
+
+    frozen = dataset_adapter.utcnow()
+    monkeypatch.setattr(dataset_adapter, "utcnow", lambda: frozen)
+    store = tmp_path / "store"
+    assert _remote_sweep(tmp_path / "a", monkeypatch, str(store)) == 0
+    monkeypatch.setenv("STUB_EXIT", "1")  # the second scan fails after writing partial output
+    assert _remote_sweep(tmp_path / "b", monkeypatch, str(store)) == 1
+    monkeypatch.delenv("STUB_EXIT")
+    assert _remote_sweep(tmp_path / "c", monkeypatch, str(store)) == 0
+    fs = StoreFS.from_locator(store)
+    cited = [
+        read_run(fs, k).inputs.get("scan_dir")
+        for k in fs.glob("inspect-evals-stereoset/runs/inspect_dataset-*.run.json")
+    ]
+    present = [c for c in cited if c is not None]
+    assert len(present) == 2 and len(set(present)) == 2
+    for key in present:
+        assert (store / str(key) / "scan_summary.json").is_file()
+
+
+def test_a_store_write_failure_is_a_usage_error_not_a_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from inspect_audit.findings import cli
+
+    def failing(*_args: object, **_kwargs: object) -> None:
+        raise OSError("connection reset by bucket")
+
+    monkeypatch.setattr(cli, "write_outputs", failing)
+    assert _remote_sweep(tmp_path, monkeypatch, "memory://remote-fails") == 2
+    assert "connection reset by bucket" in capsys.readouterr().err

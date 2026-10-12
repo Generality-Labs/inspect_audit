@@ -749,17 +749,38 @@ def test_a_failure_reason_without_an_exception_is_the_last_line() -> None:
     )
 
 
-def test_scan_directory_lives_under_the_runs_key_and_is_recorded_relatively(
+def test_scan_directory_is_staged_uniquely_under_its_eval(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = make_root(tmp_path, extra=ASSET)
     monkeypatch.setenv("STUB_OUTPUT_DIR", str(TASK_FIXTURE))
     ctx = _task_ctx(root, tmp_path)
-    result = run("inspect_evals/stereoset", ctx)
-    key = result.inputs["scan_dir"]
-    assert key == f"inspect-evals-stereoset/scans/{result.id}"
-    assert (ctx.out_dir / str(key) / "scan_summary.json").is_file()
+    first = run("inspect_evals/stereoset", ctx)
+    second = run("inspect_evals/stereoset", ctx)
+    keys = [str(r.inputs["scan_dir"]) for r in (first, second)]
+    assert keys[0] != keys[1]  # never shared, even within one second
+    for key in keys:
+        assert key.startswith("inspect-evals-stereoset/scans/.")  # staged; write_outputs names it
+        assert (ctx.out_dir / key / "scan_summary.json").is_file()
     assert not list(ctx.out_dir.glob("inspect_dataset_*"))
+
+
+def test_an_unreadable_scan_leaves_no_scan_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "scan_summary.json").write_text("{not json")
+    monkeypatch.setenv("STUB_OUTPUT_DIR", str(broken))
+    ctx = _task_ctx(root, tmp_path)
+    result = run("inspect_evals/stereoset", ctx)
+    assert result.outcomes[0].status == "skip" and "could not parse" in (
+        result.outcomes[0].message or ""
+    )
+    assert "scan_dir" not in result.inputs
+    scans = ctx.out_dir / "inspect-evals-stereoset" / "scans"
+    assert not scans.exists() or not any(scans.iterdir())
 
 
 def test_a_failed_scan_leaves_no_scan_directory_and_cites_none(

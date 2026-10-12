@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,7 @@ from .adapters import Context, ProducerError, slug
 from .adapters import dataset as dataset_adapter
 from .adapters import header as header_adapter
 from .adapters import lint as lint_adapter
+from .adapters.dataset import scan_key
 from .config import DEFAULT_CONFIG_PATH, load_config
 from .export import write_export
 from .featured import FEATURED
@@ -103,22 +105,26 @@ def _renamed(run: Run, file_id: str) -> Run:
         )
         for n, finding in enumerate(run.findings, 1)
     ]
-    inputs = dict(run.inputs)
-    scan = inputs.get("scan_dir")
-    if isinstance(scan, str) and scan.endswith(f"/{run.id}"):
-        inputs["scan_dir"] = scan[: -len(run.id)] + file_id
-    return run.model_copy(update={"id": file_id, "findings": findings, "inputs": inputs})
+    return run.model_copy(update={"id": file_id, "findings": findings})
 
 
-def _move_scan_dir(fs: StoreFS, before: Run, after: Run) -> None:
-    """A renamed local run's scan directory follows it; remote uploads use the new key directly."""
-    old, new = before.inputs.get("scan_dir"), after.inputs.get("scan_dir")
-    if not (isinstance(old, str) and isinstance(new, str) and old != new):
+def _place_scan(fs: StoreFS, work_dir: Path, staged: str, final: str, *, uploading: bool) -> None:
+    """Give a staged scan directory its final key: upload it, or rename it within a local store.
+
+    A leftover directory at the final key belongs to no run (the run key was free), so it is
+    replaced rather than merged into.
+    """
+    source = work_dir / staged
+    if uploading:
+        fs.put_tree(source, final)
         return
-    source, target = fs.local_path(old), fs.local_path(new)
-    if source is not None and target is not None and source.is_dir():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        source.rename(target)
+    target = fs.local_path(final)
+    if target is None or source.resolve() == target.resolve():
+        return
+    if target.exists():
+        shutil.rmtree(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source.rename(target)
 
 
 def write_outputs(
@@ -143,13 +149,11 @@ def write_outputs(
             key = _run_key(fs, slug(target), run)
             file_id = key.rsplit("/", 1)[-1].removesuffix(".run.json")
             stored = run if file_id == run.id else _renamed(run, file_id)
-            if stored is not run:
-                _move_scan_dir(fs, run, stored)
-            if uploading and work_dir is not None:
-                scan = run.inputs.get("scan_dir")  # on disk it still carries the producer's id
-                final = stored.inputs.get("scan_dir")
-                if isinstance(scan, str) and isinstance(final, str) and (work_dir / scan).is_dir():
-                    fs.put_tree(work_dir / scan, final)
+            staged = run.inputs.get("scan_dir")
+            if work_dir is not None and isinstance(staged, str) and (work_dir / staged).is_dir():
+                final = scan_key(target, file_id)
+                _place_scan(fs, work_dir, staged, final, uploading=uploading)
+                stored = stored.model_copy(update={"inputs": {**stored.inputs, "scan_dir": final}})
             write_run(stored, fs, key)
     render_current(fs, review)
 
@@ -588,7 +592,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         # the header producer needs logs; with no log sources it is not requested rather than
         # skipped, so a lint-and-dataset sweep exits 0 when its producers all ran
         runs_by_eval = sweep(targets, ctx, producers, header=bool(sources))
-        write_outputs(fs, runs_by_eval, review, work_dir=work_dir)
+        try:
+            write_outputs(fs, runs_by_eval, review, work_dir=work_dir)
+        except Exception as ex:  # a failed store write must not read as "a producer skipped"
+            print(f"could not write to the store {fs.locator}: {ex}", file=sys.stderr)
+            return 2
     skipped = any(
         run.outcomes and all(outcome.status == "skip" for outcome in run.outcomes)
         for runs in runs_by_eval.values()

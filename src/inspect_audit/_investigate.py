@@ -226,13 +226,22 @@ def _stage_docs(docs: list[str], inputs: Path) -> list[str]:
 
 
 def _stage_leads(leads: str, inputs: Path) -> str:
-    """Copy a LEADS.md of deterministic findings to inputs/findings/LEADS.md."""
+    """Stage deterministic findings under inputs/findings/: a LEADS.md, or a bundle directory.
+
+    A bundle (`inspect-audit-findings leads --bundle DIR`) holds LEADS.md and the run files
+    its "and N more in runs/..." pointers name, so they resolve inside the box.
+    """
     path = Path(leads).expanduser().resolve()
-    if not path.is_file():
-        raise ValueError(f"leads file does not exist: {leads}")
-    dest = inputs / "findings" / "LEADS.md"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(path, dest)
+    dest = inputs / "findings"
+    if path.is_dir():
+        if not (path / "LEADS.md").is_file():
+            raise ValueError(f"leads directory has no LEADS.md: {leads}")
+        shutil.copytree(path, dest)
+    elif path.is_file():
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, dest / "LEADS.md")
+    else:
+        raise ValueError(f"leads file or directory does not exist: {leads}")
     return "/inputs/findings/LEADS.md"
 
 
@@ -2089,9 +2098,10 @@ def investigate(
         paper: Local file or URL; a URL is downloaded now (arXiv abs -> pdf). Defaults to
             the paper the eval names in its own metadata.
         docs: Documentation directories to mount read-only (inspect docs, Hawk docs).
-        leads: A LEADS.md of deterministic findings for this eval, as
-            `inspect-audit-findings leads --store <store> <eval> --write LEADS.md` renders it.
-            Staged read-only at /inputs/findings/LEADS.md and named in the seed; the agent
+        leads: Deterministic findings for this eval: a LEADS.md, or better the directory
+            `inspect-audit-findings leads --store <store> <eval> --bundle DIR` writes, which
+            adds the run files LEADS.md points at. Staged read-only under /inputs/findings/,
+            with LEADS.md named in the seed; the agent
             treats each lead as a hypothesis with a location attached and cites its record
             id. A local file, so for execution='hawk' it must exist on the runner.
         overview: Benchmark-specific context, supplied-evidence context and operator questions.

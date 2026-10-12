@@ -1245,3 +1245,29 @@ def _scan_with_samples(tmp_path: Path) -> Path:
     (scan / "samples.json").write_text('[{"id": "1", "question": "raw text", "answer": "a"}]')
     (scan / "REPORT.md").write_text("# report quoting raw text\n")
     return scan
+
+
+def test_leads_bundle_carries_the_run_files_its_pointers_name(tmp_path: Path, run: Run) -> None:
+    from inspect_audit.findings.cli import write_outputs
+    from inspect_audit.findings.models import Run as RunModel
+
+    out = tmp_path / "out"
+    many = [
+        run.findings[0].model_copy(update={"id": None, "fingerprint": f"sha256:{i}"})
+        for i in range(5)
+    ]
+    write_outputs(out, {"inspect_evals/stereoset": [run.model_copy(update={"findings": many})]})
+    bundle = tmp_path / "bundle"
+    args = ["leads", "--store", str(out), "--bundle", str(bundle), "inspect_evals/stereoset"]
+    assert main(args) == 0
+    text = (bundle / "LEADS.md").read_text()
+    assert "and 2 more in `runs/lint-1.run.json`" in text
+    stored = RunModel.model_validate_json((bundle / "runs" / "lint-1.run.json").read_text())
+    assert len(stored.findings) == 5  # the full run: every observation the pointer promises
+
+
+def test_leads_write_and_bundle_are_alternatives(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        main(
+            ["leads", "--store", str(tmp_path), "--write", "a", "--bundle", "b", "inspect_evals/x"]
+        )

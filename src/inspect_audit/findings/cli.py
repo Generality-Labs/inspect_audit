@@ -401,8 +401,16 @@ def _parser() -> argparse.ArgumentParser:
     leads_p.add_argument(
         "--sample", default=None, help="only leads whose locations name this sample id"
     )
-    leads_p.add_argument(
+    leads_out = leads_p.add_mutually_exclusive_group()
+    leads_out.add_argument(
         "--write", type=Path, default=None, help="write LEADS.md here instead of printing"
+    )
+    leads_out.add_argument(
+        "--bundle",
+        type=Path,
+        default=None,
+        help="write DIR/LEADS.md and the eval's current run files under DIR/runs/, "
+        "which LEADS.md's pointers name; pass DIR to investigate as leads",
     )
     leads_p.add_argument("eval", help="registry name, e.g. inspect_evals/scicode")
 
@@ -543,7 +551,9 @@ def _review(args: argparse.Namespace) -> int:
     return 0
 
 
-def _leads(fs: StoreFS, eval: str, sample: str | None, write: Path | None) -> int:
+def _leads(
+    fs: StoreFS, eval: str, sample: str | None, write: Path | None, bundle: Path | None = None
+) -> int:
     review = _fold_or_exit(fs)
     if review is None:
         return 2
@@ -552,7 +562,17 @@ def _leads(fs: StoreFS, eval: str, sample: str | None, write: Path | None) -> in
     except NoRunsError as ex:
         print(f"{ex} under {fs.locator}", file=sys.stderr)
         return 2
-    if write is not None:
+    if bundle is not None:
+        # LEADS.md shows three examples a group and points at runs/<run id>.run.json for the
+        # rest; the bundle carries those files so the pointers resolve wherever it is staged
+        (bundle / "runs").mkdir(parents=True, exist_ok=True)
+        (bundle / "LEADS.md").write_text(text)
+        for run in read_current(fs):
+            if run.subject.eval == eval:
+                (bundle / "runs" / f"{run.id}.run.json").write_text(
+                    run.model_dump_json(indent=1) + "\n"
+                )
+    elif write is not None:
         write.parent.mkdir(parents=True, exist_ok=True)
         write.write_text(text)
     else:
@@ -615,7 +635,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         fs = _resolve_store(args)
         if fs is None:
             return 2
-        return _leads(fs, args.eval, args.sample, args.write)
+        return _leads(fs, args.eval, args.sample, args.write, args.bundle)
     if args.command == "review":
         return _review(args)
 

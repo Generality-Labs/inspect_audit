@@ -1371,3 +1371,35 @@ def test_the_investigating_skill_says_how_to_use_leads() -> None:
 
     skill = (ASSETS / "skills" / "investigating" / "SKILL.md").read_text()
     assert "/inputs/findings/LEADS.md" in skill and "record id" in skill
+
+
+def test_a_leads_bundle_directory_is_staged_whole(tmp_path: Path) -> None:
+    repo = git_repo(tmp_path / "repo")
+    bundle = tmp_path / "bundle"
+    (bundle / "runs").mkdir(parents=True)
+    (bundle / "LEADS.md").write_text("# Leads\n- and 2 more in `runs/lint-1.run.json`\n")
+    (bundle / "runs" / "lint-1.run.json").write_text("{}")
+    target = investigate(
+        str(repo),
+        paths=["task.py"],
+        leads=str(bundle),
+        output_dir=str(tmp_path / "runs"),
+        execution="local",
+    )
+    root = Path(target.metadata["investigation_dir"])
+    seed = json.loads((root / "inputs/seed.json").read_text())
+    assert seed["leads"] == "/inputs/findings/LEADS.md"
+    assert (root / "inputs/findings/runs/lint-1.run.json").is_file()
+
+
+def test_a_leads_directory_without_leads_md_is_an_error(tmp_path: Path) -> None:
+    repo = git_repo(tmp_path / "repo")
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(ValueError, match=r"LEADS\.md"):
+        investigate(
+            str(repo),
+            paths=["task.py"],
+            leads=str(tmp_path / "empty"),
+            output_dir=str(tmp_path / "runs"),
+            execution="local",
+        )

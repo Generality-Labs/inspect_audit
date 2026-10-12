@@ -57,3 +57,13 @@ def test_writes_do_not_create_directories_on_object_stores() -> None:
     fs = StoreFS(Bucketish(), "bucket/prefix")
     assert fs.write_text("a/b/c.json", "{}") == "a/b/c.json"
     assert fs.read_text("a/b/c.json") == "{}"
+
+
+def test_put_tree_uploads_every_file_under_a_prefix(tmp_path: Path) -> None:
+    fs = StoreFS.from_locator("memory://put-tree")
+    (tmp_path / "scan" / "deep").mkdir(parents=True)
+    (tmp_path / "scan" / "scan_summary.json").write_text("{}")
+    (tmp_path / "scan" / "deep" / "rows.json").write_text("[]")
+    keys = fs.put_tree(tmp_path / "scan", "e/scans/run-1")
+    assert keys == ["e/scans/run-1/deep/rows.json", "e/scans/run-1/scan_summary.json"]
+    assert fs.read_text("e/scans/run-1/scan_summary.json") == "{}"

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import tempfile
 import time
 import tomllib
@@ -290,6 +291,12 @@ DUMP_SCRIPT = Path(__file__).with_name("_dump_task_samples.py")
 REPLAY_SCRIPT = Path(__file__).with_name("_replay_samples.py")
 
 
+def _discard_scan(scan_dir: Path, inputs: dict[str, Any]) -> None:
+    """A scan that failed leaves no directory behind and its run cites none; the output tail stays."""
+    shutil.rmtree(scan_dir, ignore_errors=True)
+    inputs.pop("scan_dir", None)
+
+
 def scan_key(target: str, run_id: str) -> str:
     """Where a dataset run's scan directory lives in the store: beside its run, named by it."""
     return f"{slug(target)}/scans/{run_id}"
@@ -515,10 +522,12 @@ def run(target: str, ctx: Context) -> Run:
         try:
             result = run_command(argv, timeout=ctx.producers.timeout_s, cwd=scan_cwd, env=scan_env)
         except ProducerError as ex:
+            _discard_scan(scan_dir, inputs)
             return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp, inputs=inputs)
     duration = time.monotonic() - started
     if result.returncode != 0 or not (scan_dir / "scan_summary.json").is_file():
         inputs["scan_output"] = _output_tail(result)
+        _discard_scan(scan_dir, inputs)
         return skip_run(
             PRODUCER,
             target,

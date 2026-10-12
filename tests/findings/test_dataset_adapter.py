@@ -760,3 +760,18 @@ def test_scan_directory_lives_under_the_runs_key_and_is_recorded_relatively(
     assert key == f"inspect-evals-stereoset/scans/{result.id}"
     assert (ctx.out_dir / str(key) / "scan_summary.json").is_file()
     assert not list(ctx.out_dir.glob("inspect_dataset_*"))
+
+
+def test_a_failed_scan_leaves_no_scan_directory_and_cites_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    monkeypatch.setenv("STUB_OUTPUT_DIR", str(TASK_FIXTURE))  # partial output, then a failure
+    monkeypatch.setenv("STUB_EXIT", "1")
+    ctx = _task_ctx(root, tmp_path)
+    result = run("inspect_evals/stereoset", ctx)
+    assert result.outcomes[0].status == "skip"
+    assert "scan_dir" not in result.inputs and "scan_output" in result.inputs
+    assert not (ctx.out_dir / "inspect-evals-stereoset" / "scans").exists() or not any(
+        (ctx.out_dir / "inspect-evals-stereoset" / "scans").iterdir()
+    )

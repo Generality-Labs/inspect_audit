@@ -182,7 +182,7 @@ def test_featured_flag_expands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(
         cli, "sweep", lambda targets, ctx, producers, **kw: seen.append(list(targets)) or {}
     )
-    monkeypatch.setattr(cli, "write_outputs", lambda out, runs, review=None: None)
+    monkeypatch.setattr(cli, "write_outputs", lambda out, runs, review=None, **_: None)
     assert main(["run", "--root", str(tmp_path), "--out", str(tmp_path / "o"), "--featured"]) == 0
     assert seen[0] == [f"inspect_evals/{name}" for name in FEATURED]
 
@@ -248,7 +248,7 @@ def test_hawk_task_flag_resolves_sets_by_task(
         cli, "collect_logs", lambda sources, **kw: seen.setdefault("sources", list(sources)) and []
     )
     monkeypatch.setattr(cli, "sweep", lambda targets, ctx, producers, **kw: {})
-    monkeypatch.setattr(cli, "write_outputs", lambda out, runs, review=None: None)
+    monkeypatch.setattr(cli, "write_outputs", lambda out, runs, review=None, **_: None)
     assert (
         main(
             [
@@ -726,12 +726,63 @@ def test_review_retract_and_migrate(
     assert (out / "suppressions.yaml").read_text().strip().endswith("[]")
 
 
-def test_run_requires_a_local_store_for_now(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def _remote_sweep(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, locator: str) -> int:
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    args = ["run", "--config", str(PILOT), "--root", str(root), "--store", locator]
+    return main([*args, "--producers", "dataset", "inspect_evals/stereoset"])
+
+
+def test_run_writes_runs_and_scan_directories_to_a_remote_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    code = main(["run", "--root", str(tmp_path), "--store", "memory://remote", "inspect_evals/x"])
-    assert code == 2
-    assert "local" in capsys.readouterr().err
+    import tempfile
+
+    from inspect_audit.findings.io import read_run
+
+    scratch = Path(tempfile.gettempdir())
+    before = set(scratch.glob("inspect_audit_run_*"))
+    assert _remote_sweep(tmp_path, monkeypatch, "memory://remote-run") == 0
+    fs = StoreFS.from_locator("memory://remote-run")
+    (run_key,) = fs.glob("inspect-evals-stereoset/runs/inspect_dataset-*.run.json")
+    stored = read_run(fs, run_key)
+    assert stored.inputs["scan_dir"] == f"inspect-evals-stereoset/scans/{stored.id}"
+    assert fs.is_file(f"{stored.inputs['scan_dir']}/scan_summary.json")
+    assert fs.is_file("export/index.json") and fs.is_file("inspect-evals-stereoset/SUMMARY.md")
+    assert set(scratch.glob("inspect_audit_run_*")) == before  # the scratch dir is gone
+    assert main(["summary", "--store", "memory://remote-run"]) == 0
+
+
+def test_remote_rerun_in_the_same_second_keeps_both_scan_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit.findings.adapters import dataset as dataset_adapter
+    from inspect_audit.findings.io import read_run
+
+    frozen = dataset_adapter.utcnow()
+    monkeypatch.setattr(dataset_adapter, "utcnow", lambda: frozen)
+    assert _remote_sweep(tmp_path / "a", monkeypatch, "memory://remote-twice") == 0
+    assert _remote_sweep(tmp_path / "b", monkeypatch, "memory://remote-twice") == 0
+    fs = StoreFS.from_locator("memory://remote-twice")
+    keys = fs.glob("inspect-evals-stereoset/runs/inspect_dataset-*.run.json")
+    assert len(keys) == 2 and any(k.endswith("-2.run.json") for k in keys)
+    for key in keys:
+        stored = read_run(fs, key)
+        assert stored.inputs["scan_dir"] == f"inspect-evals-stereoset/scans/{stored.id}"
+        assert fs.is_file(f"{stored.inputs['scan_dir']}/scan_summary.json")
+
+
+def test_a_skipped_remote_dataset_run_uploads_no_scan_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    monkeypatch.setenv("STUB_EXIT", "1")  # the scan itself fails, so the dataset run is a skip
+    args = ["run", "--config", str(PILOT), "--root", str(root), "--store", "memory://remote-skip"]
+    assert main([*args, "--producers", "dataset", "inspect_evals/stereoset"]) == 1
+    fs = StoreFS.from_locator("memory://remote-skip")
+    assert fs.glob("inspect-evals-stereoset/scans/*") == []
+    assert fs.glob("inspect-evals-stereoset/runs/*.run.json")  # the skip itself is recorded
 
 
 def test_render_current_writes_the_export(tmp_path: Path, run: Run) -> None:

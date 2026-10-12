@@ -991,3 +991,71 @@ def test_render_reads_and_writes_the_store_in_batches(
     assert calls.get("read_bytes", 0) == 0
     assert calls.get("is_file", 0) + calls.get("exists", 0) == 0
     assert fs.read_text("inspect-evals-e5/SUMMARY.md").startswith("# inspect_evals/e5")
+
+
+def test_run_takes_its_root_from_audit_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.chdir(tmp_path)  # a relative root resolves against the current directory
+    (store / "audit.toml").write_text(f'[evals]\nroot = "{root.relative_to(tmp_path)}"\n')
+    args = ["run", "--config", str(PILOT), "--store", str(store), "--producers", "lint"]
+    assert main([*args, "inspect_evals/stereoset"]) == 0
+    assert list((store / "inspect-evals-stereoset" / "runs").glob("inspect_evals_lint-*.run.json"))
+
+
+def test_root_on_the_command_line_beats_audit_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "audit.toml").write_text('[evals]\nroot = "/nowhere/at/all"\n')
+    args = ["run", "--config", str(PILOT), "--root", str(root), "--store", str(store)]
+    assert main([*args, "--producers", "lint", "inspect_evals/stereoset"]) == 0
+
+
+def test_run_without_a_root_anywhere_is_a_usage_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["run", "--store", str(tmp_path / "store"), "inspect_evals/x"]) == 2
+    err = capsys.readouterr().err
+    assert "--root" in err and "audit.toml" in err
+
+
+def test_run_uses_the_stores_pilot_when_no_config_is_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit.findings.io import read_run
+
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "pilot.yaml").write_text(
+        PILOT.read_text()
+    )  # declares StereoSet's intersentence config
+    args = ["run", "--root", str(root), "--store", str(store), "--producers", "dataset"]
+    assert main([*args, "inspect_evals/stereoset"]) == 0
+    fs = StoreFS.from_locator(store)
+    (key,) = fs.glob("inspect-evals-stereoset/runs/inspect_dataset-*.run.json")
+    dataset = read_run(fs, key).inputs["dataset"]
+    assert isinstance(dataset, dict) and dataset.get("config") == "intersentence"
+
+
+def test_a_malformed_audit_toml_is_a_usage_error_before_anything_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "audit.toml").write_text("[evals\n")
+    args = ["run", "--root", str(root), "--store", str(store), "inspect_evals/stereoset"]
+    assert main(args) == 2
+    assert "audit.toml" in capsys.readouterr().err
+    assert not (store / "inspect-evals-stereoset").exists()

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
 
 DEFAULT_CONFIG_PATH = Path(__file__).parent / "pilot.yaml"
 
@@ -89,7 +89,18 @@ class Config(BaseModel):
 
 
 def load_config(path: Path) -> Config:
-    loaded = yaml.safe_load(path.read_text())
+    return load_config_text(path.read_text(), str(path))
+
+
+def load_config_text(text: str, source: str) -> Config:
+    """A pilot config from its text; errors name `source`."""
+    try:
+        loaded = yaml.safe_load(text)
+    except yaml.YAMLError as ex:
+        raise ValueError(f"{source}: {ex}") from ex
     if not isinstance(loaded, dict):
-        raise ValueError(f"{path} must be a mapping with `defaults` and `evals`")
-    return Config.model_validate(loaded)
+        raise ValueError(f"{source} must be a mapping with `defaults` and `evals`")
+    try:
+        return Config.model_validate(loaded)
+    except ValidationError as ex:
+        raise ValueError(f"{source}: {ex}") from ex

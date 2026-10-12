@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from inspect_ai.log import list_eval_logs
-from pydantic import ValidationError
 
 from . import hawk
 from .adapters import Context, ProducerError, slug
@@ -22,6 +21,7 @@ from .adapters import header as header_adapter
 from .adapters import lint as lint_adapter
 from .adapters.dataset import scan_key
 from .config import DEFAULT_CONFIG_PATH, load_config
+from .deployment import load_deployment, store_pilot
 from .export import export_texts
 from .featured import FEATURED
 from .fs import StoreFS, as_store_fs
@@ -266,7 +266,12 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="inspect-audit-findings")
     sub = parser.add_subparsers(dest="command", required=True)
     run_p = sub.add_parser("run", help="run the producers over evals")
-    run_p.add_argument("--root", required=True, type=Path, help="inspect_evals checkout")
+    run_p.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="inspect_evals checkout (default: [evals] root in the store's audit.toml)",
+    )
     run_p.add_argument(
         "--logs",
         action="append",
@@ -305,8 +310,9 @@ def _parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--config",
         type=Path,
-        default=DEFAULT_CONFIG_PATH,
-        help="per-eval declaration of what to scan and which logs count (default: the packaged pilot.yaml)",
+        default=None,
+        help="per-eval declaration of what to scan and which logs count "
+        "(default: the store's pilot.yaml, else the packaged one)",
     )
     run_p.add_argument("--featured", action="store_true", help="add the 35 Featured evals")
     run_p.add_argument("targets", nargs="*", help="registry names, e.g. inspect_evals/stereoset")
@@ -558,6 +564,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    # the store and its configuration first, so a bad file stops the run before any network work
+    fs = _resolve_store(args)
+    if fs is None:
+        return 2
+    try:
+        deployment = load_deployment(fs)
+        if args.config is not None:
+            config = load_config(args.config)
+        else:
+            config = store_pilot(fs) or load_config(DEFAULT_CONFIG_PATH)
+    except (OSError, ValueError) as ex:
+        print(f"could not load the configuration: {ex}", file=sys.stderr)
+        return 2
+    root: Path | None = args.root
+    if root is None and deployment.evals.root is not None:
+        root = Path(deployment.evals.root).expanduser()  # relative to here: the store may be remote
+    if root is None:
+        print(
+            "no evals root: pass --root, or set [evals] root in the store's audit.toml",
+            file=sys.stderr,
+        )
+        return 2
     sources = list(args.logs)
     for task in args.hawk_task:
         try:
@@ -573,14 +601,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         sources += [f"hawk:{entry.eval_set_id}" for entry in found]
-    try:
-        config = load_config(args.config)
-    except (OSError, ValueError, ValidationError) as ex:
-        print(f"could not load {args.config}: {ex}", file=sys.stderr)
-        return 2
-    fs = _resolve_store(args)
-    if fs is None:
-        return 2
     review = _fold_or_exit(fs)
     if review is None:
         return 2
@@ -595,7 +615,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="inspect_audit_run_") as scratch:
         work_dir = fs.local_path("") or Path(scratch)
         ctx = Context(
-            ie_root=args.root.resolve(),
+            ie_root=root.resolve(),
             logs=logs,
             out_dir=work_dir,
             producers=producers_config,

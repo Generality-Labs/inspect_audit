@@ -102,7 +102,7 @@ QA runs through every milestone. Recall against the gold-standard manual audits 
 
 ## Methodology, not template
 
-Decided 2026-10-12 ([methodology.md](methodology.md)): the investigator's brief becomes a versioned methodology (checks, guidance, scales, thresholds, sampling, verdict rule) plus the seed and steer; it writes Run, Profile, Findings, Assessments and Coverage; templates render records and own only layout and the two synthesis blocks. First instance: [methodologies/epoch-rubric-1.yaml](methodologies/epoch-rubric-1.yaml). Schema additions: `measure` on Assessment, `sampling` on Coverage, a Profile record. Lands with milestone 5's investigation import; the next investigation run tries the Epoch methodology against a real subject.
+Decided 2026-10-12 ([methodology.md](methodology.md)): the investigator's brief becomes a versioned methodology (checks, guidance, scales, thresholds, sampling, verdict rule) plus the seed and steer; it writes Run, Profile, Findings, Assessments and Coverage; templates render records and own only layout and whatever prose blocks they declare, which the synthesis agent writes at render time. First instance: [methodologies/epoch-rubric-1.yaml](methodologies/epoch-rubric-1.yaml). Schema additions: `measure` on Assessment, `sampling` on Coverage, a Profile record. Lands with milestone 5's investigation import; the next investigation run tries the Epoch methodology against a real subject.
 
 ## Rule mining: the fortnightly track
 

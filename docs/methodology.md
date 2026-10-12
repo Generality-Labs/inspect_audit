@@ -12,7 +12,7 @@ Three things, each with one owner:
 
 - **A methodology** says what to check and how to judge it. It is a versioned document, like a taxonomy: the checks with ids and the question each asks, guidance for answering, the scale and any threshold per check, the sampling policy, the evidence a check needs, and the verdict rule if the methodology has one. `gl-audit@2`, Epoch's rubric and the eval-validity-review's four dimensions are three methodologies the same investigator can run. A check an organisation wants that nobody else has ("is the author reputable?") is one more entry.
 - **Records** are what the investigator produces: a Run, a Profile, Findings, Assessments and Coverage, in the shared schema, citing the methodology's check ids. This is the `.audit` bundle in Justin's sketch and what the store holds.
-- **A template** renders records into a document: ordering, which assessments to show, figures, and the two short prose blocks a page needs, an interpretation and a summary. Those blocks are synthesis, written per template by the synthesis agent from the records, not by the investigator during the investigation. Re-rendering with a new template never re-runs the audit.
+- **A template** renders records into a document: which records to show, in what order, as which tables and figures. A template may also declare prose blocks, each with a brief for what it should say and which records it draws on. Epoch's page wants an interpretation and a summary; our Quarto report wants a summary, an architecture narrative and a discussion per section; the table site wants none. Those blocks are synthesis, written when the template is rendered by the synthesis agent from the records, not by the investigator during the investigation. Re-rendering with a new template never re-runs the audit.
 
 The investigator's brief becomes the methodology plus the subject seed, operator steer, budget and exposure policy, and the list of templates to render afterwards. That is the "audit configuration".
 
@@ -41,6 +41,6 @@ A YAML or JSON document with `id`, `version`, `status`, `source`, a `verdict` ru
 - The report template's section comments move into the methodology's `guidance`; the template keeps only layout.
 - `assessments.json` gains `measure` (numerator, denominator, threshold) on checks whose methodology defines one; `coverage.json` gains `sampling`.
 - A Profile record is written at the end of the orient stage.
-- The synthesis agent takes a template and the records and writes the interpretation and summary blocks.
+- The synthesis agent takes a template and the records and writes whatever prose blocks that template declares.
 
 None of this is on the roadmap's critical path for the table site. It is the shape the investigator and the standard should converge on, and the next investigation run is the place to try the Epoch methodology against a real subject to find what it cannot fill: reviewability needs disclosure facts the seed does not carry, and the quality questions need multi-run statistics.

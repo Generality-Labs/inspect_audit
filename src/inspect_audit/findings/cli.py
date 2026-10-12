@@ -564,10 +564,12 @@ def _leads(
         return 2
     if bundle is not None:
         # LEADS.md shows three examples a group and points at runs/<run id>.run.json for the
-        # rest; the bundle carries those files so the pointers resolve wherever it is staged
-        (bundle / "runs").mkdir(parents=True, exist_ok=True)
+        # rest; the bundle carries those files so the pointers resolve wherever it is staged.
+        # Reviewed, so suppressions show; replaced whole, so a re-bundle carries no stale runs
+        shutil.rmtree(bundle / "runs", ignore_errors=True)
+        (bundle / "runs").mkdir(parents=True)
         (bundle / "LEADS.md").write_text(text)
-        for run in read_current(fs):
+        for run in apply_review(read_current(fs), review):
             if run.subject.eval == eval:
                 (bundle / "runs" / f"{run.id}.run.json").write_text(
                     run.model_dump_json(indent=1) + "\n"

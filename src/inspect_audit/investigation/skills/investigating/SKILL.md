@@ -33,8 +33,8 @@ under /inputs/findings/runs/ when the pointers name them. Treat every lead as a
 hypothesis with a location attached, not a finding: confirm
 it against code, data or transcripts, or retire it with the reason. Leads are cheap
 starting points, not a checklist; a lead that does not affect how the score is read can be
-retired in one line. When a register entry rests on a lead, add an evidence ref with path
-`/inputs/findings/LEADS.md` and the record id as its location, so the store can link the
+retired in one line. When a register entry rests on a lead, add, alongside the source, data or transcript evidence that confirms it, an evidence ref with path
+`/inputs/findings/LEADS.md`, or the run file under /inputs/findings/runs/ that holds the record, and the record id as its location, so the store can link the
 two. A skipped check is missing coverage, not a clean result.
 
 Inventory the population with sample summaries before loading whole transcripts.

@@ -1266,6 +1266,36 @@ def test_leads_bundle_carries_the_run_files_its_pointers_name(tmp_path: Path, ru
     assert len(stored.findings) == 5  # the full run: every observation the pointer promises
 
 
+def test_leads_bundle_run_files_mark_what_review_suppressed(tmp_path: Path, run: Run) -> None:
+    from inspect_audit.findings.cli import write_outputs
+    from inspect_audit.findings.models import Run as RunModel
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    rule = run.findings[0].rule
+    author = ["--author", "Matt Fisher <matt@example.com>"]
+    suppress = ["review", "suppress", "--store", str(out), *author, "--rule", rule]
+    assert main([*suppress, "--eval", "inspect_evals/stereoset", "--reason", "noise"]) == 0
+    bundle = tmp_path / "bundle"
+    args = ["leads", "--store", str(out), "--bundle", str(bundle), "inspect_evals/stereoset"]
+    assert main(args) == 0
+    stored = RunModel.model_validate_json((bundle / "runs" / "lint-1.run.json").read_text())
+    assert stored.findings and all(f.suppressions for f in stored.findings if f.rule == rule)
+
+
+def test_leads_bundle_replaces_run_files_from_an_earlier_bundle(tmp_path: Path, run: Run) -> None:
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    bundle = tmp_path / "bundle"
+    (bundle / "runs").mkdir(parents=True)
+    (bundle / "runs" / "lint-0.run.json").write_text("{}")
+    args = ["leads", "--store", str(out), "--bundle", str(bundle), "inspect_evals/stereoset"]
+    assert main(args) == 0
+    assert sorted(p.name for p in (bundle / "runs").iterdir()) == ["lint-1.run.json"]
+
+
 def test_leads_write_and_bundle_are_alternatives(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         main(

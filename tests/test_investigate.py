@@ -1371,6 +1371,10 @@ def test_the_investigating_skill_says_how_to_use_leads() -> None:
 
     skill = (ASSETS / "skills" / "investigating" / "SKILL.md").read_text()
     assert "/inputs/findings/LEADS.md" in skill and "record id" in skill
+    # a lead is a pointer, never the evidence: the skill's own rule for summaries
+    assert "alongside the source, data or transcript evidence" in skill
+    # LEADS.md lists three ids a group; the rest live only in the run files
+    assert "or the run file under /inputs/findings/runs/ that holds the record" in skill
 
 
 def test_a_leads_bundle_directory_is_staged_whole(tmp_path: Path) -> None:

@@ -165,15 +165,24 @@ def _renamed(run: Run, file_id: str) -> Run:
     return run.model_copy(update={"id": file_id, "findings": findings})
 
 
+SCAN_SUMMARY = "scan_summary.json"  # the one scan file without sample text
+
+
 def _place_scan(fs: StoreFS, work_dir: Path, staged: str, final: str, *, uploading: bool) -> None:
-    """Give a staged scan directory its final key: upload it, or rename it within a local store.
+    """Give a staged scan directory its final key: upload its summary, or rename it within a local store.
+
+    Only `scan_summary.json` leaves the sweeping machine. The rest of a scan directory holds raw
+    dataset samples, gated datasets included, and the scanners' findings quote sample text; the
+    runs already carry those findings with sample text cut to a short marker.
 
     A leftover directory at the final key belongs to no run (the run key was free), so it is
     replaced rather than merged into.
     """
     source = work_dir / staged
     if uploading:
-        fs.put_tree(source, final)
+        summary = source / SCAN_SUMMARY
+        if summary.is_file():
+            fs.write_many({f"{final}/{SCAN_SUMMARY}": summary.read_bytes()})
         return
     target = fs.local_path(final)
     if target is None or source.resolve() == target.resolve():

@@ -26,8 +26,15 @@ class EvalsSection(BaseModel):
 
 
 class Deployment(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # Tables this version does not know are kept, not refused: a store is shared, and a newer
+    # CLI's audit.toml must not stop an older one. Typos inside a known table are still errors.
+    model_config = ConfigDict(extra="allow")
     evals: EvalsSection = EvalsSection()
+
+
+def unknown_tables(deployment: Deployment) -> list[str]:
+    """Top-level names in audit.toml this version ignores, sorted, for a warning."""
+    return sorted(deployment.model_extra or {})
 
 
 def load_deployment(fs: StoreFS) -> Deployment:

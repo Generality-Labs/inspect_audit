@@ -2,7 +2,7 @@
 
 How the findings side of inspect_audit fits together. This is the product: what any deployment runs. Where a particular organisation keeps its store, which site shows it and which credentials it uses are deployment facts, kept out of this document and out of the package; Generality Labs' instance is described in [deployments/generality.md](deployments/generality.md) as one example.
 
-Replaces `v1-architecture.md` (2026-10-05), whose design decisions it keeps and whose git-repository store the [portable store spec](superpowers/specs/2026-10-09-portable-store-design.md) superseded.
+Replaces `v1-architecture.md` (2026-10-05). Its git-repository store was superseded by the [portable store spec](superpowers/specs/2026-10-09-portable-store-design.md); its plans for lazy producer runs, hosted review actions and the measurement step are on the [roadmap](roadmap.md), not described here. Parts marked *planned* below are designed but not built.
 
 ## The shape
 
@@ -25,9 +25,9 @@ flowchart LR
     LOGS --> SWEEP
     CFG --> SWEEP
     SWEEP --> RUNS
-    INV -- import --> RUNS
+    INV -- import, planned --> RUNS
     REVIEW[review CLI] --> DEC
-    MCP[MCP server, stdio<br/>leads, finding, search; suppress, accept, set_status] --> DEC
+    MCP[MCP server, stdio, planned<br/>leads, finding, search; suppress, accept, set_status] --> DEC
     MCP -- reads --> DER
     AGENTS[investigator and<br/>sample auditor] <--> MCP
     DER -- export/ --> SITE[a site that reads /data/]
@@ -49,8 +49,8 @@ A store is named by one locator: a directory, `s3://bucket/prefix`, R2 through i
 
 1. **Sweeps.** `inspect-audit-findings run` runs the deterministic producers over named evals: inspect-evals-lint, inspect-dataset (through each eval's task, or a declared HuggingFace dataset), and header checks against logs. Logs come from local paths, `hawk:<eval-set-id>`, or any fsspec URL, fetched into a cache. Producers write to a local work directory, the store itself when it is local, and their runs and scan directories are written or uploaded into the store. Exit 1 means a producer skipped, and the run records why; exit 2 is a usage or store error.
 2. **Review.** Through the `review` CLI, never by editing files: `suppress`, `accept`, `link`, `status`, `retract`. Each writes one decision object and re-renders. A reviewer points at an eval and rule, record ids or fingerprints; the Store resolves them, refuses what the fold would refuse, and records the author.
-3. **Investigations.** The investigator and sample auditor run against an eval and publish bundles (findings, assessments, coverage). An import turns a bundle into runs in the store, citing it by address. What the investigator checks comes from a methodology, not from a report template; see [methodology.md](methodology.md).
-4. **Leads.** An agent gets leads from the store: the `leads` command renders `LEADS.md`, and an MCP server over stdio with a store locator serves the same queries and accepts `suppress`, `accept` and `set_status` with the agent's run id as provenance. Hosted variants, such as an HTTP transport, are deployment concerns.
+3. **Investigations.** The investigator and sample auditor run against an eval and publish bundles (findings, assessments, coverage). *Planned:* an import that turns a bundle into runs in the store, citing it by address. What the investigator checks comes from a methodology, not from a report template; see [methodology.md](methodology.md).
+4. **Leads.** An agent gets leads from the store: the `leads` command renders `LEADS.md`. *Planned:* an MCP server over stdio with a store locator, serving the same queries and accepting `suppress`, `accept` and `set_status` with the agent's run id as provenance. Hosted variants, such as an HTTP transport, are deployment concerns.
 5. **Publishing.** Every render writes `export/index.json` and `export/evals/<slug>.json` into the store. What serves them is the deployment's choice: a Worker with a bucket binding, a static host with the export copied beside an app, or a report that imports the JSON it needs.
 
 ## What goes in a rendering

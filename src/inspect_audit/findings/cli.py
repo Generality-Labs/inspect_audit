@@ -16,6 +16,7 @@ from typing import Any, cast
 
 from fsspec.core import url_to_fs
 from inspect_ai.log import list_eval_logs
+from inspect_ai.log._file import is_log_file  # the rule Inspect uses to list logs
 
 from . import hawk
 from .adapters import Context, ProducerError, slug
@@ -24,7 +25,7 @@ from .adapters import header as header_adapter
 from .adapters import lint as lint_adapter
 from .adapters.dataset import scan_key
 from .config import DEFAULT_CONFIG_PATH, load_config
-from .deployment import load_deployment, store_pilot
+from .deployment import load_deployment, store_pilot, unknown_tables
 from .export import export_texts
 from .featured import FEATURED
 from .fs import StoreFS, as_store_fs
@@ -93,26 +94,37 @@ def collect_logs(
 
 
 def _fetch_remote_logs(url: str, cache: Path) -> list[Path]:
-    """The Inspect logs under `url`, copied into `cache/<hash of url>/` unless already there at the same size."""
-    fs, root = url_to_fs(url)
-    root = str(root).rstrip("/")
-    listed = cast("dict[str, dict[str, Any]]", fs.find(root, detail=True))
-    logs = {
-        path: info
-        for path, info in listed.items()
-        if path.endswith(".eval") or (path.endswith(".json") and not path.endswith("/logs.json"))
-    }
-    if not logs:
-        raise ProducerError(f"no .eval or .json logs under {url}")
-    target = cache / hashlib.sha1(url.encode()).hexdigest()[:12]
-    local_paths: list[Path] = []
-    for path in sorted(logs):
-        local = target / path[len(root) :].lstrip("/")
-        size = logs[path].get("size")
-        if not (local.is_file() and size is not None and local.stat().st_size == size):
-            local.parent.mkdir(parents=True, exist_ok=True)
-            fs.get_file(path, str(local))
-        local_paths.append(local)
+    """The Inspect logs at `url` (a file or a prefix), copied into `cache/<hash of url>/`.
+
+    A log already cached at the same size is not fetched again. Anything that stops the logs
+    being listed or fetched is a `ProducerError` naming the URL, like a failed Hawk download.
+    """
+    try:
+        fs, root = url_to_fs(url)
+        root = str(root).rstrip("/")
+        if fs.isfile(root):  # one log named directly: keep its own name
+            listed = {root: cast("dict[str, Any]", fs.info(root))}
+            base = root.rsplit("/", 1)[0]
+        else:
+            listed = cast("dict[str, dict[str, Any]]", fs.find(root, detail=True))
+            base = root
+        # Inspect's own rule: any .eval, and .json only with a log's timestamped name
+        logs = {path: info for path, info in listed.items() if is_log_file(path, [".json"])}
+        if not logs:
+            raise ProducerError(f"no .eval or .json logs at {url}")
+        target = cache / hashlib.sha1(url.encode()).hexdigest()[:12]
+        local_paths: list[Path] = []
+        for path in sorted(logs):
+            local = target / path[len(base) :].lstrip("/")
+            size = logs[path].get("size")
+            if not (local.is_file() and size is not None and local.stat().st_size == size):
+                local.parent.mkdir(parents=True, exist_ok=True)
+                fs.get_file(path, str(local))
+            local_paths.append(local)
+    except ProducerError:
+        raise
+    except Exception as ex:  # unknown protocol, access denied, missing bucket, network
+        raise ProducerError(f"could not read logs at {url}: {type(ex).__name__}: {ex}") from ex
     return local_paths
 
 
@@ -625,12 +637,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError) as ex:
         print(f"could not load the configuration: {ex}", file=sys.stderr)
         return 2
+    for table in unknown_tables(deployment):
+        print(f"warning: audit.toml has [{table}], which this version ignores", file=sys.stderr)
     root: Path | None = args.root
+    origin = "--root"
     if root is None and deployment.evals.root is not None:
         root = Path(deployment.evals.root).expanduser()  # relative to here: the store may be remote
+        origin = f"[evals] root in audit.toml under {fs.locator}"
     if root is None:
         print(
             "no evals root: pass --root, or set [evals] root in the store's audit.toml",
+            file=sys.stderr,
+        )
+        return 2
+    # a wrong root would sweep anyway and write skip runs that become the current view
+    if not (root / "src" / "inspect_evals").is_dir():
+        print(
+            f"{root.resolve()} (from {origin}) is not an Inspect Evals checkout: "
+            "it has no src/inspect_evals",
             file=sys.stderr,
         )
         return 2

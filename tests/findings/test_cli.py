@@ -176,6 +176,7 @@ def test_no_targets_is_a_usage_error(tmp_path: Path) -> None:
 
 
 def test_featured_flag_expands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "src" / "inspect_evals").mkdir(parents=True)  # a checkout, as far as run checks
     from inspect_audit.findings import cli
 
     seen: list[list[str]] = []
@@ -230,6 +231,7 @@ def test_hawk_logs_source_is_downloaded_into_the_cache(
 def test_hawk_task_flag_resolves_sets_by_task(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    (tmp_path / "src" / "inspect_evals").mkdir(parents=True)  # a checkout, as far as run checks
     from inspect_audit.findings import cli, hawk
     from inspect_audit.findings.hawk import EvalSetInfo
 
@@ -1148,3 +1150,52 @@ def test_the_findings_package_names_no_organisation() -> None:
         if pattern.search(line)
     ]
     assert hits == []
+
+
+def test_a_single_remote_log_file_keeps_its_name(tmp_path: Path) -> None:
+    from fsspec.core import url_to_fs
+
+    local = _log(tmp_path / "made")
+    fs, root = url_to_fs("memory://single-log")
+    fs.put(str(local), f"{root}/{local.name}")
+    (path,) = collect_logs([f"memory://single-log/{local.name}"], remote_cache=tmp_path / "cache")
+    assert path.name == local.name and path.read_bytes() == local.read_bytes()
+
+
+@pytest.mark.parametrize("url", ["nosuch://bucket/logs", "memory://listing-fails"])
+def test_a_remote_log_source_that_cannot_be_listed_is_a_producer_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    from fsspec.implementations.memory import MemoryFileSystem
+
+    from inspect_audit.findings.adapters import ProducerError
+
+    def denied(*_args: object, **_kwargs: object) -> object:
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(MemoryFileSystem, "find", denied)
+    with pytest.raises(ProducerError, match=url.split("://")[0]):
+        collect_logs([url], remote_cache=tmp_path / "cache")
+
+
+def test_a_prefix_with_only_non_log_json_has_no_logs(tmp_path: Path) -> None:
+    from fsspec.core import url_to_fs
+
+    from inspect_audit.findings.adapters import ProducerError
+
+    fs, root = url_to_fs("memory://only-eval-set-json")
+    fs.pipe(f"{root}/eval-set.json", b"{}")
+    with pytest.raises(ProducerError, match=r"no \.eval or \.json logs"):
+        collect_logs(["memory://only-eval-set-json"], remote_cache=tmp_path / "cache")
+
+
+def test_a_root_that_is_not_an_inspect_evals_checkout_stops_the_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "audit.toml").write_text('[evals]\nroot = "../nowhere"\n')
+    assert main(["run", "--store", str(store), "--producers", "lint", "inspect_evals/x"]) == 2
+    err = capsys.readouterr().err
+    assert "nowhere" in err and "audit.toml" in err
+    assert not any(store.glob("*/runs"))

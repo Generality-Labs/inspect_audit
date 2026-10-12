@@ -26,7 +26,6 @@ def test_evals_root_is_read() -> None:
     [
         '[evals]\nprofile = "other"\n',
         "[evals]\nrooot = 'typo'\n",
-        "[tracker]\nkind = 'github'\n",
         "[evals\n",
     ],
 )
@@ -53,3 +52,16 @@ def test_a_malformed_store_pilot_names_the_file() -> None:
     fs.write_text("pilot.yaml", "- not a mapping\n")
     with pytest.raises(ValueError, match=r"pilot\.yaml"):
         store_pilot(fs)
+
+
+def test_tables_this_version_does_not_know_are_tolerated_and_named() -> None:
+    from inspect_audit.findings.deployment import unknown_tables
+
+    fs = _fs("forward")
+    fs.write_text(
+        "audit.toml",
+        '[store]\n[evals]\nroot = "r"\n[tracker]\nkind = "github"\n[publish]\n[future]\nx = 1\n',
+    )
+    deployment = load_deployment(fs)  # a newer config must not stop an older CLI
+    assert deployment.evals.root == "r"
+    assert unknown_tables(deployment) == ["future", "publish", "store", "tracker"]

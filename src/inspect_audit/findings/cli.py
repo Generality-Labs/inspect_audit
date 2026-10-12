@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import shutil
 import subprocess
@@ -11,7 +12,9 @@ import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
+from fsspec.core import url_to_fs
 from inspect_ai.log import list_eval_logs
 
 from . import hawk
@@ -55,18 +58,28 @@ EXTERNAL_PRODUCERS: dict[str, Callable[[str, Context], Run]] = {
 }
 
 
+REMOTE_LOG_CACHE = Path.home() / ".cache" / "inspect_audit" / "logs"
+
+
 def collect_logs(
     sources: Sequence[str],
     *,
     hawk_cache: Path = hawk.DEFAULT_CACHE,
+    remote_cache: Path = REMOTE_LOG_CACHE,
     producers: ProducerConfig | None = None,
 ) -> list[Path]:
-    """Local files and directories, plus `hawk:<eval-set-id>` sets pulled into the cache, as log paths."""
+    """Log paths from local files and directories, `hawk:<eval-set-id>` sets, and any fsspec URL.
+
+    Remote logs are fetched into a cache, as Hawk sets are, so the producers read local files.
+    """
     config = producers or ProducerConfig.from_env()
     paths: list[Path] = []
     for source in sources:
         if source.startswith("hawk:"):
             paths += hawk.download_eval_set(source.removeprefix("hawk:"), hawk_cache, config)
+            continue
+        if "://" in source and not source.startswith("file://"):
+            paths += _fetch_remote_logs(source, remote_cache)
             continue
         path = Path(source.removeprefix("file://"))
         if path.is_file():
@@ -77,6 +90,30 @@ def collect_logs(
                 for info in list_eval_logs(str(path), recursive=True)
             ]
     return sorted(set(paths))
+
+
+def _fetch_remote_logs(url: str, cache: Path) -> list[Path]:
+    """The Inspect logs under `url`, copied into `cache/<hash of url>/` unless already there at the same size."""
+    fs, root = url_to_fs(url)
+    root = str(root).rstrip("/")
+    listed = cast("dict[str, dict[str, Any]]", fs.find(root, detail=True))
+    logs = {
+        path: info
+        for path, info in listed.items()
+        if path.endswith(".eval") or (path.endswith(".json") and not path.endswith("/logs.json"))
+    }
+    if not logs:
+        raise ProducerError(f"no .eval or .json logs under {url}")
+    target = cache / hashlib.sha1(url.encode()).hexdigest()[:12]
+    local_paths: list[Path] = []
+    for path in sorted(logs):
+        local = target / path[len(root) :].lstrip("/")
+        size = logs[path].get("size")
+        if not (local.is_file() and size is not None and local.stat().st_size == size):
+            local.parent.mkdir(parents=True, exist_ok=True)
+            fs.get_file(path, str(local))
+        local_paths.append(local)
+    return local_paths
 
 
 def sweep(
@@ -276,7 +313,7 @@ def _parser() -> argparse.ArgumentParser:
         "--logs",
         action="append",
         default=[],
-        help="log dir, .eval file, or hawk:<eval-set-id>; repeatable",
+        help="log dir, .eval file, hawk:<eval-set-id>, or an fsspec URL such as s3://bucket/logs; repeatable",
     )
     run_p.add_argument(
         "--hawk-task",
@@ -297,6 +334,12 @@ def _parser() -> argparse.ArgumentParser:
         help="where Hawk downloads are kept between runs",
     )
     _store_arg(run_p)
+    run_p.add_argument(
+        "--log-cache",
+        type=Path,
+        default=REMOTE_LOG_CACHE,
+        help="where logs from s3:// and other remote --logs sources are kept between runs",
+    )
     run_p.add_argument(
         "--producers",
         default="lint,dataset",
@@ -606,7 +649,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     producers_config = ProducerConfig.from_env()
     try:
-        logs = collect_logs(sources, hawk_cache=args.hawk_cache, producers=producers_config)
+        logs = collect_logs(
+            sources,
+            hawk_cache=args.hawk_cache,
+            remote_cache=args.log_cache,
+            producers=producers_config,
+        )
     except ProducerError as ex:
         print(str(ex), file=sys.stderr)
         return 2

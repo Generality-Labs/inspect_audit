@@ -83,5 +83,7 @@ def test_unknown_field_role_is_rejected(tmp_path: Path) -> None:
         DatasetConfig(fields={"questoin": "ctx"})  # type: ignore[dict-item]
     path = tmp_path / "pilot.yaml"
     path.write_text("evals:\n  inspect_evals/x:\n    dataset:\n      fields: {questoin: ctx}\n")
-    with pytest.raises(ValueError, match=r"(?s)pilot\.yaml.*questoin"):  # names the file and the role
+    with pytest.raises(
+        ValueError, match=r"(?s)pilot\.yaml.*questoin"
+    ):  # names the file and the role
         load_config(path)

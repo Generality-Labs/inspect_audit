@@ -1059,3 +1059,66 @@ def test_a_malformed_audit_toml_is_a_usage_error_before_anything_runs(
     assert main(args) == 2
     assert "audit.toml" in capsys.readouterr().err
     assert not (store / "inspect-evals-stereoset").exists()
+
+
+def _remote_log_dir(tmp_path: Path, url: str) -> Path:
+    """A real .eval written locally, copied into an fsspec location as a remote log source."""
+    from fsspec.core import url_to_fs
+
+    local = _log(tmp_path / "made")
+    fs, root = url_to_fs(url)
+    fs.makedirs(f"{root}/nested", exist_ok=True)
+    fs.put(str(local), f"{root}/nested/{local.name}")
+    return local
+
+
+def test_logs_from_an_fsspec_location_are_fetched_once_into_the_cache(tmp_path: Path) -> None:
+    from fsspec.core import url_to_fs
+
+    local = _remote_log_dir(tmp_path, "memory://remote-logs-a")
+    cache = tmp_path / "cache"
+    paths = collect_logs(["memory://remote-logs-a"], remote_cache=cache)
+    assert [p.name for p in paths] == [local.name]
+    assert paths[0].is_file() and paths[0].is_relative_to(cache)
+    assert paths[0].read_bytes() == local.read_bytes()
+    fs, _ = url_to_fs("memory://remote-logs-a")
+    fetched: list[str] = []
+    inner_get = fs.get_file
+
+    def counting_get(rpath: str, lpath: str, **kwargs: object) -> None:
+        fetched.append(rpath)
+        inner_get(rpath, lpath, **kwargs)
+
+    fs.get_file = counting_get  # type: ignore[method-assign]
+    try:
+        again = collect_logs(["memory://remote-logs-a"], remote_cache=cache)
+    finally:
+        fs.get_file = inner_get  # type: ignore[method-assign]
+    assert again == paths and fetched == []
+
+
+def test_a_remote_log_source_with_no_logs_names_itself(tmp_path: Path) -> None:
+    from fsspec.core import url_to_fs
+
+    from inspect_audit.findings.adapters import ProducerError
+
+    fs, root = url_to_fs("memory://remote-logs-empty")
+    fs.pipe(f"{root}/notes.txt", b"not a log")
+    with pytest.raises(ProducerError, match="memory://remote-logs-empty"):
+        collect_logs(["memory://remote-logs-empty"], remote_cache=tmp_path / "cache")
+
+
+def test_run_reads_header_logs_from_a_remote_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_root(tmp_path, extra=ASSET)
+    _stubbed_env(monkeypatch)
+    _remote_log_dir(tmp_path, "memory://remote-logs-run")
+    cache, store = tmp_path / "log-cache", tmp_path / "store"
+    args = ["run", "--config", str(PILOT), "--root", str(root), "--store", str(store)]
+    args += ["--logs", "memory://remote-logs-run", "--log-cache", str(cache), "--producers", "lint"]
+    assert main([*args, "inspect_evals/stereoset"]) == 0
+    assert list(cache.rglob("*.eval"))
+    assert list(
+        (store / "inspect-evals-stereoset" / "runs").glob("inspect_audit_header-*.run.json")
+    )

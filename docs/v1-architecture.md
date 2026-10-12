@@ -42,6 +42,8 @@ The review files are the persistence format, not the interface. Every decision g
 
 ## The store
 
+Superseded on 2026-10-09 by the [portable store spec](superpowers/specs/2026-10-09-portable-store-design.md): the store is an fsspec locator (a directory, S3 or R2) and review decisions are an append-only log of objects. What follows describes the git-repository form it had before.
+
 A private GitHub repository, `Generality-Labs/inspect-evals-findings`, holding:
 
 - `runs/` per eval, written by the scheduled run and by investigation imports. Immutable; a sweep appends, and the newest run per producer is current. Hundreds of kilobytes per eval per run, which git handles for a long time.

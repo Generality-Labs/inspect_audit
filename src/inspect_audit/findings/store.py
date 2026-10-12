@@ -1,25 +1,38 @@
 """The Store: read the current view; write review decisions, the only way they are written.
 
-The review files are the persistence format, not the interface. A decision names what the
-reviewer pointed at, is resolved to fingerprints, validated as a whole `Review`, written, the
-summaries re-rendered, and committed with the reviewer as author when the review directory is
-inside a git work tree.
+A decision names what the reviewer pointed at, is resolved to fingerprints, checked against the
+current fold, written as one object under `review/`, and the derived views, summaries, parquet
+and export re-rendered. Nothing shared is edited in place, so the store works the same on a
+directory, S3 or R2.
 """
 
 from __future__ import annotations
 
 import re
-import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import ValidationError
-
-from .export import EXPORT_DIR
-from .io import read_current
-from .models import Finding, Run
-from .review import IssueEntry, Review, SuppressionRule, load_review, save_review
+from .fs import StoreFS, as_store_fs
+from .io import read_current, read_runs
+from .models import Finding, Run, Status
+from .review import (
+    AcceptPayload,
+    Decision,
+    LinkPayload,
+    RetractPayload,
+    Review,
+    StatusPayload,
+    SuppressionRule,
+    SuppressPayload,
+    apply_review,
+    load_decisions,
+    load_review,
+    new_decision_id,
+    unmigrated_review_files,
+    write_decision,
+)
 
 _AUTHOR = re.compile(r"[^<>]+ <[^<>@\s]+@[^<>@\s]+>")
 
@@ -30,32 +43,39 @@ class StoreError(ValueError):
 
 @dataclass(frozen=True)
 class Selection:
-    """What a reviewer points at: an eval and rule, or record ids."""
+    """What a reviewer points at: an eval and rule, record ids, or fingerprints."""
 
     eval: str | None = None
     rule: str | None = None
     ids: tuple[str, ...] = ()
+    fingerprints: tuple[str, ...] = ()
 
 
-def _today() -> date:
-    return datetime.now(tz=UTC).date()
-
-
-def _next_issue_id(review: Review) -> str:
-    numbers = [int(m.group(1)) for i in review.issues if (m := re.fullmatch(r"ISS-(\d+)", i.id))]
+def _next_issue_id(decisions: Sequence[Decision]) -> str:
+    """The next `ISS-NNNN` after every acceptance ever written, retracted ones included."""
+    numbers = [
+        int(m.group(1))
+        for d in decisions
+        if d.accept is not None and (m := re.fullmatch(r"ISS-(\d+)", d.accept.issue))
+    ]
     return f"ISS-{max(numbers, default=0) + 1:04d}"
 
 
 class Store:
-    def __init__(self, root: Path, review_dir: Path | None = None) -> None:
-        self.root = root.resolve()
-        self.review_dir = (review_dir or root).resolve()
+    def __init__(self, locator: StoreFS | str | Path) -> None:
+        self.fs = as_store_fs(locator)
 
     def runs(self) -> list[Run]:
-        return read_current(self.root)
+        return read_current(self.fs)
+
+    def history(self) -> list[Run]:
+        return read_runs(self.fs)
 
     def review(self) -> Review:
-        return load_review(self.review_dir)
+        return load_review(self.fs)
+
+    def reviewed(self) -> list[Run]:
+        return apply_review(self.runs(), self.review())
 
     def resolve(self, selection: Selection) -> list[Finding]:
         """The findings in the current view that the selection names."""
@@ -66,10 +86,20 @@ class Store:
             if unknown:
                 raise StoreError(f"unknown record id(s): {', '.join(unknown)}")
             chosen = [by_id[i] for i in selection.ids]
+        elif selection.fingerprints:
+            by_fp: dict[str, Finding] = {}
+            for f in findings:
+                by_fp.setdefault(f.fingerprint, f)
+            unknown = [fp for fp in selection.fingerprints if fp not in by_fp]
+            if unknown:
+                raise StoreError(
+                    f"unknown fingerprint(s) in the current view: {', '.join(unknown)}"
+                )
+            chosen = [by_fp[fp] for fp in selection.fingerprints]
         elif selection.rule:
             chosen = [f for f in findings if f.rule == selection.rule]
         else:
-            raise StoreError("a selection needs a rule or record ids")
+            raise StoreError("a selection needs a rule, record ids or fingerprints")
         if selection.eval:
             chosen = [f for f in chosen if f.subject.eval == selection.eval]
         if not chosen:
@@ -85,27 +115,26 @@ class Store:
         subject: str = "*",
         producer: str | None = None,
         kind: str = "false_positive",
-    ) -> SuppressionRule:
-        entry = SuppressionRule(
+    ) -> Decision:
+        now = _now()
+        probe = SuppressionRule(
             rule=rule,
             subject=subject,
             producer=producer,
             kind=kind,
             author=author,
             reason=reason,
-            since=_today(),
+            since=now.date(),
         )
-        if not any(entry.matches(f) for run in self.runs() for f in run.findings):
+        if not any(probe.matches(f) for run in self.runs() for f in run.findings):
             scope = f"rule {rule} on {subject}" + (f" from {producer}" if producer else "")
             raise StoreError(f"nothing in the current view matches {scope}")
-        review = self.review()
-        updated = review.model_copy(update={"suppressions": [*review.suppressions, entry]})
-        self._save(updated, f"review: suppress {rule} on {subject}", author)
-        return entry
+        payload = SuppressPayload(rule=rule, subject=subject, producer=producer, kind=kind)
+        return self._write(self._decision(now, author, reason, suppress=payload))
 
     def accept(
         self, selection: Selection, *, title: str, author: str, reason: str | None = None
-    ) -> IssueEntry:
+    ) -> Decision:
         review = self.review()
         findings = self.resolve(selection)
         subjects = sorted({f.subject.eval for f in findings})
@@ -123,94 +152,81 @@ class Store:
         )
         if taken:
             raise StoreError(f"already accepted into another issue: {', '.join(taken)}")
-        entry = IssueEntry(
-            id=_next_issue_id(review),
+        payload = AcceptPayload(
+            issue=_next_issue_id(load_decisions(self.fs)),
             title=title,
             subject=subjects[0],
-            findings=sorted({f.fingerprint for f in findings}),
-            author=author,
-            opened=_today(),
-            reason=reason,
+            fingerprints=sorted({f.fingerprint for f in findings}),
         )
-        updated = review.model_copy(update={"issues": [*review.issues, entry]})
-        self._save(updated, f"review: accept {entry.id} {title}", author)
-        return entry
+        return self._write(self._decision(_now(), author, reason, accept=payload))
 
-    def link(self, issue_id: str, url: str, *, author: str) -> IssueEntry:
-        review = self.review()
-        issues = list(review.issues)
-        for index, issue in enumerate(issues):
-            if issue.id == issue_id:
-                issues[index] = issue.model_copy(update={"github": url})
-                updated = review.model_copy(update={"issues": issues})
-                self._save(updated, f"review: link {issue_id}", author)
-                return issues[index]
-        raise StoreError(f"no issue {issue_id}")
+    def link(self, issue_id: str, url: str, *, author: str) -> Decision:
+        if issue_id not in {issue.id for issue in self.review().issues}:
+            raise StoreError(f"no issue {issue_id}")
+        payload = LinkPayload(issue=issue_id, url=url)
+        return self._write(self._decision(_now(), author, None, link=payload))
 
-    def _save(self, review: Review, message: str, author: str) -> None:
-        from .cli import render_current  # the renderer lives beside the CLI
-
-        if not _AUTHOR.fullmatch(author):
-            raise StoreError(f"author must be 'Name <email>', got {author!r}")
-        try:
-            review = Review.model_validate(review.model_dump())
-        except ValidationError as ex:
-            raise StoreError(str(ex)) from ex
-        written = save_review(self.review_dir, review)
-        render_current(self.root, review)
-        self._commit(written, message, author)
-
-    def _commit(self, paths: list[Path], message: str, author: str) -> None:
-        """Commit the decision when the review dir is a tracked part of a git work tree.
-
-        Only the review files and the re-rendered tracked outputs under the root go into the
-        commit (`git commit --only`), so whatever else the reviewer has staged stays staged.
-        """
-        git = ["git", "-C", str(self.review_dir)]
-        top = self._git(git, "rev-parse", "--show-toplevel")
-        if (
-            top is None
-            or self._git(git, "check-ignore", "-q", "--", str(self.review_dir)) is not None
-        ):
-            return
-        rendered: list[str] = []
-        if self.root.is_relative_to(top):
-            listed = self._git(git, "ls-files", "-m", "-z", "--full-name", "--", str(self.root))
-            rendered = [str(Path(top) / name) for name in (listed or "").split("\0") if name]
-            # the export is what the site reads; new or never-committed files go in with the decision
-            export_dir = self.root / EXPORT_DIR
-            if export_dir.is_dir() and self._git(git, "add", "--", str(export_dir)) is not None:
-                rendered += [str(p) for p in sorted(export_dir.rglob("*.json"))]
-        targets = [*map(str, paths), *rendered]
-        if self._git(git, "add", "--", *map(str, paths)) is None:
-            raise StoreError(f"git add failed for {', '.join(map(str, paths))}")
-        committed = subprocess.run(
-            [
-                *git,
-                "-c",
-                "user.name=inspect-audit",
-                "-c",
-                "user.email=inspect-audit@generality.org",
-                "commit",
-                "-q",
-                "--only",
-                "--author",
-                author,
-                "-m",
-                message,
-                "--",
-                *targets,
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
+    def set_status(
+        self, selection: Selection, *, status: Status, author: str, reason: str
+    ) -> Decision:
+        findings = self.resolve(selection)
+        payload = StatusPayload(
+            fingerprints=sorted({f.fingerprint for f in findings}), status=status
         )
-        output = (committed.stdout + committed.stderr).strip()
-        if committed.returncode != 0 and "nothing to commit" not in output:
-            raise StoreError(f"git commit failed: {output}")
+        return self._write(self._decision(_now(), author, reason, status=payload))
+
+    def retract(self, decision_id: str, *, author: str, reason: str) -> Decision:
+        if decision_id not in {d.id for d in load_decisions(self.fs)}:
+            raise StoreError(f"unknown decision {decision_id}")
+        payload = RetractPayload(decision=decision_id)
+        return self._write(self._decision(_now(), author, reason, retract=payload))
 
     @staticmethod
-    def _git(git: list[str], *args: str) -> str | None:
-        """Stdout of a git command, or None when it failed."""
-        completed = subprocess.run([*git, *args], capture_output=True, text=True, check=False)
-        return completed.stdout.strip() if completed.returncode == 0 else None
+    def _decision(
+        now: datetime,
+        author: str,
+        reason: str | None,
+        *,
+        suppress: SuppressPayload | None = None,
+        accept: AcceptPayload | None = None,
+        link: LinkPayload | None = None,
+        status: StatusPayload | None = None,
+        retract: RetractPayload | None = None,
+    ) -> Decision:
+        payloads = {
+            "suppress": suppress,
+            "accept": accept,
+            "link": link,
+            "status": status,
+            "retract": retract,
+        }
+        (kind,) = [k for k, v in payloads.items() if v is not None]
+        return Decision.model_validate(
+            {
+                "id": new_decision_id(now),
+                "at": now,
+                "author": author,
+                "kind": kind,
+                "reason": reason,
+                kind: payloads[kind],
+            }
+        )
+
+    def _write(self, decision: Decision) -> Decision:
+        from .cli import render_current  # the renderer lives beside the CLI
+
+        if not _AUTHOR.fullmatch(decision.author):
+            raise StoreError(f"author must be 'Name <email>', got {decision.author!r}")
+        pending = unmigrated_review_files(self.fs)
+        if pending:
+            raise StoreError(
+                f"hand-written {', '.join(pending)} found under {self.fs.locator}; "
+                "run `inspect-audit-findings review migrate` first"
+            )
+        write_decision(self.fs, decision)
+        render_current(self.fs)
+        return decision
+
+
+def _now() -> datetime:
+    return datetime.now(tz=UTC)

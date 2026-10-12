@@ -301,40 +301,32 @@ def test_write_export_writes_both_files_and_is_stable_across_rewrites(
     import json
 
     from inspect_audit.findings.export import write_export
+    from inspect_audit.findings.fs import StoreFS
 
+    fs = StoreFS.from_locator(tmp_path)
     reviewed = apply_review([run], Review())
-    written = write_export(tmp_path, {EVAL: reviewed}, Review(), history=reviewed, generated_at=NOW)
-    assert [p.relative_to(tmp_path).as_posix() for p in written] == [
-        "export/index.json",
-        "export/evals/inspect-evals-stereoset.json",
-    ]
-    first = {p: p.read_bytes() for p in written}
-    assert json.loads(written[0].read_text())["schema"] == 1
-    assert written[0].read_text().endswith("\n")
-    write_export(tmp_path, {EVAL: reviewed}, Review(), history=reviewed, generated_at=NOW)
-    assert {p: p.read_bytes() for p in written} == first
+    written = write_export(fs, {EVAL: reviewed}, Review(), history=reviewed, generated_at=NOW)
+    assert written == ["export/index.json", "export/evals/inspect-evals-stereoset.json"]
+    first = {k: fs.read_bytes(k) for k in written}
+    assert json.loads(fs.read_text(written[0]))["schema"] == 1
+    assert fs.read_text(written[0]).endswith("\n")
+    write_export(fs, {EVAL: reviewed}, Review(), history=reviewed, generated_at=NOW)
+    assert {k: fs.read_bytes(k) for k in written} == first
 
 
 def test_eval_files_are_left_alone_when_only_the_stamp_would_change(
     tmp_path: Path, run: Run
 ) -> None:
     from inspect_audit.findings.export import write_export
+    from inspect_audit.findings.fs import StoreFS
 
+    fs = StoreFS.from_locator(tmp_path)
     reviewed = apply_review([run], Review())
     index, eval_file = write_export(
-        tmp_path, {EVAL: reviewed}, Review(), history=reviewed, generated_at=NOW
+        fs, {EVAL: reviewed}, Review(), history=reviewed, generated_at=NOW
     )
-    before = eval_file.read_bytes()
+    before = fs.read_bytes(eval_file)
     later = datetime(2026, 10, 8, tzinfo=UTC)
-    write_export(tmp_path, {EVAL: reviewed}, Review(), history=reviewed, generated_at=later)
-    assert eval_file.read_bytes() == before  # a review of another eval must not churn this file
-    assert "2026-10-08" in index.read_text()
-
-
-def test_display_author_never_exports_an_email() -> None:
-    from inspect_audit.findings.export import display_author
-
-    assert display_author("Matt Fisher <m@x.org>") == "Matt Fisher"
-    assert display_author("matt@x.org") == "matt"
-    assert display_author("<m@x.org>") == "m"
-    assert display_author("matt") == "matt"
+    write_export(fs, {EVAL: reviewed}, Review(), history=reviewed, generated_at=later)
+    assert fs.read_bytes(eval_file) == before  # a review of another eval must not churn this file
+    assert "2026-10-08" in fs.read_text(index)

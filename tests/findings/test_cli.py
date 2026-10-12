@@ -1,5 +1,6 @@
 """End to end over a temporary inspect_evals root with stubbed producers."""
 
+import io
 import json
 import sys
 from pathlib import Path
@@ -11,6 +12,7 @@ from test_header_adapter import _log
 
 from inspect_audit.findings.cli import collect_logs, main
 from inspect_audit.findings.featured import FEATURED
+from inspect_audit.findings.fs import StoreFS
 from inspect_audit.findings.models import Run
 from inspect_audit.findings.producers import ProducerConfig
 
@@ -443,18 +445,13 @@ def test_malformed_config_is_a_usage_error(
     assert "bad.yaml" in capsys.readouterr().err
 
 
-def test_review_files_beside_the_out_dir_are_applied(
+def test_review_decisions_in_the_store_are_applied(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     root = make_root(tmp_path, extra=ASSET)
     log = _log(tmp_path / "logs")
     _stubbed_env(monkeypatch)
     out = tmp_path / "out"
-    out.mkdir()
-    (out / "suppressions.yaml").write_text(
-        "- rule: duplicate_questions\n  subject: inspect_evals/stereoset\n  author: matt\n"
-        "  reason: known duplicates\n  since: 2026-09-30\n"
-    )
     args = [
         "run",
         "--config",
@@ -467,42 +464,45 @@ def test_review_files_beside_the_out_dir_are_applied(
         str(out),
     ]
     assert main([*args, "inspect_evals/stereoset"]) == 0
+    author = ["--author", "Matt Fisher <matt@example.com>"]
+    common = ["--store", str(out), *author]
+    suppress = ["review", "suppress", *common, "--rule", "duplicate_questions"]
+    assert (
+        main([*suppress, "--eval", "inspect_evals/stereoset", "--reason", "known duplicates"]) == 0
+    )
     findings = pd.read_parquet(out / "findings.parquet")
     dup = findings[findings["rule"] == "duplicate_questions"]
     assert len(dup) == 18 and bool(dup["suppressed"].all())  # kept in the parquet, marked
     summary = (out / "inspect-evals-stereoset" / "SUMMARY.md").read_text()
     assert "## Suppressed" in summary
-    assert (
-        "duplicate_questions · 18 observations · false_positive · matt: known duplicates" in summary
-    )
+    assert "duplicate_questions · 18 observations · false_positive · Matt Fisher" in summary
     # the run files on disk are untouched
     (stored_path,) = (out / "inspect-evals-stereoset" / "runs").glob("inspect_dataset-*.run.json")
     stored = json.loads(stored_path.read_text())
     assert all(f["suppressions"] == [] for f in stored["findings"])
-    # an issue linking a fingerprint the sweep produced, plus one it did not
-    fingerprint = str(dup.iloc[0]["fingerprint"])
-    (out / "issues.yaml").write_text(
-        f"- id: ISS-0001\n  title: dups\n  subject: inspect_evals/stereoset\n"
-        f"  findings: [{fingerprint}, sha256:gone]\n  author: matt\n  opened: 2026-09-30\n"
-    )
+    # a second sweep keeps the decision; the derived views carry the header
+    assert main([*args, "inspect_evals/stereoset"]) == 0
+    assert "## Suppressed" in (out / "inspect-evals-stereoset" / "SUMMARY.md").read_text()
+    assert (out / "suppressions.yaml").read_text().startswith("# derived from review/")
+    accept = ["review", "accept", *common, "--eval", "inspect_evals/stereoset"]
+    assert main([*accept, "--rule", "duplicate_questions", "--title", "dups"]) == 0
     assert main(["summary", str(out)]) == 0
     findings = pd.read_parquet(out / "findings.parquet")
-    assert int((findings["issue"] == "ISS-0001").sum()) == 1
+    assert int((findings["issue"] == "ISS-0001").sum()) == 18
     assert (
-        "- ISS-0001 · dups · 1 current observation"
+        "- ISS-0001 · dups · 18 current observations"
         in (out / "inspect-evals-stereoset" / "SUMMARY.md").read_text()
     )
-    assert "sha256:gone" in capsys.readouterr().err
 
 
-def test_malformed_review_file_is_a_usage_error(
+def test_malformed_decision_object_is_a_usage_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     root = make_root(tmp_path, extra=ASSET)
     _stubbed_env(monkeypatch)
     out = tmp_path / "out"
-    out.mkdir()
-    (out / "issues.yaml").write_text("- id: ISS-1\n  bogus: 1\n")
+    (out / "review").mkdir(parents=True)
+    (out / "review" / "20261009T040000Z-dec-bad.json").write_text("{not json")
     code = main(
         [
             "run",
@@ -516,7 +516,8 @@ def test_malformed_review_file_is_a_usage_error(
         ]
     )
     assert code == 2
-    assert "issues.yaml" in capsys.readouterr().err
+    assert "dec-bad" in capsys.readouterr().err
+    assert not (out / "inspect-evals-stereoset").exists()  # nothing ran
 
 
 def test_a_renamed_run_file_carries_its_own_record_ids(tmp_path: Path, run: Run) -> None:
@@ -526,9 +527,9 @@ def test_a_renamed_run_file_carries_its_own_record_ids(tmp_path: Path, run: Run)
     out = tmp_path / "out"
     write_outputs(out, {"inspect_evals/stereoset": [run]})
     write_outputs(out, {"inspect_evals/stereoset": [run]})  # same run id within one second
-    runs_dir = out / "inspect-evals-stereoset" / "runs"
-    first = read_run(runs_dir / "lint-1.run.json")
-    second = read_run(runs_dir / "lint-1-2.run.json")
+    fs = StoreFS.from_locator(out)
+    first = read_run(fs, "inspect-evals-stereoset/runs/lint-1.run.json")
+    second = read_run(fs, "inspect-evals-stereoset/runs/lint-1-2.run.json")
     assert [f.id for f in first.findings] == ["lint-1/1"]
     assert second.id == "lint-1-2"
     assert [f.id for f in second.findings] == ["lint-1-2/1"]
@@ -538,57 +539,34 @@ def test_a_renamed_run_file_carries_its_own_record_ids(tmp_path: Path, run: Run)
 def test_issue_with_a_subject_no_eval_matches_is_warned_about(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    from datetime import UTC, datetime
+
+    from inspect_audit.findings.review import AcceptPayload, Decision, write_decision
+
     root = make_root(tmp_path, extra=ASSET)
     _stubbed_env(monkeypatch)
     out = tmp_path / "out"
-    assert (
-        main(
-            [
-                "run",
-                "--config",
-                str(PILOT),
-                "--root",
-                str(root),
-                "--out",
-                str(out),
-                "inspect_evals/stereoset",
-            ]
-        )
-        == 0
-    )
+    args = ["run", "--config", str(PILOT), "--root", str(root), "--out", str(out)]
+    assert main([*args, "inspect_evals/stereoset"]) == 0
     findings = pd.read_parquet(out / "findings.parquet")
     fingerprint = str(findings.iloc[0]["fingerprint"])
-    (out / "issues.yaml").write_text(
-        f"- id: ISS-0002\n  title: typo\n  subject: inspect_evals/steroset\n  findings: [{fingerprint}]\n"
-        "  author: matt\n  opened: 2026-09-30\n"
+    at = datetime(2026, 9, 30, tzinfo=UTC)
+    typo = Decision(
+        id="dec-typo",
+        at=at,
+        author="matt <m@x>",
+        kind="accept",
+        accept=AcceptPayload(
+            issue="ISS-0002",
+            title="typo",
+            subject="inspect_evals/steroset",
+            fingerprints=[fingerprint],
+        ),
     )
+    write_decision(StoreFS.from_locator(out), typo)
     assert main(["summary", str(out)]) == 0
     err = capsys.readouterr().err
     assert "ISS-0002" in err and "inspect_evals/steroset" in err
-
-
-def test_explicit_review_dir_that_does_not_exist_is_a_usage_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    root = make_root(tmp_path, extra=ASSET)
-    _stubbed_env(monkeypatch)
-    out = tmp_path / "out"
-    code = main(
-        [
-            "run",
-            "--config",
-            str(PILOT),
-            "--root",
-            str(root),
-            "--out",
-            str(out),
-            "--review",
-            str(tmp_path / "typo"),
-            "inspect_evals/stereoset",
-        ]
-    )
-    assert code == 2 and "typo" in capsys.readouterr().err
-    assert not (out / "inspect-evals-stereoset").exists()  # nothing ran
 
 
 def test_leads_subcommand_prints_and_writes(
@@ -644,42 +622,116 @@ def test_review_cli_suppress_accept_link(
     assert "ISS-0001" in capsys.readouterr().err
 
 
-def test_review_cli_author_falls_back_to_git_config_then_fails(
+def test_review_cli_author_falls_back_to_env_then_git_config_then_fails(
     tmp_path: Path, run: Run, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     import subprocess
 
     from inspect_audit.findings.cli import write_outputs
+    from inspect_audit.findings.review import load_review
 
     out = tmp_path / "out"
     write_outputs(out, {"inspect_evals/stereoset": [run]})
+    monkeypatch.delenv("INSPECT_AUDIT_AUTHOR", raising=False)
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "none"))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-    args = ["review", "suppress", "--out", str(out), "--rule", "IEBP008", "--reason", "r"]
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.chdir(tmp_path / "elsewhere")
+    args = ["review", "suppress", "--store", str(out), "--rule", "IEBP008", "--reason", "r"]
     assert main(args) == 2
     assert "author" in capsys.readouterr().err
-    git = ["git", "-C", str(out)]
+    git = ["git", "-C", str(tmp_path / "elsewhere")]
     subprocess.run([*git, "init", "-q"], check=True)
     subprocess.run([*git, "config", "user.name", "Ada"], check=True)
     subprocess.run([*git, "config", "user.email", "ada@example.com"], check=True)
     assert main(args) == 0
-    log = subprocess.run(
-        [*git, "log", "-1", "--format=%an"], capture_output=True, text=True, check=True
+    assert load_review(StoreFS.from_locator(out)).suppressions[0].author == "Ada <ada@example.com>"
+    monkeypatch.setenv("INSPECT_AUDIT_AUTHOR", "Env Person <env@example.com>")
+    status = [
+        "review",
+        "status",
+        "--store",
+        str(out),
+        "--id",
+        "lint-1/1",
+        "qualified",
+        "--reason",
+        "r",
+    ]
+    assert main(status) == 0
+    assert load_review(StoreFS.from_locator(out)).status_provenance["sha256:0"].author == (
+        "Env Person <env@example.com>"
     )
-    assert log.stdout.strip() == "Ada"
 
 
-def test_review_cli_malformed_review_file_is_a_usage_error(
+def test_review_cli_malformed_decision_is_a_usage_error(
     tmp_path: Path, run: Run, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from inspect_audit.findings.cli import write_outputs
 
     out = tmp_path / "out"
     write_outputs(out, {"inspect_evals/stereoset": [run]})
-    (out / "issues.yaml").write_text("- id: [unclosed\n")
-    args = ["review", "suppress", "--out", str(out), "--rule", "IEBP008", "--reason", "r"]
+    (out / "review").mkdir(exist_ok=True)
+    (out / "review" / "20261009T040000Z-dec-bad.json").write_text("- [unclosed\n")
+    args = ["review", "suppress", "--store", str(out), "--rule", "IEBP008", "--reason", "r"]
     assert main([*args, "--author", "Matt Fisher <matt@example.com>"]) == 2
-    assert "issues.yaml" in capsys.readouterr().err
+    assert "dec-bad" in capsys.readouterr().err
+
+
+def test_store_flag_and_environment_default(
+    tmp_path: Path, run: Run, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit.findings.cli import write_outputs
+    from inspect_audit.findings.review import load_review
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    author = ["--author", "Matt Fisher <matt@example.com>"]
+    suppress = ["review", "suppress", "--store", str(out), "--rule", "IEBP008", "--reason", "r"]
+    assert main([*suppress, *author]) == 0
+    monkeypatch.setenv("INSPECT_AUDIT_STORE", str(out))
+    status = ["review", "status", "--fingerprint", "sha256:0", "retracted", "--reason", "fixed"]
+    assert main([*status, *author]) == 0
+    review = load_review(StoreFS.from_locator(out))
+    assert review.suppressions and review.statuses == {"sha256:0": "retracted"}
+    assert main(["summary"]) == 0
+
+
+def test_review_retract_and_migrate(
+    tmp_path: Path, run: Run, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import yaml
+
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    legacy = [
+        {
+            "rule": "IEBP008",
+            "subject": "*",
+            "author": "old <o@x>",
+            "reason": "legacy",
+            "since": "2026-09-30",
+        }
+    ]
+    (out / "suppressions.yaml").write_text(yaml.safe_dump(legacy))
+    assert main(["review", "migrate", "--store", str(out)]) == 0
+    assert "1 decision" in capsys.readouterr().out
+    (key,) = StoreFS.from_locator(out).glob("review/*.json")
+    decision_id = "dec-" + key.rsplit("-dec-", 1)[1].removesuffix(".json")
+    author = ["--author", "Matt Fisher <matt@example.com>"]
+    retract = ["review", "retract", "--store", str(out), decision_id, "--reason", "not noise"]
+    assert main([*retract, *author]) == 0
+    assert (out / "suppressions.yaml").read_text().strip().endswith("[]")
+
+
+def test_run_requires_a_local_store_for_now(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(["run", "--root", str(tmp_path), "--store", "memory://remote", "inspect_evals/x"])
+    assert code == 2
+    assert "local" in capsys.readouterr().err
 
 
 def test_render_current_writes_the_export(tmp_path: Path, run: Run) -> None:
@@ -694,3 +746,85 @@ def test_render_current_writes_the_export(tmp_path: Path, run: Run) -> None:
     assert [e["eval"] for e in index["evals"]] == ["inspect_evals/stereoset"]
     assert (out / "export" / "evals" / "inspect-evals-stereoset.json").is_file()
     assert "secret" not in (out / "export" / "index.json").read_text()
+
+
+def _without_clock_lines(text: str) -> str:
+    """Lines carrying wall-clock time or a time-derived id, which differ between two renders."""
+    return "\n".join(
+        line
+        for line in text.splitlines()
+        if "generated_at" not in line and "opened" not in line and "dec-" not in line
+    )
+
+
+def test_render_is_identical_on_a_directory_and_in_memory(tmp_path: Path, run: Run) -> None:
+    from inspect_audit.findings.cli import write_outputs
+    from inspect_audit.findings.store import Selection, Store
+
+    stores = [StoreFS.from_locator(tmp_path / "a"), StoreFS.from_locator("memory://parity")]
+    keys = [
+        "SUMMARY.md",
+        "inspect-evals-stereoset/SUMMARY.md",
+        "export/index.json",
+        "export/evals/inspect-evals-stereoset.json",
+        "issues.yaml",
+    ]
+    outputs: list[dict[str, str]] = []
+    frames: list[list[pd.DataFrame]] = []
+    for fs in stores:
+        write_outputs(fs, {"inspect_evals/stereoset": [run]})
+        Store(fs).accept(Selection(ids=("lint-1/1",)), title="t", author="Matt Fisher <m@x>")
+        outputs.append({k: _without_clock_lines(fs.read_text(k)) for k in keys})
+        frames.append(
+            [
+                pd.read_parquet(io.BytesIO(fs.read_bytes(k)))
+                for k in ("findings.parquet", "runs.parquet")
+            ]
+        )
+    assert outputs[0] == outputs[1]
+    assert all(a.equals(b) for a, b in zip(frames[0], frames[1], strict=True))
+
+
+def test_hand_written_review_files_must_be_migrated_first(
+    tmp_path: Path, run: Run, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import yaml
+
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    legacy = [
+        {
+            "rule": "IEBP008",
+            "subject": "*",
+            "author": "old <o@x>",
+            "reason": "legacy",
+            "since": "2026-09-30",
+        }
+    ]
+    (out / "suppressions.yaml").write_text(yaml.safe_dump(legacy))
+    assert main(["summary", str(out)]) == 2
+    assert "migrate" in capsys.readouterr().err
+    assert (out / "suppressions.yaml").read_text().startswith("- ")  # untouched
+    suppress = ["review", "suppress", "--store", str(out), "--rule", "IEBP008", "--reason", "r"]
+    assert main([*suppress, "--author", "Matt Fisher <matt@example.com>"]) == 2
+    assert "migrate" in capsys.readouterr().err
+    assert StoreFS.from_locator(out).glob("review/*.json") == []
+    assert main(["review", "migrate", "--store", str(out)]) == 0
+    assert main(["summary", str(out)]) == 0
+    assert (out / "suppressions.yaml").read_text().startswith("# derived from review/")
+    assert "IEBP008" in (out / "suppressions.yaml").read_text()
+
+
+def test_summary_positional_beats_the_environment_store(
+    tmp_path: Path, run: Run, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "out"
+    write_outputs(out, {"inspect_evals/stereoset": [run]})
+    monkeypatch.setenv("INSPECT_AUDIT_STORE", str(tmp_path / "nonexistent"))
+    assert main(["summary", str(out)]) == 0
+    assert main(["summary", "--store", str(out)]) == 0
+    assert main(["summary"]) == 2

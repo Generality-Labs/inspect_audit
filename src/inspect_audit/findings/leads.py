@@ -12,6 +12,7 @@ from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
+from .fs import StoreFS, as_store_fs
 from .io import read_current
 from .models import Finding, Run
 from .render import inputs_lines, sorted_findings
@@ -168,8 +169,10 @@ def render_leads(
     return "\n".join(parts).rstrip() + "\n"
 
 
-def leads_markdown(out: Path, eval: str, review: Review, *, sample_id: str | None = None) -> str:
-    """LEADS.md for one eval from the current view under `out`, with review applied."""
-    runs = apply_review(read_current(out), review)
+def leads_markdown(
+    store: StoreFS | str | Path, eval: str, review: Review, *, sample_id: str | None = None
+) -> str:
+    """LEADS.md for one eval from the store's current view, with review applied."""
+    runs = apply_review(read_current(as_store_fs(store)), review)
     mine, findings, suppressed = select_leads(runs, eval, sample_id=sample_id)
     return render_leads(eval, mine, findings, suppressed, review.issues, sample_id=sample_id)

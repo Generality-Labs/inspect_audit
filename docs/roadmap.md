@@ -100,6 +100,10 @@ Done when a maintainer can find an eval, see what was checked and when, pick an 
 
 QA runs through every milestone. Recall against the gold-standard manual audits (FORTRESS, BixBench, SciCode) extends the milestone 2 test set as the matching investigation capability lands.
 
+## Methodology, not template
+
+Decided 2026-10-12 ([methodology.md](methodology.md)): the investigator's brief becomes a versioned methodology (checks, guidance, scales, thresholds, sampling, verdict rule) plus the seed and steer; it writes Run, Profile, Findings, Assessments and Coverage; templates render records and own only layout and the two synthesis blocks. First instance: [methodologies/epoch-rubric-1.yaml](methodologies/epoch-rubric-1.yaml). Schema additions: `measure` on Assessment, `sampling` on Coverage, a Profile record. Lands with milestone 5's investigation import; the next investigation run tries the Epoch methodology against a real subject.
+
 ## Rule mining: the fortnightly track
 
 The 2026-10-01 PR triage and its rule-check pass are the process this track repeats every fortnight: crawl and cluster the open PRs, mine a candidate check per cluster, sort it into lint rule, shared helper, test convention, review checklist or auditor item, raise the lint issue and the "agree before lint encodes it" policy issue, check the draft rule against the PRs as test cases, and hand maintainers the action list. [maintenance-loop.md](maintenance-loop.md) records the loop, the `cases.yaml` format, the metric, the cluster-to-taxonomy mapping and the four skills to distil: `pr-triage`, `rule-mining`, `rule-check`, `policy-question`. Its outputs are issues, lint rules, helper proposals, policy questions and docs, which is the forward-deployed-engineer role the Q4 plan assigns: no code is committed to Inspect Evals.

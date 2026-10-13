@@ -32,6 +32,26 @@ over questions with a resolved label (DEFECT plus NO_ISSUE_FOUND). Unresolved an
 unassessed questions are reported beside it, not counted either way. A status that
 disagrees with the computed threshold needs a written `threshold_override_reason`.
 
+## Deciding Pass or Flag
+
+Pass is the default. A row is Flag only when the evidence shows a material effect on the
+benchmark's headline results or on their comparability. A defect that exists but does not
+move scores, or that affects only rows a reader can avoid, is a Pass with the concern
+recorded under Limitations. When the evidence leaves the question open, Pass and say what
+would settle it. Every Flag carries an `impact` statement: the measured effect, with numbers.
+
+- **Scoring**: Flag at or above the 20% prevalence threshold, or on demonstrated grading
+  corruption at scale. Authored attacks on the grader and single false negatives are
+  limitations, not Flags.
+- **Benchmark consistency**: Flag only when results from different versions are shown to be
+  incomparable, with a measured score difference attributable to the change. An unversioned
+  change with no measured effect is a limitation.
+- **Elicitation**: Flag only when the benchmark as a whole under-elicits, meaning the best
+  listed configuration of the affected models is still depressed. Rows that are poor but
+  have a better row for the same model are a limitation.
+- **Bias in evaluation setup**: Flag only on a demonstrated model-specific advantage, not on
+  heterogeneous settings alone.
+
 ## 3. Evaluation quality
 
 | Question | Statuses |

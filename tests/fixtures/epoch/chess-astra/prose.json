@@ -1,0 +1,35 @@
+{
+  "summary": "Chess Puzzles asks models to choose the best move in 100 text-encoded chess positions, without tools. Credit depends on agreement with a reference move. Epoch’s current leaderboard reports a best score of 72% for GPT-6 Astra at maximum effort; the highest complete supplied run scores 54%.\n\nThe review finds the benchmark Flawed because some published settings repeatedly exhaust their output allowance before returning an answer. Sonnet 4.6 at maximum effort leaves 95/100 final answers empty and scores 3%; another supplied configuration returns every answer and scores 13%. This makes those scores poor estimates of the models’ best chess-puzzle performance. Conversely, engine checks support all 100 reference moves, and only one puzzle has a demonstrated scoring error, below the scoring-defect threshold. The findings concern particular evaluation settings, not the validity of every puzzle or every reported score.",
+  "methodology": "We compared the public task and generator with the pinned Generality Labs reconstruction. We examined settings and outcomes across all 193 supplied logs: 19,500 attempts dated December 2025–August 2026. Every puzzle received question-label, reference-answer, specification, answer-format, environment-integrity and other-findings audits, using GPT-6 Luna with medium reasoning. Ordinary scoring probes used GPT-5 mini with low reasoning.\n\nStockfish 17.1 independently checked every reference move. Headers, recorded requests, identical-answer comparisons and diagnostic transcripts across all logs informed consistency, elicitation and bias. We also checked Epoch’s current leaderboard and human-baseline documentation. No adversarial scorer tests or answer-access attacks were run.",
+  "recommendations": [
+    "Reserve enough output capacity for a final answer, and test completion rates before publishing a configuration. Rerun settings that routinely exhaust their allowance, using reasonable bounded reasoning or a separate final-answer step.",
+    "Publish truncation, empty-answer and unscored-attempt counts beside accuracy. Keep results clearly labeled by configuration, and do not present heavily incomplete outputs as estimates of a model’s best attainable performance.",
+    "Use deterministic parsing for the requested move format, with a defined fallback for other responses. Version changes to the answer-reading model and regrade saved responses consistently.",
+    "Repeat each configuration at least five times and report uncertainty from both puzzle selection and repeated runs. Small differences on a 100-puzzle benchmark should not be treated as precise rankings.",
+    "Publish the engine version and search settings used to establish each reference. Maintain fresh, unreleased puzzles to assess later models without relying entirely on publicly available positions and solutions."
+  ],
+  "representative_errors": [
+    "Output limits can prevent models from submitting any move. Across 19,500 attempts, 925 reached an output limit; 851 of those had empty final answers. These are unsuccessful attempts, but they do not show that the models selected wrong moves.",
+    "The problem is concentrated in particular reasoning configurations. Alternative settings for the same models complete more answers and score higher. These comparisons support better achievable performance, but do not isolate the effect of token limits from changes in reasoning effort or provider behavior."
+  ],
+  "error_examples": [
+    {
+      "task": "Sonnet 4.6: all 100 puzzles",
+      "error_type": "Elicitation",
+      "notes": "Maximum effort: 95 empty answers, 3% accuracy. A reserved reasoning budget: no empty answers, 13% accuracy.",
+      "affected_logs": "Sonnet 4.6 max and 32K (2 logs)"
+    },
+    {
+      "task": "Opus 4.7: all 100 puzzles",
+      "error_type": "Elicitation",
+      "notes": "Maximum effort: 88 empty answers, 7% accuracy. Low effort: no empty answers, 20% accuracy.",
+      "affected_logs": "Opus 4.7 max and low (2 logs)"
+    },
+    {
+      "task": "Qwen 3.5 9B: all 100 puzzles",
+      "error_type": "Elicitation",
+      "notes": "Default reasoning: 97 empty answers, 2% accuracy. Reasoning disabled: no empty answers, 12% accuracy.",
+      "affected_logs": "Qwen 3.5 9B default and none (2 logs)"
+    }
+  ]
+}

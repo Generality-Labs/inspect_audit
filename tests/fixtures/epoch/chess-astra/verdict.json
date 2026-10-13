@@ -1,0 +1,25 @@
+{
+  "verdict": "Flawed",
+  "reasons": [
+    "flagged: Elicitation",
+    "scoring_integrity sampled_defect_rate 1/100 (1.0%; threshold 20%; coverage.json)"
+  ],
+  "measures": {
+    "scoring_integrity": {
+      "name": "sampled_defect_rate",
+      "numerator": 1,
+      "denominator": 100,
+      "value": 0.01,
+      "threshold": 0.2,
+      "exceeded": false,
+      "source": "coverage.json",
+      "beside": {
+        "unresolved": 0,
+        "not_assessed": 0,
+        "population": 100
+      }
+    }
+  },
+  "methodology": "epoch-rubric@1",
+  "template": "epoch-review"
+}

@@ -132,11 +132,11 @@ def report_format(report: Path) -> str:
 
 
 def allowed_sections(report: Path) -> tuple[str, ...]:
-    """The sections a finding may be filed under, for the workspace's report format."""
+    """The sections (GL) or methodology check ids (epoch) a finding may be filed under."""
     if report_format(report) == "epoch":
-        from ._epoch import SECTIONS
+        from ._epoch import workspace_methodology
 
-        return SECTIONS
+        return workspace_methodology(report)[0].check_ids
     return GL_SECTIONS
 
 
@@ -160,9 +160,10 @@ class Finding(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1)
-    # one of the report format's sections; validated against the workspace in
-    # validate_findings, since the GL and Epoch formats file findings differently
-    section: str = Field(min_length=1)
+    # where the finding is filed: a GL report section, or (methodology formats) the
+    # check id it bears on. Validated against the workspace in validate_findings.
+    section: str = ""
+    check: str = ""
     claim: str = Field(min_length=1)
     status: Literal["hypothesis", "supported", "qualified", "retracted"]
     origin: Literal["historical", "experiment", "source", "audit_limitation"]
@@ -181,12 +182,19 @@ def validate_findings(root: Path) -> list[Finding]:
     ids = [f.id for f in findings]
     if len(set(ids)) != len(ids):
         raise ValueError("Finding ids must be unique")
-    sections = allowed_sections(report)
+    allowed = allowed_sections(report)
+    by_check = report_format(report) != "gl"
     for finding in findings:
-        if finding.section not in sections:
+        filed = finding.check if by_check else finding.section
+        field = "check" if by_check else "section"
+        if filed not in allowed:
             raise ValueError(
-                f"{finding.id}: section must be one of {', '.join(sections)}, not {finding.section!r}"
+                f"{finding.id}: {field} must be one of {', '.join(allowed)}, not {filed!r}"
             )
+        if by_check and finding.section:
+            raise ValueError(f"{finding.id}: file findings under `check`, not `section`")
+        if not by_check and finding.check:
+            raise ValueError(f"{finding.id}: `check` is for methodology formats; use `section`")
         if finding.status in ("supported", "qualified") and not finding.evidence:
             raise ValueError(f"{finding.id}: supported/qualified findings require evidence")
         for evidence in finding.evidence:
@@ -226,7 +234,14 @@ def save_publication(root: Path) -> Path:
         )
     fmt = report_format(report)
     required = (
-        ("review.json", "verdict.json", "epoch_review.md", "findings.json")
+        (
+            "profile.json",
+            "assessments.json",
+            "prose.json",
+            "verdict.json",
+            "epoch_review.md",
+            "findings.json",
+        )
         if fmt == "epoch"
         else (
             "report.tex",
@@ -396,7 +411,7 @@ def check_report(root: str) -> Tool:
             return (
                 f"Records validated. Derived verdict: {verdict['verdict']} "
                 f"({'; '.join(verdict['reasons'])}). Rendered /workspace/report/epoch_review.md "
-                "and verdict.json from review.json and findings.json; read the markdown and "
+                "and verdict.json from the records in report/; read the markdown and "
                 "fix the records (not the markdown) before publishing."
             )
         return "Records validated and tables generated. Compile with latexmk -pdf -interaction=nonstopmode -halt-on-error report.tex from /workspace/report. Render all pages with pdftoppm, inspect them with view_image, and fix layout before publishing."

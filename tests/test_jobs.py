@@ -596,7 +596,6 @@ def test_local_logs_remain_local_when_remote_work_is_enabled(
 def test_jobs_status_wait_collect_release_reservation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-
     from inspect_audit import _investigate
 
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))

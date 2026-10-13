@@ -36,6 +36,22 @@ verdict:
   flag: >-
     a Flag carries an impact statement: the measured effect on the headline results, with numbers, at
     most 60 words
+  procedure:
+    gate:
+      check: reviewability
+      stop_at: Inadequate
+      outcome: NEI
+    minimum:
+      section: 2. Scoring (minimum standard)
+      fail_at: Flag
+      outcome: Flawed
+    unfinished:
+      level: Not Reviewed
+      outcome: Incomplete
+    otherwise: Verified
+  impact:
+    max_words: 60
+    max_sentences: 3
 sampling:
   unit: task
   population: every task in the benchmark version reviewed
@@ -373,3 +389,6 @@ checks:
   taxonomy:
     inspect-audit@2:
     - construct
+notes_limit:
+  max_words: 80
+  max_sentences: 4

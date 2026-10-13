@@ -1,0 +1,176 @@
+[
+  {
+    "id": "F1",
+    "claim": "All 193 supplied logs are accessible, including five recovered from Epoch; every one of 19,500 attempts has the same FEN and target as the 100-item reconstruction. Candidate and extraction prompt templates each remain constant.",
+    "status": "supported",
+    "origin": "historical",
+    "severity": null,
+    "evidence": [
+      {
+        "path": "evidence/run_inventory.json",
+        "location": "all records; no dataset mismatches; one candidate and extraction prompt",
+        "quote": null
+      },
+      {
+        "path": "evidence/recovery_identity.json",
+        "location": "500/500 UUID and ID-score matches",
+        "quote": null
+      }
+    ],
+    "reproduce": "Run evidence/analyze_logs.py. Public recovery URLs are in the repository audit/logs.csv; selected primary data are in evidence/log_primary_excerpts.json.",
+    "limitations": "The public task is reconstructed rather than the complete private implementation; provider defaults remain defaults and hidden reasoning cannot be read.",
+    "check": "reviewability"
+  },
+  {
+    "id": "F2",
+    "claim": "Stockfish 17.1 independently ranked the stored reference first on all 100 positions at depth 20 with three candidate lines; all positions and reference moves are legal.",
+    "status": "supported",
+    "origin": "experiment",
+    "severity": null,
+    "evidence": [
+      {
+        "path": "evidence/engine_scan.json",
+        "location": "100 records: valid, target_legal, top",
+        "quote": null
+      },
+      {
+        "path": "evidence/engine_scan.py",
+        "location": "settings and engine invocation",
+        "quote": null
+      }
+    ],
+    "reproduce": "Install stockfish and chess, then run evidence/engine_scan.py.",
+    "limitations": "Finite engine search is not a proof of chess-theoretic uniqueness; close choices need deeper checks.",
+    "check": "scoring_integrity"
+  },
+  {
+    "id": "F3",
+    "claim": "Published high-reasoning configurations often terminate at their output limit without a final answer; reasonable lower-effort or reserved-answer-budget configurations of the same models complete more answers and score higher.",
+    "status": "supported",
+    "origin": "historical",
+    "severity": "Major",
+    "evidence": [
+      {
+        "path": "evidence/run_inventory.json",
+        "location": "Sonnet 4.6 max/high/medium, Opus 4.7 max/low, Qwen 3.5 9B thinking/none",
+        "quote": null
+      },
+      {
+        "path": "evidence/attempt_table.json",
+        "location": "stop_reason, completion_len and scores",
+        "quote": null
+      },
+      {
+        "path": "evidence/elicitation_examples.json",
+        "location": "Sonnet4.6 3/100 versus13/100; Opus4.7 7/100 versus20/100; Qwen3.5 9B2/100 versus12/100; exact request settings and stops",
+        "quote": null
+      },
+      {
+        "path": "evidence/leaderboard_chess_puzzles.csv",
+        "location": "published rows linked by Epoch log ID",
+        "quote": null
+      }
+    ],
+    "reproduce": "Compare matched model runs using prompt/target identity, generation settings, max_tokens stop reasons and final text.",
+    "limitations": "Effort settings and some API versions differ as well as token allocation. Do not interpret raw score differences as a controlled estimate of the cap alone.",
+    "check": "elicitation_adequacy"
+  },
+  {
+    "id": "F4",
+    "claim": "Puzzle86 has one verified historical false negative: Qwen3.5 397B A17B none gave the requested correct final move g8e6; the grader retained MOVE: in its extracted string and exact matching rejected it. This one correction raises that run from13/100 to14/100.",
+    "status": "supported",
+    "origin": "historical",
+    "severity": "Minor",
+    "evidence": [
+      {
+        "path": "evidence/historical86.json",
+        "location": "completion, score and raw grader submission",
+        "quote": null
+      },
+      {
+        "path": "hawk:imported-epoch-chess-new--lm6b3q6h12q1dx6f/qwen3.5-397b-a17b_none--VRLKwMA8hJnNRpp8M3WDCw.eval",
+        "location": "puzzle86, UUID bq63rVdXM6P22LpTKJ597x, epoch1",
+        "quote": null
+      }
+    ],
+    "reproduce": "Run evidence/verify_historical86.py; compare the candidate final MOVE line, reference, and grader tool arguments.",
+    "limitations": "A single observed attempt error, not evidence that all completions on this puzzle or all puzzles fail. Ordinary mini-low replay probes succeed; they do not erase the recorded mini-medium failure.",
+    "check": "scoring_integrity"
+  },
+  {
+    "id": "F5",
+    "claim": "Version1.1.6 contains105 logs graded by GPT5mini and51 by GPT5.6Terra, all published in the same data table. This is an unversioned grading-procedure change. Across225 naturally repeated nonempty answer texts on the same puzzles evaluated under multiple grader models, no correctness disagreement was found.",
+    "status": "qualified",
+    "origin": "historical",
+    "severity": null,
+    "evidence": [
+      {
+        "path": "evidence/crosslog_summary.json",
+        "location": "grader_by_version",
+        "quote": null
+      },
+      {
+        "path": "evidence/fixed_answer_comparisons.json",
+        "location": "324 groups including99 blank;225 nonempty groups; no correctness disagreements",
+        "quote": null
+      },
+      {
+        "path": "evidence/leaderboard_chess_puzzles.csv",
+        "location": "all156 new supplied logs matched by published ID",
+        "quote": null
+      }
+    ],
+    "reproduce": "Run evidence/compare_logs.py. Group exact visible completion hashes by puzzle and reference, then compare grades across graders.",
+    "limitations": "This observational overlap is biased toward short repeated responses; it cannot certify all graders equivalent on long explanations. Material score incomparability is not established.",
+    "check": "benchmark_consistency"
+  },
+  {
+    "id": "F6",
+    "claim": "All193 supplied logs use the same candidate prompt, reference set and no candidate tools. Reasoning modes and output budgets vary by model, but no separate material advantage from a privileged scaffold is established.",
+    "status": "qualified",
+    "origin": "historical",
+    "severity": null,
+    "evidence": [
+      {
+        "path": "evidence/run_inventory.json",
+        "location": "prompts, tools, event_configs across193 logs",
+        "quote": null
+      },
+      {
+        "path": "evidence/log_primary_excerpts.json",
+        "location": "actual request settings and sample transcripts",
+        "quote": null
+      }
+    ],
+    "reproduce": "Compare prompt and tool counters, model generation configurations and actual API settings across every run.",
+    "limitations": "Different model-specific limits need not have equal effects; resource-linked completion failures are established separately under elicitation. No equal-compute causal experiment was run.",
+    "check": "evaluation_bias"
+  },
+  {
+    "id": "F7",
+    "claim": "Final whole-population item assessment resolves all100 puzzles:99 have no demonstrated issue and puzzle86 has a historical false-negative defect. All six requested checks are completed for each selected assessment.",
+    "status": "supported",
+    "origin": "experiment",
+    "severity": null,
+    "evidence": [
+      {
+        "path": "coverage.json",
+        "location": "denominator100; counts99/1/0/0",
+        "quote": null
+      },
+      {
+        "path": "evidence/assessment_selection.json",
+        "location": "selected original auditor logs and adjudication provenance",
+        "quote": null
+      },
+      {
+        "path": "evidence/auditor_probe_table.json",
+        "location": "426 ordinary scoring probes across121 initial/followup audits covering100 distinct puzzles",
+        "quote": null
+      }
+    ],
+    "reproduce": "Run evidence/read_audits.py, audit_probes.py and export_final_coverage.py. Superseded labels are retained in the original logs and audit_results.json.",
+    "limitations": "Question-level prevalence is not the fraction of19,500 submissions misgraded. Followup86 incorporates primary historical evidence supplied by the lead; the lead independently verified that original log. No adversarial scorer or answer-access tests were performed.",
+    "check": "scoring_integrity"
+  }
+]

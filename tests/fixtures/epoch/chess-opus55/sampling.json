@@ -1,0 +1,6 @@
+{
+  "population": 100,
+  "sample": 100,
+  "strategy": "census",
+  "confirmation": "every task labelled by the per-item auditors; defects confirmed by the investigator"
+}

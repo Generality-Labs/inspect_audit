@@ -1,0 +1,263 @@
+[
+  {
+    "check": "reviewability",
+    "level": "Full",
+    "notes": "All 100 positions, reference moves and public scoring code are inspectable. Headers and recorded requests disclose prompts, model settings, answer-reading models and tool access across all 193 supplied logs. The runnable package reconstructs the public task; every supplied position, reference and prompt matches it. Some internal reasoning is hidden, but final answers and scores are visible.",
+    "evidence": [
+      {
+        "path": "evidence/published___init__.py",
+        "location": "whole task and scorer",
+        "quote": null
+      },
+      {
+        "path": "evidence/run_inventory.json",
+        "location": "193 records: configs, prompts, graders and dataset_mismatch_ids",
+        "quote": null
+      },
+      {
+        "path": "evidence/log_primary_excerpts.json",
+        "location": "557 selected sample transcripts and request settings across every log",
+        "quote": null
+      }
+    ],
+    "findings": [
+      "F1"
+    ]
+  },
+  {
+    "check": "scoring_integrity",
+    "level": "Pass",
+    "notes": "All 100 puzzles were assessed; 1 has a demonstrated scoring defect, below the 20% threshold. Stockfish supported every reference move, and ordinary correct and incorrect answers were tested. One historical answer on puzzle 86 was rejected because the answer-reading model retained the required MOVE prefix; that run should score 14%, not 13%. Wider scoring corruption was not established; adversarial scorer tests were excluded.",
+    "evidence": [
+      {
+        "path": "coverage.json",
+        "location": "100 resolved question assessments and prevalence",
+        "quote": null
+      },
+      {
+        "path": "evidence/engine_scan.json",
+        "location": "all100 positions; Stockfish17.1 depth20",
+        "quote": null
+      },
+      {
+        "path": "evidence/historical86.json",
+        "location": "correct final answer and incorrect recorded score",
+        "quote": null
+      },
+      {
+        "path": "evidence/auditor_probe_table.json",
+        "location": "actual ordinary-answer grader results",
+        "quote": null
+      }
+    ],
+    "findings": [
+      "F2",
+      "F4",
+      "F7"
+    ]
+  },
+  {
+    "check": "benchmark_consistency",
+    "level": "Pass",
+    "notes": "Prompts and references match across all 193 logs. Within version 1.1.6, 105 logs use GPT-5 mini to read answers and 51 use GPT-5.6 Terra, an unversioned procedural change. However, 225 identical nonempty answer groups spanning grader models show no correctness disagreements. Material score incomparability was not demonstrated, although these mostly short repeated answers do not establish equivalence on every response.",
+    "evidence": [
+      {
+        "path": "evidence/crosslog_summary.json",
+        "location": "grader_by_version",
+        "quote": null
+      },
+      {
+        "path": "evidence/fixed_answer_comparisons.json",
+        "location": "225 nonempty groups; correctness_disagreement false throughout",
+        "quote": null
+      },
+      {
+        "path": "evidence/leaderboard_chess_puzzles.csv",
+        "location": "published rows for all156 version1.1.6 logs",
+        "quote": null
+      }
+    ],
+    "findings": [
+      "F5"
+    ]
+  },
+  {
+    "check": "elicitation_adequacy",
+    "level": "Flag",
+    "notes": "Some published settings regularly exhaust the response allowance before producing an answer. Sonnet 4.6 at maximum effort leaves 95/100 final answers empty and scores 3%; reserving 32,000 of 64,000 tokens for reasoning produces all 100 answers and scores 13%. Similar failures occur for Opus 4.7 and Qwen 3.5. These alternatives establish substantially better achievable performance, but changes in effort and provider behavior prevent attributing the entire difference to the token cap alone.",
+    "evidence": [
+      {
+        "path": "evidence/elicitation_examples.json",
+        "location": "same-model settings, exact request parameters, truncations and published scores",
+        "quote": null
+      },
+      {
+        "path": "evidence/log_primary_excerpts.json",
+        "location": "Sonnet4.6 max sample1: empty grader input and max_tokens stop",
+        "quote": null
+      }
+    ],
+    "impact": "Sonnet 4.6 at maximum effort leaves 95/100 final answers empty and scores 3%; reserving 32,000 of 64,000 tokens for reasoning produces all 100 answers and scores 13%. Similar failures occur for Opus 4.7 and Qwen 3.5.",
+    "findings": [
+      "F3"
+    ]
+  },
+  {
+    "check": "evaluation_bias",
+    "level": "Pass",
+    "notes": "All 193 logs were checked for prompts, tools and generation settings. Models receive the same task prompt and no tools, while reasoning modes and output limits vary. No separate material advantage from a privileged prompt or tool setup was established. Unequal completion rates are real, but they support the elicitation finding rather than proving that unequal nominal token budgets unfairly favor a particular model.",
+    "evidence": [
+      {
+        "path": "evidence/run_inventory.json",
+        "location": "prompts, tools and event_configs across193 logs",
+        "quote": null
+      },
+      {
+        "path": "evidence/log_primary_excerpts.json",
+        "location": "actual provider requests and visible transcripts",
+        "quote": null
+      }
+    ],
+    "findings": [
+      "F6"
+    ]
+  },
+  {
+    "check": "resource_adequacy",
+    "level": "Unreasonably constraining",
+    "notes": "The problem is not a universally small budget: some failing runs allow 64,000–128,000 output tokens. Certain reasoning settings consume that allowance before the final answer. Across 19,500 attempts, 925 hit an output limit; 851 of those have empty final answers. Limits therefore bind very differently across models and settings, and these runs do not reliably measure performance near each model’s ceiling.",
+    "evidence": [
+      {
+        "path": "evidence/review_statistics.json",
+        "location": "truncations and empty final answers",
+        "quote": null
+      },
+      {
+        "path": "evidence/elicitation_examples.json",
+        "location": "response allowances and same-model comparisons",
+        "quote": null
+      }
+    ],
+    "findings": []
+  },
+  {
+    "check": "scaffold_fairness",
+    "level": "Shared common scaffold",
+    "notes": "The common setup supplies one text-encoded board position, asks for one move, and provides no tools or feedback. Model-specific provider options control reasoning effort and output length. The chess engine used for reference checks is not available to evaluated models. This is a test of unaided text-based move selection, not chess-engine use.",
+    "evidence": [
+      {
+        "path": "evidence/published___init__.py",
+        "location": "prompt, generate-only plan and exact-match scorer",
+        "quote": null
+      },
+      {
+        "path": "evidence/run_inventory.json",
+        "location": "identical prompts and empty tool lists",
+        "quote": null
+      }
+    ],
+    "findings": []
+  },
+  {
+    "check": "contamination",
+    "level": "Assessed",
+    "notes": "All 100 positions and solutions are publicly available by the review date. They were generated with randomized openings, which plausibly reduced overlap with existing chess puzzles at creation. Public release now permits memorization by later models; training-data contamination was not established.",
+    "evidence": [
+      {
+        "path": "evidence/gist.json",
+        "location": "public dataset and generator",
+        "quote": null
+      },
+      {
+        "path": "evidence/epoch_chess_page.txt",
+        "location": "generation and public task description",
+        "quote": null
+      }
+    ],
+    "fields": {
+      "as_of": "2026-10-08",
+      "tasks_public_pct": 100,
+      "solutions_public_pct": 100
+    },
+    "findings": []
+  },
+  {
+    "check": "human_completability",
+    "level": "Representative set of tasks",
+    "notes": "Epoch reports that five chess players rated approximately 1700–2400 attempted a randomly chosen 20-puzzle set without engines. Scores ranged from 40% to 75%, with one accidentally exposed answer excluded. This supports human feasibility on a subset, not all 100 puzzles or an average-person baseline. Ratings mix online and over-the-board scales; one player omitted timing.",
+    "evidence": [
+      {
+        "path": "evidence/epoch_chess_page.txt",
+        "location": "Human baseline",
+        "quote": null
+      },
+      {
+        "path": "evidence/human_baseline.csv",
+        "location": "five players, ratings, counts, times and exclusion",
+        "quote": null
+      }
+    ],
+    "findings": []
+  },
+  {
+    "check": "score_range",
+    "level": "Estimated",
+    "notes": "Choosing uniformly among legal moves gives an expected 4.96% score; this is a chance baseline, not a minimum. Stockfish matches all 100 references, supporting an achievable engine ceiling of 100%. Complete supplied runs range from 0% to 54%; the current leaderboard reports 72% for GPT-6 Astra maximum effort, outside the supplied logs.",
+    "evidence": [
+      {
+        "path": "evidence/engine_scan.json",
+        "location": "legal_moves and top reference agreement",
+        "quote": null
+      },
+      {
+        "path": "evidence/review_statistics.json",
+        "location": "complete-run maximum and current public maximum",
+        "quote": null
+      }
+    ],
+    "fields": {
+      "floor": "0%",
+      "ceiling": "100% (engine-assisted)"
+    },
+    "findings": []
+  },
+  {
+    "check": "statistical_adequacy",
+    "level": "Known",
+    "notes": "Of 193 log files, 191 contain one attempt per puzzle and two contain two. Different reasoning settings are not independent repeats of the same configuration. With only 100 puzzles, small score differences are uncertain; the supplied runs do not provide five-repeat estimates of run-to-run variability.",
+    "evidence": [
+      {
+        "path": "evidence/crosslog_summary.json",
+        "location": "epoch_counts",
+        "quote": null
+      },
+      {
+        "path": "evidence/run_inventory.json",
+        "location": "epochs, accuracy and standard-error metrics",
+        "quote": null
+      }
+    ],
+    "fields": {
+      "runs_per_model": "Typically 1; two logs use 2"
+    },
+    "findings": []
+  },
+  {
+    "check": "construct_validity",
+    "level": "Partially measures stated capabilities",
+    "notes": "Scores directly measure selection of an engine-preferred move from a text-encoded chess position. This plausibly involves planning and board-state reasoning, but also depends on chess knowledge and reading the encoding. A single move does not establish full-game playing strength or general spatial reasoning. Only the final move is scored, not the correctness of the explanation.",
+    "evidence": [
+      {
+        "path": "evidence/epoch_chess_page.txt",
+        "location": "claims about spatial reasoning and planning",
+        "quote": null
+      },
+      {
+        "path": "evidence/published___init__.py",
+        "location": "one-move instruction and answer-only scorer",
+        "quote": null
+      }
+    ],
+    "findings": []
+  }
+]

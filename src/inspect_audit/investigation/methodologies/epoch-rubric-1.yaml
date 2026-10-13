@@ -1,0 +1,394 @@
+# Epoch AI's benchmark review rubric as a methodology.
+# Form text and option lists are Epoch's (Rubric v1); guidance is ours. Generated from the
+# vocabularies in inspect_audit._epoch; edit here, the loader reads this file.
+id: epoch-rubric
+version: 1
+status: draft
+source: https://epoch.ai/data/benchmark-reviews-documentation/methodology
+notes: >-
+  Form text, option lists and numeric fields transcribed from Epoch's review form (Rubric v1). Guidance
+  paraphrases Epoch's intent and adds Generality Labs' decision rule: Pass is the default; a Flag needs
+  a measured impact on the headline results.
+intro:
+  rubric: Rubric v1. We expect future revisions to account for new types of benchmark flaws.
+  minimum_standard: >-
+    This is the minimum standard required to be Verified; failing any of these items results in a Flawed
+    verdict.
+  quality: >-
+    This is the standard we would like all benchmarks to meet, but it is not necessarily disqualifying
+    to omit or fail these items.
+  disclaimer: >-
+    We undertook this audit without requesting additional information from {creator} to provide impartial
+    feedback.
+verdict:
+  scale:
+  - Verified
+  - Flawed
+  - NEI
+  - Incomplete
+  rule: >-
+    NEI when reviewability is Inadequate; Flawed when any minimum-standard check is Flag; Incomplete when
+    reviewability or any minimum-standard check is Not Reviewed; Verified otherwise. Quality checks never
+    change the verdict.
+  stop: >-
+    a review may stop once reviewability is Inadequate; a Flag does not stop it, the remaining checks
+    are still assessed and reported
+  flag: >-
+    a Flag carries an impact statement: the measured effect on the headline results, with numbers, at
+    most 60 words
+  procedure:
+    gate:
+      check: reviewability
+      stop_at: Inadequate
+      outcome: NEI
+    minimum:
+      section: 2. Scoring (minimum standard)
+      fail_at: Flag
+      outcome: Flawed
+    unfinished:
+      level: Not Reviewed
+      outcome: Incomplete
+    otherwise: Verified
+  impact:
+    max_words: 60
+    max_sentences: 3
+sampling:
+  unit: task
+  population: every task in the benchmark version reviewed
+  sample: >-
+    all tasks when the benchmark has at most 100; otherwise 50, random, stratified by category when the
+    benchmark has categories
+  expansion: extend to 100 when the sampled defect rate is between 15% and 25%
+  confirmation: agent-flagged defects are confirmed by an independent check before they count
+  states:
+  - NO_ISSUE_FOUND
+  - DEFECT
+  - UNRESOLVED
+  - NOT_ASSESSED
+  measure:
+    name: sampled_defect_rate
+    numerator: DEFECT
+    denominator: DEFECT + NO_ISSUE_FOUND
+    note: UNRESOLVED and NOT_ASSESSED are reported beside the rate, not counted
+checks:
+- id: reviewability
+  section: 1. Reviewability
+  name: Reviewability
+  question: Can the tasks, scoring logic and harness settings used for each model be inspected?
+  guidance: >-
+    Establish what can be inspected before any other work: the tasks, the scoring logic, and the harness
+    and API settings each model ran with (reasoning effort, token and time limits, tool access, system
+    prompts). Read these from log headers and source, not from documentation alone. Inadequate stops the
+    review at NEI: record the level with evidence, leave the other checks Not Reviewed, and publish the
+    limited conclusion.
+  scale:
+  - Full
+  - Partial
+  - Inadequate
+  - Not Reviewed
+  form:
+    Full:
+      meaning: >-
+        All tasks and scoring logic inspectable, and harness/API settings used for each model (reasoning
+        effort, token/time limits, tool access, system prompts) are fully disclosed
+      status: '[proceed to 2]'
+    Partial:
+      meaning: >-
+        A representative sample of tasks and scoring logic inspectable, with full harness/API settings
+        disclosed
+      status: '[proceed to 2]'
+    Inadequate:
+      meaning: >-
+        Limited, biased, or no inspectable tasks or scoring logic, harness/API settings undisclosed
+      status: '[stop → NEI]'
+  evidence:
+  - source
+  - documentation
+  - logs
+  taxonomy:
+    inspect-audit@2:
+    - practical_reproducibility
+- id: scoring_integrity
+  section: 2. Scoring (minimum standard)
+  name: Scoring
+  question: >-
+    Are tasks answerable as written, is the scorer accurate, and does the benchmark measure the claimed
+    capability?
+  guidance: >-
+    Sample tasks under the sampling policy, or label the whole population. A task is defective when it
+    cannot be answered correctly as written, when the scorer rejects a correct answer, or when it accepts
+    an incorrect one. Report numerator, denominator and selection method. Flag at or above the threshold,
+    or on demonstrated grading corruption at scale. Authored attacks on the grader and single false negatives
+    are limitations, not Flags; say which kind each defect is.
+  scale:
+  - Pass
+  - Flag
+  - Not Reviewed
+  form:
+    examples:
+    - >-
+      Essentially impossible to correctly answer as written (e.g. underspecified task, hidden requirement,
+      missing file/tool)
+    - >-
+      False Negative (e.g. overly strict scorer, stale/incorrect ground truth, dependent on live external
+      state that can drift, sandbox failure independent of the agent)
+    - >-
+      False Positive (e.g. lax scorer, reward-hackable environment, stated skill can be bypassed via a
+      shortcut such as exploiting an error in the scoring logic or retrieving the answer from the harness/web)
+    - Task egregiously doesn't measure the claimed capability
+    default_threshold: ≥20% of inspected sample contains errors or issue that corrupts grading at scale
+    status_options:
+    - Pass
+    - Flag [stop → Flawed]
+    - Not Reviewed
+  flag_requires_impact: true
+  evidence:
+  - logs
+  - source
+  - coverage
+  - findings
+  taxonomy:
+    inspect-audit@2:
+    - implementation.task_specification
+    - implementation.grading
+  threshold:
+    measure: sampled_defect_rate
+    flag_when: '>= 0.20'
+    override: a status that disagrees with the measure needs threshold_override_reason
+- id: benchmark_consistency
+  section: 2. Scoring (minimum standard)
+  name: Benchmark consistency
+  question: Have the scorer, instructions or ground truth changed without a version bump?
+  guidance: >-
+    Compare the scorer, instructions and reference answers across the logs' recorded versions and grading
+    models against what the leaderboard presents as one series. Flag only when results from different
+    versions are shown to be incomparable, with a measured score difference attributable to the change.
+    An unversioned change with no measured effect is a limitation.
+  scale:
+  - Pass
+  - Flag
+  - Not Reviewed
+  form:
+    examples:
+    - Scorer, instructions, or ground truth changed without a version bump
+    default_threshold: Leaderboard has incomparable results from different versions
+    status_options:
+    - Pass
+    - Flag [stop → Flawed]
+    - Not Reviewed
+  flag_requires_impact: true
+  evidence:
+  - logs
+  - source
+  - coverage
+  - findings
+  taxonomy:
+    inspect-audit@2:
+    - comparability.identity
+- id: elicitation_adequacy
+  section: 2. Scoring (minimum standard)
+  name: Elicitation
+  question: >-
+    Is model elicitation so constraining that it substantially reduces performance against reasonable
+    alternatives?
+  guidance: >-
+    Compare the recorded limits and settings with what the tasks need and with reasonable alternatives.
+    A deliberately constrained design (single turn, no tools) passes when the constraint is the point
+    of the benchmark. Flag only when the benchmark as a whole under-elicits, meaning the best listed configuration
+    of the affected models is still depressed. Rows that are poor but have a better row for the same model
+    are a limitation.
+  scale:
+  - Pass
+  - Flag
+  - Not Reviewed
+  form:
+    examples:
+    - 'Model elicitation is extremely constraining and is not the focus of the benchmark:'
+    - Under-resourced relative to task size (token/turn/time limit, sandbox resources)
+    - Poor context management
+    - Lack of agentic environment where one would be natural to provide
+    - Excessive non-voluntary termination for agentic benchmarks
+    default_threshold: Substantially reduced performance compared to reasonable alternatives for the tasks
+    status_options:
+    - Pass
+    - Flag [stop → Flawed]
+    - Not Reviewed
+  flag_requires_impact: true
+  evidence:
+  - logs
+  - source
+  - coverage
+  - findings
+  taxonomy:
+    inspect-audit@2:
+    - sensitivity.token_limits
+    - implementation.scaffolding
+- id: evaluation_bias
+  section: 2. Scoring (minimum standard)
+  name: Bias in evaluation setup
+  question: Does the setup give any model a material advantage the others do not get?
+  guidance: >-
+    Look for prompts, tools, budgets, graders or termination rules that differ by model or developer.
+    Flag only on a demonstrated model-specific advantage, not on heterogeneous settings alone.
+  scale:
+  - Pass
+  - Flag
+  - Not Reviewed
+  form:
+    examples:
+    - Uneven compute/token budgets
+    - Unfair scaffold choice (e.g. only a subset of models optimized)
+    default_threshold: Material model-specific advantage found
+    status_options:
+    - Pass
+    - Flag [stop → Flawed]
+    - Not Reviewed
+  flag_requires_impact: true
+  evidence:
+  - logs
+  - source
+  - coverage
+  - findings
+  taxonomy:
+    inspect-audit@2:
+    - comparability.audited_implementation
+- id: resource_adequacy
+  section: 3. Evaluation quality
+  name: Elicitation and resource adequacy
+  question: >-
+    Elicitation and resource adequacy: Are the resources given to models (reasoning token/turn budget,
+    tool access, etc.) sufficient for them to perform near their ceiling?
+  guidance: >-
+    Judge whether the resources given to models let them perform near their ceiling: reasoning and output
+    budgets, turns, tools. Count attempts cut off at a limit and say which configurations lose answers
+    to it.
+  scale:
+  - Sufficient
+  - Constraining
+  - Unreasonably constraining
+  - Unknown
+  - Not Reviewed
+  evidence:
+  - logs
+- id: scaffold_fairness
+  section: 3. Evaluation quality
+  name: Scaffold fairness
+  question: 'Scaffold fairness: What scaffold does the leaderboard report?'
+  guidance: >-
+    State what scaffold the leaderboard reports: one common prompt and harness for every model, a mix,
+    or model-specific scaffolds. Settings that vary per model (effort, caps) are reported under elicitation
+    and bias, not here.
+  scale:
+  - Shared common scaffold
+  - Mix of model-specific and common scaffolds
+  - Model-specific scaffolds
+  - Not Reviewed
+  evidence:
+  - logs
+  - source
+- id: contamination
+  section: 3. Evaluation quality
+  name: Contamination
+  question: Is there evidence/risk of contamination?
+  guidance: >-
+    State whether the tasks and their solutions are public, as of the review date, and whether there is
+    evidence of training exposure. Public availability is exposure risk, not evidence of memorisation;
+    say which was tested.
+  scale:
+  - Assessed
+  - Not Reviewed
+  evidence:
+  - documentation
+  - findings
+  taxonomy:
+    inspect-audit@2:
+    - content.contamination
+  fields:
+  - as_of
+  - tasks_public_pct
+  - solutions_public_pct
+  form: >-
+    As of {as_of}: {tasks_public_pct}% of tasks public; {solutions_public_pct}% of solutions public
+- id: human_completability
+  section: 3. Evaluation quality
+  name: Human completability
+  question: Has human completability been assessed?
+  guidance: >-
+    State whether a human baseline exists, on all tasks or a representative sample, and whether its design
+    is sound (representative tasks, reasonable participants).
+  scale:
+  - All tasks
+  - Representative set of tasks
+  - Poor implementation
+  - Not established
+  - Not Reviewed
+  evidence:
+  - documentation
+  form:
+    status_options:
+    - All tasks
+    - Representative set of tasks
+    - Poor implementation (Unrepresentative set of tasks, unreasonable set of participants)
+    - Not established
+    - Not reviewed
+- id: score_range
+  section: 3. Evaluation quality
+  name: Score range
+  question: Score range (if possible to estimate)
+  guidance: >-
+    Give the floor (chance or a trivial strategy) and the ceiling (what a perfect or engine-assisted solver
+    reaches, and what limits it), with the best observed score for context.
+  scale:
+  - Estimated
+  - Not Reviewed
+  evidence:
+  - logs
+  - findings
+  taxonomy:
+    inspect-audit@2:
+    - informativeness.floor_ceiling
+  fields:
+  - floor
+  - ceiling
+  form: '{floor} floor; {ceiling} ceiling'
+- id: statistical_adequacy
+  section: 3. Evaluation quality
+  name: Statistical adequacy
+  question: 'Statistical adequacy: How many runs/model (≥ 5 recommended for error bars)'
+  guidance: >-
+    Give runs per model and the resulting standard error. Five or more runs per model is the recommended
+    standard; single runs mean differences within about twice the standard error are noise.
+  scale:
+  - Known
+  - Unknown
+  - Not Reviewed
+  evidence:
+  - logs
+  taxonomy:
+    inspect-audit@2:
+    - sensitivity.rollouts
+  fields:
+  - runs_per_model
+  form: '{runs_per_model} runs/model'
+- id: construct_validity
+  section: 3. Evaluation quality
+  name: Construct validity
+  question: Construct validity
+  guidance: >-
+    Say what the score measures and how far that matches the capability the benchmark claims. Independent
+    checks of the reference answers belong here, as does any evidence that the task can be solved without
+    the claimed capability.
+  scale:
+  - Measures stated capabilities
+  - Partially measures stated capabilities
+  - Does not measure stated capabilities
+  - Not Reviewed
+  evidence:
+  - findings
+  - documentation
+  taxonomy:
+    inspect-audit@2:
+    - construct
+notes_limit:
+  max_words: 80
+  max_sentences: 4

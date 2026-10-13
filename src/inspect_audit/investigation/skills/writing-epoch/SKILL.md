@@ -1,6 +1,6 @@
 ---
 name: writing-epoch
-description: Write the Epoch AI benchmark review for readers with a scientific background. Short sections with word limits, plain language, a verdict derived from the rubric rows. Read before recording any review row or narrative.
+description: Write the Epoch AI benchmark review for readers with a scientific background. Records against the methodology, short prose blocks with word limits, a verdict derived from the assessments. Read before recording any assessment or prose block.
 ---
 
 ## Who reads this, and how
@@ -8,7 +8,7 @@ description: Write the Epoch AI benchmark review for readers with a scientific b
 The review is read by people with a scientific background who do not work on model
 evaluations. They want to know what the benchmark measures, whether its number can be
 trusted, and what to keep in mind when they quote it. They will not read a long document.
-Every section has a word limit and the limits are enforced when you publish.
+Every block has a word limit and the limits are enforced when you publish.
 
 Write plainly. Short sentences, one idea each. No paragraph longer than five sentences.
 No jargon: say "the model that reads the answer out of the response" rather than
@@ -19,72 +19,57 @@ details, costs and pipeline errors out of the review; they belong in the journal
 
 ## Contract
 
-You maintain two records: `report/review.json` (schema in `report/review.schema.json`)
-and `report/findings.json` (the evidence register). `check_report` validates them,
-derives the verdict into `report/verdict.json` and renders `report/epoch_review.md`.
-Edit the records, never the rendered markdown. `report/methodology.md` defines every
-rubric row; read it before planning. Do not substitute any other report format.
+The methodology (`report/methodology.md`, and `report/methodology.yaml` as data) says
+what to check and how to judge it. The template (`report/template.yaml`) says what the
+page shows. You write five records in `report/`, each with a schema beside it:
 
-The rubric rows decide the verdict. Fill them first, run `check_report` to learn the
-derived verdict, then write the narrative that verdict calls for. Writing the narrative
-before the verdict is known produces sections that will be rejected.
+- `profile.json`: the facts about the benchmark every block draws on. `benchmark` is the
+  name a reader knows ("Chess Puzzles", not a registry path); `creator` is the
+  organisation that published it; `claim`, `snapshot`, `population`, `composition`,
+  `scorer`, `grader`, `elicitation` and `harness` as you establish them. `review_date`
+  is filled in for you if left empty.
+- `assessments.json`: one row per check, in the methodology's order, each with `level`
+  from that check's scale, `notes`, `evidence`, the `findings` ids it rests on, the
+  `fields` the form asks for, and `impact` on a Flag.
+- `sampling.json`: how the audited items were chosen: population, sample, strategy
+  (census, random, stratified, purposive), strata, seed, expansion, confirmation.
+- `findings.json`: the evidence register, each finding filed under the `check` it bears on.
+- `prose.json`: the reader-facing blocks the template declares, keyed by block id.
 
-## The header
+`check_report` validates the records, derives the verdict into `report/verdict.json` and
+renders `report/epoch_review.md`. Edit the records, never the rendered markdown. Do not
+substitute any other report format.
 
-`benchmark` is the benchmark's name as a reader knows it ("Chess Puzzles", not a registry
-path). `benchmark_creator` is the organisation that published it. `review_date` is the
-publication date in ISO form and is filled in for you if left empty. The rendered header
-reads: title, Benchmark, Benchmark creator, Verdict, Review date.
+The assessments decide the verdict. Fill them first, run `check_report` to learn the
+derived verdict, then write the prose blocks that verdict calls for. Writing the prose
+before the verdict is known produces blocks that will be rejected.
 
-## The sections, by verdict
+## The blocks, by verdict
 
-Every review has:
+The template lists every block with its brief, its limit and the verdicts it belongs to;
+`report/methodology.md` ends with the same list. In short:
 
-- **Summary** (at most 150 words). How the task works and what it tries to measure, what
-  the best score is, and the key observations that decided the verdict. A reader who stops
-  here should know the verdict and why.
-- **Methodology** (at most 125 words). What you did: which logs and source you read, what
-  you computed, which per-item audits ran and on how many items, what you did not do.
-
-A **Verified** review adds, in this order:
-
-- **Interpretation** (at most 300 words). What the benchmark measures, how its headline
-  number is made (what is scored, how, and how results are aggregated), and how a reader
-  should and should not interpret that number.
-- **Task Analysis** (at most 300 words). How the tasks work, how they were created,
-  whether they are reasonable, and how they are graded. Name any issue that matters to the
-  score, with its count and denominator.
-- **Elicitation and Scaffolding** (at most 300 words). The harness, prompting and tools
-  the model is given; limits on tokens, turns or time; cost and resources where known;
-  whether these settings let models show what they can do.
-- **Limitations**. Bullet points only, each at most three sentences. The lead sentence is
-  rendered for you ("While none of these limitations cross our threshold for a Flawed
-  verdict, they do inform how a reader should characterize this benchmark."), so the
-  bullets start straight on the point.
-- **Recommendations**. Bullet points, each at most three sentences, addressed to the
-  benchmark's creator: what to change, publish or document. One recommendation per
-  limitation or error is the usual shape.
-
-A **Flawed** review adds instead:
-
-- **Representative Errors**. Bullet points, each at most three sentences, explaining the
-  errors that crossed the threshold, followed by a table of concrete examples with
-  columns Task, Error type, Notes, Affected logs. Task names the item or run; Error type
-  is the defect class in a few words; Notes says what happened; Affected logs names the
-  runs or models the error touches, with a count. Keep every cell under thirty words. Then Recommendations, as above. Do not write Interpretation, Task Analysis or
-  Elicitation sections for a Flawed review; the rubric notes carry what the reader needs
-  on those.
-
-An **NEI** or **Incomplete** review adds Limitations, saying what could not be reviewed
-and why.
+- Every review: **summary** (150 words: how the task works and what it measures, the best
+  score, the observations that decided the verdict) and **methodology** (125 words: which
+  logs and source you read, what you computed, which per-item audits ran on how many items,
+  what you did not do).
+- **Verified** adds **interpretation**, **task_analysis** and **elicitation_and_scaffolding**
+  (300 words each), **limitations** (bullets of at most three sentences; the lead sentence
+  is rendered for you, so bullets start straight on the point) and **recommendations**
+  (bullets addressed to the benchmark's creator: what to change, publish or document).
+- **Flawed** adds instead **representative_errors** (bullets explaining the errors that
+  crossed the threshold), **error_examples** (a table with columns Task, Error type, Notes,
+  Affected logs; every cell under thirty words) and **recommendations**. No interpretation,
+  task analysis or elicitation block: the rubric notes carry what the reader needs.
+- **NEI** or **Incomplete** adds **limitations**, saying what could not be reviewed and why.
 
 ## Pass is the default
 
-Flag a minimum-standard row only when the evidence shows a material effect on the
+Flag a minimum-standard check only when the evidence shows a material effect on the
 benchmark's headline results or on their comparability. A defect that exists but does not
 move scores, or that affects only rows a reader can avoid, is a Pass with the concern
-recorded under Limitations. When the evidence leaves the question open, Pass and say what
-would settle it. `report/methodology.md` gives the test for each class; the ones that
+recorded under limitations. When the evidence leaves the question open, Pass and say what
+would settle it. The methodology's guidance gives the test for each check; the ones that
 decide most reviews are that an unversioned change needs a measured score effect to be a
 Flag, and that under-elicitation is a Flag only when the affected models have no better
 listed configuration. Every Flag carries `impact`: the measured effect in at most three
@@ -93,34 +78,35 @@ cell opens with it.
 
 ## The rubric
 
-The rendered rubric reproduces Epoch's form: every level, defect class and question is
-printed with its fixed meaning, examples and threshold, every status option is listed and
-the one you chose is shown in bold. You supply only the status, the numbers the form asks
-for, and the notes. The Reviewability notes appear on the level you chose; the other
-levels stay blank, as on the form. A disclaimer that the review used public information
-without asking the creator closes the document; if that is not true of your review, say
-so in Methodology.
+The rendered rubric reproduces Epoch's form from the methodology: every level, defect
+class and question is printed with its fixed meaning, examples and threshold, every
+status option is listed and the one you chose is shown in bold. You supply only the level,
+the numbers the form asks for, and the notes. The Reviewability notes appear on the level
+you chose; the other levels stay blank, as on the form. A disclaimer that the review used
+public information without asking the creator closes the document; if that is not true
+of your review, say so in the methodology block.
 
-Each rubric row carries a short note: at most eighty words and four sentences. State the
+Each assessment carries a short note: at most eighty words and four sentences. State the
 conclusion and the one or two facts that support it, with numbers and denominators. Do not
 list evidence paths, scripts or file names in the notes; put the references in the row's
 `evidence` list, which is rendered separately. A Pass or clean row says in one clause what
 was checked.
 
-## The scoring row and the 20% threshold
+## The scoring check and the 20% threshold
 
-Prevalence must come from a sample selected for prevalence. Choose the questions for the
-question-labels auditors with a recorded random seed, or label the whole population; a
-purposive set can establish that a defect exists but not how common it is. The prevalence
-is computed from `report/coverage.json`: questions labelled DEFECT over questions with a
-resolved label, with unresolved and unassessed counts beside it. `check_report` refuses a
-Pass or Flag that contradicts the computed threshold unless `threshold_override_reason`
-says why. Without a coverage file, give `inspected` and `with_defect` on the row and say
-how they were obtained. A question-level defect is not automatically a misgraded
-submission, and an attack you authored against the current grader is not a historical
-score error; say which kind each defect is.
+The measure must come from a sample selected for prevalence. Choose the questions for the
+question-labels auditors with a recorded random seed, or label the whole population, and
+record the design in `sampling.json`; a purposive sample can establish that a defect
+exists but not how common it is, and its coverage counts are not used as the measure. The
+measure is computed from `report/coverage.json`: questions labelled DEFECT over questions
+with a resolved label, with unresolved and unassessed counts beside it. `check_report`
+refuses a Pass or Flag that contradicts the computed threshold unless
+`threshold_override_reason` says why. Without a coverage file, give `measure` (numerator
+and denominator) on the assessment and say how they were obtained. A question-level
+defect is not automatically a misgraded submission, and an attack you authored against the
+current grader is not a historical score error; say which kind each defect is.
 
-## Benchmark-wide rows need benchmark-wide evidence
+## Benchmark-wide checks need benchmark-wide evidence
 
 Consistency, elicitation and bias are not answered by item audits. Consistency compares
 the scorer, instructions and reference answers across the logs' recorded versions and
@@ -131,14 +117,13 @@ evidence references.
 
 ## Evidence
 
-Every assessed row carries at least one evidence reference: a path under `/inputs` or in
+Every assessed check carries at least one evidence reference: a path under `/inputs` or in
 the report bundle, a location within it, and a quotation where it helps. Two references
-per row is usually enough; the register in `findings.json` carries the rest. `section`
-on a finding names the rubric row it supports.
+per check is usually enough; the register in `findings.json` carries the rest.
 
 ## Publication
 
 Call `check_report`. Read the rendered markdown as the intended reader would, and fix
 the records until it is short, plain and supported. Then call `publish_report`. Never
 write the verdict yourself, never invent an overall grade, and never let the summary claim
-more than the rows show.
+more than the assessments show.

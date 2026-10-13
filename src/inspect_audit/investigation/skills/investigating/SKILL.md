@@ -89,9 +89,9 @@ writing skill and supplied report schema define publication.
 ## Comprehensive assessment
 
 Use the report format's structure as an investigation plan, not headings to fill after
-item audits: the GL framework's dimensions and checks, or the Epoch methodology's defect
-classes and quality questions. Maintain report/assessments.json (GL) or report/review.json
-(Epoch) as work progresses. For each
+item audits: the GL framework's dimensions and checks, or the Epoch methodology's checks.
+Maintain report/assessments.json as work progresses (the Epoch format adds profile.json,
+sampling.json and prose.json). For each
 outstanding check choose an informative next step or record a concrete scope/access
 blocker. Specialist review can strengthen analysis; its absence is not a reason to skip
 an assessment that source, papers, datasets and logs can support.

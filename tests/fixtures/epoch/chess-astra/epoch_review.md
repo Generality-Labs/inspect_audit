@@ -1,0 +1,82 @@
+# Chess Puzzles Review
+
+Benchmark: Chess Puzzles  
+Benchmark creator: Epoch AI  
+Verdict: Flawed  
+Review date: 8th October 2026
+
+## Summary
+
+Chess Puzzles asks models to choose the best move in 100 text-encoded chess positions, without tools. Credit depends on agreement with a reference move. Epoch’s current leaderboard reports a best score of 72% for GPT-6 Astra at maximum effort; the highest complete supplied run scores 54%.
+
+The review finds the benchmark Flawed because some published settings repeatedly exhaust their output allowance before returning an answer. Sonnet 4.6 at maximum effort leaves 95/100 final answers empty and scores 3%; another supplied configuration returns every answer and scores 13%. This makes those scores poor estimates of the models’ best chess-puzzle performance. Conversely, engine checks support all 100 reference moves, and only one puzzle has a demonstrated scoring error, below the scoring-defect threshold. The findings concern particular evaluation settings, not the validity of every puzzle or every reported score.
+
+## Methodology
+
+We compared the public task and generator with the pinned Generality Labs reconstruction. We examined settings and outcomes across all 193 supplied logs: 19,500 attempts dated December 2025–August 2026. Every puzzle received question-label, reference-answer, specification, answer-format, environment-integrity and other-findings audits, using GPT-6 Luna with medium reasoning. Ordinary scoring probes used GPT-5 mini with low reasoning.
+
+Stockfish 17.1 independently checked every reference move. Headers, recorded requests, identical-answer comparisons and diagnostic transcripts across all logs informed consistency, elicitation and bias. We also checked Epoch’s current leaderboard and human-baseline documentation. No adversarial scorer tests or answer-access attacks were run.
+
+## Representative Errors
+
+The following issues cross our threshold for a Flawed verdict.
+
+- Output limits can prevent models from submitting any move. Across 19,500 attempts, 925 reached an output limit; 851 of those had empty final answers. These are unsuccessful attempts, but they do not show that the models selected wrong moves.
+- The problem is concentrated in particular reasoning configurations. Alternative settings for the same models complete more answers and score higher. These comparisons support better achievable performance, but do not isolate the effect of token limits from changes in reasoning effort or provider behavior.
+
+| Task | Error type | Notes | Affected logs |
+|---|---|---|---|
+| Sonnet 4.6: all 100 puzzles | Elicitation | Maximum effort: 95 empty answers, 3% accuracy. A reserved reasoning budget: no empty answers, 13% accuracy. | Sonnet 4.6 max and 32K (2 logs) |
+| Opus 4.7: all 100 puzzles | Elicitation | Maximum effort: 88 empty answers, 7% accuracy. Low effort: no empty answers, 20% accuracy. | Opus 4.7 max and low (2 logs) |
+| Qwen 3.5 9B: all 100 puzzles | Elicitation | Default reasoning: 97 empty answers, 2% accuracy. Reasoning disabled: no empty answers, 12% accuracy. | Qwen 3.5 9B default and none (2 logs) |
+
+## Recommendations
+
+- Reserve enough output capacity for a final answer, and test completion rates before publishing a configuration. Rerun settings that routinely exhaust their allowance, using reasonable bounded reasoning or a separate final-answer step.
+- Publish truncation, empty-answer and unscored-attempt counts beside accuracy. Keep results clearly labeled by configuration, and do not present heavily incomplete outputs as estimates of a model’s best attainable performance.
+- Use deterministic parsing for the requested move format, with a defined fallback for other responses. Version changes to the answer-reading model and regrade saved responses consistently.
+- Repeat each configuration at least five times and report uncertainty from both puzzle selection and repeated runs. Small differences on a 100-puzzle benchmark should not be treated as precise rankings.
+- Publish the engine version and search settings used to establish each reference. Maintain fresh, unreleased puzzles to assess later models without relying entirely on publicly available positions and solutions.
+
+## Benchmark Review Rubric
+
+Rubric v1. We expect future revisions to account for new types of benchmark flaws.
+
+### 1. Reviewability
+
+| Level | Meaning | Status | Notes |
+|---|---|---|---|
+| **Full** | All tasks and scoring logic inspectable, and harness/API settings used for each model (reasoning effort, token/time limits, tool access, system prompts) are fully disclosed | [proceed to 2] | All 100 positions, reference moves and public scoring code are inspectable. Headers and recorded requests disclose prompts, model settings, answer-reading models and tool access across all 193 supplied logs. The runnable package reconstructs the public task; every supplied position, reference and prompt matches it. Some internal reasoning is hidden, but final answers and scores are visible. |
+| Partial | A representative sample of tasks and scoring logic inspectable, with full harness/API settings disclosed | [proceed to 2] |  |
+| Inadequate | Limited, biased, or no inspectable tasks or scoring logic, harness/API settings undisclosed | [stop → NEI] |  |
+
+### 2. Scoring
+
+This is the minimum standard required to be Verified; failing any of these items results in a Flawed verdict.
+
+Scoring prevalence: 1 of 100 inspected tasks (1%); threshold 20%.
+
+| Defect Class | Examples | Default Threshold for Flawed | Status | Notes |
+|---|---|---|---|---|
+| Scoring | • Essentially impossible to correctly answer as written (e.g. underspecified task, hidden requirement, missing file/tool)<br>• False Negative (e.g. overly strict scorer, stale/incorrect ground truth, dependent on live external state that can drift, sandbox failure independent of the agent)<br>• False Positive (e.g. lax scorer, reward-hackable environment, stated skill can be bypassed via a shortcut such as exploiting an error in the scoring logic or retrieving the answer from the harness/web)<br>• Task egregiously doesn't measure the claimed capability | ≥20% of inspected sample contains errors or issue that corrupts grading at scale | **Pass**<br>Flag [stop → Flawed]<br>Not Reviewed | All 100 puzzles were assessed; 1 has a demonstrated scoring defect, below the 20% threshold. Stockfish supported every reference move, and ordinary correct and incorrect answers were tested. One historical answer on puzzle 86 was rejected because the answer-reading model retained the required MOVE prefix; that run should score 14%, not 13%. Wider scoring corruption was not established; adversarial scorer tests were excluded. |
+| Benchmark consistency | • Scorer, instructions, or ground truth changed without a version bump | Leaderboard has incomparable results from different versions | **Pass**<br>Flag [stop → Flawed]<br>Not Reviewed | Prompts and references match across all 193 logs. Within version 1.1.6, 105 logs use GPT-5 mini to read answers and 51 use GPT-5.6 Terra, an unversioned procedural change. However, 225 identical nonempty answer groups spanning grader models show no correctness disagreements. Material score incomparability was not demonstrated, although these mostly short repeated answers do not establish equivalence on every response. |
+| Elicitation | • Model elicitation is extremely constraining and is not the focus of the benchmark:<br>• Under-resourced relative to task size (token/turn/time limit, sandbox resources)<br>• Poor context management<br>• Lack of agentic environment where one would be natural to provide<br>• Excessive non-voluntary termination for agentic benchmarks | Substantially reduced performance compared to reasonable alternatives for the tasks | Pass<br>**Flag [stop → Flawed]**<br>Not Reviewed | **Impact:** Sonnet 4.6 at maximum effort leaves 95/100 final answers empty and scores 3%; reserving 32,000 of 64,000 tokens for reasoning produces all 100 answers and scores 13%. Similar failures occur for Opus 4.7 and Qwen 3.5. Some published settings regularly exhaust the response allowance before producing an answer. Sonnet 4.6 at maximum effort leaves 95/100 final answers empty and scores 3%; reserving 32,000 of 64,000 tokens for reasoning produces all 100 answers and scores 13%. Similar failures occur for Opus 4.7 and Qwen 3.5. These alternatives establish substantially better achievable performance, but changes in effort and provider behavior prevent attributing the entire difference to the token cap alone. |
+| Bias in evaluation setup | • Uneven compute/token budgets<br>• Unfair scaffold choice (e.g. only a subset of models optimized) | Material model-specific advantage found | **Pass**<br>Flag [stop → Flawed]<br>Not Reviewed | All 193 logs were checked for prompts, tools and generation settings. Models receive the same task prompt and no tools, while reasoning modes and output limits vary. No separate material advantage from a privileged prompt or tool setup was established. Unequal completion rates are real, but they support the elicitation finding rather than proving that unequal nominal token budgets unfairly favor a particular model. |
+
+### 3. Evaluation Quality
+
+This is the standard we would like all benchmarks to meet, but it is not necessarily disqualifying to omit or fail these items.
+
+| Question | Status | Notes |
+|---|---|---|
+| Elicitation and resource adequacy: Are the resources given to models (reasoning token/turn budget, tool access, etc.) sufficient for them to perform near their ceiling? | Sufficient<br>Constraining<br>**Unreasonably constraining**<br>Unknown<br>Not Reviewed | The problem is not a universally small budget: some failing runs allow 64,000–128,000 output tokens. Certain reasoning settings consume that allowance before the final answer. Across 19,500 attempts, 925 hit an output limit; 851 of those have empty final answers. Limits therefore bind very differently across models and settings, and these runs do not reliably measure performance near each model’s ceiling. |
+| Scaffold fairness: What scaffold does the leaderboard report? | **Shared common scaffold**<br>Mix of model-specific and common scaffolds<br>Model-specific scaffolds<br>Not Reviewed | The common setup supplies one text-encoded board position, asks for one move, and provides no tools or feedback. Model-specific provider options control reasoning effort and output length. The chess engine used for reference checks is not available to evaluated models. This is a test of unaided text-based move selection, not chess-engine use. |
+| Is there evidence/risk of contamination? | **As of 2026-10-08: 100% of tasks public<br>100% of solutions public**<br>Not Reviewed | All 100 positions and solutions are publicly available by the review date. They were generated with randomized openings, which plausibly reduced overlap with existing chess puzzles at creation. Public release now permits memorization by later models; training-data contamination was not established. |
+| Has human completability been assessed? | All tasks<br>**Representative set of tasks**<br>Poor implementation (Unrepresentative set of tasks, unreasonable set of participants)<br>Not established<br>Not reviewed | Epoch reports that five chess players rated approximately 1700–2400 attempted a randomly chosen 20-puzzle set without engines. Scores ranged from 40% to 75%, with one accidentally exposed answer excluded. This supports human feasibility on a subset, not all 100 puzzles or an average-person baseline. Ratings mix online and over-the-board scales; one player omitted timing. |
+| Score range (if possible to estimate) | **0% floor<br>100% (engine-assisted) ceiling**<br>Not Reviewed | Choosing uniformly among legal moves gives an expected 4.96% score; this is a chance baseline, not a minimum. Stockfish matches all 100 references, supporting an achievable engine ceiling of 100%. Complete supplied runs range from 0% to 54%; the current leaderboard reports 72% for GPT-6 Astra maximum effort, outside the supplied logs. |
+| Statistical adequacy: How many runs/model (≥ 5 recommended for error bars) | **Typically 1; two logs use 2 runs/model**<br>Unknown<br>Not Reviewed | Of 193 log files, 191 contain one attempt per puzzle and two contain two. Different reasoning settings are not independent repeats of the same configuration. With only 100 puzzles, small score differences are uncertain; the supplied runs do not provide five-repeat estimates of run-to-run variability. |
+| Construct validity | Measures stated capabilities<br>**Partially measures stated capabilities**<br>Does not measure stated capabilities<br>Not Reviewed | Scores directly measure selection of an engine-preferred move from a text-encoded chess position. This plausibly involves planning and board-state reasoning, but also depends on chess knowledge and reading the encoding. A single move does not establish full-game playing strength or general spatial reasoning. Only the final move is scored, not the correctness of the explanation. |
+
+## Disclaimer
+
+We undertook this audit without requesting additional information from Epoch AI to provide impartial feedback.

@@ -1,0 +1,325 @@
+[
+  {
+    "id": "F-gold-engine",
+    "claim": "An independent Stockfish 17 search (depth about 30, MultiPV 3, plus a search restricted to the reference move) confirms the reference move as the best move in all 100 positions. In 99 of them every alternative is at least 154 centipawns worse; 8 of these 99 fall below the generator's own 180-centipawn gap at this depth. Puzzle 14 is a tie: at depth 29 Nd4 (f5d4) +7 against Nh4 (f5h4) -12, and at depth 40 both 0.00. One recorded attempt (gpt-4o) answered f5h4 and was marked wrong.",
+    "status": "supported",
+    "origin": "experiment",
+    "severity": "Minor",
+    "evidence": [
+      {
+        "path": "evidence/engine/sf_t45_classified.csv",
+        "location": "rows id=1..100; columns margin, cat_100",
+        "quote": null
+      },
+      {
+        "path": "evidence/engine/sf_t45.jsonl",
+        "location": "id=14",
+        "quote": "\"gold\": \"f5d4\""
+      },
+      {
+        "path": "evidence/attempts_compact.csv.gz",
+        "location": "rows id=14, answer=f5h4 (gpt-4o, score I)",
+        "quote": null
+      },
+      {
+        "path": "evidence/engine/sf_p14_deep.jsonl",
+        "location": "depth-40 search of puzzle 14",
+        "quote": null
+      }
+    ],
+    "reproduce": "cd report/evidence/engine && python3 sf_analyse.py 30 1 sf_t45.jsonl all 45 20 4 && python3 classify.py sf_t45.jsonl; python3 sf_analyse.py 40 4 sf_p14_deep.jsonl 14 300 120 1",
+    "limitations": "Search was capped at 45 s per position on one thread; depth reached 25-30. Engine evaluations at this depth are not proofs. A depth-40 recheck of puzzle 14 scores both moves 0.00.",
+    "check": "scoring_integrity"
+  },
+  {
+    "id": "F-coverage",
+    "claim": "Per-puzzle audits of all 100 puzzles (each auditor installed Stockfish and searched independently) labelled 99 NO_ISSUE_FOUND and 1 DEFECT (puzzle 14, two equally good moves). None unresolved. Prevalence 1/100, below the 20% threshold. The labels agree with our own engine table on every puzzle.",
+    "status": "supported",
+    "origin": "experiment",
+    "severity": "Minor",
+    "evidence": [
+      {
+        "path": "coverage.json",
+        "location": "counts",
+        "quote": null
+      },
+      {
+        "path": "hawk:inv-chess-audit-full-dfc360e3/2026-10-08T10-56-23-00-00_bench-Chess_Puzzles_PXNKVYFECyVeE3dTYJWBmn.eval",
+        "location": "sample 14, score question-labels",
+        "quote": null
+      },
+      {
+        "path": "evidence/audit_items_summary.csv",
+        "location": "columns question-labels, apt_stockfish, ran_stockfish",
+        "quote": null
+      }
+    ],
+    "reproduce": "python3 report/evidence/coverage_export.py; python3 report/evidence/audit_summary.py",
+    "limitations": "Auditor engine depths varied (18-35); the clean labels lean on our own depth-30 table for confirmation.",
+    "check": "scoring_integrity"
+  },
+  {
+    "id": "F-provider-errors",
+    "claim": "33 attempts whose final model call failed at the provider (MiniMax-M3 32, kimi-k2.7-code 1) were scored as answers, not as errors. MiniMax-M3 has 35 of 100 empty answers and a leaderboard score of 0.14; it got 14 of the other 65 right. The gemini-3.1-pro-preview log instead records such failures as errors.",
+    "status": "supported",
+    "origin": "historical",
+    "severity": "Minor",
+    "evidence": [
+      {
+        "path": "evidence/empty_completions_cause.csv",
+        "location": "rows cause=provider_error",
+        "quote": null
+      },
+      {
+        "path": "hawk:imported-epoch-chess-new--lm6b3q6h12q1dx6f/MiniMax-M3--XwemU6ABotEuG9o5TRLG2r.eval",
+        "location": "sample 1, ModelEvent call.response",
+        "quote": "\"finish_reason\": \"error\""
+      }
+    ],
+    "reproduce": "python3 report/evidence/empty_cause.py",
+    "limitations": "Three further MiniMax-M3 empty answers have no finish reason recorded and are counted as other.",
+    "check": "scoring_integrity"
+  },
+  {
+    "id": "F-notation",
+    "claim": "Nine attempts named the reference move in algebraic notation (e.g. 'Nxd5') or kept the 'MOVE:' prefix and were scored wrong; eight similar answers were converted and credited. The prompt asks for coordinate notation, so the effect is small (17 of 19,442 attempts) but inconsistent.",
+    "status": "supported",
+    "origin": "historical",
+    "severity": "Minor",
+    "evidence": [
+      {
+        "path": "evidence/san_reference_answers.csv",
+        "location": "all rows",
+        "quote": null
+      },
+      {
+        "path": "evidence/attempts_compact.csv.gz",
+        "location": "rows with score C and no MOVE tag",
+        "quote": null
+      }
+    ],
+    "reproduce": "python3 report/evidence/san_and_empty.py",
+    "limitations": "Only answers that parse as a legal move in the position were counted.",
+    "check": "scoring_integrity"
+  },
+  {
+    "id": "F-extraction",
+    "claim": "The answer-reading model agrees with the last literal 'MOVE: xxxx' tag in 99.6% of 17,045 tagged attempts. Across 19,442 scored attempts, one correct tagged answer was marked wrong (qwen3.5-397b-a17b_none, puzzle 86) and two truncated, rambling outputs were credited.",
+    "status": "supported",
+    "origin": "historical",
+    "severity": "Minor",
+    "evidence": [
+      {
+        "path": "evidence/grader_agreement.csv",
+        "location": "all rows",
+        "quote": null
+      },
+      {
+        "path": "evidence/attempts_compact.csv.gz",
+        "location": "log=qwen3.5-397b-a17b_none*, id=86",
+        "quote": "answer 'MOVE: g8e6', score I"
+      }
+    ],
+    "reproduce": "python3 report/evidence/extract_attempts.py <log>; python3 report/evidence/grader_agreement.py",
+    "limitations": "The deterministic tag parser cannot judge outputs without a tag (2,397 attempts); those were only spot-checked.",
+    "check": "scoring_integrity"
+  },
+  {
+    "id": "F-injection",
+    "claim": "The answer-reading model receives the response verbatim inside delimiters. In an authored probe a wrong answer followed by an instruction to solve the position was credited once, and a closing-delimiter payload made the scorer raise an error. No recorded attempt shows this.",
+    "status": "qualified",
+    "origin": "experiment",
+    "severity": "Minor",
+    "evidence": [
+      {
+        "path": "hawk:inv-chess-audit-pilot-b2c0a71a/2026-10-08T10-28-39-00-00_bench-Chess_Puzzles_VtNtp3LJuvX3djuRvGQpEL.eval",
+        "location": "sample 86, score red-teaming",
+        "quote": null
+      },
+      {
+        "path": "evidence/source/chess_puzzles_init.py",
+        "location": "EXTRACTION_PROMPT_TEMPLATE",
+        "quote": "<student_solution>"
+      }
+    ],
+    "reproduce": "See red-teaming attempts in the pilot audit log; repeat with the grader role set to the historical graders.",
+    "limitations": "Probes used gpt-5-mini (low) as the grader, not the historical graders. Exploiting it needs a model that writes an injection on purpose.",
+    "check": "scoring_integrity"
+  },
+  {
+    "id": "F-version-identity",
+    "claim": "All 193 logs (versions 1.0.0 to 1.1.6) render the same prompt, use the same plan and scorer, and carry the same 100 reference moves. Only the answer-reading model changed: gemini-2.0-flash-001 (26 logs), gpt-5-mini (116 logs), and gpt-5.6-terra (51 logs, all at version 1.1.6).",
+    "status": "supported",
+    "origin": "historical",
+    "severity": null,
+    "evidence": [
+      {
+        "path": "evidence/prompt_by_version.csv",
+        "location": "all rows",
+        "quote": null
+      },
+      {
+        "path": "evidence/log_headers.csv",
+        "location": "column epochai-benchmark-version",
+        "quote": null
+      },
+      {
+        "path": "evidence/grader_agreement.csv",
+        "location": "rows per grader",
+        "quote": null
+      }
+    ],
+    "reproduce": "python3 report/evidence/rendered_prompt.py; python3 report/evidence/prompt_by_version.py",
+    "limitations": "Consistency is checked for the 187 leaderboard rows that have a supplied log.",
+    "check": "benchmark_consistency"
+  },
+  {
+    "id": "F-gemini-mismatch",
+    "claim": "The leaderboard shows gemini-3.1-pro-preview at 0.55 (stderr 0.05, implying 100 graded puzzles). Its linked log, identical to Epoch's public copy, has 53 of 100 samples errored (connection reset) and 29 correct of 47 graded (0.617). The other 186 matched rows reproduce from their logs.",
+    "status": "supported",
+    "origin": "historical",
+    "severity": "Minor",
+    "evidence": [
+      {
+        "path": "hawk:imported-epoch-chess-sour-0pexj5yimxsum0r9/gemini-3-1-pro-preview.eval",
+        "location": "header results",
+        "quote": "accuracy 0.6170212765957447"
+      },
+      {
+        "path": "evidence/leaderboard/epoch_chess_puzzles_leaderboard_2026-10-08.csv",
+        "location": "row id 4QfM9qyeWGqNc8YTcQNV76",
+        "quote": "gemini-3.1-pro-preview,0.55"
+      }
+    ],
+    "reproduce": "python3 report/evidence/per_log.py; compare mean_score with accuracy in per_log_with_leaderboard.csv",
+    "limitations": "We cannot see how Epoch produced 0.55; a rerun that was not published is the likely explanation.",
+    "check": "benchmark_consistency"
+  },
+  {
+    "id": "F-truncation",
+    "claim": "925 of 19,442 scored attempts hit the output-token cap; only 4 of them were credited (two by a looping last MOVE tag, two with no tag). Eight of 188 logged runs lost at least half their answers this way and scored 0-16%. The same models score higher in other listed settings, e.g. claude-opus-4-7 0.07 at max vs 0.20 at low and 0.30 at xhigh (unlogged); claude-sonnet-5 0.16 at max vs 0.35 at xhigh (unlogged).",
+    "status": "supported",
+    "origin": "historical",
+    "severity": "Major",
+    "evidence": [
+      {
+        "path": "evidence/truncation_by_run.csv",
+        "location": "rows with trunc >= 50",
+        "quote": null
+      },
+      {
+        "path": "evidence/per_log_with_leaderboard.csv",
+        "location": "columns max_tokens, stop_max_tokens, mean_score",
+        "quote": null
+      }
+    ],
+    "reproduce": "python3 report/evidence/truncation.py",
+    "limitations": "Accuracy on completed answers in truncated runs is computed on easier, faster-finishing puzzles and overstates what a larger budget would give.",
+    "check": "elicitation_adequacy"
+  },
+  {
+    "id": "F-budgets",
+    "claim": "Output-token caps range from 3,000 to 384,000 (median 65,536) across 174 logs that record one. Older non-reasoning models with small caps did not truncate. Truncation is concentrated in high-effort Anthropic runs at the model's own output limit and in small open reasoning models under a uniform 28-30k cap.",
+    "status": "supported",
+    "origin": "historical",
+    "severity": "Minor",
+    "evidence": [
+      {
+        "path": "evidence/per_log_with_leaderboard.csv",
+        "location": "column max_tokens",
+        "quote": null
+      },
+      {
+        "path": "evidence/truncation_by_run.csv",
+        "location": "all rows",
+        "quote": null
+      }
+    ],
+    "reproduce": "python3 report/evidence/per_log.py; python3 report/evidence/truncation.py",
+    "limitations": "Each provider's own output limit is inferred from the recorded cap, not checked against provider documentation.",
+    "check": "evaluation_bias"
+  },
+  {
+    "id": "F-unlogged-top",
+    "claim": "39 of 227 leaderboard rows have no public log, including the seven highest-scoring rows (top score 0.72, gpt-6-astra_max). One more row (gemini-3.5-flash_high, 0.50) links a log that returned HTTP 403 on 2026-10-08 and is not in the supplied sources. The settings and transcripts of these 40 rows cannot be checked; 187 rows have a readable log.",
+    "status": "supported",
+    "origin": "historical",
+    "severity": "Major",
+    "evidence": [
+      {
+        "path": "evidence/leaderboard_log_availability.csv",
+        "location": "rows with has_link False; row id imPXZhfTfq9Q9G2kq3stdg has_link True, in_ours False",
+        "quote": null
+      },
+      {
+        "path": "evidence/leaderboard/epoch_chess_puzzles_leaderboard_2026-10-08.csv",
+        "location": "column Logs",
+        "quote": null
+      }
+    ],
+    "reproduce": "See leaderboard_log_availability.csv (built from the leaderboard CSV and per_log_with_leaderboard.csv).",
+    "limitations": "Epoch may hold these logs privately.",
+    "check": "reviewability"
+  },
+  {
+    "id": "F-human",
+    "claim": "Five players rated 1700-2400 each answered 20 randomly chosen puzzles without an engine; the best two scored 75%. Epoch notes the sample was harder than average (mean model score 8 points lower on it).",
+    "status": "supported",
+    "origin": "source",
+    "severity": null,
+    "evidence": [
+      {
+        "path": "evidence/leaderboard/epoch_human_baseline_2026-10-08.csv",
+        "location": "all rows",
+        "quote": null
+      },
+      {
+        "path": "evidence/epoch_page_text_2026-10-08.txt",
+        "location": "Human baseline section",
+        "quote": "Five players each answered a sample of 20 randomly chosen puzzles."
+      }
+    ],
+    "reproduce": "curl the benchmark page and the linked spreadsheet.",
+    "limitations": "Five players and 20 puzzles each is a small sample.",
+    "check": "human_completability"
+  },
+  {
+    "id": "F-contamination",
+    "claim": "The positions are newly generated, but all 100 positions and reference moves are public in the task's CSV and in public logs.",
+    "status": "supported",
+    "origin": "source",
+    "severity": null,
+    "evidence": [
+      {
+        "path": "evidence/source/puzzles.csv",
+        "location": "100 rows with input and target",
+        "quote": null
+      }
+    ],
+    "reproduce": "wc -l puzzles.csv",
+    "limitations": "Exposure is not the same as training-data contamination; we did not test for memorisation.",
+    "check": "contamination"
+  },
+  {
+    "id": "F-runs",
+    "claim": "Each leaderboard row comes from one pass over the 100 puzzles (two logs ran 2 epochs). Standard errors are about 0.04-0.05, so differences under about 0.1 between rows are not reliable.",
+    "status": "supported",
+    "origin": "historical",
+    "severity": null,
+    "evidence": [
+      {
+        "path": "evidence/log_headers.csv",
+        "location": "column epochs",
+        "quote": null
+      },
+      {
+        "path": "evidence/leaderboard/epoch_chess_puzzles_leaderboard_2026-10-08.csv",
+        "location": "column stderr",
+        "quote": null
+      }
+    ],
+    "reproduce": "python3 report/evidence/headers.py",
+    "limitations": "None.",
+    "check": "statistical_adequacy"
+  }
+]

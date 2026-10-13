@@ -1,0 +1,30 @@
+{
+  "defect_counts": {
+    "incorrect_reference_or_test": 1,
+    "missing_information": 1
+  },
+  "unclassified_defects": 0,
+  "outstanding_ids": [],
+  "denominator": 100,
+  "counts": {
+    "NO_ISSUE_FOUND": 99,
+    "DEFECT": 1,
+    "UNRESOLVED": 0,
+    "NOT_ASSESSED": 0
+  },
+  "percentages": {
+    "NO_ISSUE_FOUND": 99.0,
+    "DEFECT": 1.0,
+    "UNRESOLVED": 0.0,
+    "NOT_ASSESSED": 0.0
+  },
+  "sampling": {
+    "population": 100,
+    "sample": 100,
+    "strategy": "census",
+    "strata": "",
+    "seed": "",
+    "expansion": "",
+    "confirmation": "every task labelled by the per-item auditors; defects confirmed by the investigator"
+  }
+}

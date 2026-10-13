@@ -1,0 +1,143 @@
+# The Epoch AI benchmark review page, as a template over the records.
+#
+# A template owns layout and the prose blocks a reader needs; the methodology owns the
+# checks, their scales and the verdict rule. Prose blocks are written by the investigator
+# at the end of the run (not synthesised afterwards) and validated against the limits here.
+id: epoch-review
+version: 1
+methodology: epoch-rubric@1
+audience: >-
+  People with a scientific background who do not work on model evaluations. They want to
+  know what the benchmark measures, whether its number can be trusted, and what to keep in
+  mind when they quote it. They will not read a long document.
+style:
+  max_sentences_per_paragraph: 5
+  rules:
+    - Short sentences, one idea each; no paragraph longer than five sentences.
+    - No jargon. Say "the model that reads the answer out of the response", not "the extractor"; "a reference answer", not "gold". Expand an acronym the first time.
+    - Numbers with their denominators, not adjectives. Lead with the conclusion, then the evidence.
+    - Do not narrate the investigation; execution details, costs and pipeline errors belong in the journal.
+title: "{benchmark} Review"
+header:
+  - label: Benchmark
+    value: profile.benchmark
+  - label: Benchmark creator
+    value: profile.creator
+  - label: Verdict
+    value: verdict
+  - label: Review date
+    value: profile.review_date
+    format: ordinal_date
+blocks:
+  - id: summary
+    title: Summary
+    kind: prose
+    max_words: 150
+    when: [Verified, Flawed, NEI, Incomplete]
+    required: [Verified, Flawed, NEI, Incomplete]
+    brief: >-
+      How the task works and what it tries to measure, what the best score is, and the key
+      observations that decided the verdict. A reader who stops here knows the verdict and why.
+  - id: methodology
+    title: Methodology
+    kind: prose
+    max_words: 125
+    when: [Verified, Flawed, NEI, Incomplete]
+    required: [Verified, Flawed, NEI, Incomplete]
+    brief: >-
+      What was done: which logs and source were read, what was computed, which per-item
+      audits ran and on how many items, what was not done.
+  - id: interpretation
+    title: Interpretation
+    kind: prose
+    max_words: 300
+    when: [Verified]
+    required: [Verified]
+    brief: >-
+      What the benchmark measures, how its headline number is made (what is scored, how, and
+      how results are aggregated), and how a reader should and should not interpret it.
+  - id: task_analysis
+    title: Task Analysis
+    kind: prose
+    max_words: 300
+    when: [Verified]
+    required: [Verified]
+    brief: >-
+      How the tasks work, how they were created, whether they are reasonable, and how they
+      are graded. Name any issue that matters to the score, with its count and denominator.
+  - id: elicitation_and_scaffolding
+    title: Elicitation and Scaffolding
+    kind: prose
+    max_words: 300
+    when: [Verified]
+    required: [Verified]
+    brief: >-
+      The harness, prompting and tools the model is given; limits on tokens, turns or time;
+      cost and resources where known; whether these settings let models show what they can do.
+  - id: representative_errors
+    title: Representative Errors
+    kind: bullets
+    max_sentences: 3
+    when: [Flawed]
+    required: [Flawed]
+    lead: The following issues cross our threshold for a Flawed verdict.
+    brief: >-
+      The errors that crossed the threshold, one bullet each, followed by the error_examples
+      table.
+  - id: error_examples
+    kind: table
+    when: [Flawed]
+    required: [Flawed]
+    max_cell_words: 30
+    columns:
+      - {key: task, title: Task}
+      - {key: error_type, title: Error type}
+      - {key: notes, title: Notes}
+      - {key: affected_logs, title: Affected logs}
+    brief: >-
+      Concrete examples. Task names the item or run; Error type is the defect class in a few
+      words; Notes says what happened; Affected logs names the runs or models the error
+      touches, with a count.
+  - id: limitations
+    title: Limitations
+    kind: bullets
+    max_sentences: 3
+    when: [Verified, NEI, Incomplete]
+    required: [Verified, NEI, Incomplete]
+    lead:
+      Verified: >-
+        While none of these limitations cross our threshold for a Flawed verdict, they do
+        inform how a reader should characterize this benchmark.
+      default: The review did not reach a verdict. These points say why.
+    brief: >-
+      Concerns that did not change the verdict, one bullet each, starting straight on the
+      point. For a review without a verdict, what could not be reviewed and why.
+  - id: recommendations
+    title: Recommendations
+    kind: bullets
+    max_sentences: 3
+    when: [Verified, Flawed, NEI, Incomplete]
+    required: [Verified, Flawed]
+    brief: >-
+      Addressed to the benchmark's creator: what to change, publish or document. One
+      recommendation per limitation or error is the usual shape.
+rubric:
+  title: Benchmark Review Rubric
+  intro: rubric
+  sections:
+    - section: 1. Reviewability
+      title: 1. Reviewability
+      layout: levels
+      columns: [Level, Meaning, Status, Notes]
+    - section: 2. Scoring (minimum standard)
+      title: 2. Scoring
+      intro: minimum_standard
+      layout: defect_classes
+      columns: [Defect Class, Examples, Default Threshold for Flawed, Status, Notes]
+      measure_line: true
+    - section: 3. Evaluation quality
+      title: 3. Evaluation Quality
+      intro: quality
+      layout: questions
+      columns: [Question, Status, Notes]
+  disclaimer: disclaimer

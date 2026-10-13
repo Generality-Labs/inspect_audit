@@ -78,6 +78,19 @@ A **Flawed** review adds instead:
 An **NEI** or **Incomplete** review adds Limitations, saying what could not be reviewed
 and why.
 
+## Pass is the default
+
+Flag a minimum-standard row only when the evidence shows a material effect on the
+benchmark's headline results or on their comparability. A defect that exists but does not
+move scores, or that affects only rows a reader can avoid, is a Pass with the concern
+recorded under Limitations. When the evidence leaves the question open, Pass and say what
+would settle it. `report/methodology.md` gives the test for each class; the ones that
+decide most reviews are that an unversioned change needs a measured score effect to be a
+Flag, and that under-elicitation is a Flag only when the affected models have no better
+listed configuration. Every Flag carries `impact`: the measured effect in at most three
+sentences with numbers. `check_report` refuses a Flag without it, and the rendered Notes
+cell opens with it.
+
 ## The rubric
 
 The rendered rubric reproduces Epoch's form: every level, defect class and question is

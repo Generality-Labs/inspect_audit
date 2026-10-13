@@ -95,11 +95,13 @@ def test_the_stop_rules_are_applied_in_order() -> None:
     gated = filled()
     gated["reviewability"]["level"] = "Inadequate"
     for row in gated["minimum_standard"]:
-        row.update(status="Flag")  # a flag behind a closed gate changes nothing
+        row.update(
+            status="Flag", impact="Ten points."
+        )  # a flag behind a closed gate changes nothing
     assert derive_verdict(Review.model_validate(gated), None)["verdict"] == "NEI"
 
     flawed = filled()
-    flawed["minimum_standard"][1]["status"] = "Flag"
+    flawed["minimum_standard"][1].update(status="Flag", impact="Scores differ by 9 points.")
     derived = derive_verdict(Review.model_validate(flawed), None)
     assert derived["verdict"] == "Flawed"
     assert "Benchmark consistency" in derived["reasons"][0]
@@ -116,6 +118,7 @@ def test_prevalence_comes_from_coverage_and_must_agree_with_the_status() -> None
         derive_verdict(review, coverage_of(defect=5, clean=15, unresolved=3, not_assessed=72))
     scoring = next(r for r in review.minimum_standard if r.id == "scoring")
     scoring.status = "Flag"
+    scoring.impact = "Five of twenty inspected questions are defective."
     derived = derive_verdict(review, coverage_of(defect=5, clean=15, unresolved=3, not_assessed=72))
     prev = derived["scoring_prevalence"]
     assert derived["verdict"] == "Flawed"
@@ -137,7 +140,9 @@ def test_prevalence_comes_from_coverage_and_must_agree_with_the_status() -> None
 
 def test_without_coverage_the_row_may_carry_its_own_counts() -> None:
     review = filled()
-    review["minimum_standard"][0].update(status="Flag", inspected=10, with_defect=4)
+    review["minimum_standard"][0].update(
+        status="Flag", inspected=10, with_defect=4, impact="Four of ten inspected questions."
+    )
     derived = derive_verdict(Review.model_validate(review), None)
     assert derived["scoring_prevalence"]["source"] == "review.json"
     assert derived["scoring_prevalence"]["rate"] == pytest.approx(0.4)
@@ -259,6 +264,23 @@ def flawed_narrative() -> dict:
     }
 
 
+def test_a_flag_needs_its_impact_and_a_pass_has_none() -> None:
+    review = filled()
+    review["minimum_standard"][2]["status"] = "Flag"
+    with pytest.raises(ValueError, match="elicitation: a Flag needs `impact`"):
+        Review.model_validate(review)
+    review["minimum_standard"][2]["impact"] = "Eight rows score 0-16%; their best rows 20-35%."
+    Review.model_validate(review)
+    review = filled()
+    review["minimum_standard"][0]["impact"] = "Stray."
+    with pytest.raises(ValueError, match="impact belongs to a Flag row"):
+        Review.model_validate(review)
+    review = filled()
+    review["minimum_standard"][0].update(status="Flag", impact=" ".join(["w"] * 61))
+    with pytest.raises(ValueError, match="impact: at most 60 words"):
+        Review.model_validate(review)
+
+
 def test_the_narrative_follows_the_verdict() -> None:
     review = Review.model_validate(filled())
     check_narrative(review, "Verified")
@@ -346,7 +368,9 @@ def test_a_verified_review_renders_the_reader_sections(tmp_path: Path) -> None:
 
 def test_a_flawed_review_renders_representative_errors(tmp_path: Path) -> None:
     review = filled(**flawed_narrative())
-    review["minimum_standard"][1]["status"] = "Flag"
+    review["minimum_standard"][1].update(
+        status="Flag", impact="Rows graded by the two models differ by 9 points."
+    )
     root = workspace(tmp_path, review, coverage_of(defect=8, clean=92))
     derived = prepare_publication(
         root, [{"id": "F1", "section": "consistency", "status": "supported"}]
@@ -355,6 +379,7 @@ def test_a_flawed_review_renders_representative_errors(tmp_path: Path) -> None:
     assert derived["findings"] == [{"id": "F1", "section": "consistency", "status": "supported"}]
     md = (root / "work/report/epoch_review.md").read_text()
     assert "Verdict: Flawed" in md and ERRORS_LEAD in md
+    assert "**Impact:** Rows graded by the two models differ by 9 points. Checked." in md
     assert "**Flag [stop → Flawed]**" in md and "- Bump the version when the grader changes." in md
     assert (
         "| Puzzle 86 | False negative | Prefix kept in the extracted answer. | 1 run (GPT-5.4 high) |"
@@ -460,5 +485,6 @@ def test_methodology_names_every_row_the_code_knows() -> None:
         "Recommendations",
         "Representative Errors",
         "Disclaimer",
+        "Pass is the default",
     ):
         assert heading in text, heading

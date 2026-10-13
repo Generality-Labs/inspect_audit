@@ -191,6 +191,8 @@ SENTENCES_PER_PARAGRAPH = 5
 SENTENCES_PER_BULLET = 3
 NOTE_WORDS = 80
 NOTE_SENTENCES = 4
+IMPACT_WORDS = 60
+IMPACT_SENTENCES = 3
 EXAMPLE_CELL_WORDS = 30
 
 LIMITATIONS_LEAD = (
@@ -273,6 +275,9 @@ class MinimumStandardRow(BaseModel):
     # Epoch's threshold is a default: a status that disagrees with the computed
     # prevalence is allowed only with the reason written down
     threshold_override_reason: str | None = None
+    # a Flag must say what it does to the headline results, with numbers: Pass is the
+    # default, and a defect without a material effect is a limitation, not a Flag
+    impact: str = ""
 
     @model_validator(mode="after")
     def _known(self) -> "MinimumStandardRow":
@@ -297,6 +302,18 @@ class MinimumStandardRow(BaseModel):
         ):
             raise ValueError("scoring: 0 <= with_defect <= inspected")
         _check_note(self.id, self.notes)
+        if self.status == "Flag" and not self.impact.strip():
+            raise ValueError(
+                f"{self.id}: a Flag needs `impact`, the measured effect on the headline "
+                "results (with numbers); a defect without a material effect is a Pass "
+                "recorded under limitations"
+            )
+        if self.status != "Flag" and self.impact.strip():
+            raise ValueError(f"{self.id}: impact belongs to a Flag row")
+        if words(self.impact) > IMPACT_WORDS or sentences(self.impact) > IMPACT_SENTENCES:
+            raise ValueError(
+                f"{self.id} impact: at most {IMPACT_WORDS} words and {IMPACT_SENTENCES} sentences"
+            )
         return self
 
 
@@ -719,9 +736,10 @@ def render_markdown(review: Review, derived: dict[str, Any]) -> str:
         chosen = {"Pass": "Pass", "Flag": "Flag [stop → Flawed]", "Not Reviewed": "Not Reviewed"}[
             r.status
         ]
+        notes = f"**Impact:** {r.impact.strip()} {r.notes}" if r.status == "Flag" else r.notes
         out.append(
             f"| {MINIMUM_STANDARD[r.id]} | {_bullets(examples)} | {threshold} | "
-            f"{_options(list(MINIMUM_STATUS_FORM), chosen)} | {_cell(r.notes)} |"
+            f"{_options(list(MINIMUM_STATUS_FORM), chosen)} | {_cell(notes)} |"
         )
     out.append("")
 

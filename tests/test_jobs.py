@@ -2162,6 +2162,39 @@ def test_the_laptop_token_comes_from_the_hawk_login() -> None:
     assert captured["env"]["HAWK_API_URL"] == "https://hawk.example"  # type: ignore[index]
 
 
+def test_the_runner_token_is_asked_for_the_way_hawk_3_7_answers(monkeypatch) -> None:
+    """hawk 3.7.2's refresh hook declines an empty ask for HAWK_ACCESS_TOKEN (it has no paired
+    base URL, so the hook takes it for the launch's own credential); it answers an ask that
+    carries the launch JWT. 2026-10-13: a run died in preflight on the 3.6 form of the ask."""
+    from inspect_ai.hooks import _hooks
+
+    from inspect_audit import _jobs
+
+    def hook_3_7(env_var: str, value: str) -> str | None:
+        assert env_var == "HAWK_ACCESS_TOKEN"
+        if not value or value != "launch-jwt":
+            return None
+        return "current-access"
+
+    monkeypatch.setenv("HAWK_JOB_ID", "parent-job")
+    monkeypatch.setenv("BASE_API_KEY", "launch-jwt")
+    monkeypatch.setattr(_hooks, "override_api_key", hook_3_7)
+    monkeypatch.setattr(_hooks, "get_all_hooks", list)
+    assert run(_jobs.Hawk("https://hawk.example").access_token()) == "current-access"
+
+    # a hook that declines every ask still carries its current token
+    class Hook:
+        _current_access_token = "from-hook"
+
+    Hook.__module__ = "hawk.runner.refresh_token"
+    monkeypatch.setattr(_hooks, "override_api_key", lambda env_var, value: None)
+    monkeypatch.setattr(_hooks, "get_all_hooks", lambda: [Hook()])
+    assert run(_jobs.Hawk("https://hawk.example").access_token()) == "from-hook"
+    monkeypatch.setattr(_hooks, "get_all_hooks", list)
+    with pytest.raises(RuntimeError, match="token refresh hook is not available"):
+        run(_jobs.Hawk("https://hawk.example").access_token())
+
+
 def test_prices_are_the_jobs_own_and_travel_with_its_tasks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

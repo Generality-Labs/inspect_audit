@@ -310,9 +310,23 @@ class Hawk:
     async def access_token(self) -> str:
         """The operator's Hawk token: the runner's refresh hook, or the laptop login."""
         if os.environ.get("HAWK_JOB_ID"):
-            from inspect_ai.hooks._hooks import override_api_key
+            from inspect_ai.hooks._hooks import get_all_hooks, override_api_key
 
-            token = override_api_key("HAWK_ACCESS_TOKEN", "")
+            # hawk >= 3.7 answers only for gateway traffic: an ask carrying the launch
+            # JWT (BASE_API_KEY) or a token the hook issued. An empty ask about a variable
+            # with no paired base URL is taken for the launch's own credential and
+            # declined, which is how 3.7.2 broke the 3.6 form of this call.
+            marker = os.environ.get("BASE_API_KEY") or os.environ.get("HAWK_ACCESS_TOKEN") or ""
+            token = override_api_key("HAWK_ACCESS_TOKEN", marker)
+            if not token:
+                token = next(
+                    (
+                        getattr(hook, "_current_access_token", None)
+                        for hook in get_all_hooks()
+                        if type(hook).__module__ == "hawk.runner.refresh_token"
+                    ),
+                    None,
+                )
             if not token:
                 raise RuntimeError("Hawk runner's token refresh hook is not available")
             return token

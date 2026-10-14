@@ -1403,6 +1403,11 @@ def test_a_hawk_run_is_continued_from_the_state_it_saved(
     root = Path(cont.metadata["investigation_dir"])
     seed = json.loads((root / "inputs" / "seed.json").read_text())
     assert seed["continued_from"]["eval_set"] == "bfcl-old"
+    from inspect_ai._util.registry import registry_info
+
+    for step in cont.setup:
+        # Inspect refuses a task at run time when a setup step is not a registered solver
+        registry_info(step)
     state = TaskState(
         model=ModelName("mockllm/model"), sample_id="investigation", epoch=1, input="", messages=[]
     )

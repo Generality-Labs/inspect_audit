@@ -1873,6 +1873,7 @@ def reconcile_jobs(remote: Remote) -> Solver:
     return solve
 
 
+@solver
 def restore_state(remote: Remote, root: Path, eval_set_id: str) -> Solver:
     """Setup: fill a fresh directory with the state a Hawk run of this investigation saved.
 

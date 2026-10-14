@@ -56,8 +56,8 @@ for a tool it does not need yet.
 | 1 Reviewability | source, supplied log headers | can tasks, scoring logic and settings be inspected? | the reviewability row |
 | 2 Items | the sample | question-labels and the substantive item checks, two items first, then the rest | `coverage.json`, a provisional scoring row |
 | 3 Attempts | supplied logs, else eval models | read the supplied logs now; with none, run the default eval on the sampled ids only, one epoch, inside `eval_budget_usd`; with neither, write that down | the attempts source |
-| 4 Minimum standard | stages 2 and 3 | scoring impact measured on attempts where defects exist; consistency, elicitation and bias from headers, transcripts and the published methodology | the four rows, `impact` on any Flag |
-| 5 Quality | all of the above | the seven quality rows | assessments complete |
+| 4 Minimum standard | stages 2 and 3 | the four rows in rubric order: scoring impact measured on attempts where defects exist; consistency, elicitation and bias from headers, transcripts and the published methodology. Stop at the first Flag: the rows after it are Not Reviewed | the rows up to and including the first Flag, with its `impact` |
+| 5 Quality | no Flag in stage 4 | the seven quality rows; after a Flag they are all Not Reviewed | assessments complete |
 | 6 Publish | the derived verdict | the prose blocks that verdict calls for; publish | the page |
 
 Write as you go. The table's last column is not optional: the scoring row goes in at
@@ -69,6 +69,14 @@ working-time limit ends the run without warning, and a run that ends with record
 but no rows publishes nothing. `budget()` shows the working time used; when half of
 it is gone, stop refining, write what the evidence supports, and publish. A published
 review that names its open questions beats an unpublished one.
+
+The rubric stops at the first Flag. A Flag on scoring leaves consistency, elicitation,
+bias and every quality row Not Reviewed; a Flag on consistency leaves elicitation and
+bias and the quality rows Not Reviewed; and so on. `check_report` refuses a level
+written after a Flag. The Flag carries its impact, the prose carries the errors, and
+the page reads "[stop → Flawed]" where it stopped. Observations that would have gone
+into later rows belong in the findings filed under the flagged check or in the
+journal, not in rows the methodology says are not reviewed.
 
 A benchmark job before stage 2 is finished is premature: the items decide whether
 attempts are needed and which ones matter. A benchmark job on the whole dataset is not

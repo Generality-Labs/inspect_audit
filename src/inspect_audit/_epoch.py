@@ -302,6 +302,20 @@ def derive_verdict(
         verdict = proc.unfinished["outcome"]
         reasons.insert(0, f"{method.gate.id} has not been assessed")
     else:
+        # the review stops at the first failing minimum-standard check: what follows it in
+        # the rubric, and every quality check, is left unassessed, as the published rubric's
+        # "stop" reads. A level written there is a record the methodology does not allow
+        order = method.minimum
+        first = next((i for i, c in enumerate(order) if assessments[c.id].level == fail_at), None)
+        if first is not None:
+            after = [
+                c.id for c in order[first + 1 :] + method.quality if assessments[c.id].assessed
+            ]
+            if after:
+                raise ValueError(
+                    f"the review stops at the first {fail_at} ({order[first].name}): "
+                    f"{', '.join(after)} must be {unfinished}, not assessed"
+                )
         flagged = [c.name for c in method.minimum if assessments[c.id].level == fail_at]
         pending = [c.name for c in method.minimum if assessments[c.id].level == unfinished]
         # a thresholded check passed on counts that cannot measure prevalence is not

@@ -59,3 +59,7 @@ The `epoch` report format now runs on this split. `inspect_audit.methodology` lo
 ## Write as you go (2026-10-14)
 
 A validation run on BFCL followed the rubric order correctly, then spent its last hours confirming candidate labels and repairing two items, and reached its working-time limit with every assessment row still Not Reviewed: records on disk, nothing derivable, nothing published. The prompt and the writing skill now say that the scoring row is written at its provisional level as soon as the item labels exist, that later stages update rows rather than save them, that confirmation and repairs are refinements of a derivable review rather than prerequisites, and that at half the working time the agent stops refining and publishes. `budget()` reports the working time used beside the money. `resume: hawk:<eval set id>` continues a run that ran out of time anyway, from the state it saved.
+
+## The review stops at the first Flag (2026-10-14)
+
+The rubric's rows read "Flag [stop → Flawed]", and Epoch's own reviews leave the rows after a Flag not reviewed. The methodology text said the opposite ("a Flag does not stop it") and the BFCL reviews assessed everything after a scoring Flag. The rule is now the published one: the minimum-standard checks after the first Flag in rubric order, and every quality check, are Not Reviewed; `derive_verdict` refuses a level written there. The prompt and the writing skill say where the observations that would have filled those rows go instead.

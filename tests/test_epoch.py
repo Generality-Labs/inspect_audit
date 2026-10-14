@@ -44,11 +44,27 @@ def filled_assessments(**levels: str) -> list[dict]:
             row.update(level="Pass", notes="Checked.", evidence=evidence())
         if row["check"] in levels:
             row["level"] = levels[row["check"]]
+    # the review stops at the first Flag: the minimum-standard rows after it are left
+    # Not Reviewed unless a test sets them on purpose
+    flagged = False
+    for row in rows:
+        if row["check"] in MINIMUM:
+            if flagged and row["check"] not in levels:
+                row.update(level="Not Reviewed", notes="", evidence=[])
+            flagged = flagged or row["level"] == "Flag"
     return rows
 
 
 def row(rows: list[dict], check: str) -> dict:
     return next(r for r in rows if r["check"] == check)
+
+
+def stop_after(rows: list[dict], check: str) -> None:
+    """Leave every row after `check` Not Reviewed, as a review that stops there does."""
+    ids = [r["check"] for r in rows]
+    for r in rows[ids.index(check) + 1 :]:
+        if r["check"] != "reviewability":
+            r.update(level="Not Reviewed", notes="", evidence=[], fields={})
 
 
 def verified_prose(**overrides) -> dict:
@@ -254,6 +270,7 @@ def test_the_measure_comes_from_coverage_and_must_agree_with_the_level() -> None
     row(rows, "scoring_integrity").update(
         level="Flag", impact="Five of twenty inspected questions are defective."
     )
+    stop_after(rows, "scoring_integrity")
     derived = derived_for(rows, coverage_of(defect=5, clean=15, unresolved=3, not_assessed=72))
     m = derived["measures"]["scoring_integrity"]
     assert derived["verdict"] == "Flawed"
@@ -662,3 +679,28 @@ def test_converted_bundles_render_their_golden_pages(name: str, verdict: str) ->
     assert derived["verdict"] == verdict
     assert derived["page"] == (FIXTURES / name / "epoch_review.md").read_text()
     assert json.loads((FIXTURES / name / "verdict.json").read_text())["verdict"] == verdict
+
+
+def test_the_review_stops_at_the_first_flag() -> None:
+    """Rows after a Flag, and every quality row, are Not Reviewed; a level there is refused."""
+    rows = filled_assessments(benchmark_consistency="Flag")
+    row(rows, "benchmark_consistency")["impact"] = (
+        "Rows graded by the two models differ by 9 points."
+    )
+    assert [row(rows, c)["level"] for c in ("elicitation_adequacy", "evaluation_bias")] == [
+        "Not Reviewed",
+        "Not Reviewed",
+    ]
+    assert derived_for(rows)["verdict"] == "Flawed"
+    row(rows, "evaluation_bias").update(level="Pass", notes="Checked.", evidence=evidence())
+    with pytest.raises(
+        ValueError, match="stops at the first Flag \\(Benchmark consistency\\): evaluation_bias"
+    ):
+        derived_for(rows)
+    rows = filled_assessments(scoring_integrity="Flag")
+    row(rows, "scoring_integrity")["impact"] = "Eleven of sixty attempts scored wrong."
+    row(rows, "statistical_adequacy").update(
+        level="Known", fields={"runs_per_model": 1}, notes="One run.", evidence=evidence()
+    )
+    with pytest.raises(ValueError, match="statistical_adequacy must be Not Reviewed"):
+        derived_for(rows)

@@ -188,6 +188,9 @@ class Sampling(BaseModel):
     strategy: str = Field(min_length=1)
     strata: str = ""
     seed: str = ""
+    # who made the draw when it was not this investigation. A sample is random when its
+    # draw was random, whoever drew it: record the design, and name the drawer here
+    drawn_by: str = ""
     expansion: str = ""
     confirmation: str = ""
 

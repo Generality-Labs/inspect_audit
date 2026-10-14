@@ -17,6 +17,26 @@ with selected checks and optional recorded attempts. Choose the actual candidate
 judge explicitly, including task-specific judge arguments. model_roles alone does not
 configure a judge that the task constructs independently.
 
+## Workers and eval models
+
+The seed's remote block lists two kinds of model. `workers` audit, grade and probe:
+they are the model items of an audit job and the only models a task argument (a
+grader, a judge, an extractor) may name, in either job. `evals` are the candidates:
+the only models a benchmark job may list under `models`, and `eval_budget_usd` is
+the most benchmark jobs may hold or spend between them, inside the allowance. With
+an empty eval list no benchmark job will be accepted: audit the supplied logs and say
+in the methodology block that no attempts could be generated.
+
+Attempts are for the review, not for the leaderboard. Generate them only when stage 3
+of the writing-epoch order calls for them: on the sampled items, by `sample_ids`, one
+epoch, the cheaper candidate first, the second only when the first produced attempts
+on the items that carry confirmed defects. Smoke on two ids, collect, read the measured
+cost, extrapolate to the sample before submitting the rest; never run the whole
+dataset to reproduce a published score. On the direct provider every benchmark job is
+sent with `strict_tools: false` on its candidates, because Inspect's OpenAI-compatible
+provider otherwise marks tool schemas strict and strict mode refuses the optional
+parameters many benchmarks' tools have; the setting changes nothing the model sees.
+
 Write the config from the examples in the investigating skill, set task arguments
 and sample selection, save it under /workspace/jobs/, then submit the path with hawk_submit. Do not
 invent an eval_set_id: submission assigns one. The host validates the config with

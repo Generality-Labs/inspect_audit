@@ -15,6 +15,7 @@ from inspect_audit._jobs import (
     Job,
     JobLedger,
     Policy,
+    job_kind,
     task_package_name,
     validate_config,
 )
@@ -634,7 +635,7 @@ def test_jobs_status_wait_collect_release_reservation(
     assert (tmp_path / "inputs" / "jobs" / "jj" / "run.eval").is_file()
     ledger = JobLedger(tmp_path)
     assert ledger.get("jj").actual_usd == 0.42 and ledger.reserved_usd() == 0  # type: ignore[union-attr]
-    assert "jj (eval-set)" in run(
+    assert "jj (benchmark)" in run(
         tool(action="list", label=None, sample=None, wait_minutes=None, limit=None)
     )
     run(tool(action="stop", label="jj", sample=None, wait_minutes=None, limit=None))
@@ -2327,3 +2328,134 @@ def test_every_job_config_must_state_its_retries(tmp_path: Path) -> None:
         1 + INSPECT_DEFAULT_RETRIES
     )
     assert any("retry_attempts is required" in p for p in validate_config(config, policy, set()))
+
+
+# ------------------------------------------------------- workers versus eval models
+
+
+def _split_policy() -> Policy:
+    """Luna may be evaluated; mini audits and grades; neither may do the other's job."""
+    return Policy(
+        packages=[TASK_PKG, AUDIT_PKG],
+        task_names=["inspect_evals", "inspect_audit"],
+        models=["openai/gpt-5.6-luna", "openai/gpt-5-mini"],
+        auditor_images=[IMAGE],
+        hawk_api_url=HAWK,
+        eval_models=["openai/gpt-5.6-luna"],
+        worker_models=["openai/gpt-5-mini"],
+    )
+
+
+def test_benchmark_jobs_run_eval_models_and_audit_jobs_run_workers() -> None:
+    split = _split_policy()
+    staged = {"inv-staged-abc"}
+
+    benchmark = filled_example("benchmark.eval-set.yaml")  # candidate: luna, an eval model
+    assert validate_config(benchmark, split, set()) == []
+    benchmark["models"][0]["items"][0]["name"] = "openai/gpt-5-mini"  # a worker is not a candidate
+    problems = validate_config(benchmark, split, set())
+    assert any("eval models are openai/gpt-5.6-luna" in p for p in problems), problems
+
+    audit = filled_example("audit.eval-set.yaml")  # auditor: luna, which only evaluates here
+    problems = validate_config(audit, split, staged)
+    assert any("worker models are openai/gpt-5-mini" in p for p in problems), problems
+    audit["models"][0]["items"][0]["name"] = "openai/gpt-5-mini"
+    assert validate_config(audit, split, staged) == []
+
+    graded = filled_example("benchmark.eval-set.yaml")  # a grader is a worker, never a candidate
+    graded["tasks"][0]["items"][0]["args"] = {"grader_model": "openrouter/openai/gpt-5.6-luna"}
+    problems = validate_config(graded, split, set())
+    assert any(
+        "name a worker by its Inspect name: openrouter/openai/gpt-5-mini" in p for p in problems
+    )
+
+    nothing = _split_policy()
+    nothing.eval_models = []  # the operator forbade attempts
+    problems = validate_config(filled_example("benchmark.eval-set.yaml"), nothing, set())
+    assert any("no eval models" in p for p in problems), problems
+    assert validate_config(audit, nothing, staged) == []
+
+    # no line drawn: every worker may be a candidate, as before
+    assert validate_config(filled_example("benchmark.eval-set.yaml"), policy(), set()) == []
+    assert job_kind(benchmark) == "benchmark" and job_kind(audit) == "audit"
+
+
+def test_strict_tools_is_allowed_and_sent_to_direct_benchmark_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit import _investigate
+
+    config = filled_example("benchmark.eval-set.yaml")
+    config["models"][0]["items"][0]["args"]["strict_tools"] = False
+    assert validate_config(config, policy(), set()) == []
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    r = remote(tmp_path)
+    r.provider, r.provider_key = "openrouter-direct", "sk-or-test"
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+    run(
+        hawk_submit(r, tmp_path)(
+            config=_write(
+                tmp_path, "b.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-b")
+            ),
+            estimated_usd=0.2,
+            note=None,
+        )
+    )
+    submitted = yaml.safe_load(r.hawk.submitted[-1].read_text())  # type: ignore[attr-defined]
+    assert all(i["args"]["strict_tools"] is False for g in submitted["models"] for i in g["items"])
+    assert JobLedger(tmp_path).get("b").kind == "benchmark"  # type: ignore[union-attr]
+
+    r.known_sources.add("inv-staged-abc")  # what investigate() records after staging at setup
+    run(
+        hawk_submit(r, tmp_path)(
+            config=_write(
+                tmp_path, "a.eval-set.yaml", filled_example("audit.eval-set.yaml", name="inv-a")
+            ),
+            estimated_usd=0.2,
+            note=None,
+        )
+    )
+    submitted = yaml.safe_load(r.hawk.submitted[-1].read_text())  # type: ignore[attr-defined]
+    assert all("strict_tools" not in i["args"] for g in submitted["models"] for i in g["items"])
+    assert JobLedger(tmp_path).get("a").kind == "audit"  # type: ignore[union-attr]
+
+
+def test_eval_models_have_their_own_table_and_allowance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    (tmp_path / "work").mkdir(exist_ok=True)
+    _price("openrouter/openai/gpt-5.6-luna")
+    _price("openrouter/openai/gpt-5-mini", input=0.25, output=2.0)
+    args = (tmp_path, HAWK, TASK_PKG, AUDIT_PKG, IMAGE, ["openai/gpt-5-mini"], 3.0)
+
+    # no line drawn: the workers are the candidates and share the whole allowance
+    plain = Remote(*args)
+    assert plain.eval_models == ["openai/gpt-5-mini"] and plain.eval_budget_usd == 3.0
+    assert plain.policy.eval_models is None
+
+    r = Remote(*args, eval_models=["openai/gpt-5.6-luna"])
+    r.hawk = FakeHawk()  # type: ignore[assignment]
+    assert r.eval_budget_usd == 1.0  # a third of the allowance unless the operator says
+    assert [w["model_item"] for w in r.eval_table()] == ["openai/gpt-5.6-luna"]
+    assert [w["model_item"] for w in r.worker_table()] == ["openai/gpt-5-mini"]
+    assert r.policy.models == ["openai/gpt-5-mini", "openai/gpt-5.6-luna"]
+
+    # the example benchmark job holds $1.00 (2 samples at $0.50): a second one does not fit
+    first = _write(
+        tmp_path, "one.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-one")
+    )
+    run(hawk_submit(r, tmp_path)(config=first, estimated_usd=0.2, note=None))
+    second = _write(
+        tmp_path, "two.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-two")
+    )
+    with pytest.raises(ToolError, match=r"eval allowance"):
+        run(hawk_submit(r, tmp_path)(config=second, estimated_usd=0.2, note=None))
+    assert r.eval_committed_usd() == 1.0
+    with pytest.raises(ValueError, match="within budget_usd"):
+        Remote(*args, eval_models=["openai/gpt-5.6-luna"], eval_budget_usd=4.0)

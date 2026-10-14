@@ -51,6 +51,7 @@ from ._jobs import (
     copy_into_inputs,
     expected_evals,
     http_status,
+    job_kind,
     named_models,
     parse_config,
     slug,
@@ -693,9 +694,20 @@ class Remote:
         allowance_usd: float,
         provider: str = "middleman",
         provider_key: str | None = None,
+        *,
+        eval_models: list[str] | None = None,
+        eval_budget_usd: float | None = None,
     ) -> None:
         if provider not in PROVIDERS:
             raise ValueError(f"provider must be one of {', '.join(PROVIDERS)}")
+        # the operator drew a line between workers and candidates, or did not: without
+        # one, every worker may be evaluated and benchmark jobs share the whole
+        # allowance, as before; with one, candidates are only the eval models and their
+        # jobs share a third of the allowance unless the operator says otherwise
+        explicit_evals = eval_models is not None
+        eval_models = list(eval_models) if explicit_evals else list(worker_models)
+        if eval_budget_usd is not None and not (0 < eval_budget_usd <= allowance_usd):
+            raise ValueError("eval_budget_usd must be positive and within budget_usd")
         if provider == "openrouter-direct" and not provider_key:
             raise ValueError(
                 "provider 'openrouter-direct' (the default) needs the operator's OpenRouter "
@@ -704,7 +716,7 @@ class Remote:
                 "Pass provider='middleman' to route child jobs through Hawk's proxy instead."
             )
         if provider == "openrouter-direct":
-            _check_openrouter_ids(worker_models)
+            _check_openrouter_ids(worker_models + eval_models)
         self.root = root
         self.provider = provider
         self.provider_key = provider_key
@@ -714,8 +726,18 @@ class Remote:
         self.audit_package = audit_package
         self.auditor_image = auditor_image
         self.worker_models = worker_models
+        # the candidates a benchmark job may evaluate, and the most their jobs may
+        # hold or spend between them: a third of the allowance unless the operator says
+        self.eval_models = eval_models
+        self.eval_budget_usd = (
+            eval_budget_usd
+            if eval_budget_usd is not None
+            else (allowance_usd / 3 if explicit_evals else allowance_usd)
+        )
+        # every model either list names, priced once; a model on both lists is one worker
+        every = list(dict.fromkeys(worker_models + eval_models))
         self.workers = [
-            Worker(item=m, price=_registered_price(qualified_model_name(m))) for m in worker_models
+            Worker(item=m, price=_registered_price(qualified_model_name(m))) for m in every
         ]
         self.allowance_usd = allowance_usd
         self.ledger = JobLedger(root)
@@ -723,9 +745,11 @@ class Remote:
             known_models=frozenset(OPENROUTER_IDS),
             packages=[task_package, audit_package],
             task_names=[task_package_name(task_package), "inspect_audit"],
-            models=worker_models,
+            models=every,
             auditor_images=[auditor_image],
             hawk_api_url=hawk_api_url,
+            eval_models=eval_models if explicit_evals else None,
+            worker_models=worker_models,
         )
         self._spend_path = root / "local_spend.json"
         # a resumed run starts Inspect's usage accounting from zero; what earlier runs
@@ -776,8 +800,9 @@ class Remote:
             costs[worker.inspect_name] = price
         return costs, missing
 
-    def worker_table(self) -> list[dict[str, Any]]:
+    def worker_table(self, names: list[str] | None = None) -> list[dict[str, Any]]:
         """The workers as the agent should name them, with the prices they are held to."""
+        chosen = self.worker_models if names is None else names
         return [
             {
                 "model_item": w.item,
@@ -785,7 +810,20 @@ class Remote:
                 "price_per_million_tokens": _registered_price(w.inspect_name),
             }
             for w in self.workers
+            if w.item in chosen
         ]
+
+    def eval_table(self) -> list[dict[str, Any]]:
+        """The candidates a benchmark job may evaluate, in the same shape as the workers."""
+        return self.worker_table(self.eval_models)
+
+    def eval_committed_usd(self) -> float:
+        """What benchmark jobs have spent or still hold, against the eval allowance."""
+        return sum(
+            (j.actual_usd if j.actual_usd is not None else j.reserved_usd)
+            for j in self.ledger.jobs
+            if j.kind == "benchmark" and j.status != "failed"
+        )
 
     def fold_prior_spend(self) -> None:
         """Start a sample attempt: what earlier attempts spent becomes prior spend.
@@ -895,6 +933,15 @@ class Remote:
             if existing is not None:
                 # it never reached Hawk, so the name is free and its hold was released
                 ledger.jobs.remove(existing)
+            if job.kind == "benchmark":
+                held = self.eval_committed_usd()
+                if held + job.reserved_usd > self.eval_budget_usd:
+                    raise ToolError(
+                        f"cannot reserve ${job.reserved_usd:.2f} for a benchmark run: "
+                        f"${held:.2f} of the ${self.eval_budget_usd:.2f} eval allowance is "
+                        "already spent or held by earlier benchmark jobs. Run fewer items, "
+                        "one candidate, or collect a finished job first"
+                    )
             committed = self.committed_usd()
             if committed + job.reserved_usd > self.allowance_usd:
                 raise ToolError(
@@ -1089,6 +1136,16 @@ def investigation_budget(
                 f"Remote jobs: {len(jobs)} launched, ${remote.ledger.actual_usd():.2f} measured cost, "
                 f"${remote.ledger.reserved_usd():.2f} held against jobs not yet collected"
             )
+            if hasattr(remote, "eval_budget_usd"):
+                lines.append(
+                    f"Eval allowance: ${remote.eval_committed_usd():.2f} of "
+                    f"${remote.eval_budget_usd:.2f} spent or held by benchmark jobs"
+                    + (
+                        f" (candidates: {', '.join(remote.eval_models)})"
+                        if remote.eval_models
+                        else " (no eval models: attempts cannot be generated)"
+                    )
+                )
             for j in jobs:
                 cost_text = (
                     f"${j.actual_usd:.2f} spent"
@@ -1252,8 +1309,15 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
         # set_model_cost, which refuses a model the runner's Inspect does not know
         data["model_cost_config"] = costs
         ship_prices(data, costs, remote.audit_package)
+        kind = job_kind(data)
         if remote.provider == "openrouter-direct":
             route_direct(data)
+            if kind == "benchmark":
+                # the direct provider marks every tool strict, and strict mode refuses
+                # optional parameters; a candidate must see the task's tools as written
+                for group in data.get("models") or []:
+                    for item in group.get("items") or []:
+                        item["args"] = {"strict_tools": False, **(item.get("args") or {})}
         parsed, _ = parse_config(data)
         worst = worst_case_usd(parsed, remote.policy)
         if worst is None:  # pragma: no cover - validate_config already refused this
@@ -1264,7 +1328,7 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
         submitted_path = root / "jobs" / f"{label}.eval-set.yaml"
         job = Job(
             label=label,
-            kind="eval-set",
+            kind=kind,
             eval_set_id=eval_set_id,
             config_path=str(submitted_path),
             submitted_at=utcnow(),
@@ -2067,6 +2131,8 @@ def investigate(
     task_package: str | None = None,
     auditor_image: str | None = None,
     worker_models: list[str] | None = None,
+    eval_models: list[str] | None = None,
+    eval_budget_usd: float | None = None,
     secrets_file: str | None = None,
     execution: str | None = None,
     investigator_image: str | None = None,
@@ -2117,8 +2183,14 @@ def investigate(
         task_package: Explicit benchmark pip spec for remote workers, including optional
             dependencies when needed. Defaults to the source repository and revision.
         auditor_image: Published auditor image for sample-audit jobs on k8s.
-        worker_models: OpenRouter model ids the agent may run (benchmark workers, auditors,
-            graders). Prices for these are registered so costs are accounted.
+        worker_models: OpenRouter model ids the agent may use as workers: item auditors,
+            graders and probes. Prices for these are registered so costs are accounted.
+        eval_models: OpenRouter model ids the agent may evaluate on the benchmark itself,
+            to generate attempts when none are supplied. Only these may be a benchmark
+            job's candidates; empty (the default) means the investigation generates no
+            attempts and says so.
+        eval_budget_usd: The most benchmark jobs may hold or spend between them, inside
+            budget_usd. Defaults to a third of budget_usd.
         secrets_file: Dotenv file holding the operator's OpenRouter key
             (INSPECT_AUDIT_OPENROUTER_API_KEY or OPENROUTER_API_KEY), for
             provider='openrouter-direct'. On a Hawk runner, pass it as the secret
@@ -2171,6 +2243,8 @@ def investigate(
     task_package = settings.get("task_package", task_package)
     auditor_image = settings.get("auditor_image", auditor_image)
     worker_models = settings.get("worker_models", worker_models)
+    eval_models = settings.get("eval_models", eval_models)
+    eval_budget_usd = settings.get("eval_budget_usd", eval_budget_usd)
     secrets_file = settings.get("secrets_file", secrets_file)
     execution = settings.get("execution", execution) or "hawk"
     report = settings.get("report", report)
@@ -2316,6 +2390,8 @@ def investigate(
             budget_usd,
             provider,
             provider_key,
+            eval_models=eval_models,
+            eval_budget_usd=eval_budget_usd,
         )
         seed_path = root / "inputs" / "seed.json"
         seed = json.loads(seed_path.read_text())
@@ -2335,6 +2411,11 @@ def investigate(
             # provider group, the name task arguments use, and the price it is held to.
             # hawk_submit accepts either spelling in either place and rewrites it
             "workers": remote.worker_table(),
+            # the candidates a benchmark job may evaluate, and the most their jobs may
+            # hold or spend between them. Empty: this investigation generates no attempts
+            "eval_models": remote.eval_models,
+            "evals": remote.eval_table(),
+            "eval_budget_usd": remote.eval_budget_usd,
             "provider": provider,
             "audit_package": audit_package,
             "auditor_image": auditor_image,
@@ -2350,7 +2431,11 @@ def investigate(
                 "them whatever its own id is. Every config states cost_limit, the dollars a "
                 "single sample may spend, and its size; the two decide what the job holds "
                 "against the allowance. jobs() watches, waits, collects into "
-                "/inputs/jobs/<label>/ and shows runner logs, traces and transcripts."
+                "/inputs/jobs/<label>/ and shows runner logs, traces and transcripts. "
+                "Workers (workers) audit, grade and probe; eval models (evals) are the only "
+                "candidates a benchmark job may evaluate, and benchmark jobs together may "
+                "not hold or spend more than eval_budget_usd. With no eval models, no "
+                "attempts can be generated: audit the supplied logs and say so."
             ),
         }
         seed_path.write_text(json.dumps(seed, indent=2))

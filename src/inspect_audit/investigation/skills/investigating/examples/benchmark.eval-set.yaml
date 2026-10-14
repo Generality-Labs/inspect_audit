@@ -1,5 +1,8 @@
 # Run the benchmark itself on Hawk. Copy, edit, save under /workspace/jobs/, then hawk_submit.
-# Substitute the values from /inputs/seed.json `remote`: task_package, worker_models, hawk.
+# Substitute the values from /inputs/seed.json `remote`: task_package, eval_models, hawk.
+# The candidates under `models` must come from remote.eval_models (the workers audit and
+# grade; they are not candidates unless they are also listed there). Benchmark jobs share
+# remote.eval_budget_usd. Run the sampled items by sample_ids, not the whole dataset.
 name: inv-smoke-luna            # lowercase, digits, hyphens; unique per investigation
 packages:
   - <remote.task_package>       # exactly the string from the seed
@@ -13,7 +16,7 @@ models:
   - package: openai
     name: openrouter
     items:
-      - name: openai/gpt-5.6-luna          # from remote.worker_models
+      - name: openai/gpt-5.6-luna          # from remote.eval_models
         args:
           config:
             reasoning_effort: low

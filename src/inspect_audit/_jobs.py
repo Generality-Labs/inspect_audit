@@ -640,6 +640,13 @@ class Policy:
     models: list[str]  # OpenRouter model ids allowed anywhere a model is named
     auditor_images: list[str]  # every image any task argument may name
     hawk_api_url: str
+    # the candidates a benchmark job may evaluate. None means the operator drew no line
+    # and every worker may be a candidate; an empty list means the investigation may
+    # not generate attempts at all, and a benchmark job is refused rather than run.
+    eval_models: list[str] | None = None
+    # the workers: the models an audit job runs and any task argument may name. None
+    # means every model in `models`.
+    worker_models: list[str] | None = None
     # the only runner environment a job may set: where the audit task finds Hawk
     env_keys: tuple[str, ...] = ("HAWK_API_URL",)
     max_limit: int = 1000
@@ -691,7 +698,31 @@ ALLOWED_TOP_LEVEL = {
     "score",
 }
 ALLOWED_RUNNER = {"environment", "memory"}
-ALLOWED_MODEL_ARGS = {"config"}
+# strict_tools: Inspect's OpenAI-compatible provider marks every tool schema strict,
+# and strict mode refuses optional parameters (every property must be required). A
+# benchmark whose tools have optional parameters cannot run at all under it, so a
+# benchmark job may turn it off; it changes nothing about what the model is asked.
+ALLOWED_MODEL_ARGS = {"config", "strict_tools"}
+
+
+def job_kind(config: dict[str, Any]) -> str:
+    """What a config runs: `benchmark` (attempts on a task) or `audit` (our item auditors).
+
+    Anything that is not inspect_audit's own `audit` task evaluates a candidate model
+    on the benchmark: the benchmark run through inspect_audit's `benchmark` wrapper, or
+    the task package's own task.
+    """
+    for task in config.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        if task.get("name") != "inspect_audit":
+            return "benchmark"
+        for item in task.get("items") or []:
+            if isinstance(item, dict) and item.get("name") != "audit":
+                return "benchmark"
+    return "audit"
+
+
 ALLOWED_MODEL_CONFIG = {"reasoning_effort", "max_tokens", "temperature", "reasoning_tokens"}
 # task argument names that decide what runs, what it costs, or what it can reach.
 # Anything matching is checked against the policy; everything else is the task's own
@@ -798,13 +829,16 @@ def _task_arg_problems(
                 # a task builds a model from this string with Inspect's own providers,
                 # so only the metered route is allowed: a bare `openai/...` would reach
                 # the provider directly, outside the job's prices and cost limit
-                allowed = {f"openrouter/{name}" for name in policy.models}
+                workers = (
+                    policy.worker_models if policy.worker_models is not None else policy.models
+                )
+                allowed = {f"openrouter/{name}" for name in workers}
                 if "/" in model and model not in allowed:
                     problems.append(
                         f"{where}: {path}={model!r} is not an allowed model; task arguments "
                         f"name a worker by its Inspect name: {', '.join(sorted(allowed))}"
                     )
-                elif "/" not in model and model in policy.models:
+                elif "/" not in model and model in workers:
                     continue
             return
         if IMAGE_ARG.search(lowered):
@@ -998,14 +1032,28 @@ def validate_config(
         problems.append(f"runner.environment must set HAWK_API_URL to {policy.hawk_api_url}")
     if config.get("secrets"):
         problems.append("top-level secrets are not allowed; models route through Hawk's proxy")
+    kind = job_kind(config)
+    workers = policy.worker_models if policy.worker_models is not None else policy.models
+    evals = policy.eval_models if policy.eval_models is not None else workers
+    if kind == "benchmark" and not evals:
+        problems.append(
+            "this investigation has no eval models, so it may not generate attempts: audit "
+            "the items with the supplied logs, and say in the methodology block that no "
+            "attempts could be run"
+        )
     for where, group in _model_items(config):
         if group.get("package") != "openai" or group.get("name") != "openrouter":
             problems.append(f"{where}: models must use package openai, provider openrouter")
+        # a benchmark job's candidates (its `models`) come from the eval list; the
+        # models an audit job runs, and every role in either, are workers
+        candidates = kind == "benchmark" and not where.startswith("model_roles")
+        allowed = evals if candidates else workers
+        menu = "eval models" if candidates else "worker models"
         for item in group.get("items") or []:
-            if item.get("name") not in policy.models:
+            if item.get("name") not in allowed:
                 problems.append(
-                    f"{where}: model not allowed: {item.get('name')!r}; model items are "
-                    f"{', '.join(sorted(policy.models))}"
+                    f"{where}: model not allowed: {item.get('name')!r}; {menu} are "
+                    f"{', '.join(sorted(allowed)) or 'none'}"
                 )
             args = item.get("args") or {}
             extra = set(args) - ALLOWED_MODEL_ARGS

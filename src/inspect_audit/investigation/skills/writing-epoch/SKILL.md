@@ -44,6 +44,40 @@ The assessments decide the verdict. Fill them first, run `check_report` to learn
 derived verdict, then write the prose blocks that verdict calls for. Writing the prose
 before the verdict is known produces blocks that will be rejected.
 
+## Order of work
+
+The rubric is the plan. Each stage ends with a record on disk and a `check_report` run,
+so the verdict is always derivable from what has been written, and no stage reaches
+for a tool it does not need yet.
+
+| Stage | Needs | Do | Writes |
+|---|---|---|---|
+| 0 Orient | source, docs, overview | the benchmark's facts; the population and its strata; the sample design, yours or the operator's | `profile.json`, `sampling.json` |
+| 1 Reviewability | source, supplied log headers | can tasks, scoring logic and settings be inspected? | the reviewability row |
+| 2 Items | the sample | question-labels and the substantive item checks, two items first, then the rest | `coverage.json`, a provisional scoring row |
+| 3 Attempts | supplied logs, else eval models | read the supplied logs now; with none, run the default eval on the sampled ids only, one epoch, inside `eval_budget_usd`; with neither, write that down | the attempts source |
+| 4 Minimum standard | stages 2 and 3 | scoring impact measured on attempts where defects exist; consistency, elicitation and bias from headers, transcripts and the published methodology | the four rows, `impact` on any Flag |
+| 5 Quality | all of the above | the seven quality rows | assessments complete |
+| 6 Publish | the derived verdict | the prose blocks that verdict calls for; publish | the page |
+
+A benchmark job before stage 2 is finished is premature: the items decide whether
+attempts are needed and which ones matter. A benchmark job on the whole dataset is not
+part of a review; the published results are the series the review compares against,
+and the review's own attempts measure what the confirmed defects do to real
+submissions. A defect no attempt touches is still a defect for the measure; it simply
+carries no impact figure.
+
+## The sample's provenance
+
+A sample is random when its draw was random, whoever drew it. When the operator supplies
+the items an independent reviewer drew with a stated random design, record that design
+(`strategy`, `strata`) and name the drawer in `drawn_by`; the seed may be unknown. Call
+a sample `purposive` only when the items were chosen for a reason rather than drawn.
+A scoring row that passes on purposive counts leaves the review Incomplete: the counts
+show defects exist, not how common they are. On a purposive sample the row can still
+be a Flag when the impact of a confirmed defect is measured on real attempts, and it
+can carry its own `measure` when you obtained one some other way.
+
 ## The blocks, by verdict
 
 The template lists every block with its brief, its limit and the verdicts it belongs to;

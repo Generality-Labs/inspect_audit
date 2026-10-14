@@ -23,6 +23,7 @@
     "strategy": "census",
     "strata": "",
     "seed": "",
+    "drawn_by": "",
     "expansion": "",
     "confirmation": "every task labelled by the per-item auditors; defects confirmed by the investigator"
   }

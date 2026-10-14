@@ -233,6 +233,9 @@ def measures(
                 "assessments.json",
             )
         else:
+            # counts exist but the sample was not selected for prevalence: they say
+            # defects exist, not how common they are, and the row has no measure of its
+            # own. The verdict procedure treats that as unfinished, not as a Pass.
             out[check.id] = {
                 "name": spec.name,
                 "numerator": 0,
@@ -241,6 +244,11 @@ def measures(
                 "threshold": threshold,
                 "exceeded": None,
                 "source": None,
+                "inadmissible": (
+                    f"a {sampling.strategy} sample does not measure prevalence"
+                    if coverage is not None and sampling is not None
+                    else None
+                ),
             }
             continue
         value = num / den if den else None
@@ -296,12 +304,30 @@ def derive_verdict(
     else:
         flagged = [c.name for c in method.minimum if assessments[c.id].level == fail_at]
         pending = [c.name for c in method.minimum if assessments[c.id].level == unfinished]
+        # a thresholded check passed on counts that cannot measure prevalence is not
+        # passed: the review is unfinished until the sample is one that can, the row
+        # carries its own measure, or the check is flagged on a measured impact
+        unmeasured = [
+            (c.name, measured[c.id]["inadmissible"])
+            for c in method.minimum
+            if c.id in measured
+            and measured[c.id].get("inadmissible")
+            and assessments[c.id].level not in (fail_at, unfinished)
+        ]
         if flagged:
             verdict = proc.minimum["outcome"]
             reasons.insert(0, f"{fail_at.lower()}ged: " + ", ".join(flagged))
-        elif pending:
+        elif pending or unmeasured:
             verdict = proc.unfinished["outcome"]
-            reasons.insert(0, "minimum standard not reviewed: " + ", ".join(pending))
+            if pending:
+                reasons.insert(0, "minimum standard not reviewed: " + ", ".join(pending))
+            for name, why in unmeasured:
+                reasons.insert(
+                    0,
+                    f"{name} passes without an admissible measure ({why}); record a random, "
+                    "stratified or census design, give the assessment its own measure, or "
+                    f"{fail_at} it on a measured impact",
+                )
         else:
             verdict = proc.otherwise
             reasons.insert(0, f"{method.gate.id} {gate.level}; every minimum-standard check passes")

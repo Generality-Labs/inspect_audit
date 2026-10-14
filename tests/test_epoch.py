@@ -294,11 +294,23 @@ def test_a_purposive_sample_does_not_measure_prevalence() -> None:
     rows = filled_assessments()
     purposive = {"population": 100, "sample": 20, "strategy": "purposive"}
     derived = derived_for(rows, coverage_of(defect=10, clean=10), purposive)  # 50% of a chosen set
-    assert derived["verdict"] == "Verified"
+    # the counts cannot clear the threshold, and a Pass on them is not a Pass
+    assert derived["verdict"] == "Incomplete"
     assert derived["measures"]["scoring_integrity"]["value"] is None
+    assert "passes without an admissible measure" in derived["reasons"][0]
+    assert "purposive sample" in derived["reasons"][0]
     random = {"population": 100, "sample": 20, "strategy": "random", "seed": "20261006"}
     with pytest.raises(ValueError, match="at or above"):
         derived_for(rows, coverage_of(defect=10, clean=10), random)
+    # a Flag on a measured impact still stands on a purposive sample
+    flagged = filled_assessments(scoring_integrity="Flag")
+    row(flagged, "scoring_integrity")["impact"] = "Two of four recorded submissions were misgraded."
+    assert derived_for(flagged, coverage_of(defect=10, clean=10), purposive)["verdict"] == "Flawed"
+    # and a draw made elsewhere is recorded as its design, with the drawer named
+    elsewhere = {**random, "seed": "", "drawn_by": "independent reviewer: Epoch AI"}
+    assert Sampling.model_validate(elsewhere).for_prevalence
+    with pytest.raises(ValueError, match="at or above"):
+        derived_for(rows, coverage_of(defect=10, clean=10), elsewhere)
 
 
 # ------------------------------------------------------------------ the prose

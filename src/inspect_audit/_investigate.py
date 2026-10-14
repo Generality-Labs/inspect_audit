@@ -697,9 +697,13 @@ class Remote:
         *,
         eval_models: list[str] | None = None,
         eval_budget_usd: float | None = None,
+        forwarded_secrets: dict[str, str] | None = None,
     ) -> None:
         if provider not in PROVIDERS:
             raise ValueError(f"provider must be one of {', '.join(PROVIDERS)}")
+        # credentials a benchmark needs beyond the provider key (a gated dataset's
+        # HF_TOKEN), shipped to every child job as runner secrets; never in a config
+        self.forwarded_secrets: dict[str, str] = dict(forwarded_secrets or {})
         # the operator drew a line between workers and candidates, or did not: without
         # one, every worker may be evaluated and benchmark jobs share the whole
         # allowance, as before; with one, candidates are only the eval models and their
@@ -1347,12 +1351,10 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
         write_config(root, label, data)
 
         try:
-            returned = await remote.hawk.submit(
-                submitted_path,
-                {"OPENROUTER_API_KEY": remote.provider_key}
-                if remote.provider == "openrouter-direct" and remote.provider_key
-                else None,
-            )
+            shipped = dict(remote.forwarded_secrets)
+            if remote.provider == "openrouter-direct" and remote.provider_key:
+                shipped["OPENROUTER_API_KEY"] = remote.provider_key
+            returned = await remote.hawk.submit(submitted_path, shipped or None)
         except Exception as ex:
             # the job is already written down as pending; ask Hawk whether it landed
             notes = await remote.reconcile()
@@ -2133,6 +2135,7 @@ def investigate(
     worker_models: list[str] | None = None,
     eval_models: list[str] | None = None,
     eval_budget_usd: float | None = None,
+    forward_secrets: list[str] | None = None,
     secrets_file: str | None = None,
     execution: str | None = None,
     investigator_image: str | None = None,
@@ -2191,6 +2194,11 @@ def investigate(
             attempts and says so.
         eval_budget_usd: The most benchmark jobs may hold or spend between them, inside
             budget_usd. Defaults to a third of budget_usd.
+        forward_secrets: Names of environment variables on this runner whose values are
+            shipped to every child job as runner secrets, for benchmarks whose data or
+            judges need a credential of their own (HF_TOKEN for a gated dataset). On
+            Hawk, pass each as a secret on the investigator's eval set; the agent never
+            sees the values.
         secrets_file: Dotenv file holding the operator's OpenRouter key
             (INSPECT_AUDIT_OPENROUTER_API_KEY or OPENROUTER_API_KEY), for
             provider='openrouter-direct'. On a Hawk runner, pass it as the secret
@@ -2245,6 +2253,7 @@ def investigate(
     worker_models = settings.get("worker_models", worker_models)
     eval_models = settings.get("eval_models", eval_models)
     eval_budget_usd = settings.get("eval_budget_usd", eval_budget_usd)
+    forward_secrets = settings.get("forward_secrets", forward_secrets)
     secrets_file = settings.get("secrets_file", secrets_file)
     execution = settings.get("execution", execution) or "hawk"
     report = settings.get("report", report)
@@ -2392,7 +2401,17 @@ def investigate(
             provider_key,
             eval_models=eval_models,
             eval_budget_usd=eval_budget_usd,
+            # only names the operator listed, and only those actually set on this runner
+            forwarded_secrets={
+                name: os.environ[name] for name in (forward_secrets or []) if os.environ.get(name)
+            },
         )
+        missing_secrets = [n for n in (forward_secrets or []) if not os.environ.get(n)]
+        if missing_secrets:
+            raise ValueError(
+                f"forward_secrets names {', '.join(missing_secrets)}, which is not set on this "
+                "runner; pass it as a secret on the investigator's eval set"
+            )
         seed_path = root / "inputs" / "seed.json"
         seed = json.loads(seed_path.read_text())
         # Local evidence stays local. A remote worker receives only a source
@@ -2416,6 +2435,8 @@ def investigate(
             "eval_models": remote.eval_models,
             "evals": remote.eval_table(),
             "eval_budget_usd": remote.eval_budget_usd,
+            # credentials every child job receives on its runner, by name only
+            "forwarded_credentials": sorted(remote.forwarded_secrets),
             "provider": provider,
             "audit_package": audit_package,
             "auditor_image": auditor_image,

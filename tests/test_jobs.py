@@ -2459,3 +2459,38 @@ def test_eval_models_have_their_own_table_and_allowance(
     assert r.eval_committed_usd() == 1.0
     with pytest.raises(ValueError, match="within budget_usd"):
         Remote(*args, eval_models=["openai/gpt-5.6-luna"], eval_budget_usd=4.0)
+
+
+def test_forwarded_secrets_reach_every_child_job_but_never_its_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A gated dataset's HF_TOKEN travels as a runner secret beside the provider key."""
+    from inspect_audit import _investigate
+
+    monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
+    (tmp_path / "work").mkdir(exist_ok=True)
+    _price("openrouter/openai/gpt-5.6-luna")
+    _price("openrouter/openai/gpt-5-mini", input=0.25, output=2.0)
+    r = Remote(
+        tmp_path,
+        HAWK,
+        TASK_PKG,
+        AUDIT_PKG,
+        IMAGE,
+        ["openai/gpt-5.6-luna", "openai/gpt-5-mini"],
+        10.0,
+        "openrouter-direct",
+        "sk-or-test",
+        forwarded_secrets={"HF_TOKEN": "hf_abc"},
+    )
+    r.hawk = FakeHawk()  # type: ignore[assignment]
+    (tmp_path / "inputs").mkdir(exist_ok=True)
+    path = _write(
+        tmp_path, "h.eval-set.yaml", filled_example("benchmark.eval-set.yaml", name="inv-h")
+    )
+    run(hawk_submit(r, tmp_path)(config=path, estimated_usd=0.2, note=None))
+    assert r.hawk.secrets == {"HF_TOKEN": "hf_abc", "OPENROUTER_API_KEY": "sk-or-test"}  # type: ignore[attr-defined]
+    assert "hf_abc" not in r.hawk.submitted[-1].read_text()  # type: ignore[attr-defined]
+
+    plain = Remote(tmp_path, HAWK, TASK_PKG, AUDIT_PKG, IMAGE, ["openai/gpt-5.6-luna"], 10.0)
+    assert plain.forwarded_secrets == {}

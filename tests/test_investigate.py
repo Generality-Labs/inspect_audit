@@ -1308,3 +1308,172 @@ def test_unpriced_spend_stays_unknown_across_a_retry(
     with pytest.raises(ToolError, match="costs are unknown"):
         retry.reserve_and_record(_investigate.Job("j", "eval-set", "inv-j", "", "", 1.0))
     assert retry.local_usd() == 3.0  # a lower bound, and known to be one
+
+
+def origin_repo(path: Path) -> str:
+    """A checkout a Hawk runner could install from: a git repo with an origin remote."""
+    repo_path = git_repo(path)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_path),
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/org/bench.git",
+        ],
+        check=True,
+    )
+    return str(repo_path)
+
+
+def test_a_hawk_run_is_continued_from_the_state_it_saved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that ended before publishing carries on in a fresh directory with its records."""
+    from inspect_ai.model import ModelName
+
+    from inspect_audit import _investigate
+
+    async def noop_generate(state, **kwargs):
+        return state
+
+    repo = origin_repo(tmp_path / "repo")
+    common = {"hawk_api_url": "https://hawk.example", "output_dir": str(tmp_path / "runs")}
+    with pytest.raises(ValueError, match="needs hawk_api_url"):
+        investigate(repo, resume="hawk:bfcl-old", output_dir=str(tmp_path / "x"), execution="local")  # type: ignore[arg-type]
+
+    asked: list[str] = []
+
+    class RestoringHawk:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def uuid_of_sample(self, eval_set_id: str, sample_id: str, epoch: int = 1) -> str:
+            assert (eval_set_id, sample_id, epoch) == ("bfcl-old", "investigation", 1)
+            return "uuid-1"
+
+        async def download_artifacts(
+            self, eval_set_id: str, sample_uuid: str, out_dir: Path, prefix: str = ""
+        ) -> list[Path]:
+            assert (eval_set_id, sample_uuid, prefix) == ("bfcl-old", "uuid-1", "state/")
+            saved = out_dir / "state"
+            files = {
+                "jobs.json": json.dumps(
+                    [
+                        {
+                            "label": "items",
+                            "kind": "audit",
+                            "eval_set_id": "inv-items-1234abcd",
+                            "config_path": "/old/jobs/items.eval-set.yaml",
+                            "submitted_at": "2026-10-14T10:30:00+00:00",
+                            "estimated_usd": 1.0,
+                            "reserved_usd": 2.0,
+                            "status": "pending",
+                        }
+                    ]
+                ),
+                "local_spend.json": json.dumps(
+                    {"prior_usd": 0.0, "prior_unpriced": [], "this_run_usd": 30.6, "unpriced": []}
+                ),
+                "log_sources.json": json.dumps(["hawk:supplied-logs"]),
+                "jobs/items.eval-set.yaml": "name: items\n",
+                "work/journal.md": "# Activity journal\n\nStage 2 done.\n",
+                "work/report/format.json": json.dumps({"format": "epoch"}),
+                "work/report/methodology.md": "STALE COPY",
+                "work/report/profile.json": json.dumps({"benchmark": "bfcl"}),
+                "work/report/evidence/notes.txt": "kept",
+                "work/report/assessments.json": "[]",
+            }
+            written = []
+            for name, text in files.items():
+                path = saved / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text)
+                written.append(path)
+            return written
+
+        async def eval_set_exists(self, eval_set_id: str) -> bool:
+            asked.append(eval_set_id)
+            return True
+
+    monkeypatch.setattr(_investigate, "Hawk", RestoringHawk)
+    cont = investigate(repo, resume="hawk:bfcl-old", report="epoch", **common, execution="local")  # type: ignore[arg-type]
+    root = Path(cont.metadata["investigation_dir"])
+    seed = json.loads((root / "inputs" / "seed.json").read_text())
+    assert seed["continued_from"]["eval_set"] == "bfcl-old"
+    state = TaskState(
+        model=ModelName("mockllm/model"), sample_id="investigation", epoch=1, input="", messages=[]
+    )
+    setup = cont.setup
+    for step in setup if isinstance(setup, list) else [setup]:
+        if step is not None:
+            asyncio.run(step(state, noop_generate))
+
+    assert "Stage 2 done." in (root / "work" / "journal.md").read_text()
+    assert "Continued on a fresh runner from bfcl-old" in (root / "work" / "journal.md").read_text()
+    assert (root / "work" / "report" / "evidence" / "notes.txt").read_text() == "kept"
+    assert (root / "work" / "report" / "assessments.json").read_text() == "[]", (
+        "records are the old run's"
+    )
+    assert "STALE COPY" not in (root / "work" / "report" / "methodology.md").read_text(), (
+        "report assets come from this package, not the old run"
+    )
+    assert (root / "jobs" / "items.eval-set.yaml").read_text() == "name: items\n"
+    assert not (root / "restored").exists()
+    ledger = JobLedger(root)
+    assert [j.label for j in ledger.jobs] == ["items"]
+    assert asked == ["inv-items-1234abcd"], "a job left pending must be settled with Hawk"
+    assert ledger.get("items").status == "submitted"  # type: ignore[union-attr]
+    spend = json.loads((root / "local_spend.json").read_text())
+    assert spend["prior_usd"] == 30.6 and spend["this_run_usd"] == 0.0, (
+        "the old run's spend is prior spend"
+    )
+    assert "hawk:supplied-logs" in json.loads((root / "log_sources.json").read_text())
+
+
+def test_a_hawk_run_prepared_for_another_report_cannot_be_continued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_ai.model import ModelName
+
+    from inspect_audit import _investigate
+
+    async def noop_generate(state, **kwargs):
+        return state
+
+    class EpochHawk:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def uuid_of_sample(self, *args: object) -> str:
+            return "uuid-1"
+
+        async def download_artifacts(self, eval_set_id, sample_uuid, out_dir: Path, prefix=""):
+            path = out_dir / "state" / "work" / "report" / "format.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({"format": "gl"}))
+            return [path]
+
+    monkeypatch.setattr(_investigate, "Hawk", EpochHawk)
+    repo = origin_repo(tmp_path / "repo")
+    cont = investigate(
+        repo,
+        resume="hawk:old",
+        report="epoch",
+        hawk_api_url="https://hawk.example",
+        output_dir=str(tmp_path / "runs"),
+        execution="local",
+    )  # type: ignore[arg-type]
+    state = TaskState(
+        model=ModelName("mockllm/model"), sample_id="investigation", epoch=1, input="", messages=[]
+    )
+
+    def run_setup() -> None:
+        for step in cont.setup if isinstance(cont.setup, list) else [cont.setup]:
+            if step is not None:
+                asyncio.run(step(state, noop_generate))
+
+    with pytest.raises(ValueError, match="prepared for the 'gl' report"):
+        run_setup()

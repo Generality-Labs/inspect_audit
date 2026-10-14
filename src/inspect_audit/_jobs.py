@@ -358,6 +358,43 @@ class Hawk:
                 written.append(dest)
         return sorted(written)
 
+    async def uuid_of_sample(self, eval_set_id: str, sample_id: str, epoch: int = 1) -> str:
+        """The uuid Hawk filed one sample of the set under, which names its artifacts."""
+        for row in await self.samples(eval_set_id):
+            if str(row.get("id")) == sample_id and int(row.get("epoch") or 1) == epoch:
+                return str(row["uuid"])
+        raise ValueError(f"{eval_set_id} has no sample {sample_id!r} at epoch {epoch}")
+
+    async def download_artifacts(
+        self, eval_set_id: str, sample_uuid: str, out_dir: Path, prefix: str = ""
+    ) -> list[Path]:
+        """The files a sample saved as artifacts under `prefix`, written below out_dir.
+
+        A listing Hawk cut short, or one that collapsed a directory, is refused: a
+        state restored from part of what was saved would look whole and be wrong.
+        """
+        from hawk.cli.download import download_file
+
+        written: list[Path] = []
+        async with self._client() as client:
+            listing = await client.list_sample_artifacts(eval_set_id, sample_uuid)
+            entries = [e for e in listing.entries if str(e.key).startswith(prefix)]
+            if listing.truncated or any(e.collapsed for e in entries):
+                raise RuntimeError(
+                    f"Hawk did not list every artifact of {eval_set_id} under {prefix!r}; "
+                    "the saved state cannot be restored whole"
+                )
+            for entry in entries:
+                parts = str(entry.key).split("/")
+                if any(part in ("", ".", "..") for part in parts):
+                    raise ValueError(f"unsafe artifact path {entry.key!r}")
+                dest = out_dir.joinpath(*parts)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                url = await client.get_sample_artifact_file_url(eval_set_id, sample_uuid, entry.key)
+                await download_file(str(url.url), dest)
+                written.append(dest)
+        return sorted(written)
+
     async def stop(self, eval_set_id: str) -> None:
         async with self._client() as client:
             await client.stop_eval_set(eval_set_id)

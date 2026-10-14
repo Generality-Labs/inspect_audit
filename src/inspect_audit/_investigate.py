@@ -13,6 +13,7 @@ import tarfile
 import tempfile
 import urllib.request
 from dataclasses import asdict
+from datetime import UTC, datetime
 from importlib.metadata import version
 from logging import getLogger
 from pathlib import Path
@@ -1872,6 +1873,76 @@ def reconcile_jobs(remote: Remote) -> Solver:
     return solve
 
 
+def restore_state(remote: Remote, root: Path, eval_set_id: str) -> Solver:
+    """Setup: fill a fresh directory with the state a Hawk run of this investigation saved.
+
+    What save_state kept outside that run's pod (its ledger, spend, log sources, job
+    configs, journal and report workspace) comes back from its artifacts, so the agent
+    carries on from its own journal with its own jobs and records, as a resume of a
+    local directory does. The report assets (methodology, template, schemas, scripts)
+    travel with this package, not with the old run: the restored copies are replaced
+    by the current ones, so the records are checked against what this code renders.
+    """
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        from ._investigation_workspace import STATE_FILES
+
+        uuid = await remote.hawk.uuid_of_sample(eval_set_id, str(state.sample_id), state.epoch)
+        staging = root / "restored"
+        files = await remote.hawk.download_artifacts(eval_set_id, uuid, staging, prefix="state/")
+        saved = staging / "state"
+        if not files or not (saved / "work").is_dir():
+            raise RuntimeError(f"{eval_set_id} saved no investigation state to continue from")
+        report = root / "work" / "report"
+        current = json.loads((report / "format.json").read_text())["format"]
+        old_format = saved / "work" / "report" / "format.json"
+        if (
+            old_format.is_file()
+            and (fixed := json.loads(old_format.read_text())["format"]) != current
+        ):
+            raise ValueError(
+                f"{eval_set_id} was prepared for the {fixed!r} report; cannot continue it as {current!r}"
+            )
+        for name in STATE_FILES:
+            if (saved / name).is_file():
+                shutil.copyfile(saved / name, root / name)
+        for sub in ("jobs", "work"):
+            if (saved / sub).is_dir():
+                shutil.copytree(saved / sub, root / sub, dirs_exist_ok=True)
+        shutil.copytree(
+            ASSETS / REPORT_ASSETS[current],
+            report,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+        if current == "epoch":
+            from ._epoch import prepare_review
+
+            prepare_review(report, json.loads((report / "profile.json").read_text())["benchmark"])
+        shutil.rmtree(staging)
+        remote.ledger.reload()
+        sources = root / "log_sources.json"
+        remote.known_sources |= set(json.loads(sources.read_text()) if sources.is_file() else [])
+        remote.known_sources |= {j.eval_set_id for j in remote.ledger.jobs}
+        remote.save_sources()
+        stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+        with (root / "work" / "journal.md").open("a") as journal:
+            journal.write(
+                f"\n## Continued on a fresh runner from {eval_set_id} ({stamp})\n"
+                "The journal, report workspace, job configs, ledger and spend above were "
+                "restored from that run's saved state. Its jobs are in the ledger and their "
+                "logs are on Hawk; collected copies under /inputs/jobs are not, so collect "
+                "again what you need to read. Carry on from the last entry.\n"
+            )
+        transcript().info(
+            f"continue: restored {len(files)} file(s) from {eval_set_id}; "
+            f"the ledger holds {len(remote.ledger.jobs)} job(s)"
+        )
+        return state
+
+    return solve
+
+
 def source_alias(source: str) -> str:
     """A short, filesystem-safe, unique name for a log source the agent can type.
 
@@ -2171,7 +2242,10 @@ def investigate(
         resume: An existing investigation directory to carry on in, instead of creating
             one. Its inputs, workspace, journal and job ledger are reused, supplied logs
             are not staged again, and jobs left pending by an interrupted run are
-            reconciled with Hawk before the agent starts.
+            reconciled with Hawk before the agent starts. `hawk:<eval set id>` names a
+            Hawk run of this investigation to continue instead: a fresh directory is
+            prepared and its journal, workspace, job configs, ledger and spend are
+            restored from the state that run saved, before the agent starts.
         budget_usd: Shared allowance for investigator calls and reserved/collected Hawk work.
         enforce_cost_limit: Enforce `budget_usd` through Inspect's cost limit. Needs a
             price for the model; OpenRouter prices are registered automatically.
@@ -2304,6 +2378,15 @@ def investigate(
     if not repo:
         raise ValueError("investigate needs a repo: the benchmark to audit, or a config naming one")
 
+    # a run Hawk finished without publishing is carried on in a fresh directory filled
+    # from the state it saved; a local directory is reused in place
+    continued: str | None = None
+    if resume and resume.startswith("hawk:"):
+        continued, resume = resume.removeprefix("hawk:"), None
+        if not continued:
+            raise ValueError("resume: hawk:<eval set id> names the run to continue")
+        if not hawk_api_url:
+            raise ValueError("resume: hawk:<eval set id> needs hawk_api_url to fetch its state")
     resumed = _resumable(resume) if resume else None
     if resumed:
         from ._report import report_format
@@ -2459,11 +2542,23 @@ def investigate(
                 "attempts can be generated: audit the supplied logs and say so."
             ),
         }
+        if continued:
+            seed["continued_from"] = {
+                "eval_set": continued,
+                "note": (
+                    "This investigation continues that Hawk run, which ended before it "
+                    "published. Its journal, report workspace, job configs, ledger and spend "
+                    "were restored into this one before you started; read the journal's last "
+                    "entries first and carry on from them."
+                ),
+            }
         seed_path.write_text(json.dumps(seed, indent=2))
     setup_steps: list[Solver] = []
     if remote is not None:
+        if continued:
+            setup_steps.append(restore_state(remote, root, continued))
         setup_steps.append(carry_spend(remote))
-        if resumed:
+        if resumed or continued:
             setup_steps.append(reconcile_jobs(remote))
         if remote.provider == "openrouter-direct":
             setup_steps.append(check_workers(remote, root))

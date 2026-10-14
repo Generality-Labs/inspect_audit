@@ -74,6 +74,14 @@ class FakeHawk:
     async def evals(self, eval_set_id: str) -> list[dict[str, str]]:
         return [{"task": "t", "model": "m", "status": self.eval_status, "samples": "2/2"}]
 
+    async def uuid_of_sample(self, eval_set_id: str, sample_id: str, epoch: int = 1) -> str:
+        return f"uuid-{sample_id}-{epoch}"
+
+    async def download_artifacts(
+        self, eval_set_id: str, sample_uuid: str, out_dir: Path, prefix: str = ""
+    ) -> list[Path]:
+        return []
+
     async def download(self, eval_set_id: str, out_dir: Path) -> list[Path]:
         out_dir.mkdir(parents=True, exist_ok=True)
         f = out_dir / "run.eval"

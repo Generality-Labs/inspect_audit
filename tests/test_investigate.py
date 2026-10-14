@@ -1350,14 +1350,15 @@ def test_a_hawk_run_is_continued_from_the_state_it_saved(
         def __init__(self, *args: object, **kwargs: object) -> None:
             pass
 
-        async def uuid_of_sample(self, eval_set_id: str, sample_id: str, epoch: int = 1) -> str:
-            assert (eval_set_id, sample_id, epoch) == ("bfcl-old", "investigation", 1)
-            return "uuid-1"
-
         async def download_artifacts(
-            self, eval_set_id: str, sample_uuid: str, out_dir: Path, prefix: str = ""
+            self, eval_set_id: str, sample_key: str, out_dir: Path, prefix: str = ""
         ) -> list[Path]:
-            assert (eval_set_id, sample_uuid, prefix) == ("bfcl-old", "uuid-1", "state/")
+            # the key the old run saved under: sample id and epoch, as save_state files it
+            assert (eval_set_id, sample_key, prefix) == (
+                "bfcl-old",
+                "investigation-epoch1",
+                "state/",
+            )
             saved = out_dir / "state"
             files = {
                 "jobs.json": json.dumps(
@@ -1452,10 +1453,7 @@ def test_a_hawk_run_prepared_for_another_report_cannot_be_continued(
         def __init__(self, *args: object, **kwargs: object) -> None:
             pass
 
-        async def uuid_of_sample(self, *args: object) -> str:
-            return "uuid-1"
-
-        async def download_artifacts(self, eval_set_id, sample_uuid, out_dir: Path, prefix=""):
+        async def download_artifacts(self, eval_set_id, sample_key, out_dir: Path, prefix=""):
             path = out_dir / "state" / "work" / "report" / "format.json"
             path.parent.mkdir(parents=True)
             path.write_text(json.dumps({"format": "gl"}))

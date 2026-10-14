@@ -1886,11 +1886,13 @@ def restore_state(remote: Remote, root: Path, eval_set_id: str) -> Solver:
     """
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        from ._investigation_workspace import STATE_FILES
+        from ._investigation_workspace import STATE_FILES, sample_key
 
-        uuid = await remote.hawk.uuid_of_sample(eval_set_id, str(state.sample_id), state.epoch)
+        # the old run saved under the same key this one will: sample id and epoch
         staging = root / "restored"
-        files = await remote.hawk.download_artifacts(eval_set_id, uuid, staging, prefix="state/")
+        files = await remote.hawk.download_artifacts(
+            eval_set_id, sample_key(state), staging, prefix="state/"
+        )
         saved = staging / "state"
         if not files or not (saved / "work").is_dir():
             raise RuntimeError(f"{eval_set_id} saved no investigation state to continue from")

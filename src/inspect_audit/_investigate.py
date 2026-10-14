@@ -1104,11 +1104,23 @@ def investigation_budget(
     async def execute() -> str:
         """Show the allowance, spend so far by model, and tokens used."""
         usage = sample_model_usage()
-        spend = sample_limits().cost
+        limits = sample_limits()
+        spend = limits.cost
         lines = [
             f"Allowance: ${budget_usd:.2f}"
             + (" (enforced)" if enforce_cost_limit else " (planning only)")
         ]
+        # the clock ends the run without warning: a review with rows unwritten when it
+        # does publishes nothing, so the time is shown beside the money
+        working = limits.working
+        used = float(working.usage or 0.0)
+        if working.limit:
+            lines.append(
+                f"Working time: {used / 60:.0f} min used of {working.limit / 60:.0f} "
+                f"({used / working.limit:.0%}); write provisional rows before refining"
+            )
+        else:
+            lines.append(f"Working time: {used / 60:.0f} min used, no limit set")
         total = spend.usage
         unpriced: list[str] = []
         for name, value in usage.items():

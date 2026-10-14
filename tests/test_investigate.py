@@ -161,9 +161,14 @@ def test_budget_does_not_turn_missing_prices_into_zero(
         usage = 2.0 if missing else 3.0
         remaining = 8.0 if missing else 7.0
 
-    monkeypatch.setattr(_investigate, "sample_limits", lambda: SimpleNamespace(cost=_Cost()))
+    monkeypatch.setattr(
+        _investigate,
+        "sample_limits",
+        lambda: SimpleNamespace(cost=_Cost(), working=SimpleNamespace(usage=600.0, limit=None)),
+    )
     text = asyncio.run(_investigate.investigation_budget(10, True)())
     assert "Allowance: $10.00 (enforced)" in text
+    assert "Working time:" in text, "the clock ends a run; the agent must see it beside the money"
     if missing:
         assert "at least $2.00" in text and "other unpriced" in text
         assert "Remaining" not in text
@@ -178,7 +183,10 @@ def test_resumed_budget_displays_shared_remaining_allowance(monkeypatch):
     monkeypatch.setattr(
         _investigate,
         "sample_limits",
-        lambda: SimpleNamespace(cost=SimpleNamespace(usage=3.0, remaining=97.0)),
+        lambda: SimpleNamespace(
+            cost=SimpleNamespace(usage=3.0, remaining=97.0),
+            working=SimpleNamespace(usage=10800.0, limit=21600.0),
+        ),
     )
     ledger = SimpleNamespace(
         reload=lambda: None,
@@ -189,6 +197,7 @@ def test_resumed_budget_displays_shared_remaining_allowance(monkeypatch):
     )
     remote = SimpleNamespace(ledger=ledger, prior_local_usd=7.0, prior_unpriced=[])
     text = asyncio.run(_investigate.investigation_budget(100, True, remote)())
+    assert "Working time: 180 min used of 360 (50%)" in text
     assert "Committed in total: $40.00 of $100.00" in text
     assert "Shared remaining allowance: $60.00" in text
     assert "$97.00" not in text

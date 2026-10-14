@@ -60,6 +60,16 @@ for a tool it does not need yet.
 | 5 Quality | all of the above | the seven quality rows | assessments complete |
 | 6 Publish | the derived verdict | the prose blocks that verdict calls for; publish | the page |
 
+Write as you go. The table's last column is not optional: the scoring row goes in at
+its provisional level the moment stage 2's labels exist, with the measure from
+`coverage.json`, and later stages update rows rather than save them for the end.
+Confirming candidate labels, fetching more sources and repairing the last items are
+refinements of a review that is already derivable, not prerequisites for one. The
+working-time limit ends the run without warning, and a run that ends with records
+but no rows publishes nothing. `budget()` shows the working time used; when half of
+it is gone, stop refining, write what the evidence supports, and publish. A published
+review that names its open questions beats an unpublished one.
+
 A benchmark job before stage 2 is finished is premature: the items decide whether
 attempts are needed and which ones matter. A benchmark job on the whole dataset is not
 part of a review; the published results are the series the review compares against,

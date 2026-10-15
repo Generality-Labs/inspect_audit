@@ -16,6 +16,7 @@ from typing import Any
 
 from .adapters import slug
 from .fs import StoreFS
+from .investigation import CITED
 from .models import Assessment, Finding, Run
 from .render import SEVERITY_ORDER, inputs_data, page_subject, sorted_findings
 from .review import Review
@@ -95,6 +96,26 @@ def _eval_entry(eval_name: str, runs: Sequence[Run], review: Review) -> dict[str
     }
 
 
+def _status_change(finding: Finding) -> dict[str, Any] | None:
+    """The last status review set on the finding: by whom, when, why, and which records it cites.
+
+    `cited_by` names the investigation findings that rested on this one, when an import set
+    the status; a person's status cites nothing.
+    """
+    if not finding.history:
+        return None
+    change = finding.history[-1]
+    reason = change.provenance.reason
+    cited = reason.removeprefix(CITED).split(", ") if reason and reason.startswith(CITED) else []
+    return {
+        "status": change.status,
+        "by": display_author(change.provenance.author),
+        "at": iso(change.provenance.timestamp),
+        "reason": reason,
+        "cited_by": cited,
+    }
+
+
 def _finding_row(finding: Finding, run: Run, review: Review, seen: Seen) -> dict[str, Any]:
     github = next((i.github for i in review.issues if i.id == finding.issue), None)
     first, last = _seen(seen, finding, run)
@@ -113,6 +134,7 @@ def _finding_row(finding: Finding, run: Run, review: Review, seen: Seen) -> dict
         "location": finding.primary_location.key(),
         "issue": finding.issue,
         "github": github,
+        "status_change": _status_change(finding),
         "first_seen": first,
         "last_seen": last,
     }
@@ -183,6 +205,7 @@ def _group_finding(finding: Finding, run: Run, seen: Seen) -> dict[str, Any]:
         "summary": finding.summary,
         "locations": [location.model_dump() for location in finding.locations],
         "issue": finding.issue,
+        "status_change": _status_change(finding),
         "first_seen": first,
         "last_seen": last,
     }

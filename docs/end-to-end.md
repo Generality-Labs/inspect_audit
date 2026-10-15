@@ -400,7 +400,7 @@ inspect_dataset            encoding_issues          none     3   (ISS-0001)
 
 ## Known gaps this walk-through shows
 
-- **The lead's confirmation is invisible.** The dataset producer already writes every Finding record as `supported`, so the investigator's `supported` changes nothing visible, and the export does not include status history. On the site, the lead looks exactly as it did before the import. Exporting history, or a "confirmed by" field, would fix this.
+- **The lead's confirmation was invisible.** The dataset producer already writes every Finding record as `supported`, so the investigator's `supported` changes nothing visible. The export now carries each finding's last status change as `status_change`, with `cited_by` naming the investigation findings that rested on it, so the site can show the confirmation.
 - **The site does not show assessments yet.** They are in the export; the eval page needs the audits-site change.
 - **Assessment evidence uses container paths.** `/inputs/source/…` is a path inside the investigator's container, not a file in the bundle.
 - **The investigator's path bug.** Without `-T paths=…`, it searched untracked folders in the checkout (`.claude/worktrees/…`), found a stray copy of BFCL there, and failed to archive it.

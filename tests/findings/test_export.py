@@ -413,3 +413,55 @@ def test_an_evals_page_takes_its_subject_from_a_sweep_not_an_investigation(run: 
     assert (doc["revision"]["commit"], doc["task_version"]) == ("5687c5cdf", "3-A")
     (entry,) = index_document({EVAL: runs}, Review(), seen_range(runs), NOW)["evals"]
     assert (entry["revision"]["commit"], entry["task_version"]) == ("5687c5cdf", "3-A")
+
+
+def test_a_finding_row_carries_the_status_change_review_made(run: Run) -> None:
+    from inspect_audit.findings.export import eval_document, index_document, seen_range
+    from inspect_audit.findings.models import Provenance
+
+    cited = "cited as evidence by inspect_audit_investigate-1/1, inspect_audit_investigate-1/2"
+    review = Review(
+        statuses={"sha256:0": "supported"},
+        status_provenance={
+            "sha256:0": Provenance(
+                timestamp=NOW, author="Ada Lovelace <ada@example.com>", reason=cited
+            )
+        },
+    )
+    runs = apply_review([run], review)
+    expected = {
+        "status": "supported",
+        "by": "Ada Lovelace",
+        "at": "2026-10-07T04:20:50Z",
+        "reason": cited,
+        "cited_by": ["inspect_audit_investigate-1/1", "inspect_audit_investigate-1/2"],
+    }
+    (row,) = index_document({EVAL: runs}, review, seen_range(runs), NOW)["findings"]
+    assert row["status_change"] == expected
+    doc = eval_document(EVAL, runs, review, seen_range(runs), NOW)
+    assert doc["groups"][0]["findings"][0]["status_change"] == expected
+
+
+def test_a_finding_no_one_reviewed_has_no_status_change(run: Run) -> None:
+    from inspect_audit.findings.export import index_document, seen_range
+
+    runs = apply_review([run], Review())
+    (row,) = index_document({EVAL: runs}, Review(), seen_range(runs), NOW)["findings"]
+    assert row["status_change"] is None
+
+
+def test_a_status_set_by_a_person_cites_nothing(run: Run) -> None:
+    from inspect_audit.findings.export import index_document, seen_range
+    from inspect_audit.findings.models import Provenance
+
+    review = Review(
+        statuses={"sha256:0": "retracted"},
+        status_provenance={
+            "sha256:0": Provenance(
+                timestamp=NOW, author="Ada <ada@example.com>", reason="fixed upstream"
+            )
+        },
+    )
+    runs = apply_review([run], review)
+    (row,) = index_document({EVAL: runs}, review, seen_range(runs), NOW)["findings"]
+    assert row["status_change"]["cited_by"] == [] and row["status"] == "retracted"

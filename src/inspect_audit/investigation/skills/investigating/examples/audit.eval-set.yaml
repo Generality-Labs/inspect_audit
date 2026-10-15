@@ -43,7 +43,7 @@ cost_limit: 2.00                           # dollars per audited item, enforced 
 epochs: 1
 token_limit: 4000000
 time_limit: 7200
-max_connections: 5
+max_connections: 5     # concurrent model calls; one item is one long agent, so set it to the item count (cap 50)
 max_retries: 10
 retry_attempts: 0        # a first job fails once; raise it only once the config works
 timeout: 600

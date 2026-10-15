@@ -55,7 +55,7 @@ for a tool it does not need yet.
 | 0 Orient | source, docs, overview | the benchmark's facts; the population and its strata; the sample design, yours or the operator's | `profile.json`, `sampling.json` |
 | 1 Reviewability | source, supplied log headers | can tasks, scoring logic and settings be inspected? | the reviewability row |
 | 2 Items | the sample | question-labels and the substantive item checks, two items first, then the rest | `coverage.json`, a provisional scoring row |
-| 3 Attempts | supplied logs, else eval models | read the supplied logs now; with none, run the default eval on the sampled ids only, one epoch, inside `eval_budget_usd`; with neither, write that down | the attempts source |
+| 3 Attempts | supplied logs, else eval models | read the supplied logs once the labels exist; with none, submit the default eval on the sampled ids only, one epoch, inside `eval_budget_usd`, beside the item batch (the auditors never see it) and read it once the labels exist; with neither, write that down. Measure impact by re-running gold-answer on the defective items alone against that job | the attempts source |
 | 4 Minimum standard | stages 2 and 3 | the four rows in rubric order: scoring impact measured on attempts where defects exist; consistency, elicitation and bias from headers, transcripts and the published methodology. Stop at the first Flag: the rows after it are Not Reviewed | the rows up to and including the first Flag, with its `impact` |
 | 5 Quality | no Flag in stage 4 | the seven quality rows; after a Flag they are all Not Reviewed | assessments complete |
 | 6 Publish | the derived verdict | the prose blocks that verdict calls for; publish | the page |
@@ -78,8 +78,14 @@ the page reads "[stop → Flawed]" where it stopped. Observations that would hav
 into later rows belong in the findings filed under the flagged check or in the
 journal, not in rows the methodology says are not reviewed.
 
-A benchmark job before stage 2 is finished is premature: the items decide whether
-attempts are needed and which ones matter. A benchmark job on the whole dataset is not
+A benchmark job before the sample is fixed is premature; once it is fixed and the
+pilot has passed, the attempts job goes out beside the item batch, because the clock
+is the item audits (one long agent per item, waiting on nothing) and the auditors
+never see attempts. Read it only once the labels exist, and measure impact by
+re-running gold-answer on the defective items alone with that job as the logs
+argument: auditing the whole sample a second time doubles the longest stage. Give an
+audit job `max_connections` equal to its item count, up to the policy cap, or the
+batch runs in waves. A benchmark job on the whole dataset is not
 part of a review; the published results are the series the review compares against,
 and the review's own attempts measure what the confirmed defects do to real
 submissions. A defect no attempt touches is still a defect for the measure; it simply

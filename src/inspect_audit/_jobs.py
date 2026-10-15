@@ -550,6 +550,8 @@ def http_status(ex: BaseException) -> int | None:
 JOB_TERMINAL = {"complete", "failed", "deleted"}
 # inspect_ai eval_set(retry_attempts=None) retries a failed task this many times
 INSPECT_DEFAULT_RETRIES = 10
+# Inspect's max_connections when a config leaves it unset
+INSPECT_DEFAULT_CONNECTIONS = 10
 
 
 @dataclass(frozen=True)
@@ -1184,6 +1186,26 @@ def validate_config(
         if name not in policy.models and bare in policy.known_models and bare not in policy.models:
             problems.append(
                 f"model {name!r} is not on the worker menu (found outside a model field)"
+            )
+
+    if kind == "audit":
+        # one audited item is one long agent that waits on nothing but its model, so a
+        # batch runs as many items at once as it has connections; a 48-item batch on
+        # Inspect's default of 10 runs in five waves and is the clock of the whole review
+        sizes = [_samples_in(item, parsed.limit) for task in parsed.tasks for item in task.items]
+        items = max((n for n in sizes if n is not None), default=None)
+        connections = config.get("max_connections")
+        if connections is None:
+            connections = INSPECT_DEFAULT_CONNECTIONS
+        if (
+            items is not None
+            and isinstance(connections, int)
+            and not isinstance(connections, bool)
+            and connections < min(items, policy.max_connections)
+        ):
+            problems.append(
+                f"max_connections {connections} runs this job's {items} items in waves of "
+                f"{connections}: set it to the item count, up to {policy.max_connections}"
             )
 
     worst = worst_case_usd(parsed, policy)

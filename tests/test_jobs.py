@@ -1193,6 +1193,25 @@ def test_repeated_work_is_reserved_and_the_knobs_that_multiply_it_are_capped() -
         )
 
 
+def test_an_audit_batch_gets_a_connection_per_item() -> None:
+    """One audited item is one long agent: a batch on ten connections runs in waves."""
+    waves = validate_config(
+        filled_example("audit.eval-set.yaml", limit=48, max_connections=10), policy(), set()
+    )
+    assert any("waves of 10" in p and "up to 50" in p for p in waves)
+    unset = filled_example("audit.eval-set.yaml", limit=48)
+    del unset["max_connections"]
+    assert any("waves of 10" in p for p in validate_config(unset, policy(), set()))
+    enough = filled_example("audit.eval-set.yaml", limit=48, max_connections=48)
+    assert not any("waves" in p for p in validate_config(enough, policy(), set()))
+    # the cap, not the item count, is the ceiling asked for on a batch bigger than it
+    capped = filled_example("audit.eval-set.yaml", limit=200, max_connections=50)
+    assert not any("waves" in p for p in validate_config(capped, policy(), set()))
+    # a benchmark job's samples are short generations; the rule is not for it
+    bench = filled_example("benchmark.eval-set.yaml", limit=48, max_connections=10)
+    assert not any("waves" in p for p in validate_config(bench, policy(), set()))
+
+
 def test_a_refused_duplicate_does_not_overwrite_the_config_that_ran(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

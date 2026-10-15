@@ -2,14 +2,17 @@
 
 import io
 import json
+import os
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pandas as pd
 import pytest
 from test_adapters_common import STUBS, make_root
 from test_header_adapter import _log
 
+from inspect_audit.findings import cli
 from inspect_audit.findings.cli import collect_logs, main
 from inspect_audit.findings.featured import FEATURED
 from inspect_audit.findings.fs import StoreFS
@@ -33,6 +36,25 @@ def _stubbed_env(monkeypatch: pytest.MonkeyPatch, *, lint_ok: bool = True) -> No
     )
     monkeypatch.setenv("STUB_OUTPUT_FILE", str(FIXTURES / "lint.json"))
     monkeypatch.setenv("STUB_OUTPUT_DIR", str(FIXTURES / "dataset"))
+
+
+def test_run_loads_the_nearest_env_file_and_the_shell_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".env").write_text(
+        "INSPECT_AUDIT_STORE=s3://from-file\nINSPECT_AUDIT_AUTHOR=file\n"
+    )
+    (tmp_path / "sub").mkdir()
+    monkeypatch.chdir(tmp_path / "sub")
+    seen: dict[str, str] = {}
+    monkeypatch.setattr(cli, "main", lambda: seen.update(os.environ) or 0)
+    with mock.patch.dict(os.environ, {"INSPECT_AUDIT_AUTHOR": "shell"}):
+        os.environ.pop("INSPECT_AUDIT_STORE", None)
+        with pytest.raises(SystemExit) as exited:
+            cli.run()
+    assert exited.value.code == 0
+    assert seen["INSPECT_AUDIT_STORE"] == "s3://from-file"
+    assert seen["INSPECT_AUDIT_AUTHOR"] == "shell"
 
 
 def test_featured_has_35_ids() -> None:

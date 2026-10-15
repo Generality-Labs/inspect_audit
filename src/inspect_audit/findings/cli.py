@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+from dotenv import find_dotenv, load_dotenv
 from fsspec.core import url_to_fs
 from inspect_ai.log import list_eval_logs
 from inspect_ai.log._file import is_log_file  # the rule Inspect uses to list logs
@@ -889,5 +890,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 1 if skipped else 0
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """Console entry point: load the nearest `.env` as `inspect eval` does, then run `main`.
+
+    Variables already set in the shell win over the file.
+    """
+    load_dotenv(find_dotenv(usecwd=True))
     raise SystemExit(main())
+
+
+if __name__ == "__main__":
+    run()

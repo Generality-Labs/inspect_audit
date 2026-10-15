@@ -48,21 +48,21 @@ root = "../inspect_evals"   # default --root for run, relative to the current di
 
 ## Using an S3 or R2 bucket
 
-Pass `--store s3://<bucket>/<prefix>` or set `INSPECT_AUDIT_STORE`. Give the store its credentials through a named AWS profile, and set `INSPECT_AUDIT_STORE_PROFILE` to the profile's name. Only the store's own S3 client uses the profile. Remote log sources (`--logs s3://…`) and the producers keep the default AWS credentials, so a sweep can read logs from AWS while it writes to R2. For Cloudflare R2:
+Pass `--store s3://<bucket>/<prefix>` or set `INSPECT_AUDIT_STORE`. Give the store its credentials through a named AWS profile, and set `INSPECT_AUDIT_STORE_PROFILE` to the profile's name, such as `inspect-audit-store`. Only the store's own S3 client uses the profile. Remote log sources (`--logs s3://…`) and the producers keep the default AWS credentials, so a sweep can read logs from AWS while it writes to R2. For Cloudflare R2:
 
 ```ini
 # ~/.aws/credentials
-[<bucket>]
+[inspect-audit-store]
 aws_access_key_id = <the R2 token's Access Key ID, not the account id>
 aws_secret_access_key = <its Secret Access Key>
 
 # ~/.aws/config
-[profile <bucket>]
+[profile inspect-audit-store]
 endpoint_url = https://<account id>.r2.cloudflarestorage.com
 region = auto
 ```
 
-The token needs object read and write on the bucket. Name the profile after that bucket, since it holds that bucket's credentials and no others. R2 rejects AWS region names, so `region = auto` is required whenever `~/.aws/config` sets a default region.
+The token needs object read and write on the bucket. Any profile name works; `inspect-audit-store` keeps it beside the variable that selects it. R2 rejects AWS region names, so `region = auto` is required whenever `~/.aws/config` sets a default region.
 
 Put `INSPECT_AUDIT_STORE` and `INSPECT_AUDIT_STORE_PROFILE` in a `.env` file. The CLI loads the nearest one from the working directory or a parent, as `inspect eval` does, and variables already set in the shell win.
 

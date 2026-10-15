@@ -332,3 +332,49 @@ def test_inputs_data_returns_what_the_lines_are_rendered_from(run: Run) -> None:
         "logs": {"used": [], "excluded": [], "count_excluded": []},
         "comparison": {},
     }
+
+
+def test_eval_summary_takes_its_subject_from_a_sweep_not_an_investigation(run: Run) -> None:
+    from inspect_audit.findings.models import Revision, Subject
+    from inspect_audit.findings.render import render_eval_summary
+
+    investigation = run.model_copy(
+        update={
+            "id": "inspect_audit_investigate-1",
+            "producer": "inspect_audit_investigate",
+            "subject": Subject(eval=run.subject.eval, revision=Revision(commit="dbd3dd25")),
+            "findings": [],
+        }
+    )
+    text = render_eval_summary([investigation, run])
+    assert "| Revision | 5687c5cdf |" in text and "| Task version | 3-A |" in text
+
+
+def test_eval_summary_shows_the_newest_sweeps_revision(run: Run) -> None:
+    from datetime import timedelta
+
+    from inspect_audit.findings.models import Revision, Subject, TaskVersion
+    from inspect_audit.findings.render import page_subject
+
+    old = run.model_copy(
+        update={
+            "id": "header-1",
+            "producer": "header",
+            "subject": Subject(
+                eval=run.subject.eval,
+                revision=Revision(commit="aaaa"),
+                task_version=TaskVersion.parse("7-A"),
+            ),
+        }
+    )
+    new = run.model_copy(
+        update={
+            "timestamp": run.timestamp + timedelta(days=14),
+            "subject": Subject(
+                eval=run.subject.eval,
+                revision=Revision(commit="bbbb"),
+                task_version=TaskVersion.parse("7-B"),
+            ),
+        }
+    )
+    assert page_subject([old, new]).revision.commit == "bbbb"

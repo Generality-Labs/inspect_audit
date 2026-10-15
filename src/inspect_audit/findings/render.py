@@ -6,7 +6,8 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .models import Finding, Run
+from .investigation import PRODUCER as INVESTIGATOR
+from .models import Finding, Run, Subject
 from .review import IssueEntry
 
 NOISE_THRESHOLD = 100
@@ -153,10 +154,31 @@ def _is_skipped(run: Run) -> bool:
     return bool(run.outcomes) and all(outcome.status == "skip" for outcome in run.outcomes)
 
 
+def page_subject(runs: Sequence[Run]) -> Subject:
+    """The revision and task version an eval's page shows.
+
+    A sweep reads the checkout and records both; an imported investigation records only the
+    commit its report names. So a run with a task version wins, then any run but an
+    investigation, then the newest, so re-running some producers moves the page to their
+    revision.
+    """
+    ranked = sorted(
+        runs,
+        key=lambda r: (
+            r.subject.task_version is None,
+            r.producer == INVESTIGATOR,
+            -r.timestamp.timestamp(),
+            r.producer,
+            r.id,
+        ),
+    )
+    return ranked[0].subject
+
+
 def render_eval_summary(runs: Sequence[Run], issues: Sequence[IssueEntry] = ()) -> str:
     """One eval: subject, inputs, outcomes, counts, findings grouped by rule, suppressions, issues."""
     runs = sorted(runs, key=lambda r: (r.producer, r.id))
-    subject = runs[0].subject
+    subject = page_subject(runs)
     parts: list[str] = [f"# {subject.eval}", ""]
 
     dataset = subject.dataset

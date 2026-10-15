@@ -121,7 +121,9 @@ def read_bundle(bundle: Path, eval: str, *, revision: str | None = None) -> Impo
         )
         fingerprints[raw["id"]] = finding.fingerprint
         status: Status = raw["status"]
-        pending += [(str(ref["location"]), status, len(findings)) for ref in leads if ref.get("location")]
+        pending.extend(
+            (str(ref["location"]), status, len(findings)) for ref in leads if ref.get("location")
+        )
         findings.append(finding)
 
     limitation_ids = {str(item["id"]) for item in limitations}
@@ -138,7 +140,10 @@ def read_bundle(bundle: Path, eval: str, *, revision: str | None = None) -> Impo
     }
     coverage = _load(bundle / "coverage.json")
     if isinstance(coverage, dict) and "counts" in coverage:
-        inputs["coverage"] = {"denominator": coverage.get("denominator"), "counts": coverage["counts"]}
+        inputs["coverage"] = {
+            "denominator": coverage.get("denominator"),
+            "counts": coverage["counts"],
+        }
     if limitations:
         inputs["limitations"] = cast(JsonValue, limitations)
     run = Run(

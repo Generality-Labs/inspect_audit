@@ -573,7 +573,7 @@ def test_the_errors_table_names_every_recorded_defect_and_lists_the_sound_items(
         sampling={"population": 6, "sample": 6, "strategy": "census"},
     )
     with pytest.raises(
-        ValueError, match="error_examples must carry one row for every item.*missing 1: item_3"
+        ValueError, match=r"error_examples must carry one row for every item.*missing 1: item_3"
     ):
         prepare_publication(root, [])
     prose["error_examples"].append(

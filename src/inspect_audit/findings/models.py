@@ -296,7 +296,9 @@ class Measure(BaseModel):
     @model_validator(mode="after")
     def _within(self) -> Measure:
         if self.numerator > self.denominator:
-            raise ValueError(f"{self.name}: {self.numerator} exceeds its denominator {self.denominator}")
+            raise ValueError(
+                f"{self.name}: {self.numerator} exceeds its denominator {self.denominator}"
+            )
         return self
 
     @property
@@ -332,9 +334,9 @@ class Assessment(BaseModel):
     def _known_check(self) -> Assessment:
         if not METHODOLOGY_REF.match(self.methodology):
             raise ValueError(f"methodology {self.methodology!r} is not <id>@<version>")
-        if self.methodology in TAXONOMIES:
-            if self.check not in load_taxonomy(self.methodology).assessable_ids():
-                raise ValueError(f"{self.check!r} is not a check of {self.methodology}")
+        known = self.methodology in TAXONOMIES
+        if known and self.check not in load_taxonomy(self.methodology).assessable_ids():
+            raise ValueError(f"{self.check!r} is not a check of {self.methodology}")
         return self
 
 
@@ -363,7 +365,9 @@ class Run(BaseModel):
         for assessment in self.assessments:
             key = (assessment.methodology, assessment.check)
             if key in seen:
-                raise ValueError(f"{assessment.check!r} is assessed twice under {assessment.methodology}")
+                raise ValueError(
+                    f"{assessment.check!r} is assessed twice under {assessment.methodology}"
+                )
             seen.add(key)
             missing = [f for f in assessment.findings if f not in fingerprints]
             if missing:

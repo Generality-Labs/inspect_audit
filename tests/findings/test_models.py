@@ -168,7 +168,9 @@ def test_a_run_carries_assessments_through_a_round_trip(run: Run) -> None:
     assessed = run.model_copy(
         update={
             "assessments": [
-                _assessment(findings=[run.findings[0].fingerprint], measure=measure, impact="3 pairs")
+                _assessment(
+                    findings=[run.findings[0].fingerprint], measure=measure, impact="3 pairs"
+                )
             ]
         }
     )
@@ -184,7 +186,7 @@ def test_a_taxonomy_methodology_accepts_dimension_codes_and_contributions() -> N
 
 
 def test_a_taxonomy_methodology_refuses_a_check_it_does_not_have() -> None:
-    with pytest.raises(ValidationError, match="Z.9"):
+    with pytest.raises(ValidationError, match=r"Z\.9"):
         _assessment(check="Z.9")
 
 
@@ -201,13 +203,14 @@ def test_a_methodology_names_its_version() -> None:
 def test_an_assessment_cites_only_findings_of_its_own_run(run: Run) -> None:
     with pytest.raises(ValidationError, match="sha256:elsewhere"):
         Run.model_validate(
-            run.model_dump() | {"assessments": [_assessment(findings=["sha256:elsewhere"]).model_dump()]}
+            run.model_dump()
+            | {"assessments": [_assessment(findings=["sha256:elsewhere"]).model_dump()]}
         )
 
 
 def test_a_check_is_assessed_once_per_methodology_in_a_run(run: Run) -> None:
     twice = [_assessment().model_dump(), _assessment(level="Major").model_dump()]
-    with pytest.raises(ValidationError, match="A.1"):
+    with pytest.raises(ValidationError, match=r"A\.1"):
         Run.model_validate(run.model_dump() | {"assessments": twice})
 
 

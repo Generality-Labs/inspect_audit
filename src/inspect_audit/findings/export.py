@@ -16,7 +16,7 @@ from typing import Any
 
 from .adapters import slug
 from .fs import StoreFS
-from .models import Finding, Run
+from .models import Assessment, Finding, Run
 from .render import SEVERITY_ORDER, inputs_data, sorted_findings
 from .review import Review
 
@@ -153,6 +153,24 @@ def _run_entry(run: Run) -> dict[str, Any]:
             for o in run.outcomes
             if o.status != "pass"
         ],
+        "assessments": [_assessment_entry(a, run) for a in run.assessments],
+    }
+
+
+def _assessment_entry(assessment: Assessment, run: Run) -> dict[str, Any]:
+    # the page links findings by record id; the record cites them by fingerprint
+    ids = {finding.fingerprint: finding.id for finding in run.findings}
+    measure = assessment.measure
+    return {
+        "methodology": assessment.methodology,
+        "check": assessment.check,
+        "level": assessment.level,
+        "notes": assessment.notes,
+        "impact": assessment.impact,
+        "measure": measure.model_dump() | {"value": measure.value} if measure else None,
+        "findings": [ids[fingerprint] for fingerprint in assessment.findings],
+        "evidence": [location.model_dump() for location in assessment.evidence],
+        "fields": assessment.fields,
     }
 
 

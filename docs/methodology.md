@@ -1,5 +1,7 @@
 # Methodology, template and records
 
+About the investigator agent: what it is asked to check, how its report is laid out, and the records it should leave for the findings store.
+
 Written 2026-10-12 after Justin's Auditor architecture sketch (Slack, 2026-10-09) and a read of Epoch AI's benchmark reviews. It settles one question: whether the investigator keeps being handed the report template to tell it what to look for, or produces records that any template can render.
 
 ## Today

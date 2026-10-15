@@ -31,7 +31,7 @@ The facts about Generality Labs' own instance of the findings store: where it li
 
 Moved from the table site spec, 2026-10-12. Kept for whoever extends the site.
 
-**The export shapes.** `src/inspect_audit/findings/export.py` is the source of truth; real files carry more than the spec's examples: `inputs.logs.count_excluded`; dataset keys such as `config`, `split`, `revision`, `task` and `inspect_ai`; `quote` and `end_line` as null on code locations; `runs[*].passing`; `issues[*].reason`; `suppressed[*].producer` may be null. The site's fixture is a real export plus a few additions.
+**The export shapes.** `src/inspect_audit/findings/export.py` is the source of truth; real files carry more than the spec's examples: `inputs.logs.count_excluded`; dataset keys such as `config`, `split`, `revision`, `task` and `inspect_ai`; `quote` and `end_line` as null on code locations; `runs[*].passing`; `runs[*].assessments`, each with its findings as record ids and its measure's derived `value`; `issues[*].reason`; `suppressed[*].producer` may be null. The site's fixture is a real export plus a few additions.
 
 **Cloudflare.** The custom domain is a route under `[env.production]` on the `generality.org` zone, declared the way `llm-prices.generality.org` is. Repo secrets the template's deploy needs: `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; a `HEALTH_URL` variable on the GitHub environment for the smoke test. The Worker has no secrets since the move to the R2 binding (audits-site #7).
 

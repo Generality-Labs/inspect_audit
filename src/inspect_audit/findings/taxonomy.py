@@ -81,6 +81,11 @@ class Taxonomy(BaseModel):
             for contribution in dimension.contributions
         }
 
+    def assessable_ids(self) -> set[str]:
+        """What an assessment may name: a dimension, by id or letter code, or one of its checks."""
+        codes = {dimension.code for dimension in self.dimensions if dimension.code}
+        return codes | self.dimension_ids() | self.check_ids()
+
 
 class TaxonomyMapping(BaseModel):
     """How one taxonomy's ids read in another; every source id must be covered."""

@@ -97,6 +97,7 @@ Done when a maintainer can find an eval, see what was checked and when, pick an 
 ### 5. Import the existing investigations and expand
 
 - The register adapter imports the chess bundle and the SciCode registers into the findings repo as PRs; Assessment and Coverage render on those evals' pages; cited leads become status history.
+- Built 2026-10-15: the Assessment record on runs, and `import-investigation` for GL-format bundles (first case: the BFCL investigation run with leads on 2026-10-12, which cites one lead). Still to come: assessments on the site's eval page, an Epoch-format reader once `laurence/epoch-methodology` lands, and the SciCode registers.
 - The MCP attach step, the staged-file fallback and the skill text go to James as one PR, with the egress allowlist and token scope questions.
 - Deterministic checks across the registry are already scheduled by milestone 3; bounded investigations run at the cadence milestone 2 says we can afford. Each eval page shows which checks apply and which have run.
 

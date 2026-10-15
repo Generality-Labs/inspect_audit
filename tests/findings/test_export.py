@@ -330,3 +330,55 @@ def test_eval_files_are_left_alone_when_only_the_stamp_would_change(
     write_export(fs, {EVAL: reviewed}, Review(), history=reviewed, generated_at=later)
     assert fs.read_bytes(eval_file) == before  # a review of another eval must not churn this file
     assert "2026-10-08" in fs.read_text(index)
+
+
+def test_eval_document_run_entries_carry_their_assessments(run: Run) -> None:
+    from inspect_audit.findings.export import eval_document, seen_range
+    from inspect_audit.findings.models import ArtifactLocation, Assessment, Measure
+
+    finding = run.findings[0]
+    assessed = run.model_copy(
+        update={
+            "assessments": [
+                Assessment(
+                    methodology="inspect-audit@1",
+                    check="C.1",
+                    level="Minor",
+                    notes="Three pairs carry contradictory labels.",
+                    evidence=[ArtifactLocation(path="evidence/pairs_probe.txt")],
+                    findings=[finding.fingerprint],
+                    measure=Measure(name="sampled_defect_rate", numerator=5, denominator=50),
+                    impact="unknown score effect",
+                )
+            ]
+        }
+    )
+    doc = eval_document(EVAL, [assessed], Review(), seen_range([assessed]), NOW)
+    assert doc["runs"][0]["assessments"] == [
+        {
+            "methodology": "inspect-audit@1",
+            "check": "C.1",
+            "level": "Minor",
+            "notes": "Three pairs carry contradictory labels.",
+            "impact": "unknown score effect",
+            "measure": {
+                "name": "sampled_defect_rate",
+                "numerator": 5,
+                "denominator": 50,
+                "threshold": None,
+                "source": None,
+                "value": 0.1,
+            },
+            "findings": [finding.id],
+            "evidence": [
+                {
+                    "kind": "artifact",
+                    "role": "related",
+                    "quote": None,
+                    "path": "evidence/pairs_probe.txt",
+                    "location": None,
+                }
+            ],
+            "fields": {},
+        }
+    ]

@@ -42,6 +42,10 @@ class Block(BaseModel):
     when: list[str]
     required: list[str] = Field(default_factory=list)
     lead: str | dict[str, str] = ""
+    # what the renderer appends under a table from the records: `coverage_ids` lists
+    # the audited items that were not recorded as defects, so the table of errors is
+    # read against the items that were checked and found sound
+    footer: Literal["", "coverage_ids"] = ""
 
     def shown_for(self, verdict: str) -> bool:
         return verdict in self.when
@@ -204,6 +208,34 @@ def _header_value(line: HeaderLine, profile: "Profile", verdict: str) -> str:
     return raw
 
 
+COVERAGE_FOOTER = {
+    "NO_ISSUE_FOUND": "Audited without finding a defect",
+    "UNRESOLVED": "Audited, unresolved",
+    "NOT_ASSESSED": "Not assessed",
+}
+
+
+def coverage_ids(coverage: dict[str, Any] | None, status: str) -> list[str]:
+    """The ids `coverage.json` records at `status`, in its order."""
+    if not coverage:
+        return []
+    return [
+        str(q.get("question_id") or q.get("sample_id"))
+        for q in coverage.get("questions") or []
+        if isinstance(q, dict) and q.get("status") == status
+    ]
+
+
+def coverage_id_lines(coverage: dict[str, Any] | None) -> list[str]:
+    """The lines under the errors table: every audited item that is not in it, by status."""
+    lines: list[str] = []
+    for status, label in COVERAGE_FOOTER.items():
+        ids = coverage_ids(coverage, status)
+        if ids:
+            lines += [f"{label} ({len(ids)}): {', '.join(ids)}", ""]
+    return lines
+
+
 def render(
     template: Template,
     method: Methodology,
@@ -211,6 +243,7 @@ def render(
     assessments: dict[str, "Assessment"],
     prose: "Prose",
     derived: dict[str, Any],
+    coverage: dict[str, Any] | None = None,
 ) -> str:
     """The deliverable, rendered from the records so it cannot drift from them."""
     verdict = derived["verdict"]
@@ -234,6 +267,8 @@ def render(
                 for row in value
             ]
             out.append("")
+            if block.footer == "coverage_ids":
+                out += coverage_id_lines(coverage)
             continue
         if block.title:
             out += [f"## {block.title}", ""]

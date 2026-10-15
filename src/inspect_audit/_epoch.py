@@ -18,7 +18,7 @@ from pydantic import TypeAdapter
 
 from .methodology import METHODOLOGIES, Methodology, load_methodology
 from .records import Assessment, Profile, Prose, Sampling, validate_assessments
-from .template import TEMPLATES, Template, load_template, render
+from .template import TEMPLATES, Template, coverage_ids, load_template, render
 
 FORMAT = "epoch"
 METHODOLOGY = "epoch-rubric@1"
@@ -359,10 +359,29 @@ def derive_verdict(
     }
 
 
-def check_prose(prose: Prose, template: Template, profile: Profile, verdict: str) -> None:
+def check_prose(
+    prose: Prose,
+    template: Template,
+    profile: Profile,
+    verdict: str,
+    coverage: dict[str, Any] | None = None,
+) -> None:
     prose.validate_against(template, verdict)
     if not profile.creator.strip():
         raise ValueError("profile.creator is empty")
+    # a table that lists the sound items beneath it must name every defect above them:
+    # the reader counts the rows against the measure, so a sample of them misleads
+    for block in template.blocks:
+        if block.footer != "coverage_ids" or not prose.present(block):
+            continue
+        named = " ".join(str(row.get("task", "")) for row in prose.block(block.id))
+        missing = [qid for qid in coverage_ids(coverage, "DEFECT") if qid not in named]
+        if missing:
+            raise ValueError(
+                f"{block.id} must carry one row for every item recorded as a defect in "
+                f"coverage.json, naming it in the task cell; missing {len(missing)}: "
+                + ", ".join(missing)
+            )
 
 
 def assess(report: Path, root: Path | None = None) -> dict[str, Any]:
@@ -383,7 +402,7 @@ def assess(report: Path, root: Path | None = None) -> dict[str, Any]:
     coverage = json.loads(coverage_path.read_text()) if coverage_path.is_file() else None
     measured = measures(method, assessments, coverage, sampling)
     derived = derive_verdict(method, assessments, measured)
-    check_prose(prose, template, profile, derived["verdict"])
+    check_prose(prose, template, profile, derived["verdict"], coverage)
     if not profile.review_date:
         profile.review_date = datetime.now(UTC).date().isoformat()
         (report / "profile.json").write_text(json.dumps(profile.model_dump(), indent=2) + "\n")
@@ -395,7 +414,7 @@ def assess(report: Path, root: Path | None = None) -> dict[str, Any]:
         coverage["sampling"] = sampling.model_dump()
         coverage_path.write_text(json.dumps(coverage, indent=2))
     derived["template"] = template.id
-    derived["page"] = render(template, method, profile, assessments, prose, derived)
+    derived["page"] = render(template, method, profile, assessments, prose, derived, coverage)
     return derived
 
 

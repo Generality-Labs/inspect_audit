@@ -117,7 +117,10 @@ The template lists every block with its brief, its limit and the verdicts it bel
   (bullets addressed to the benchmark's creator: what to change, publish or document).
 - **Flawed** adds instead **representative_errors** (bullets explaining the errors that
   crossed the threshold), **error_examples** (a table with columns Task, Error type, Notes,
-  Affected logs; every cell under thirty words) and **recommendations**. No interpretation,
+  Affected logs; every cell under thirty words; one row for every item `coverage.json`
+  records as a defect, naming its id in Task, then any run-level errors; `check_report`
+  refuses a table that leaves a recorded defect out, and the page lists the ids audited
+  without a defect under the table for you) and **recommendations**. No interpretation,
   task analysis or elicitation block: the rubric notes carry what the reader needs.
 - **NEI** or **Incomplete** adds **limitations**, saying what could not be reviewed and why.
 

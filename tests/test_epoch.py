@@ -542,6 +542,59 @@ def test_a_flawed_review_renders_representative_errors(tmp_path: Path) -> None:
     assert "## Interpretation" not in md and "## Limitations" not in md
 
 
+def test_the_errors_table_names_every_recorded_defect_and_lists_the_sound_items(
+    tmp_path: Path,
+) -> None:
+    """The reader counts the rows against the measure, so a sample of the defects misleads."""
+    coverage = coverage_of(defect=2, clean=3, unresolved=1)
+    coverage["questions"] = [
+        {"question_id": q, "status": s}
+        for q, s in (
+            ("item_1", "DEFECT"),
+            ("item_2", "NO_ISSUE_FOUND"),
+            ("item_3", "DEFECT"),
+            ("item_4", "NO_ISSUE_FOUND"),
+            ("item_5", "UNRESOLVED"),
+            ("item_6", "NO_ISSUE_FOUND"),
+        )
+    ]
+    rows = filled_assessments(scoring_integrity="Flag")
+    row(rows, "scoring_integrity")["impact"] = "Two of ten attempts were marked wrong."
+    stop_after(rows, "scoring_integrity")
+    prose = flawed_prose()
+    prose["error_examples"] = [
+        {"task": "item_1", "error_type": "False negative", "notes": "n", "affected_logs": "1"}
+    ]
+    root = workspace(
+        tmp_path,
+        rows,
+        prose,
+        coverage,
+        sampling={"population": 6, "sample": 6, "strategy": "census"},
+    )
+    with pytest.raises(
+        ValueError, match="error_examples must carry one row for every item.*missing 1: item_3"
+    ):
+        prepare_publication(root, [])
+    prose["error_examples"].append(
+        {
+            "task": "item_3 (second half)",
+            "error_type": "Wrong key",
+            "notes": "n",
+            "affected_logs": "2",
+        }
+    )
+    (root / "work/report/prose.json").write_text(json.dumps(prose))
+    derived = prepare_publication(root, [])
+    md = (root / "work/report/epoch_review.md").read_text()
+    assert derived["verdict"] == "Flawed"
+    assert "| item_3 (second half) | Wrong key | n | 2 |" in md
+    table_end = md.index("| item_3 (second half)")
+    assert "Audited without finding a defect (3): item_2, item_4, item_6" in md[table_end:]
+    assert "Audited, unresolved (1): item_5" in md[table_end:]
+    assert md.index("Audited without finding a defect") < md.index("## Recommendations")
+
+
 def test_publication_fills_the_date_merges_sampling_and_refuses_the_wrong_prose(
     tmp_path: Path,
 ) -> None:

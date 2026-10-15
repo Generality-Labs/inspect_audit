@@ -89,15 +89,18 @@ blocks:
     when: [Flawed]
     required: [Flawed]
     max_cell_words: 30
+    footer: coverage_ids
     columns:
       - {key: task, title: Task}
       - {key: error_type, title: Error type}
       - {key: notes, title: Notes}
       - {key: affected_logs, title: Affected logs}
     brief: >-
-      Concrete examples. Task names the item or run; Error type is the defect class in a few
+      Every recorded error. One row for each item coverage.json records as a defect, with
+      Task naming its id, then any run-level errors; Error type is the defect class in a few
       words; Notes says what happened; Affected logs names the runs or models the error
-      touches, with a count.
+      touches, with a count. The ids audited without a defect are listed under the table
+      from coverage.json; you do not write them.
   - id: limitations
     title: Limitations
     kind: bullets

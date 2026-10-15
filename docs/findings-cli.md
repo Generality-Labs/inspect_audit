@@ -52,17 +52,17 @@ Pass `--store s3://<bucket>/<prefix>` or set `INSPECT_AUDIT_STORE`. Give the sto
 
 ```ini
 # ~/.aws/credentials
-[r2]
+[<bucket>]
 aws_access_key_id = <the R2 token's Access Key ID, not the account id>
 aws_secret_access_key = <its Secret Access Key>
 
 # ~/.aws/config
-[profile r2]
+[profile <bucket>]
 endpoint_url = https://<account id>.r2.cloudflarestorage.com
 region = auto
 ```
 
-The token needs object read and write on the bucket. R2 rejects AWS region names, so `region = auto` is required whenever `~/.aws/config` sets a default region.
+The token needs object read and write on the bucket. Name the profile after that bucket, since it holds that bucket's credentials and no others. R2 rejects AWS region names, so `region = auto` is required whenever `~/.aws/config` sets a default region.
 
 Put `INSPECT_AUDIT_STORE` and `INSPECT_AUDIT_STORE_PROFILE` in a `.env` file. The CLI loads the nearest one from the working directory or a parent, as `inspect eval` does, and variables already set in the shell win.
 

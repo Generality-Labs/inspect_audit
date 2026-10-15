@@ -53,6 +53,123 @@
       "title": "ArtifactLocation",
       "type": "object"
     },
+    "Assessment": {
+      "additionalProperties": false,
+      "description": "One check's level under a methodology, as an agent or a person judged it.\n\nClean, not-assessed and not-applicable checks are assessments, never findings, and a\nlevel is never computed from findings. The store knows no methodology's scale, so the\nlevel is the methodology's own word; only a taxonomy's check ids are validated.",
+      "properties": {
+        "check": {
+          "minLength": 1,
+          "title": "Check",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "artifact": "#/$defs/ArtifactLocation",
+                "code": "#/$defs/CodeLocation",
+                "log": "#/$defs/LogLocation",
+                "sample": "#/$defs/SampleLocation",
+                "scorer": "#/$defs/ScorerLocation",
+                "transcript": "#/$defs/TranscriptLocation",
+                "url": "#/$defs/UrlLocation"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/CodeLocation"
+              },
+              {
+                "$ref": "#/$defs/SampleLocation"
+              },
+              {
+                "$ref": "#/$defs/TranscriptLocation"
+              },
+              {
+                "$ref": "#/$defs/LogLocation"
+              },
+              {
+                "$ref": "#/$defs/ScorerLocation"
+              },
+              {
+                "$ref": "#/$defs/ArtifactLocation"
+              },
+              {
+                "$ref": "#/$defs/UrlLocation"
+              }
+            ]
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "fields": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Fields",
+          "type": "object"
+        },
+        "findings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "impact": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Impact"
+        },
+        "level": {
+          "minLength": 1,
+          "title": "Level",
+          "type": "string"
+        },
+        "measure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Measure"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "methodology": {
+          "title": "Methodology",
+          "type": "string"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        }
+      },
+      "required": [
+        "methodology",
+        "check",
+        "level"
+      ],
+      "title": "Assessment",
+      "type": "object"
+    },
     "CodeLocation": {
       "additionalProperties": true,
       "properties": {
@@ -521,6 +638,58 @@
         "path"
       ],
       "title": "LogLocation",
+      "type": "object"
+    },
+    "Measure": {
+      "additionalProperties": false,
+      "description": "A thresholded check's count, so \"5 of 50 sampled, threshold 20%\" is data, not prose.",
+      "properties": {
+        "denominator": {
+          "exclusiveMinimum": 0,
+          "title": "Denominator",
+          "type": "integer"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "numerator": {
+          "minimum": 0,
+          "title": "Numerator",
+          "type": "integer"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "threshold": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Threshold"
+        }
+      },
+      "required": [
+        "name",
+        "numerator",
+        "denominator"
+      ],
+      "title": "Measure",
       "type": "object"
     },
     "Outcome": {
@@ -1080,6 +1249,13 @@
   "additionalProperties": false,
   "description": "One producer invocation over one eval: provenance, pass/fail/skip outcomes, findings.",
   "properties": {
+    "assessments": {
+      "items": {
+        "$ref": "#/$defs/Assessment"
+      },
+      "title": "Assessments",
+      "type": "array"
+    },
     "cost_usd": {
       "anyOf": [
         {

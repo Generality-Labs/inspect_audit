@@ -150,3 +150,68 @@ def test_run_assigns_record_ids_to_findings_that_lack_one(
     assert run.findings[0].issue is None
     again = Run.model_validate_json(run.model_dump_json())
     assert [f.id for f in again.findings] == ["lint-9/1", "kept/explicit"]
+
+
+def _assessment(**overrides: object) -> models.Assessment:
+    values: dict[str, object] = {
+        "methodology": "inspect-audit@1",
+        "check": "A.1",
+        "level": "Minor",
+        "notes": "Relevance labels contradict each other in three matched pairs.",
+    }
+    values.update(overrides)
+    return models.Assessment.model_validate(values)
+
+
+def test_a_run_carries_assessments_through_a_round_trip(run: Run) -> None:
+    measure = models.Measure(name="sampled_defect_rate", numerator=5, denominator=50, threshold=0.2)
+    assessed = run.model_copy(
+        update={
+            "assessments": [
+                _assessment(findings=[run.findings[0].fingerprint], measure=measure, impact="3 pairs")
+            ]
+        }
+    )
+    again = Run.model_validate_json(assessed.model_dump_json())
+    assert again == assessed
+    assert again.assessments[0].measure is not None
+    assert again.assessments[0].measure.value == 0.1
+
+
+def test_a_taxonomy_methodology_accepts_dimension_codes_and_contributions() -> None:
+    assert _assessment(check="A").check == "A"
+    assert _assessment(check="G.2").check == "G.2"
+
+
+def test_a_taxonomy_methodology_refuses_a_check_it_does_not_have() -> None:
+    with pytest.raises(ValidationError, match="Z.9"):
+        _assessment(check="Z.9")
+
+
+def test_another_methodology_is_not_checked_against_a_taxonomy() -> None:
+    assessment = _assessment(methodology="epoch-rubric@1", check="minimum.scoring", level="Flag")
+    assert assessment.check == "minimum.scoring"
+
+
+def test_a_methodology_names_its_version() -> None:
+    with pytest.raises(ValidationError, match="methodology"):
+        _assessment(methodology="inspect-audit")
+
+
+def test_an_assessment_cites_only_findings_of_its_own_run(run: Run) -> None:
+    with pytest.raises(ValidationError, match="sha256:elsewhere"):
+        Run.model_validate(
+            run.model_dump() | {"assessments": [_assessment(findings=["sha256:elsewhere"]).model_dump()]}
+        )
+
+
+def test_a_check_is_assessed_once_per_methodology_in_a_run(run: Run) -> None:
+    twice = [_assessment().model_dump(), _assessment(level="Major").model_dump()]
+    with pytest.raises(ValidationError, match="A.1"):
+        Run.model_validate(run.model_dump() | {"assessments": twice})
+
+
+@pytest.mark.parametrize(("numerator", "denominator"), [(6, 5), (0, 0), (-1, 5)])
+def test_a_measure_counts_within_its_denominator(numerator: int, denominator: int) -> None:
+    with pytest.raises(ValidationError):
+        models.Measure(name="sampled_defect_rate", numerator=numerator, denominator=denominator)

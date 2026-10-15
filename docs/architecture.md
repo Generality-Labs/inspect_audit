@@ -1,6 +1,6 @@
 # Architecture: one store, many renderings
 
-How the findings side of inspect_audit fits together. This is the product: what any deployment runs. Where a particular organisation keeps its store, which site shows it and which credentials it uses are deployment facts, kept out of this document and out of the package; Generality Labs' instance is described in [deployments/generality.md](deployments/generality.md) as one example.
+How the findings store fits together. The agents (the sample auditor and the investigator) are the other part of inspect_audit; here they appear only as producers whose published bundles are imported (see [the docs index](README.md)). This is the product: what any deployment runs. Where a particular organisation keeps its store, which site shows it and which credentials it uses are deployment facts, kept out of this document and out of the package; Generality Labs' instance is described in [deployments/generality.md](deployments/generality.md) as one example.
 
 Replaces `v1-architecture.md` (2026-10-05). Its git-repository store was superseded by the [portable store spec](superpowers/specs/2026-10-09-portable-store-design.md); its plans for lazy producer runs, hosted review actions and the measurement step are on the [roadmap](roadmap.md), not described here. Parts marked *planned* below are designed but not built.
 

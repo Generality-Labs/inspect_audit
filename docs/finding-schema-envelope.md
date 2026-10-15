@@ -1,5 +1,7 @@
 # A finding schema for eval audits: envelope and verbatim source
 
+The findings store's record types. The agents keep their own formats (`findings.json`, `assessments.json`, `coverage.json` in a published bundle); the import converts them into these records.
+
 Alternative proposal, 2026-09-25, to compare with `finding-schema.md`. The first document normalises every fact a producer emits into a shared field. This one normalises only the fields the aggregator has to act on and copies the producer's record in whole. The same prior art applies: SARIF keeps tool-specific data in a `properties` bag, OSV in `database_specific`, and Scout copies the entire transcript envelope onto each result row.
 
 ## Design rules

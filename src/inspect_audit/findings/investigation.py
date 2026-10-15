@@ -57,6 +57,24 @@ class Imported:
     citations: list[Citation]
 
 
+# The dataset adapter's rule: a quote keeps enough to recognise a sample, too little to
+# reproduce it, since some datasets are gated to keep their text out of training data
+QUOTE_CHARS = 32
+
+
+def _short(quote: object) -> str | None:
+    if quote is None:
+        return None
+    text = str(quote)
+    return text if len(text) <= QUOTE_CHARS else f"{text[:QUOTE_CHARS]}…"
+
+
+def _shortened(raw: dict[str, Any]) -> dict[str, Any]:
+    """The bundle's finding with each evidence quote shortened, as it is stored."""
+    refs = [ref | {"quote": _short(ref.get("quote"))} for ref in raw.get("evidence", [])]
+    return raw | {"evidence": refs}
+
+
 def _is_lead(path: str) -> bool:
     return path.endswith("findings/LEADS.md") or "findings/runs/" in path
 
@@ -90,11 +108,11 @@ def read_bundle(bundle: Path, eval: str, *, revision: str | None = None) -> Impo
     limitations: list[dict[str, JsonValue]] = []
     pending: list[tuple[str, Status, int]] = []  # lead record id, citing status, finding index
     fingerprints: dict[str, str] = {}
-    for raw in raw_findings:
+    for raw in map(_shortened, raw_findings):
         if raw["origin"] == LIMITATION:
             limitations.append({"id": raw["id"], "claim": raw["claim"]})
             continue
-        refs = raw.get("evidence", [])
+        refs = raw["evidence"]
         leads = [ref for ref in refs if _is_lead(ref["path"])]
         located = [ref for ref in refs if not _is_lead(ref["path"])] or leads
         locations: list[AnyLocation] = [

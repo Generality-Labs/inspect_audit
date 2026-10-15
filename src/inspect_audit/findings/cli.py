@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -29,6 +30,8 @@ from .deployment import load_deployment, store_pilot, unknown_tables
 from .export import export_texts
 from .featured import FEATURED
 from .fs import StoreFS, as_store_fs
+from .investigation import PRODUCER as INVESTIGATOR
+from .investigation import Citation, read_bundle
 from .io import (
     current_of,
     findings_df,
@@ -39,7 +42,7 @@ from .io import (
     write_run,
 )
 from .leads import NoRunsError, leads_markdown
-from .models import Run
+from .models import Run, Status
 from .producers import ProducerConfig
 from .render import render_eval_summary, render_sweep_summary
 from .review import (
@@ -51,7 +54,7 @@ from .review import (
     review_view_texts,
     unmatched_issue_findings,
 )
-from .store import Selection, Store
+from .store import Selection, Store, StoreError
 
 EXTERNAL_PRODUCERS: dict[str, Callable[[str, Context], Run]] = {
     "lint": lint_adapter.run,
@@ -414,6 +417,22 @@ def _parser() -> argparse.ArgumentParser:
     )
     leads_p.add_argument("eval", help="registry name, e.g. inspect_evals/scicode")
 
+    imp_p = sub.add_parser(
+        "import-investigation", help="add a published investigation bundle to the store as one run"
+    )
+    _store_arg(imp_p)
+    imp_p.add_argument("bundle", type=Path, help="the bundle's published/<id>/ directory")
+    imp_p.add_argument("--eval", required=True, help="registry name, e.g. inspect_evals/bfcl")
+    imp_p.add_argument(
+        "--revision", default=None, help="the audited commit, when the report names none"
+    )
+    imp_p.add_argument(
+        "--author",
+        default=None,
+        help="'Name <email>' on the status decisions for cited leads "
+        "(default: $INSPECT_AUDIT_AUTHOR, then git config)",
+    )
+
     shared = argparse.ArgumentParser(add_help=False)
     _store_arg(shared)
     shared.add_argument(
@@ -487,6 +506,87 @@ def _selection(args: argparse.Namespace) -> Selection:
         ids=tuple(args.id or ()),
         fingerprints=tuple(getattr(args, "fingerprint", None) or ()),
     )
+
+
+def _import_investigation(args: argparse.Namespace) -> int:
+    """Write a bundle's run, then mark each lead it cites with the citing finding's status."""
+    fs = _resolve_store(args)
+    if fs is None:
+        return 2
+    try:
+        imported = read_bundle(args.bundle, args.eval, revision=args.revision)
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as ex:
+        print(f"{args.bundle}: {ex}", file=sys.stderr)
+        return 2
+    store = Store(fs)
+    history = store.history()
+    bundle_id = args.bundle.name
+    earlier = next((r.id for r in history if _bundle_id(r) == bundle_id), None)
+    if earlier is not None:
+        print(f"bundle {bundle_id} is already in the store as {earlier}", file=sys.stderr)
+        return 2
+    # a lead's sweep may have been superseded since the leads were rendered; its
+    # fingerprint carries over to the current view, its record id does not
+    fingerprint_of = {f.id: f.fingerprint for r in history for f in r.findings}
+    current = {f.fingerprint for r in store.runs() for f in r.findings}
+    marked: list[tuple[Citation, str]] = []
+    for citation in imported.citations:
+        fp = fingerprint_of.get(citation.record_id)
+        if fp in current:
+            marked.append((citation, fp))
+        else:
+            print(
+                f"warning: {citation.record_id}, cited by {citation.cited_by}, is not in "
+                "the store's current view; its status is unchanged",
+                file=sys.stderr,
+            )
+    author = _author(args.author)
+    if marked and author is None:
+        print(
+            "no author for the cited leads' status decisions: pass --author 'Name <email>', "
+            "set INSPECT_AUDIT_AUTHOR, or configure git user.name and user.email",
+            file=sys.stderr,
+        )
+        return 2
+    run = imported.run
+    key = _run_key(fs, slug(args.eval), run)
+    file_id = key.rsplit("/", 1)[-1].removesuffix(".run.json")
+    stored = run if file_id == run.id else _renamed(run, file_id)
+    write_run(stored, fs, key)
+    try:
+        for (status, cited_by), fingerprints in _by_citing_finding(marked).items():
+            store.set_status(
+                Selection(fingerprints=fingerprints),
+                status=status,
+                author=str(author),
+                reason=f"cited as evidence by {cited_by.replace(run.id, stored.id, 1)}",
+            )
+        if not marked:
+            render_current(fs)
+    except (StoreError, OSError) as ex:
+        print(str(ex), file=sys.stderr)
+        return 2
+    print(
+        f"imported {bundle_id} as {stored.id}: {len(stored.findings)} finding(s), "
+        f"{len(stored.assessments)} assessment(s), {len(marked)} lead(s) marked"
+    )
+    return 0
+
+
+def _bundle_id(run: Run) -> str | None:
+    bundle = run.inputs.get("bundle")
+    return str(bundle.get("id")) if isinstance(bundle, dict) else None
+
+
+def _by_citing_finding(
+    marked: Sequence[tuple[Citation, str]],
+) -> dict[tuple[Status, str], tuple[str, ...]]:
+    grouped: dict[tuple[Status, str], tuple[str, ...]] = {}
+    for citation, fp in marked:
+        key = (citation.status, citation.cited_by)
+        if fp not in grouped.get(key, ()):
+            grouped[key] = (*grouped.get(key, ()), fp)
+    return grouped
 
 
 def _review(args: argparse.Namespace) -> int:
@@ -570,6 +670,8 @@ def _leads(
         (bundle / "runs").mkdir(parents=True)
         (bundle / "LEADS.md").write_text(text)
         for run in apply_review(read_current(fs), review):
+            if run.producer == INVESTIGATOR:
+                continue
             if run.subject.eval == eval:
                 (bundle / "runs" / f"{run.id}.run.json").write_text(
                     run.model_dump_json(indent=1) + "\n"
@@ -640,6 +742,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _leads(fs, args.eval, args.sample, args.write, args.bundle)
     if args.command == "review":
         return _review(args)
+    if args.command == "import-investigation":
+        return _import_investigation(args)
 
     targets = list(args.targets) + (
         [f"inspect_evals/{name}" for name in FEATURED] if args.featured else []

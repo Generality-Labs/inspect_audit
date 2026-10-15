@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .fs import StoreFS, as_store_fs
+from .investigation import PRODUCER as INVESTIGATOR
 from .io import read_current
 from .models import Finding, Run
 from .render import inputs_lines, sorted_findings
@@ -49,7 +50,8 @@ def select_leads(
     runs: Sequence[Run], eval: str, *, sample_id: str | None = None
 ) -> tuple[list[Run], list[Finding], int]:
     """The eval's runs, its active findings (for one sample when asked), and how many were suppressed."""
-    mine = [run for run in runs if run.subject.eval == eval]
+    # an earlier investigation is not a lead: its verdicts would anchor the next one
+    mine = [run for run in runs if run.subject.eval == eval and run.producer != INVESTIGATOR]
     if not mine:
         raise NoRunsError(f"no runs for {eval} in the current view")
     findings = [f for run in mine for f in run.findings]

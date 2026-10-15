@@ -22,7 +22,11 @@ CONTRADICTORY: dict[str, Any] = {
     "evidence": [
         {"path": "_inputs/findings/LEADS.md", "location": LEAD, "quote": None},
         {"path": "evidence/pairs_probe.txt", "location": "three pairs", "quote": "with call: 0 1"},
-        {"path": "_inputs/source/src/inspect_evals/bfcl/score/scorer.py", "location": "lines 20-27", "quote": None},
+        {
+            "path": "_inputs/source/src/inspect_evals/bfcl/score/scorer.py",
+            "location": "lines 20-27",
+            "quote": None,
+        },
     ],
     "reproduce": "python evidence/pairs_probe.py",
 }
@@ -57,7 +61,10 @@ ASSESSMENTS: list[dict[str, Any]] = [
     },
     {"id": "I", "assessment": "Not assessed", "result": "No logs.", "evidence": []},
 ]
-COVERAGE = {"denominator": 4981, "counts": {"NO_ISSUE_FOUND": 0, "DEFECT": 0, "UNRESOLVED": 0, "NOT_ASSESSED": 4981}}
+COVERAGE = {
+    "denominator": 4981,
+    "counts": {"NO_ISSUE_FOUND": 0, "DEFECT": 0, "UNRESOLVED": 0, "NOT_ASSESSED": 4981},
+}
 
 
 def _bundle(
@@ -143,7 +150,11 @@ def test_assessments_cite_findings_by_fingerprint_and_files_as_evidence(tmp_path
     run = _read(_bundle(tmp_path)).run
     contradictory = next(f for f in run.findings if f.rule == "contradictory-relevance")
     construct, informativeness = run.assessments
-    assert (construct.methodology, construct.check, construct.level) == ("inspect-audit@1", "C", "Minor")
+    assert (construct.methodology, construct.check, construct.level) == (
+        "inspect-audit@1",
+        "C",
+        "Minor",
+    )
     assert construct.notes == ASSESSMENTS[0]["result"]
     assert construct.findings == [contradictory.fingerprint]
     assert construct.evidence == [ArtifactLocation(path="evidence/pairs_probe.txt")]
@@ -153,7 +164,11 @@ def test_assessments_cite_findings_by_fingerprint_and_files_as_evidence(tmp_path
         1,
         4,
     )
-    assert (informativeness.check, informativeness.level, informativeness.measure) == ("I", "Not assessed", None)
+    assert (informativeness.check, informativeness.level, informativeness.measure) == (
+        "I",
+        "Not assessed",
+        None,
+    )
 
 
 def test_a_bundle_without_assessments_or_coverage_still_imports(tmp_path: Path) -> None:
@@ -161,7 +176,9 @@ def test_a_bundle_without_assessments_or_coverage_still_imports(tmp_path: Path) 
     assert run.assessments == [] and "coverage" not in run.inputs
 
 
-def test_the_revision_comes_from_the_command_line_when_the_report_names_none(tmp_path: Path) -> None:
+def test_the_revision_comes_from_the_command_line_when_the_report_names_none(
+    tmp_path: Path,
+) -> None:
     bundle = _bundle(tmp_path, commitref=None)
     assert _read(bundle, revision="7158d455").run.subject.revision.commit == "7158d455"
     with pytest.raises(ValueError, match="revision"):
@@ -169,5 +186,112 @@ def test_the_revision_comes_from_the_command_line_when_the_report_names_none(tmp
 
 
 def test_a_directory_without_findings_is_not_a_bundle(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="findings.json"):
+    with pytest.raises(ValueError, match=r"findings\.json"):
         _read(tmp_path)
+
+
+STEREOSET = "inspect_evals/stereoset"
+AUTHOR = ["--author", "Matt Fisher <matt@example.com>"]
+
+
+def _stereoset_store(tmp_path: Path, run: Any) -> Path:
+    from inspect_audit.findings.cli import write_outputs
+
+    out = tmp_path / "store"
+    write_outputs(out, {STEREOSET: [run]})
+    return out
+
+
+def _citing(lead: str) -> dict[str, Any]:
+    refs = [{"path": "_inputs/findings/LEADS.md", "location": lead, "quote": None}]
+    return CONTRADICTORY | {"evidence": refs + CONTRADICTORY["evidence"][1:]}
+
+
+def _import(bundle: Path, store: Path, *extra: str) -> int:
+    from inspect_audit.findings.cli import main
+
+    return main(
+        ["import-investigation", str(bundle), "--store", str(store), "--eval", STEREOSET, *extra]
+    )
+
+
+def test_import_writes_the_run_and_the_export_carries_its_assessments(
+    tmp_path: Path, run: Any
+) -> None:
+    store = _stereoset_store(tmp_path, run)
+    assert _import(_bundle(tmp_path, findings=[_citing("lint-1/1"), SCORER]), store, *AUTHOR) == 0
+    doc = json.loads((store / "export" / "evals" / "inspect-evals-stereoset.json").read_text())
+    (entry,) = [r for r in doc["runs"] if r["producer"] == "inspect_audit_investigate"]
+    assert [a["check"] for a in entry["assessments"]] == ["C", "I"]
+    groups = {g["rule"] for g in doc["groups"]}
+    assert {"contradictory-relevance", "agentic-containment"} <= groups
+
+
+def test_a_cited_lead_takes_the_citing_status_with_its_provenance(tmp_path: Path, run: Any) -> None:
+    from inspect_audit.findings.fs import StoreFS
+    from inspect_audit.findings.review import load_review
+
+    store = _stereoset_store(tmp_path, run)
+    assert _import(_bundle(tmp_path, findings=[_citing("lint-1/1")]), store, *AUTHOR) == 0
+    review = load_review(StoreFS.from_locator(store))
+    assert review.statuses == {"sha256:0": "supported"}
+    reason = review.status_provenance["sha256:0"].reason or ""
+    assert reason.startswith("cited as evidence by inspect_audit_investigate-")
+
+
+def test_a_bundle_is_imported_once(
+    tmp_path: Path, run: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    store = _stereoset_store(tmp_path, run)
+    bundle = _bundle(tmp_path, findings=[SCORER])
+    assert _import(bundle, store) == 0
+    assert _import(bundle, store) == 2
+    assert "already in the store as inspect_audit_investigate-" in capsys.readouterr().err
+
+
+def test_a_citation_outside_the_current_view_warns_and_still_imports(
+    tmp_path: Path, run: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from inspect_audit.findings.fs import StoreFS
+    from inspect_audit.findings.review import load_review
+
+    store = _stereoset_store(tmp_path, run)
+    assert _import(_bundle(tmp_path, findings=[_citing(LEAD)]), store) == 0
+    assert LEAD in capsys.readouterr().err
+    assert load_review(StoreFS.from_locator(store)).statuses == {}
+    assert list((store / "inspect-evals-stereoset" / "runs").glob("inspect_audit_investigate-*"))
+
+
+def test_citations_need_an_author(
+    tmp_path: Path, run: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)  # no git identity to fall back on
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "none"))
+    store = _stereoset_store(tmp_path, run)
+    assert _import(_bundle(tmp_path, findings=[_citing("lint-1/1")]), store) == 2
+    assert "author" in capsys.readouterr().err
+    assert not list(
+        (store / "inspect-evals-stereoset" / "runs").glob("inspect_audit_investigate-*")
+    )
+
+
+def test_leads_leave_out_investigations(tmp_path: Path, run: Any) -> None:
+    from inspect_audit.findings.cli import main
+
+    store = _stereoset_store(tmp_path, run)
+    assert _import(_bundle(tmp_path, findings=[SCORER]), store) == 0
+    bundle = tmp_path / "leads"
+    assert main(["leads", "--store", str(store), "--bundle", str(bundle), STEREOSET]) == 0
+    assert "agentic-containment" not in (bundle / "LEADS.md").read_text()
+    assert [p.name for p in (bundle / "runs").iterdir()] == ["lint-1.run.json"]
+
+
+def test_quoted_sample_text_is_shortened_as_dataset_findings_are(tmp_path: Path) -> None:
+    long = "calculate the area of a triangle with base 10 and height 5 please"
+    quoting = SCORER | {
+        "evidence": [{"path": "evidence/x.txt", "location": "row 1", "quote": long}]
+    }
+    (finding,) = _read(_bundle(tmp_path, findings=[quoting], assessments=None)).run.findings
+    shortened = long[:32] + "…"
+    assert finding.primary_location.quote == shortened
+    assert finding.source.record["evidence"][0]["quote"] == shortened  # type: ignore[index,call-overload]

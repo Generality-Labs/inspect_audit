@@ -13,6 +13,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .fs import StoreFS, as_store_fs
+from .investigation import CITED
+from .investigation import PRODUCER as INVESTIGATOR
 from .io import read_current
 from .models import Finding, Run
 from .render import inputs_lines, sorted_findings
@@ -45,11 +47,33 @@ def _sample_ids(finding: Finding) -> set[str]:
     return ids
 
 
+def without_citations(review: Review) -> Review:
+    """The review minus statuses an imported investigation set on the leads it cited.
+
+    Suppressions, issue links and people's statuses still apply; an earlier verdict does
+    not, so a re-audit starts from the deterministic observations.
+    """
+    cited = {
+        fp
+        for fp, provenance in review.status_provenance.items()
+        if (provenance.reason or "").startswith(CITED)
+    }
+    return review.model_copy(
+        update={
+            "statuses": {fp: s for fp, s in review.statuses.items() if fp not in cited},
+            "status_provenance": {
+                fp: p for fp, p in review.status_provenance.items() if fp not in cited
+            },
+        }
+    )
+
+
 def select_leads(
     runs: Sequence[Run], eval: str, *, sample_id: str | None = None
 ) -> tuple[list[Run], list[Finding], int]:
     """The eval's runs, its active findings (for one sample when asked), and how many were suppressed."""
-    mine = [run for run in runs if run.subject.eval == eval]
+    # an earlier investigation is not a lead: its verdicts would anchor the next one
+    mine = [run for run in runs if run.subject.eval == eval and run.producer != INVESTIGATOR]
     if not mine:
         raise NoRunsError(f"no runs for {eval} in the current view")
     findings = [f for run in mine for f in run.findings]

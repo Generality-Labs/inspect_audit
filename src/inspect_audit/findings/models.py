@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
@@ -15,7 +16,7 @@ from pydantic import (
     model_validator,
 )
 
-from .taxonomy import DEFAULT_TAXONOMY, TAXONOMIES, load_taxonomy, validate_against
+from .taxonomy import DEFAULT_TAXONOMY, TAXONOMIES, canonical_ref, load_taxonomy, validate_against
 
 # a dimension id from the finding's taxonomy (see taxonomy.py); validated per finding, not by type
 Dimension = str
@@ -289,7 +290,7 @@ class Measure(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1)
     numerator: int = Field(ge=0)
-    denominator: int = Field(gt=0)
+    denominator: int = Field(ge=0)
     threshold: float | None = None
     source: str | None = None
 
@@ -302,9 +303,9 @@ class Measure(BaseModel):
         return self
 
     @property
-    def value(self) -> float:
-        """A plain property: a computed field would serialise and break round-trips."""
-        return self.numerator / self.denominator
+    def value(self) -> float | None:
+        """None over an empty sample. A plain property: a computed field would serialise and break round-trips."""
+        return self.numerator / self.denominator if self.denominator else None
 
 
 METHODOLOGY_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*@[0-9]+$")
@@ -334,6 +335,8 @@ class Assessment(BaseModel):
     def _known_check(self) -> Assessment:
         if not METHODOLOGY_REF.match(self.methodology):
             raise ValueError(f"methodology {self.methodology!r} is not <id>@<version>")
+        # a renamed taxonomy's old name is stored as the current one, so one methodology is one group
+        self.methodology = canonical_ref(self.methodology)
         known = self.methodology in TAXONOMIES
         if known and self.check not in load_taxonomy(self.methodology).assessable_ids():
             raise ValueError(f"{self.check!r} is not a check of {self.methodology}")
@@ -361,7 +364,7 @@ class Run(BaseModel):
     @model_validator(mode="after")
     def _assessments_consistent(self) -> Run:
         seen: set[tuple[str, str]] = set()
-        fingerprints = {finding.fingerprint for finding in self.findings}
+        holders = Counter(finding.fingerprint for finding in self.findings)
         for assessment in self.assessments:
             key = (assessment.methodology, assessment.check)
             if key in seen:
@@ -369,9 +372,14 @@ class Run(BaseModel):
                     f"{assessment.check!r} is assessed twice under {assessment.methodology}"
                 )
             seen.add(key)
-            missing = [f for f in assessment.findings if f not in fingerprints]
+            missing = [f for f in assessment.findings if f not in holders]
             if missing:
                 raise ValueError(f"{assessment.check!r} cites findings not in this run: {missing}")
+            shared = [f for f in assessment.findings if holders[f] > 1]
+            if shared:
+                raise ValueError(
+                    f"{assessment.check!r} cites a fingerprint held by more than one finding: {shared}"
+                )
         return self
 
     @model_validator(mode="after")

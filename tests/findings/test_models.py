@@ -214,7 +214,31 @@ def test_a_check_is_assessed_once_per_methodology_in_a_run(run: Run) -> None:
         Run.model_validate(run.model_dump() | {"assessments": twice})
 
 
-@pytest.mark.parametrize(("numerator", "denominator"), [(6, 5), (0, 0), (-1, 5)])
+@pytest.mark.parametrize(("numerator", "denominator"), [(6, 5), (1, 0), (-1, 5)])
 def test_a_measure_counts_within_its_denominator(numerator: int, denominator: int) -> None:
     with pytest.raises(ValidationError):
         models.Measure(name="sampled_defect_rate", numerator=numerator, denominator=denominator)
+
+
+def test_an_assessment_may_not_cite_a_fingerprint_two_findings_share(run: Run) -> None:
+    twin = run.findings[0].model_copy(update={"id": None, "summary": "the same place again"})
+    with pytest.raises(ValidationError, match="more than one finding"):
+        Run.model_validate(
+            run.model_dump()
+            | {
+                "findings": [run.findings[0].model_dump() | {"id": None}, twin.model_dump()],
+                "assessments": [_assessment(findings=[run.findings[0].fingerprint]).model_dump()],
+            }
+        )
+
+
+def test_a_measure_over_an_empty_sample_has_no_value() -> None:
+    measure = models.Measure(name="sampled_defect_rate", numerator=0, denominator=0)
+    assert measure.value is None
+
+
+def test_the_old_taxonomy_name_is_stored_as_the_current_one() -> None:
+    assessment = _assessment(methodology="gl-audit@1")
+    assert assessment.methodology == "inspect-audit@1"
+    with pytest.raises(ValidationError, match=r"Z\.9"):
+        _assessment(methodology="gl-audit@1", check="Z.9")

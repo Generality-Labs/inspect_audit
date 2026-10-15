@@ -645,7 +645,7 @@
       "description": "A thresholded check's count, so \"5 of 50 sampled, threshold 20%\" is data, not prose.",
       "properties": {
         "denominator": {
-          "exclusiveMinimum": 0,
+          "minimum": 0,
           "title": "Denominator",
           "type": "integer"
         },

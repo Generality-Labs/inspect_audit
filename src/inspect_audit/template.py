@@ -26,6 +26,10 @@ class Column(BaseModel):
     model_config = ConfigDict(extra="forbid")
     key: str
     title: str
+    max_words: int | None = None
+    max_sentences: int | None = None
+    # one sentence about the item for its reader, with no account of the audit
+    plain: bool = False
 
 
 class Block(BaseModel):
@@ -49,6 +53,9 @@ class Block(BaseModel):
 
     def shown_for(self, verdict: str) -> bool:
         return verdict in self.when
+
+    def column(self, key: str) -> Column:
+        return next(c for c in self.columns if c.key == key)
 
     def required_for(self, verdict: str) -> bool:
         return verdict in self.required

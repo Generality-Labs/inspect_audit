@@ -35,6 +35,42 @@ def paragraphs(text: str) -> list[str]:
     return [p.strip() for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
 
 
+# words that describe the audit rather than the question: a line for the reader of the
+# page says what is wrong with the item, not how that was found out
+PROCESS_WORDS = frozenset(
+    [
+        "auditor",
+        "auditors",
+        "probe",
+        "probes",
+        "probed",
+        "independent",
+        "independently",
+        "established",
+        "unresolved",
+        "verified",
+        "unverified",
+        "candidate",
+        "candidates",
+        "attempt",
+        "attempts",
+        "agent",
+        "agents",
+    ]
+)
+
+
+def check_plain(name: str, text: str, *, max_words: int = 25) -> None:
+    """One sentence, within the limit, about the item and not about the audit."""
+    check_length(name, text, max_words=max_words, max_sentences=1)
+    found = sorted({w for w in re.findall(r"[A-Za-z]+", text.lower()) if w in PROCESS_WORDS})
+    if found:
+        raise ValueError(
+            f"{name}: says how the audit went ({', '.join(found)}); say what is wrong with "
+            "the item instead, as its reader would see it"
+        )
+
+
 def check_length(name: str, text: str, *, max_words: int | None, max_sentences: int | None) -> None:
     if max_words is not None and words(text) > max_words:
         raise ValueError(f"{name}: {words(text)} words, limit {max_words}")
@@ -285,4 +321,18 @@ class Prose(BaseModel):
                         if block.max_cell_words and words(cell) > block.max_cell_words:
                             raise ValueError(
                                 f"{block.id} row {i}: {key} over {block.max_cell_words} words"
+                            )
+                        column = block.column(key)
+                        if column.plain:
+                            check_plain(
+                                f"{block.id} row {i}: {key}",
+                                cell,
+                                max_words=column.max_words or block.max_cell_words or 25,
+                            )
+                        elif column.max_words or column.max_sentences:
+                            check_length(
+                                f"{block.id} row {i}: {key}",
+                                cell,
+                                max_words=column.max_words,
+                                max_sentences=column.max_sentences,
                             )

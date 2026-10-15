@@ -6,7 +6,7 @@ metadata:
   unevidenced: [UNRESOLVED]
   tools: [attempt, grade]
   details:
-    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include each ID from /audit/assessment_ids.json exactly once. Preserve ids exactly. defect_types is a list of mechanism names, required and nonempty for DEFECT, empty otherwise. scoring_effect and next_check are optional strings.'
+    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include each ID from /audit/assessment_ids.json exactly once. Preserve ids exactly. defect_types is a list of mechanism names, required and nonempty for DEFECT, empty otherwise. headline is required for DEFECT: one plain sentence, at most 25 words, saying what is wrong with the item for a reader who has it open, with no account of the audit. scoring_effect and next_check are optional strings.'
 ---
 
 # Classify the question, not the model's answer
@@ -38,6 +38,25 @@ finish; record_verdict replaces the previous table. Do not leave saving until a
 hard resource limit interrupts the agent. Overall grade is DEFECT if any row has an established defect;
 otherwise UNRESOLVED if any row is unresolved/unassessed; otherwise NO_ISSUE_FOUND.
 Return the table through record_verdict details, so it survives sandbox cleanup.
+
+## The headline
+
+Every DEFECT carries a `headline` beside its explanation: one sentence, at most
+25 words, that a reader with the question in front of them can check against it.
+It names what is wrong with the question or its key, not how you found out. No
+method, no tool names, no hedges, no account of checks; a number only when the
+number is the defect. The explanation holds the evidence; the headline is what the
+page prints. The register to match:
+
+- Asks for density as a function of height, but the answer key is a single number.
+- The author's own rationale matches option E, but the key is D.
+- The key's time-dilation factor has a misplaced decimal (0.9963 vs 0.963).
+- Multiple molecules satisfy every listed constraint, but only one is in the key.
+- The case already states the confirmed diagnosis, then asks for the next diagnostic step.
+
+Not this: "Independent normal-B continuity and tangential-H jump equations give
+option E; key D has the wrong sign in its interior denominator." That is the
+explanation, and it belongs there.
 
 ## Defect mechanisms and follow-up
 

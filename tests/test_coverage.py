@@ -129,4 +129,23 @@ def test_defect_counts_deduplicate_and_outstanding_units_survive():
         validate_labels([label("old", "DEFECT")], ["old"], require_classification=True)
     assert validate_labels([label("old", "DEFECT")], ["old"])
     custom = {**label("new", "DEFECT"), "defect_types": ["novel_mechanism"]}
+    with pytest.raises(ValueError, match="needs a headline"):
+        validate_labels([custom], ["new"], require_classification=True)
+    custom["headline"] = "Asks for a 4-point DFT but the sequence has 8 entries."
     assert validate_labels([custom], ["new"], require_classification=True)
+
+
+def test_a_defects_headline_is_one_plain_sentence_about_the_item():
+    """The page prints the headline; the explanation holds the evidence."""
+    row = {**label("q", "DEFECT"), "defect_types": ["incorrect_reference_or_test"]}
+    for bad, why in (
+        ("The key is wrong. The rationale says E.", "2 sentences"),
+        ("Independent probes established that the key is wrong.", "says how the audit went"),
+        (" ".join(["word"] * 26) + ".", "26 words"),
+    ):
+        with pytest.raises(ValueError, match=why):
+            validate_labels([{**row, "headline": bad}], ["q"], require_classification=True)
+    ok = {**row, "headline": "The author's own rationale matches option E, but the key is D."}
+    assert validate_labels([ok], ["q"], require_classification=True)[0].headline.endswith("D.")
+    # historical labels carry no headline and are still read
+    assert validate_labels([label("old", "DEFECT")], ["old"])[0].headline is None

@@ -595,6 +595,23 @@ def test_the_errors_table_names_every_recorded_defect_and_lists_the_sound_items(
     assert md.index("Audited without finding a defect") < md.index("## Recommendations")
 
 
+def test_the_notes_cell_is_one_plain_sentence_for_the_reader() -> None:
+    template = load_template("epoch-review")
+    for bad, why in (
+        ("Key is wrong. Rationale says E.", "2 sentences"),
+        ("Independent auditors established the key is wrong.", "says how the audit went"),
+    ):
+        prose = flawed_prose()
+        prose["error_examples"][0]["notes"] = bad
+        with pytest.raises(ValueError, match=f"error_examples row 1: notes: {why}"):
+            Prose.model_validate(prose).validate_against(template, "Flawed")
+    good = flawed_prose()
+    good["error_examples"][0]["notes"] = (
+        "The key gives the reciprocal of its own rationale's answer."
+    )
+    Prose.model_validate(good).validate_against(template, "Flawed")
+
+
 def test_publication_fills_the_date_merges_sampling_and_refuses_the_wrong_prose(
     tmp_path: Path,
 ) -> None:

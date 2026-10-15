@@ -124,6 +124,20 @@ The template lists every block with its brief, its limit and the verdicts it bel
   task analysis or elicitation block: the rubric notes carry what the reader needs.
 - **NEI** or **Incomplete** adds **limitations**, saying what could not be reviewed and why.
 
+## The Notes cell
+
+Each row's Notes is one sentence, at most 25 words, that says what is wrong with the
+item for a reader who has it open: the question's problem first, nothing about how
+it was found. Start from the auditor's `headline` in `coverage.json` and tighten it;
+the explanation and the numbers stay in the record and the findings. `check_report`
+refuses a second sentence and the vocabulary of the audit (auditor, probe,
+independent, established, unresolved, verified, candidate, attempt, agent). The
+register to match, from Epoch's own reviews: "Asks for a 4-point DFT but the sequence
+has 8 entries"; "Answer key gives the reciprocal of the answer found in its own
+rationale"; "No answer option is fully correct". Not: "Explicit state-vector
+evolution gives amplitude 1/2, hence probability 1/4, not target 0", which is the
+finding's evidence, not its headline.
+
 ## Pass is the default
 
 Flag a minimum-standard check only when the evidence shows a material effect on the

@@ -26,9 +26,9 @@ The following issues cross our threshold for a Flawed verdict.
 
 | Task | Error type | Notes | Affected logs |
 |---|---|---|---|
-| Sonnet 4.6: all 100 puzzles | Elicitation | Maximum effort: 95 empty answers, 3% accuracy. A reserved reasoning budget: no empty answers, 13% accuracy. | Sonnet 4.6 max and 32K (2 logs) |
-| Opus 4.7: all 100 puzzles | Elicitation | Maximum effort: 88 empty answers, 7% accuracy. Low effort: no empty answers, 20% accuracy. | Opus 4.7 max and low (2 logs) |
-| Qwen 3.5 9B: all 100 puzzles | Elicitation | Default reasoning: 97 empty answers, 2% accuracy. Reasoning disabled: no empty answers, 12% accuracy. | Qwen 3.5 9B default and none (2 logs) |
+| Sonnet 4.6: all 100 puzzles | Elicitation | Maximum effort: 95 empty answers, 3% accuracy; a reserved reasoning budget: no empty answers, 13% accuracy. | Sonnet 4.6 max and 32K (2 logs) |
+| Opus 4.7: all 100 puzzles | Elicitation | Maximum effort: 88 empty answers, 7% accuracy; low effort: no empty answers, 20% accuracy. | Opus 4.7 max and low (2 logs) |
+| Qwen 3.5 9B: all 100 puzzles | Elicitation | Default reasoning: 97 empty answers, 2% accuracy; reasoning disabled: no empty answers, 12% accuracy. | Qwen 3.5 9B default and none (2 logs) |
 
 ## Recommendations
 

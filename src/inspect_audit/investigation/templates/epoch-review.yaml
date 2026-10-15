@@ -93,13 +93,14 @@ blocks:
     columns:
       - {key: task, title: Task}
       - {key: error_type, title: Error type}
-      - {key: notes, title: Notes}
+      - {key: notes, title: Notes, plain: true, max_words: 25}
       - {key: affected_logs, title: Affected logs}
     brief: >-
       Every recorded error. One row for each item coverage.json records as a defect, with
       Task naming its id, then any run-level errors; Error type is the defect class in a few
-      words; Notes says what happened; Affected logs names the runs or models the error
-      touches, with a count. The ids audited without a defect are listed under the table
+      words; Notes is one plain sentence saying what is wrong with the item, as its reader
+      would see it, with no account of how that was found (start from the auditor's
+      headline); Affected logs names the runs or models the error touches, with a count. The ids audited without a defect are listed under the table
       from coverage.json; you do not write them.
   - id: limitations
     title: Limitations

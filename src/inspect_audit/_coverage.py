@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from .records import check_plain
+
 
 class QuestionAssessment(BaseModel):
     """One question's validity, independent of a model's recorded pass or failure."""
@@ -21,6 +23,9 @@ class QuestionAssessment(BaseModel):
     defect_types: list[str] = Field(default_factory=list)
     scoring_effect: str | None = None
     next_check: str | None = None
+    # one plain sentence for the page: what is wrong with the item, as its reader
+    # would see it; the explanation above is the evidence, this is the headline
+    headline: str | None = None
 
 
 def validate_labels(
@@ -36,6 +41,13 @@ def validate_labels(
             raise ValueError(f"{row.question_id}: assessed labels need checks and evidence")
         if require_classification and row.status == "DEFECT" and not row.defect_types:
             raise ValueError(f"{row.question_id}: defects need at least one defect type")
+        if require_classification and row.status == "DEFECT":
+            if not (row.headline or "").strip():
+                raise ValueError(
+                    f"{row.question_id}: a defect needs a headline, one plain sentence saying "
+                    "what is wrong with the item for the reader of the page"
+                )
+            check_plain(f"{row.question_id}: headline", row.headline or "")
         if row.defect_types and row.status != "DEFECT":
             raise ValueError(f"{row.question_id}: only established defects have defect types")
         if len(row.defect_types) != len(set(row.defect_types)):

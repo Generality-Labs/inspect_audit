@@ -15,13 +15,12 @@ Two paths, same content. The pull path is the target; the staged file is the fal
 - **Staged file (built 2026-10-12).** Render the leads from the store and pass the file to the investigator:
 
   ```bash
-  set -a; source <credentials file>; set +a      # when the store is a bucket
   uv run inspect-audit-findings leads --store s3://<bucket> inspect_evals/<eval> --bundle leads/
   uv run inspect eval inspect_audit/investigate -T repo=<checkout> -T target_task=inspect_evals/<task> \
       -T leads=leads/ -T execution=local ...
   ```
 
-  `--bundle` writes `LEADS.md` and the eval's current run files under `runs/`, which the file's "and N more in runs/…" pointers name. `investigate` stages the bundle (or a bare `LEADS.md`) read-only under `/inputs/findings/` and names `LEADS.md` in `seed.json` (`leads`), and the investigating skill tells the agent to treat each lead as a hypothesis with a location attached, confirm or retire it, and cite its record id as an evidence location when a register entry rests on it. The file is a snapshot of what the run saw. It is local, so a Hawk run needs it on the runner; the sample auditor's per-sample `/audit/leads.md` is not built yet.
+  A bucket store's credentials come from a named AWS profile, as in [findings-cli.md](findings-cli.md#using-an-s3-or-r2-bucket). `--bundle` writes `LEADS.md` and the eval's current run files under `runs/`, which the file's "and N more in runs/…" pointers name. `investigate` stages the bundle (or a bare `LEADS.md`) read-only under `/inputs/findings/` and names `LEADS.md` in `seed.json` (`leads`), and the investigating skill tells the agent to treat each lead as a hypothesis with a location attached, confirm or retire it, and cite its record id as an evidence location when a register entry rests on it. The file is a snapshot of what the run saw. It is local, so a Hawk run needs it on the runner; the sample auditor's per-sample `/audit/leads.md` is not built yet.
 
 The MCP attach and the sample auditor's staging still touch James's code and prompts and go to him as one PR. The leads module imports nothing from the investigator.
 

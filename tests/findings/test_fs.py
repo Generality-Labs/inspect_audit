@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from inspect_audit.findings.fs import StoreFS, as_store_fs
+from inspect_audit.findings.fs import PROFILE_VAR, StoreFS, as_store_fs
 
 
 @pytest.fixture(params=["local", "memory"])
@@ -138,3 +138,22 @@ def test_put_tree_uploads_in_one_batch(tmp_path: Path) -> None:
     # one batch call; the memory backend implements it with an open per file, s3fs concurrently
     assert len(keys) == 5 and calls["pipe"] == 1
     assert fs.read_text("e/scans/r/3.json") == "3"
+
+
+def test_a_bucket_store_takes_its_endpoint_and_region_from_the_named_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config").write_text(
+        "[profile store-test]\nendpoint_url = https://acct.r2.example.com\nregion = auto\n"
+    )
+    (tmp_path / "credentials").write_text(
+        "[store-test]\naws_access_key_id = k\naws_secret_access_key = s\n"
+    )
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "credentials"))
+    monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+    monkeypatch.setenv(PROFILE_VAR, "store-test")
+    fs = StoreFS.from_locator("s3://bucket/prefix")
+    client = fs.fs.connect()
+    assert client.meta.endpoint_url == "https://acct.r2.example.com"
+    assert client.meta.region_name == "auto"

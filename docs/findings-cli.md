@@ -48,4 +48,24 @@ root = "../inspect_evals"   # default --root for run, relative to the current di
 
 ## Using an S3 or R2 bucket
 
-Pass `--store s3://<bucket>/<prefix>` or set `INSPECT_AUDIT_STORE`. Credentials come from the environment as they do for an Inspect `--log-dir s3://`: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, plus `AWS_ENDPOINT_URL` for anything that is not AWS. For Cloudflare R2 the endpoint is `https://<account id>.r2.cloudflarestorage.com`, the keys come from an R2 API token with object read and write on the bucket (its Access Key ID, not the account id), and `AWS_DEFAULT_REGION=auto` is needed whenever `~/.aws/config` sets a default region: the S3 client otherwise sends that region, which R2 rejects. `AWS_REGION` is not read by the botocore version inspect_ai pins. Keep these in a file outside any repository and load it only in the shell that runs sweeps (`set -a; source <file>; set +a`); exported globally, `AWS_ENDPOINT_URL` would redirect every S3 client in that shell, including evals that load data from AWS. R2 has no bucket versioning; the store does not need it, because runs and decisions are never overwritten. `INSPECT_AUDIT_TEST_STORE=s3://<bucket>/ci` with the same credentials runs the one test that talks to a real bucket.
+Pass `--store s3://<bucket>/<prefix>` or set `INSPECT_AUDIT_STORE`. Give the store its credentials through a named AWS profile, and set `INSPECT_AUDIT_STORE_PROFILE` to the profile's name, such as `inspect-audit-store`. Only the store's own S3 client uses the profile. Remote log sources (`--logs s3://…`) and the producers keep the default AWS credentials, so a sweep can read logs from AWS while it writes to R2. For Cloudflare R2:
+
+```ini
+# ~/.aws/credentials
+[inspect-audit-store]
+aws_access_key_id = <the R2 token's Access Key ID, not the account id>
+aws_secret_access_key = <its Secret Access Key>
+
+# ~/.aws/config
+[profile inspect-audit-store]
+endpoint_url = https://<account id>.r2.cloudflarestorage.com
+region = auto
+```
+
+The token needs object read and write on the bucket. Any profile name works; `inspect-audit-store` keeps it beside the variable that selects it. R2 rejects AWS region names, so `region = auto` is required whenever `~/.aws/config` sets a default region.
+
+Put `INSPECT_AUDIT_STORE` and `INSPECT_AUDIT_STORE_PROFILE` in a `.env` file. The CLI loads the nearest one from the working directory or a parent, as `inspect eval` does, and variables already set in the shell win.
+
+With no profile set, the store reads the environment, as an Inspect `--log-dir s3://` does: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, plus `AWS_ENDPOINT_URL` and `AWS_DEFAULT_REGION=auto` for R2 (`AWS_REGION` is not read by the botocore version inspect_ai pins). This suits CI and Hawk runners, where secrets arrive as environment variables. Those variables reach every S3 client in the process and its subprocesses, so scope them to the step that runs the CLI.
+
+R2 has no bucket versioning; the store does not need it, because runs and decisions are never overwritten. `INSPECT_AUDIT_TEST_STORE=s3://<bucket>/ci`, with either kind of credentials, runs the one test that talks to a real bucket.

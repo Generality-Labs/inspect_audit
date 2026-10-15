@@ -6,6 +6,7 @@ depends on the order a backend enumerates objects.
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -13,6 +14,8 @@ from typing import Any, cast
 
 from fsspec import AbstractFileSystem
 from fsspec.core import url_to_fs
+
+PROFILE_VAR = "INSPECT_AUDIT_STORE_PROFILE"
 
 
 class StoreFS:
@@ -29,6 +32,9 @@ class StoreFS:
         elif text.startswith(("s3://", "s3a://")):
             # botocore's default pool of 10 connections serialises a batch read of hundreds of runs
             options["config_kwargs"] = {"max_pool_connections": 64}
+            # a named AWS profile gives the store its own keys and endpoint; other S3 clients keep theirs
+            if profile := os.environ.get(PROFILE_VAR):
+                options["profile"] = profile
         fs, root = url_to_fs(text, **options)
         return cls(fs, str(root))
 

@@ -1,7 +1,8 @@
 """Against a real S3-compatible store, when INSPECT_AUDIT_TEST_STORE names one. Skips otherwise.
 
-Set INSPECT_AUDIT_TEST_STORE to a prefix such as s3://<bucket>/ci, with AWS_ENDPOINT_URL,
-AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY for the bucket. Each run writes under a fresh
+Set INSPECT_AUDIT_TEST_STORE to a prefix such as s3://<bucket>/ci, with INSPECT_AUDIT_STORE_PROFILE
+naming an AWS profile for the bucket, or AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID and
+AWS_SECRET_ACCESS_KEY. Each run writes under a fresh
 sub-prefix and leaves it there; a lifecycle rule on the prefix is the cleanup.
 """
 

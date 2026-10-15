@@ -17,7 +17,7 @@ from typing import Any
 from .adapters import slug
 from .fs import StoreFS
 from .models import Assessment, Finding, Run
-from .render import SEVERITY_ORDER, inputs_data, sorted_findings
+from .render import SEVERITY_ORDER, inputs_data, page_subject, sorted_findings
 from .review import Review
 
 SCHEMA = 1
@@ -74,7 +74,7 @@ def _seen(seen: Seen, finding: Finding, run: Run) -> tuple[str, str]:
 
 
 def _eval_entry(eval_name: str, runs: Sequence[Run], review: Review) -> dict[str, Any]:
-    subject = runs[0].subject
+    subject = page_subject(runs)
     return {
         "eval": eval_name,
         "slug": slug(eval_name),
@@ -271,7 +271,7 @@ def eval_document(
 ) -> dict[str, Any]:
     """Everything one eval's page shows: inputs, runs, grouped findings, suppressed groups, issues."""
     runs = sorted(runs, key=lambda r: (r.producer, r.id))
-    subject = runs[0].subject
+    subject = page_subject(runs)
     return {
         "generated_at": iso(generated_at),
         "schema": SCHEMA,

@@ -382,3 +382,34 @@ def test_eval_document_run_entries_carry_their_assessments(run: Run) -> None:
             "fields": {},
         }
     ]
+
+
+def _investigation(run: Run) -> Run:
+    """An imported investigation: its report names a short commit and no task version."""
+    from inspect_audit.findings.models import Revision, Subject
+
+    subject = Subject(eval=EVAL, revision=Revision(commit="dbd3dd25"))
+    finding = run.findings[0].model_copy(
+        update={"producer": "inspect_audit_investigate", "subject": subject, "id": None}
+    )
+    return Run(
+        id="inspect_audit_investigate-1",
+        timestamp=T1,
+        producer="inspect_audit_investigate",
+        subject=subject,
+        findings=[
+            finding.model_copy(
+                update={"fingerprint": "sha256:inv", "run_id": "inspect_audit_investigate-1"}
+            )
+        ],
+    )
+
+
+def test_an_evals_page_takes_its_subject_from_a_sweep_not_an_investigation(run: Run) -> None:
+    from inspect_audit.findings.export import eval_document, index_document, seen_range
+
+    runs = apply_review([_investigation(run), run], Review())
+    doc = eval_document(EVAL, runs, Review(), seen_range(runs), NOW)
+    assert (doc["revision"]["commit"], doc["task_version"]) == ("5687c5cdf", "3-A")
+    (entry,) = index_document({EVAL: runs}, Review(), seen_range(runs), NOW)["evals"]
+    assert (entry["revision"]["commit"], entry["task_version"]) == ("5687c5cdf", "3-A")

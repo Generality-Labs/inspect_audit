@@ -22,12 +22,14 @@ from pydantic import JsonValue
 from .adapters import slug
 from .fingerprint import fingerprint
 from .models import (
+    AnyLocation,
     ArtifactLocation,
     Assessment,
     Finding,
     Measure,
     Revision,
     Run,
+    Severity,
     Source,
     Status,
     Subject,
@@ -95,7 +97,7 @@ def read_bundle(bundle: Path, eval: str, *, revision: str | None = None) -> Impo
         refs = raw.get("evidence", [])
         leads = [ref for ref in refs if _is_lead(ref["path"])]
         located = [ref for ref in refs if not _is_lead(ref["path"])] or leads
-        locations = [
+        locations: list[AnyLocation] = [
             ArtifactLocation(
                 role="primary" if index == 0 else "related",
                 path=ref["path"],
@@ -110,7 +112,7 @@ def read_bundle(bundle: Path, eval: str, *, revision: str | None = None) -> Impo
             rule=raw["id"],
             subject=subject,
             dimension=raw["section"],
-            severity=(raw.get("severity") or "none").lower(),
+            severity=_severity(raw),
             status=raw["status"],
             summary=raw["claim"],
             locations=locations,
@@ -118,7 +120,8 @@ def read_bundle(bundle: Path, eval: str, *, revision: str | None = None) -> Impo
             source=Source(format=SOURCE_FORMAT, record=cast(JsonValue, raw)),
         )
         fingerprints[raw["id"]] = finding.fingerprint
-        pending += [(ref["location"], finding.status, len(findings)) for ref in leads if ref.get("location")]
+        status: Status = raw["status"]
+        pending += [(str(ref["location"]), status, len(findings)) for ref in leads if ref.get("location")]
         findings.append(finding)
 
     limitation_ids = {str(item["id"]) for item in limitations}
@@ -152,6 +155,18 @@ def read_bundle(bundle: Path, eval: str, *, revision: str | None = None) -> Impo
         for record, status, index in pending
     ]
     return Imported(run=run, citations=citations)
+
+
+SEVERITIES: tuple[Severity, ...] = ("none", "minor", "major", "critical")
+
+
+def _severity(raw: dict[str, Any]) -> Severity:
+    # the bundle writes Minor/Major/Critical, and null (older bundles: "None") for no defect
+    value = str(raw.get("severity") or "none").lower()
+    for severity in SEVERITIES:
+        if value == severity:
+            return severity
+    raise ValueError(f"finding {raw['id']!r} has an unknown severity {raw.get('severity')!r}")
 
 
 def _assessment(

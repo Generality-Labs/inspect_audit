@@ -1,5 +1,7 @@
 # Review decisions
 
+Part of the findings store.
+
 Producer run files are never edited. A review decision is one object under `review/` in the store, written once and never changed: who decided what, when, and why. Rendering folds the log in time order into the view it applies to copies of the current runs: matching observations gain a suppression, matching fingerprints gain an issue id or a status. Rerunning a producer cannot lose a decision, and two writers never edit the same object, so the store works the same on a directory, S3 or R2.
 
 Decisions are written through `inspect-audit-findings review suppress|accept|link|status|retract`, which resolves what you point at against the current view, refuses what the fold would refuse, writes the object and re-renders. Nobody writes the objects by hand.

@@ -2,6 +2,18 @@
 
 This follows one eval, BFCL, through every step: from the deterministic checks to the table site. Every command below was run for real on 2026-10-15 into a local scratch store, and the JSON excerpts are that run's output, trimmed. The investigation in step 5 is a real one, run on 2026-10-12.
 
+inspect_audit has two parts, and this walk-through uses both. Steps 1 to 4, 6 and 7 are the **findings store**: the `inspect-audit-findings` CLI and the store it writes. Step 5 is the **investigator agent**, an Inspect task that is separate software: it is run with `inspect eval`, costs model calls, and writes its own folder outside the store. The two meet at step 4 (leads, from the store to the investigator) and step 6 (import, from the investigator to the store).
+
+| Step            | Part                                              | Command                                        | Writes to the store?                   |
+| --------------- | ------------------------------------------------- | ---------------------------------------------- | -------------------------------------- |
+| 1 · Sweep       | findings store                                    | `inspect-audit-findings run`                   | yes: run records                       |
+| 2 · Render      | findings store                                    | automatic, or `inspect-audit-findings summary` | yes: derived files only                |
+| 3 · Review      | findings store                                    | `inspect-audit-findings review …`              | yes: review decisions                  |
+| 4 · Leads       | findings store, for the investigator              | `inspect-audit-findings leads --bundle`        | no: writes a folder for the agent      |
+| 5 · Investigate | **investigator agent**                            | `inspect eval inspect_audit/investigate`       | no: writes an investigation folder     |
+| 6 · Import      | findings store, reading the investigator's output | `inspect-audit-findings import-investigation`  | yes: a run record and review decisions |
+| 7 · Site        | the table site                                    | nothing                                        | no: reads the export                   |
+
 The store in this walk-through is a local folder. A deployment's store is usually a bucket: every command takes `--store s3://<bucket>` instead and writes the same files there. Generality's deployment is described in [deployments/generality.md](deployments/generality.md).
 
 ## The words, first
@@ -52,7 +64,7 @@ Two kinds of thing are written by commands: run records and review decisions. Ev
 
 ______________________________________________________________________
 
-## Step 1 · Sweep: run the deterministic producers
+## Step 1 · Sweep: run the deterministic producers (findings store)
 
 ```bash
 uv run inspect-audit-findings run --root ../inspect_evals --store <store> inspect_evals/bfcl
@@ -130,7 +142,7 @@ What changed between the two: the producer's `severity: high` became the store's
 
 A third producer, the log-header checks, runs only when `--logs` names Inspect logs. It was not run here.
 
-## Step 2 · Render (automatic)
+## Step 2 · Render (findings store, automatic)
 
 Every command that writes something ends by rendering. To render by hand:
 
@@ -154,7 +166,7 @@ Render reads every run record and every review decision, then:
 
 Run records are never changed by render. A Finding record's status, suppressions and issue on the page come from applying review decisions to a copy at render time.
 
-## Step 3 · Review (optional; a person)
+## Step 3 · Review (findings store; optional, a person)
 
 A person looks at the page and rules. Here, accepting the three control-character Finding records as one issue:
 
@@ -185,7 +197,7 @@ The decision names Finding records by **fingerprint**, not record id, so it keep
 
 The other review commands, one line each: `review suppress` hides a rule's Finding records as noise; `review status` sets a Finding record's status; `review link` attaches a GitHub issue URL; `review retract` withdraws an earlier decision.
 
-## Step 4 · Leads: what the investigator is given
+## Step 4 · Leads: what the investigator is given (findings store → agent)
 
 ```bash
 uv run inspect-audit-findings leads --store <store> --bundle leads/bfcl inspect_evals/bfcl
@@ -212,7 +224,7 @@ leads/bfcl/runs/inspect_evals_lint-20261015T033751Z-inspect-evals-bfcl.run.json 
 
 Suppressed Finding records are left out. Investigation run records are left out, so one investigation never feeds the next. The `runs/` copies are there so the "and 116 more" pointers resolve inside the investigator's container.
 
-## Step 5 · Investigate (the real run of 2026-10-12)
+## Step 5 · Investigate (the investigator agent; the real run of 2026-10-12)
 
 ```bash
 uv run inspect eval inspect_audit/investigate \
@@ -224,7 +236,7 @@ uv run inspect eval inspect_audit/investigate \
   --model openrouter/openai/gpt-6-sol --log-dir <investigation dir>/logs
 ```
 
-`-T paths=…` works around the path bug described under known gaps. That run used leads rendered from the bucket's 8 October sweep, so the record ids it cites are `inspect_dataset-20261008T050851Z-…`, not the 15 October ones above.
+This step is the investigator agent, not the findings store: none of the store's code runs here, and the agent reads only the leads folder from step 4. `-T paths=…` works around the path bug described under known gaps. That run used leads rendered from the bucket's 8 October sweep, so the record ids it cites are `inspect_dataset-20261008T050851Z-…`, not the 15 October ones above.
 
 Files produced, under the investigation folder:
 
@@ -283,7 +295,7 @@ The `id` is a name the agent chose. The last evidence entry is a **lead citation
 
 `C.1` is a check of the GL report framework: dimension C (dataset), contribution 1 (in `framework/checks.json`). Those ids are the same as the `inspect-audit@1` taxonomy's. This bundle has 56 such rows: 8 Minor or Major, the rest Not assessed.
 
-## Step 6 · Import the bundle into the store
+## Step 6 · Import the bundle into the store (agent → findings store)
 
 ```bash
 uv run inspect-audit-findings import-investigation --store <store> --eval inspect_evals/bfcl \
@@ -358,7 +370,7 @@ The agent's `id` became the `rule`; `section` became `dimension`; `claim` became
 
 It has the same shape as a decision from `review status`, written on the importing person's behalf. The reason names the investigator's Finding record by record id, so a reader can follow it back.
 
-## Step 7 · What the site reads
+## Step 7 · What the site reads (table site)
 
 When the store is a bucket the site can read, a render is all it takes to update the page: the site reads `export/` directly (Generality's site uses an R2 binding). This walk-through used a local folder, so nothing here reached the site.
 

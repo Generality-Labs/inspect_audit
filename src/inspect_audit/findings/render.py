@@ -159,13 +159,15 @@ def page_subject(runs: Sequence[Run]) -> Subject:
 
     A sweep reads the checkout and records both; an imported investigation records only the
     commit its report names. So a run with a task version wins, then any run but an
-    investigation, then producer order.
+    investigation, then the newest, so re-running some producers moves the page to their
+    revision.
     """
     ranked = sorted(
         runs,
         key=lambda r: (
             r.subject.task_version is None,
             r.producer == INVESTIGATOR,
+            -r.timestamp.timestamp(),
             r.producer,
             r.id,
         ),

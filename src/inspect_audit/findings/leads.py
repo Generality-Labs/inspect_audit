@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .fs import StoreFS, as_store_fs
+from .investigation import CITED
 from .investigation import PRODUCER as INVESTIGATOR
 from .io import read_current
 from .models import Finding, Run
@@ -44,6 +45,27 @@ def _sample_ids(finding: Finding) -> set[str]:
         if sample_id is not None:
             ids.add(str(sample_id))
     return ids
+
+
+def without_citations(review: Review) -> Review:
+    """The review minus statuses an imported investigation set on the leads it cited.
+
+    Suppressions, issue links and people's statuses still apply; an earlier verdict does
+    not, so a re-audit starts from the deterministic observations.
+    """
+    cited = {
+        fp
+        for fp, provenance in review.status_provenance.items()
+        if (provenance.reason or "").startswith(CITED)
+    }
+    return review.model_copy(
+        update={
+            "statuses": {fp: s for fp, s in review.statuses.items() if fp not in cited},
+            "status_provenance": {
+                fp: p for fp, p in review.status_provenance.items() if fp not in cited
+            },
+        }
+    )
 
 
 def select_leads(

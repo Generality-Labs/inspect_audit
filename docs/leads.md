@@ -23,6 +23,6 @@ Two paths, same content. The pull path is the target; the staged file is the fal
 
 The MCP attach and the sample auditor's staging still touch James's code and prompts and go to him as one PR. The leads module imports nothing from the investigator.
 
-**Investigations are not leads.** An imported investigation's findings and assessments are left out of `LEADS.md` and the bundle's run files, so a re-audit starts from the deterministic observations rather than an earlier verdict.
+**Investigations are not leads.** An imported investigation's findings and assessments are left out of `LEADS.md` and the bundle's run files, and the statuses its citations set on leads are ignored there (suppressions, issue links and people's statuses still apply), so a re-audit starts from the deterministic observations rather than an earlier verdict.
 
 **Closing the loop.** New investigations write status history through the server. The two investigations that predate it (chess, SciCode) are imported by the register adapter, which reads cited record ids from evidence and writes the status history then.

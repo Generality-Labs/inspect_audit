@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -239,14 +240,29 @@ def test_a_cited_lead_takes_the_citing_status_with_its_provenance(tmp_path: Path
     assert reason.startswith("cited as evidence by inspect_audit_investigate-")
 
 
-def test_a_bundle_is_imported_once(
+def test_a_bundle_imported_again_adds_no_second_run(
     tmp_path: Path, run: Any, capsys: pytest.CaptureFixture[str]
 ) -> None:
     store = _stereoset_store(tmp_path, run)
     bundle = _bundle(tmp_path, findings=[SCORER])
     assert _import(bundle, store) == 0
+    assert _import(bundle, store) == 0
+    assert "already in the store as inspect_audit_investigate-" in capsys.readouterr().out
+    assert (
+        len(list((store / "inspect-evals-stereoset" / "runs").glob("inspect_audit_investigate-*")))
+        == 1
+    )
+
+
+def test_a_changed_bundle_under_the_same_id_is_refused(
+    tmp_path: Path, run: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    store = _stereoset_store(tmp_path, run)
+    bundle = _bundle(tmp_path, findings=[SCORER])
+    assert _import(bundle, store) == 0
+    (bundle / "findings.json").write_text(json.dumps([SCORER | {"claim": "corrected"}]))
     assert _import(bundle, store) == 2
-    assert "already in the store as inspect_audit_investigate-" in capsys.readouterr().err
+    assert "changed since" in capsys.readouterr().err
 
 
 def test_a_citation_outside_the_current_view_warns_and_still_imports(
@@ -295,3 +311,133 @@ def test_quoted_sample_text_is_shortened_as_dataset_findings_are(tmp_path: Path)
     shortened = long[:32] + "…"
     assert finding.primary_location.quote == shortened
     assert finding.source.record["evidence"][0]["quote"] == shortened  # type: ignore[index,call-overload]
+
+
+def _decisions(store: Path) -> list[Any]:
+    from inspect_audit.findings.fs import StoreFS
+    from inspect_audit.findings.review import load_decisions
+
+    return [d for d in load_decisions(StoreFS.from_locator(store)) if d.status is not None]
+
+
+def test_a_malformed_author_fails_before_anything_is_written(tmp_path: Path, run: Any) -> None:
+    store = _stereoset_store(tmp_path, run)
+    bundle = _bundle(tmp_path, findings=[_citing("lint-1/1")])
+    assert _import(bundle, store, "--author", "Matt") == 2
+    assert not list(
+        (store / "inspect-evals-stereoset" / "runs").glob("inspect_audit_investigate-*")
+    )
+    assert _import(bundle, store, *AUTHOR) == 0
+    assert len(_decisions(store)) == 1
+
+
+def test_an_interrupted_import_resumes_with_the_missing_lead_decisions(
+    tmp_path: Path, run: Any
+) -> None:
+    store = _stereoset_store(tmp_path, run)
+    bundle = _bundle(tmp_path, findings=[_citing("lint-1/1")])
+    assert _import(bundle, store, *AUTHOR) == 0
+    for decision in (store / "review").glob("*.json"):
+        decision.unlink()  # as if the run was written and the status write then failed
+    assert _import(bundle, store, *AUTHOR) == 0
+    assert len(_decisions(store)) == 1
+    assert _import(bundle, store, *AUTHOR) == 0
+    assert len(_decisions(store)) == 1
+
+
+@pytest.mark.parametrize("status", ["hypothesis", "retracted"])
+def test_only_supported_or_qualified_findings_mark_a_lead(
+    tmp_path: Path, run: Any, status: str
+) -> None:
+    store = _stereoset_store(tmp_path, run)
+    assert (
+        _import(
+            _bundle(tmp_path, findings=[_citing("lint-1/1") | {"status": status}]), store, *AUTHOR
+        )
+        == 0
+    )
+    assert _decisions(store) == []
+
+
+def test_a_lead_cited_twice_takes_the_stronger_status_once(tmp_path: Path, run: Any) -> None:
+    store = _stereoset_store(tmp_path, run)
+    supported = _citing("lint-1/1")
+    qualified = _citing("lint-1/1") | {"id": "second", "status": "qualified"}
+    assert _import(_bundle(tmp_path, findings=[supported, qualified]), store, *AUTHOR) == 0
+    (decision,) = _decisions(store)
+    assert decision.status.status == "supported"
+
+
+def test_a_lead_someone_already_judged_is_left_alone(tmp_path: Path, run: Any) -> None:
+    from inspect_audit.findings.cli import main
+
+    store = _stereoset_store(tmp_path, run)
+    human = [
+        "review",
+        "status",
+        "--store",
+        str(store),
+        "--id",
+        "lint-1/1",
+        "qualified",
+        "--reason",
+        "partly",
+    ]
+    assert main([*human, *AUTHOR]) == 0
+    assert _import(_bundle(tmp_path, findings=[_citing("lint-1/1")]), store, *AUTHOR) == 0
+    (decision,) = _decisions(store)
+    assert decision.status.status == "qualified"
+
+
+def test_the_timestamp_can_be_given_when_the_file_time_is_a_copy_time(tmp_path: Path) -> None:
+    run = _read(_bundle(tmp_path), timestamp=datetime(2026, 9, 25, 10, tzinfo=UTC)).run
+    assert run.id == "inspect_audit_investigate-20260925T100000Z-inspect-evals-bfcl"
+
+
+def test_bundled_leads_carry_no_status_from_investigator_citations(
+    tmp_path: Path, run: Any
+) -> None:
+    from inspect_audit.findings.cli import main
+
+    store = _stereoset_store(tmp_path, run)
+    assert _import(_bundle(tmp_path, findings=[_citing("lint-1/1")]), store, *AUTHOR) == 0
+    leads = tmp_path / "leads"
+    assert main(["leads", "--store", str(store), "--bundle", str(leads), STEREOSET]) == 0
+    stored = json.loads((leads / "runs" / "lint-1.run.json").read_text())
+    assert stored["findings"][0]["history"] == []
+    assert "cited as evidence" not in (leads / "LEADS.md").read_text()
+
+
+def test_a_finding_without_evidence_is_located_in_the_bundle(tmp_path: Path) -> None:
+    bare = SCORER | {"evidence": []}
+    (finding,) = _read(_bundle(tmp_path, findings=[bare], assessments=None)).run.findings
+    assert finding.primary_location == ArtifactLocation(
+        role="primary", path="findings.json", location="agentic-containment"
+    )
+
+
+def test_a_bundle_named_as_the_current_directory_keeps_its_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = _bundle(tmp_path)
+    monkeypatch.chdir(bundle)
+    assert _read(Path(".")).run.inputs["bundle"]["id"] == bundle.name  # type: ignore[index]
+
+
+def test_citations_of_another_evals_leads_are_refused(
+    tmp_path: Path, run: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from inspect_audit.findings.cli import main
+
+    store = _stereoset_store(tmp_path, run)
+    bundle = _bundle(tmp_path, findings=[_citing("lint-1/1")])
+    args = [
+        "import-investigation",
+        str(bundle),
+        "--store",
+        str(store),
+        "--eval",
+        "inspect_evals/other",
+    ]
+    assert main([*args, *AUTHOR]) == 2
+    assert STEREOSET in capsys.readouterr().err

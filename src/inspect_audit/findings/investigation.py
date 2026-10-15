@@ -40,6 +40,12 @@ PRODUCER = "inspect_audit_investigate"
 METHODOLOGY = "inspect-audit@1"
 SOURCE_FORMAT = "inspect_audit.investigation.finding"
 LIMITATION = "audit_limitation"
+# the reason on a lead's status decision; leads leave these statuses out, so an earlier
+# investigation's verdict does not anchor the next one
+CITED = "cited as evidence by "
+# a lead takes only a confirming status; a retracted or unconfirmed investigator finding
+# says nothing about whether the deterministic observation holds
+MARKS: tuple[Status, ...] = ("supported", "qualified")
 
 
 @dataclass(frozen=True)
@@ -91,8 +97,15 @@ def _load(path: Path) -> Any:
     return json.loads(path.read_text()) if path.is_file() else None
 
 
-def read_bundle(bundle: Path, eval: str, *, revision: str | None = None) -> Imported:
-    """The run a published bundle describes. `revision` is used when the report names no commit."""
+def read_bundle(
+    bundle: Path, eval: str, *, revision: str | None = None, timestamp: datetime | None = None
+) -> Imported:
+    """The run a published bundle describes.
+
+    `revision` is used when the report names no commit. `timestamp` replaces
+    `findings.json`'s modification time, which a copy or download resets.
+    """
+    bundle = bundle.resolve()
     findings_file = bundle / "findings.json"
     if not findings_file.is_file():
         raise ValueError(f"{bundle} is not a published investigation: it has no findings.json")
@@ -100,7 +113,9 @@ def read_bundle(bundle: Path, eval: str, *, revision: str | None = None) -> Impo
     commit = _commitref(bundle) or revision
     if commit is None:
         raise ValueError(f"{bundle}'s report names no commit; pass the audited revision")
-    stamp = datetime.fromtimestamp(findings_file.stat().st_mtime, UTC).replace(microsecond=0)
+    stamp = (timestamp or datetime.fromtimestamp(findings_file.stat().st_mtime, UTC)).replace(
+        microsecond=0
+    )
     run_id = f"{PRODUCER}-{stamp:%Y%m%dT%H%M%SZ}-{slug(eval)}"
     subject = Subject(eval=eval, revision=Revision(commit=commit))
 
@@ -112,9 +127,11 @@ def read_bundle(bundle: Path, eval: str, *, revision: str | None = None) -> Impo
         if raw["origin"] == LIMITATION:
             limitations.append({"id": raw["id"], "claim": raw["claim"]})
             continue
-        refs = raw["evidence"]
+        refs: list[dict[str, Any]] = raw["evidence"]
         leads = [ref for ref in refs if _is_lead(ref["path"])]
-        located = [ref for ref in refs if not _is_lead(ref["path"])] or leads
+        located: list[dict[str, Any]] = [ref for ref in refs if not _is_lead(ref["path"])] or leads
+        if not located:  # the schema allows a finding with no evidence; locate it in the bundle
+            located = [{"path": "findings.json", "location": raw["id"], "quote": None}]
         locations: list[AnyLocation] = [
             ArtifactLocation(
                 role="primary" if index == 0 else "related",
@@ -139,6 +156,8 @@ def read_bundle(bundle: Path, eval: str, *, revision: str | None = None) -> Impo
         )
         fingerprints[raw["id"]] = finding.fingerprint
         status: Status = raw["status"]
+        if status not in MARKS:
+            leads = []
         pending.extend(
             (str(ref["location"]), status, len(findings)) for ref in leads if ref.get("location")
         )
@@ -152,7 +171,7 @@ def read_bundle(bundle: Path, eval: str, *, revision: str | None = None) -> Impo
     inputs: dict[str, JsonValue] = {
         "bundle": {
             "id": bundle.name,
-            "path": str(bundle.resolve()),
+            "path": str(bundle),
             "findings_sha256": sha256(findings_file.read_bytes()).hexdigest(),
         }
     }

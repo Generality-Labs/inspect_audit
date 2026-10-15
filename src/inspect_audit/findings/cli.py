@@ -30,8 +30,8 @@ from .deployment import load_deployment, store_pilot, unknown_tables
 from .export import export_texts
 from .featured import FEATURED
 from .fs import StoreFS, as_store_fs
+from .investigation import CITED, MARKS, read_bundle
 from .investigation import PRODUCER as INVESTIGATOR
-from .investigation import Citation, read_bundle
 from .io import (
     current_of,
     findings_df,
@@ -41,7 +41,7 @@ from .io import (
     write_parquet,
     write_run,
 )
-from .leads import NoRunsError, leads_markdown
+from .leads import NoRunsError, leads_markdown, without_citations
 from .models import Run, Status
 from .producers import ProducerConfig
 from .render import render_eval_summary, render_sweep_summary
@@ -427,6 +427,13 @@ def _parser() -> argparse.ArgumentParser:
         "--revision", default=None, help="the audited commit, when the report names none"
     )
     imp_p.add_argument(
+        "--timestamp",
+        type=_timestamp,
+        default=None,
+        help="when the investigation ran (ISO 8601); default: findings.json's modification "
+        "time, which a copy or download resets",
+    )
+    imp_p.add_argument(
         "--author",
         default=None,
         help="'Name <email>' on the status decisions for cited leads "
@@ -509,84 +516,115 @@ def _selection(args: argparse.Namespace) -> Selection:
 
 
 def _import_investigation(args: argparse.Namespace) -> int:
-    """Write a bundle's run, then mark each lead it cites with the citing finding's status."""
+    """Write a bundle's run, then mark the leads it confirms; importing it again resumes."""
     fs = _resolve_store(args)
     if fs is None:
         return 2
     try:
-        imported = read_bundle(args.bundle, args.eval, revision=args.revision)
-    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as ex:
+        imported = read_bundle(
+            args.bundle, args.eval, revision=args.revision, timestamp=args.timestamp
+        )
+    except (ValueError, KeyError, TypeError, AttributeError, json.JSONDecodeError) as ex:
         print(f"{args.bundle}: {ex}", file=sys.stderr)
         return 2
+    run = imported.run
+    bundle_id, digest = _bundle_ref(run)
     store = Store(fs)
     history = store.history()
-    bundle_id = args.bundle.name
-    earlier = next((r.id for r in history if _bundle_id(r) == bundle_id), None)
-    if earlier is not None:
-        print(f"bundle {bundle_id} is already in the store as {earlier}", file=sys.stderr)
+    earlier = next((r for r in history if _bundle_ref(r)[0] == bundle_id), None)
+    if earlier is not None and _bundle_ref(earlier)[1] != digest:
+        print(
+            f"bundle {bundle_id} has changed since it was imported as {earlier.id}; "
+            "a corrected investigation needs a new bundle",
+            file=sys.stderr,
+        )
+        return 2
+    review = _fold_or_exit(fs)
+    if review is None:
         return 2
     # a lead's sweep may have been superseded since the leads were rendered; its
     # fingerprint carries over to the current view, its record id does not
-    fingerprint_of = {f.id: f.fingerprint for r in history for f in r.findings}
+    lead_of = {f.id: f for r in history for f in r.findings}
     current = {f.fingerprint for r in store.runs() for f in r.findings}
-    marked: list[tuple[Citation, str]] = []
+    wanted: dict[str, tuple[Status, list[str]]] = {}
+    foreign: set[str] = set()
     for citation in imported.citations:
-        fp = fingerprint_of.get(citation.record_id)
-        if fp in current:
-            marked.append((citation, fp))
-        else:
+        lead = lead_of.get(citation.record_id)
+        if lead is None or lead.fingerprint not in current:
             print(
                 f"warning: {citation.record_id}, cited by {citation.cited_by}, is not in "
                 "the store's current view; its status is unchanged",
                 file=sys.stderr,
             )
-    author = _author(args.author)
-    if marked and author is None:
+        elif lead.subject.eval != args.eval:
+            foreign.add(lead.subject.eval)
+        elif lead.fingerprint not in review.statuses:  # someone already judged it: leave it
+            status, cited_by = wanted.get(lead.fingerprint, (citation.status, []))
+            stronger = (
+                status if MARKS.index(status) <= MARKS.index(citation.status) else citation.status
+            )
+            wanted[lead.fingerprint] = (stronger, [*cited_by, citation.cited_by])
+    if foreign:
         print(
-            "no author for the cited leads' status decisions: pass --author 'Name <email>', "
-            "set INSPECT_AUDIT_AUTHOR, or configure git user.name and user.email",
+            f"the bundle cites leads of {', '.join(sorted(foreign))}, not {args.eval}; "
+            "check --eval",
             file=sys.stderr,
         )
         return 2
-    run = imported.run
-    key = _run_key(fs, slug(args.eval), run)
-    file_id = key.rsplit("/", 1)[-1].removesuffix(".run.json")
-    stored = run if file_id == run.id else _renamed(run, file_id)
-    write_run(stored, fs, key)
+    author = _author(args.author)
+    if wanted:
+        try:
+            store.check_can_decide(author or "")
+        except StoreError as ex:
+            print(f"cannot mark the cited leads: {ex}", file=sys.stderr)
+            return 2
+    if earlier is None:
+        key = _run_key(fs, slug(args.eval), run)
+        file_id = key.rsplit("/", 1)[-1].removesuffix(".run.json")
+        stored = run if file_id == run.id else _renamed(run, file_id)
+        write_run(stored, fs, key)
+        target = stored.id
+    else:
+        target = earlier.id
+    decisions: dict[tuple[Status, str], list[str]] = {}
+    for fingerprint, (status, cited_by) in wanted.items():
+        records = ", ".join(sorted({c.replace(run.id, target, 1) for c in cited_by}))
+        decisions.setdefault((status, f"{CITED}{records}"), []).append(fingerprint)
     try:
-        for (status, cited_by), fingerprints in _by_citing_finding(marked).items():
+        for (status, reason), fingerprints in decisions.items():
             store.set_status(
-                Selection(fingerprints=fingerprints),
+                Selection(fingerprints=tuple(fingerprints)),
                 status=status,
                 author=str(author),
-                reason=f"cited as evidence by {cited_by.replace(run.id, stored.id, 1)}",
+                reason=reason,
             )
-        if not marked:
+        if not decisions and earlier is None:
             render_current(fs)
     except (StoreError, OSError) as ex:
-        print(str(ex), file=sys.stderr)
+        print(f"{ex}; import the bundle again to finish marking its leads", file=sys.stderr)
         return 2
-    print(
-        f"imported {bundle_id} as {stored.id}: {len(stored.findings)} finding(s), "
-        f"{len(stored.assessments)} assessment(s), {len(marked)} lead(s) marked"
-    )
+    if earlier is None:
+        print(
+            f"imported {bundle_id} as {target}: {len(run.findings)} finding(s), "
+            f"{len(run.assessments)} assessment(s), {len(wanted)} lead(s) marked"
+        )
+    else:
+        print(
+            f"bundle {bundle_id} is already in the store as {target}; {len(wanted)} lead(s) marked"
+        )
     return 0
 
 
-def _bundle_id(run: Run) -> str | None:
+def _bundle_ref(run: Run) -> tuple[str | None, str | None]:
     bundle = run.inputs.get("bundle")
-    return str(bundle.get("id")) if isinstance(bundle, dict) else None
+    if not isinstance(bundle, dict):
+        return None, None
+    return str(bundle.get("id")), str(bundle.get("findings_sha256"))
 
 
-def _by_citing_finding(
-    marked: Sequence[tuple[Citation, str]],
-) -> dict[tuple[Status, str], tuple[str, ...]]:
-    grouped: dict[tuple[Status, str], tuple[str, ...]] = {}
-    for citation, fp in marked:
-        key = (citation.status, citation.cited_by)
-        if fp not in grouped.get(key, ()):
-            grouped[key] = (*grouped.get(key, ()), fp)
-    return grouped
+def _timestamp(text: str) -> datetime:
+    stamp = datetime.fromisoformat(text)
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
 
 
 def _review(args: argparse.Namespace) -> int:
@@ -657,6 +695,7 @@ def _leads(
     review = _fold_or_exit(fs)
     if review is None:
         return 2
+    review = without_citations(review)
     try:
         text = leads_markdown(fs, eval, review, sample_id=sample)
     except NoRunsError as ex:

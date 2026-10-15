@@ -212,17 +212,21 @@ class Store:
             }
         )
 
-    def _write(self, decision: Decision) -> Decision:
-        from .cli import render_current  # the renderer lives beside the CLI
-
-        if not _AUTHOR.fullmatch(decision.author):
-            raise StoreError(f"author must be 'Name <email>', got {decision.author!r}")
+    def check_can_decide(self, author: str) -> None:
+        """Raise StoreError unless a decision by `author` could be written now."""
+        if not _AUTHOR.fullmatch(author):
+            raise StoreError(f"author must be 'Name <email>', got {author!r}")
         pending = unmigrated_review_files(self.fs)
         if pending:
             raise StoreError(
                 f"hand-written {', '.join(pending)} found under {self.fs.locator}; "
                 "run `inspect-audit-findings review migrate` first"
             )
+
+    def _write(self, decision: Decision) -> Decision:
+        from .cli import render_current  # the renderer lives beside the CLI
+
+        self.check_can_decide(decision.author)
         write_decision(self.fs, decision)
         render_current(self.fs)
         return decision

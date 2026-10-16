@@ -32,7 +32,7 @@ page shows. You write five records in `report/`, each with a schema beside it:
   from that check's scale, `notes`, `evidence`, the `findings` ids it rests on, the
   `fields` the form asks for, and `impact` on a Flag.
 - `sampling.json`: how the audited items were chosen: population, sample, strategy
-  (census, random, stratified, purposive), strata, seed, expansion, confirmation, provided to you.
+  (census, random, stratified, purposive), strata, seed, expansion, confirmation.
 - `findings.json`: the evidence register, each finding filed under the `check` it bears on.
 - `prose.json`: the reader-facing blocks the template declares, keyed by block id.
 
@@ -47,51 +47,28 @@ before the verdict is known produces blocks that will be rejected.
 ## Order of work
 
 The rubric is the plan. Each stage ends with a record on disk and a `check_report` run,
-so the verdict is always derivable from what has been written, and no stage reaches
-for a tool it does not need yet.
+so the verdict is always derivable from what has been written. The rules of each stage
+(write as you go, the attempts job beside the item batch, impact measured on the
+defective items alone, the first Flag ending the rubric and not the review) are in your
+standing instructions, stated once there; this table is the map.
 
 | Stage | Needs | Do | Writes |
 |---|---|---|---|
 | 0 Orient | source, docs, overview | the benchmark's facts; the population and its strata; the sample design, yours or the operator's | `profile.json`, `sampling.json` |
 | 1 Reviewability | source, supplied log headers | can tasks, scoring logic and settings be inspected? | the reviewability row |
 | 2 Items | the sample | question-labels and the substantive item checks, two items first, then the rest | `coverage.json`, a provisional scoring row |
-| 3 Attempts | supplied logs, else eval models | read the supplied logs once the labels exist; with none, submit the default eval on the sampled ids only, one epoch, inside `eval_budget_usd`, beside the item batch (the auditors never see it) and read it once the labels exist; with neither, write that down. Measure impact by re-running gold-answer on the defective items alone against that job | the attempts source |
-| 4 Minimum standard | stages 2 and 3 | the four rows in rubric order: scoring with its impact measured on the attempts; consistency, elicitation and bias from headers, transcripts and the published methodology. The first Flag ends the rubric: the rows after it are written Not Reviewed and stage 5 is skipped | the rows up to and including the first Flag, with its `impact` |
-| 5 Quality | no Flag in stage 4 | the seven quality rows; after a Flag they are all Not Reviewed | assessments complete |
+| 3 Attempts | supplied logs, else the attempts job | read them once the labels exist; measure impact on the defective items; with neither logs nor eval models, say so in the methodology block | the attempts source |
+| 4 Minimum standard | stages 2 and 3 | the four rows in rubric order; the first Flag ends the rubric, the rows after it are Not Reviewed | the rows up to and including the first Flag, with its `impact` |
+| 5 Quality | no Flag in stage 4 | the seven quality rows | assessments complete |
 | 6 Publish | the derived verdict | the prose blocks that verdict calls for; publish | the page |
 
-Write as you go. The table's last column is not optional: the scoring row goes in at
-its provisional level the moment stage 2's labels exist, with the measure from
-`coverage.json`, and later stages update rows rather than save them for the end.
-Confirming candidate labels, fetching more sources and repairing the last items are
-refinements of a review that is already derivable, not prerequisites for one. The
-working-time limit ends the run without warning, and a run that ends with records
-but no rows publishes nothing. `budget()` shows the working time used; when half of
-it is gone, stop refining, write what the evidence supports, and publish. A published
-review that names its open questions beats an unpublished one.
-
-The rubric stops at the first Flag. A Flag ends the rubric, not the review: the run
-still completes stage 3 when stage 2's provisional scoring row is already a Flag,
-because the Flag has to carry its measured impact, and it always reaches stage 6. A
-Flag on scoring leaves consistency, elicitation, bias and every quality row Not Reviewed; a Flag on consistency leaves elicitation and
-bias and the quality rows Not Reviewed; and so on. `check_report` refuses a level
-written after a Flag. The Flag carries its impact, the prose carries the errors, and
-the page reads "[stop → Flawed]" where it stopped. Observations that would have gone
-into later rows belong in the findings filed under the flagged check or in the
-journal, not in rows the methodology says are not reviewed.
-
-A benchmark job before the sample is fixed is premature; once it is fixed and the
-pilot has passed, the attempts job goes out beside the item batch, because the clock
-is the item audits (one long agent per item, waiting on nothing) and the auditors
-never see attempts. Read it only once the labels exist, and measure impact by
-re-running gold-answer on the defective items alone with that job as the logs
-argument: auditing the whole sample a second time doubles the longest stage. Give an
-audit job `max_connections` equal to its item count, up to the policy cap, or the
-batch runs in waves. A benchmark job on the whole dataset is not
-part of a review; the published results are the series the review compares against,
-and the review's own attempts measure what the confirmed defects do to real
-submissions. A defect no attempt touches is still a defect for the measure; it simply
-carries no impact figure.
+Two consequences for the writing. Observations that would have gone into rows after a
+Flag belong in the findings filed under the flagged check or in the journal, not in
+rows the methodology says are not reviewed; `check_report` refuses a level written
+there, and the page reads "[stop → Flawed]" where the rubric stopped. And the
+published results are the series the review compares against: the review's own
+attempts measure what the confirmed defects do to real submissions, and a defect no
+attempt touches is still a defect for the measure, it simply carries no impact figure.
 
 ## The sample's provenance
 
@@ -109,8 +86,7 @@ can carry its own `measure` when you obtained one some other way.
 The template lists every block with its brief, its limit and the verdicts it belongs to;
 `report/methodology.md` ends with the same list. In short:
 
-- Every review: **summary** (150 words: how the task works and what it measures, the best
-  score, the observations that decided the verdict) and **methodology** (125 words: which
+- Every review: **summary** (150 words: how the task works and what it measures, the observations that decided the verdict) and **methodology** (125 words: which
   logs and source you read, what you computed, which per-item audits ran on how many items,
   what you did not do).
 - **Verified** adds **interpretation**, **task_analysis** and **elicitation_and_scaffolding**
@@ -129,7 +105,7 @@ The template lists every block with its brief, its limit and the verdicts it bel
 ## The Notes cell
 
 Each row's Notes is one sentence, at most 25 words, that says what is wrong with the
-item for a reader who has it open: the question's problem first, nothing about how
+item: the question's problem first, nothing about how
 it was found. Start from the auditor's `headline` in `coverage.json` and tighten it;
 the explanation and the numbers stay in the record and the findings. `check_report`
 refuses a second sentence and the vocabulary of the audit (auditor, probe,

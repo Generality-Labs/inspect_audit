@@ -563,10 +563,13 @@ def canonicalise(config: dict[str, Any], workers: list[Worker]) -> list[str]:
     unmetered, outside the job's cost limit) into the metered route.
     """
     rewrites: list[str] = []
+    if not isinstance(config, dict):
+        return rewrites
     for _, group in _model_items(config):
         if not isinstance(group, dict):
             continue
-        for item in group.get("items") or []:
+        items = group.get("items")
+        for item in items if isinstance(items, list) else []:
             if not isinstance(item, dict) or not isinstance(item.get("name"), str):
                 continue
             worker = _worker_for(item["name"], workers)
@@ -581,10 +584,12 @@ def canonicalise(config: dict[str, Any], workers: list[Worker]) -> list[str]:
         rewrites.append(f"task argument model {name!r} -> {worker.inspect_name!r}")
         return worker.inspect_name
 
-    for task in config.get("tasks") or []:
+    tasks = config.get("tasks")
+    for task in tasks if isinstance(tasks, list) else []:
         if not isinstance(task, dict):
             continue
-        for item in task.get("items") or []:
+        task_items = task.get("items")
+        for item in task_items if isinstance(task_items, list) else []:
             if isinstance(item, dict) and isinstance(item.get("args"), dict):
                 item["args"] = _task_arg_models(item["args"], visit)
     return rewrites
@@ -732,11 +737,20 @@ def parse_config(config: dict[str, Any]) -> tuple[Any, list[str]]:
 
 
 def _model_items(config: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """The model groups that are mappings.
+
+    Anything else is left for the schema check to refuse with a reason, rather than
+    crashing the tool that reads it.
+    """
     found: list[tuple[str, dict[str, Any]]] = []
-    for group in config.get("models") or []:
-        found.append((f"models[{group.get('name')}]", group))
-    for role, group in (config.get("model_roles") or {}).items():
-        found.append((f"model_roles.{role}", group))
+    models = config.get("models")
+    for group in models if isinstance(models, list) else []:
+        if isinstance(group, dict):
+            found.append((f"models[{group.get('name')}]", group))
+    roles = config.get("model_roles")
+    for role, group in (roles if isinstance(roles, dict) else {}).items():
+        if isinstance(group, dict):
+            found.append((f"model_roles.{role}", group))
     return found
 
 

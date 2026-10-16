@@ -11,7 +11,7 @@ metadata:
 
 # Classify the question, not the model's answer
 
-Examine the question, acceptance rule, source, and available attempts. Audit the
+Examine the question, acceptance rule and source, and any attempts you were given. Audit the
 sample together so dependencies remain visible. The assessment units are listed
 in /audit/assessment_ids.json; their meaning comes from the operator notes and
 benchmark evidence, not a built-in dataset convention.
@@ -24,6 +24,13 @@ evidence for a concrete problem with the question or acceptance rule. An unexpec
 model failure, disagreement, or timeout alone does not establish a defect.
 UNRESOLVED means attempted checks could not settle validity. NOT_ASSESSED means no
 adequate assessment was undertaken. Never turn missing work into NO_ISSUE_FOUND.
+
+No attempts or historical logs are needed to settle validity: this check comes before
+any model is run, and most samples arrive without logs. Judge the item on its text, its
+key and its grader, and test the acceptance rule with the grade tool, submitting an
+ordinary correct answer and, when it helps, a wrong one. An otherwise supported label is
+never UNRESOLVED because logs are absent; UNRESOLVED is for a substantive question the
+checks could not settle.
 
 Keep historical grading accuracy separate: an observed format exception does not
 prove a numerically correct candidate was rejected. Cite the exact log, sample,

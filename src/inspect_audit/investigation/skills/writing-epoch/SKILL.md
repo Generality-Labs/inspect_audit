@@ -35,8 +35,8 @@ standing instructions, stated once there; this table is the map.
 |---|---|---|---|
 | 0 Orient | source, docs, overview | the benchmark's facts; the population and its strata; the sample design, yours or the operator's | `profile.json`, `sampling.json` |
 | 1 Reviewability | source, supplied log headers | can tasks, scoring logic and settings be inspected? | the reviewability row |
-| 2 Items | the sample | question-labels and the substantive item checks, two items first, then the rest; the defect rate decides the scoring row, and a Flag there goes straight to stage 6 | `coverage.json`, the scoring row |
-| 3 Logs | a scoring Pass; supplied logs, else the attempts job | read them; when they are on hand, the scoring row's impact is the submissions the defects misgraded; with neither logs nor eval models, say so in the methodology block | the attempts source |
+| 2 Items | the sample | question-labels and the substantive item checks, two items first, then the rest, then at most one repair batch for what the batch left open; the defect rate decides the scoring row, and a Flag there goes straight to stage 6 | `coverage.json`, the scoring row |
+| 3 Logs | a scoring Pass; supplied logs, else the attempts job | read them; when they are on hand, the scoring row's impact is the submissions the defects misgraded, from one gold-answer job on the defective items, neither retried nor followed up; with neither logs nor eval models, say so in the methodology block | the attempts source |
 | 4 Benchmark-wide | stage 3 | consistency, elicitation and bias in rubric order; the first Flag ends the rubric, the rows after it are Not Reviewed | the rows up to and including the first Flag, with its `impact` |
 | 5 Quality | no Flag in stage 4 | the seven quality rows | assessments complete |
 | 6 Publish | the derived verdict | the prose blocks that verdict calls for; publish | the page |
@@ -84,7 +84,8 @@ would settle it. The methodology's guidance gives the test for each check. A Fla
 most three sentences with numbers; `check_report` refuses one without it, and the
 rendered Notes cell opens with it. On scoring, the defect rate is the Flag; give
 `impact` only when attempts or supplied logs were on hand, as the submissions the
-defects misgraded.
+defects misgraded in the one impact job; whatever it left unjudged is unquantified, not
+a reason for another job.
 
 ## The rubric notes
 

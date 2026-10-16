@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 from datetime import UTC, datetime
 from typing import Any
 
@@ -96,7 +96,28 @@ def _eval_entry(eval_name: str, runs: Sequence[Run], review: Review) -> dict[str
     }
 
 
-def _status_change(finding: Finding) -> dict[str, Any] | None:
+# finding record id -> what a citation of it shows: its rule, summary and run time, from history
+Records = Mapping[str, Mapping[str, Any]]
+
+
+def citation_records(history: Sequence[Run]) -> dict[str, dict[str, Any]]:
+    """Every finding ever written, by record id, so a citation of a superseded run can be described."""
+    return {
+        str(finding.id): {
+            "rule": finding.rule,
+            "summary": finding.summary,
+            "at": iso(run.timestamp),
+        }
+        for run in history
+        for finding in run.findings
+    }
+
+
+def _record_ids(runs: Sequence[Run]) -> set[str]:
+    return {str(finding.id) for run in runs for finding in run.findings}
+
+
+def _status_change(finding: Finding, records: Records, current: Set[str]) -> dict[str, Any] | None:
     """The last status review set on the finding: by whom, when, why, and which records it cites.
 
     `cited_by` names the investigation findings that rested on this one, when an import set
@@ -113,10 +134,22 @@ def _status_change(finding: Finding) -> dict[str, Any] | None:
         "at": iso(change.provenance.timestamp),
         "reason": reason,
         "cited_by": cited,
+        # current is False for a citing finding whose run a newer investigation superseded:
+        # the page has no row to link to, but the citation still stands
+        "citations": [
+            {
+                "id": record,
+                **(records.get(record) or {"rule": None, "summary": None, "at": None}),
+                "current": record in current,
+            }
+            for record in cited
+        ],
     }
 
 
-def _finding_row(finding: Finding, run: Run, review: Review, seen: Seen) -> dict[str, Any]:
+def _finding_row(
+    finding: Finding, run: Run, review: Review, seen: Seen, records: Records, current: Set[str]
+) -> dict[str, Any]:
     github = next((i.github for i in review.issues if i.id == finding.issue), None)
     first, last = _seen(seen, finding, run)
     return {
@@ -134,7 +167,7 @@ def _finding_row(finding: Finding, run: Run, review: Review, seen: Seen) -> dict
         "location": finding.primary_location.key(),
         "issue": finding.issue,
         "github": github,
-        "status_change": _status_change(finding),
+        "status_change": _status_change(finding, records, current),
         "first_seen": first,
         "last_seen": last,
     }
@@ -145,13 +178,19 @@ def index_document(
     review: Review,
     seen: Seen,
     generated_at: datetime,
+    records: Records | None = None,
 ) -> dict[str, Any]:
     """Every active finding across every eval, and a roll-up per eval."""
     rows: list[dict[str, Any]] = []
+    records = records or {}
+    current = _record_ids([run for runs in runs_by_eval.values() for run in runs])
     for eval_name in sorted(runs_by_eval):
         for run in runs_by_eval[eval_name]:
             active = [f for f in run.findings if not f.suppressions]
-            rows += [_finding_row(f, run, review, seen) for f in sorted_findings(active)]
+            rows += [
+                _finding_row(f, run, review, seen, records, current)
+                for f in sorted_findings(active)
+            ]
     rows.sort(key=lambda r: (r["eval"], r["rule"], r["id"]))
     return {
         "generated_at": iso(generated_at),
@@ -203,7 +242,9 @@ def _assessment_entry(assessment: Assessment, run: Run) -> dict[str, Any]:
     }
 
 
-def _group_finding(finding: Finding, run: Run, seen: Seen) -> dict[str, Any]:
+def _group_finding(
+    finding: Finding, run: Run, seen: Seen, records: Records, current: Set[str]
+) -> dict[str, Any]:
     first, last = _seen(seen, finding, run)
     return {
         "id": finding.id,
@@ -212,7 +253,7 @@ def _group_finding(finding: Finding, run: Run, seen: Seen) -> dict[str, Any]:
         "summary": finding.summary,
         "locations": [location.model_dump() for location in finding.locations],
         "issue": finding.issue,
-        "status_change": _status_change(finding),
+        "status_change": _status_change(finding, records, current),
         "first_seen": first,
         "last_seen": last,
     }
@@ -221,7 +262,9 @@ def _group_finding(finding: Finding, run: Run, seen: Seen) -> dict[str, Any]:
 GroupKey = tuple[str, str, str, str | None, str]  # producer, rule, dimension, check, severity
 
 
-def _groups(runs: Sequence[Run], seen: Seen) -> list[dict[str, Any]]:
+def _groups(
+    runs: Sequence[Run], seen: Seen, records: Records, current: Set[str]
+) -> list[dict[str, Any]]:
     members: dict[GroupKey, list[tuple[Finding, Run]]] = {}
     for run in runs:
         for finding in sorted_findings([f for f in run.findings if not f.suppressions]):
@@ -242,7 +285,7 @@ def _groups(runs: Sequence[Run], seen: Seen) -> list[dict[str, Any]]:
             "check": check,
             "severity": severity,
             "count": len(pairs),
-            "findings": [_group_finding(f, r, seen) for f, r in pairs],
+            "findings": [_group_finding(f, r, seen, records, current) for f, r in pairs],
         }
         for (producer, rule, dimension, check, severity), pairs in ordered
     ]
@@ -298,6 +341,7 @@ def eval_document(
     review: Review,
     seen: Seen,
     generated_at: datetime,
+    records: Records | None = None,
 ) -> dict[str, Any]:
     """Everything one eval's page shows: inputs, runs, grouped findings, suppressed groups, issues."""
     runs = sorted(runs, key=lambda r: (r.producer, r.id))
@@ -311,7 +355,7 @@ def eval_document(
         "task_version": subject.task_version.full if subject.task_version else None,
         "inputs": inputs_data(runs),
         "runs": [_run_entry(run) for run in runs],
-        "groups": _groups(runs, seen),
+        "groups": _groups(runs, seen, records or {}, _record_ids(runs)),
         "suppressed": _suppressed_groups(eval_name, runs, review),
         "issues": _issues(eval_name, runs, review),
     }
@@ -332,15 +376,18 @@ def export_texts(
     """
     stamp = generated_at or datetime.now(tz=UTC)
     seen = seen_range(history)
+    records = citation_records(history)
     index_key = f"{EXPORT_DIR}/index.json"
     keys = [index_key]
-    texts = {index_key: _dumps(index_document(runs_by_eval, review, seen, stamp))}
+    texts = {index_key: _dumps(index_document(runs_by_eval, review, seen, stamp, records))}
     existing_keys = set(fs.glob(f"{EXPORT_DIR}/evals/*.json"))
     documents: dict[str, dict[str, Any]] = {}
     for eval_name in sorted(runs_by_eval):
         key = f"{EXPORT_DIR}/evals/{slug(eval_name)}.json"
         keys.append(key)
-        documents[key] = eval_document(eval_name, runs_by_eval[eval_name], review, seen, stamp)
+        documents[key] = eval_document(
+            eval_name, runs_by_eval[eval_name], review, seen, stamp, records
+        )
     existing = fs.read_texts([key for key in documents if key in existing_keys])
     for key, document in documents.items():
         if not _same_but_for_stamp(existing.get(key), document):

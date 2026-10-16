@@ -176,6 +176,13 @@ def _run_entry(run: Run) -> dict[str, Any]:
             if o.status != "pass"
         ],
         "assessments": [_assessment_entry(a, run) for a in run.assessments],
+        # an imported investigation's item coverage and the limits it reported; none for a sweep
+        "coverage": run.inputs.get("coverage")
+        if isinstance(run.inputs.get("coverage"), dict)
+        else None,
+        "limitations": run.inputs.get("limitations")
+        if isinstance(run.inputs.get("limitations"), list)
+        else [],
     }
 
 

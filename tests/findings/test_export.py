@@ -465,3 +465,23 @@ def test_a_status_set_by_a_person_cites_nothing(run: Run) -> None:
     runs = apply_review([run], review)
     (row,) = index_document({EVAL: runs}, review, seen_range(runs), NOW)["findings"]
     assert row["status_change"]["cited_by"] == [] and row["status"] == "retracted"
+
+
+def test_an_investigations_run_entry_carries_its_coverage_and_limitations(run: Run) -> None:
+    from inspect_audit.findings.export import eval_document, seen_range
+
+    coverage = {
+        "denominator": 4981,
+        "counts": {"NO_ISSUE_FOUND": 163, "DEFECT": 113, "UNRESOLVED": 9, "NOT_ASSESSED": 4696},
+    }
+    limitations = [{"id": "no-logs", "claim": "No logs were supplied."}]
+    inv = _investigation(run).model_copy(
+        update={"inputs": {"coverage": coverage, "limitations": limitations}}
+    )
+    runs = apply_review([inv, run], Review())
+    doc = eval_document(EVAL, runs, Review(), seen_range(runs), NOW)
+    entries = {r["producer"]: r for r in doc["runs"]}
+    assert entries["inspect_audit_investigate"]["coverage"] == coverage
+    assert entries["inspect_audit_investigate"]["limitations"] == limitations
+    assert entries["inspect_evals_lint"]["coverage"] is None
+    assert entries["inspect_evals_lint"]["limitations"] == []

@@ -1,11 +1,11 @@
 ---
 name: writing-epoch
-description: Write the Epoch AI benchmark review for readers with a scientific background. Records against the methodology, short prose blocks with word limits, a verdict derived from the assessments. Read before recording any assessment or prose block.
+description: Write the Epoch AI benchmark review for readers with a scientific mindset. Records against the methodology, short prose blocks with word limits, a verdict derived from the assessments. Read before recording any assessment or prose block.
 ---
 
 ## Who reads this, and how
 
-The review is read by people with a scientific background who do not work on model
+The review is read by people with a scientific mindset who do not work on model
 evaluations. They want to know what the benchmark measures, whether its number can be
 trusted, and what to keep in mind when they quote it. They will not read a long document.
 Every block has a word limit and the limits are enforced when you publish.
@@ -15,7 +15,7 @@ No jargon: say "the model that reads the answer out of the response" rather than
 "the extractor", say "a reference answer" rather than "gold", and expand any acronym the
 first time. Prefer numbers with their denominators over adjectives. Lead with the
 conclusion, then the evidence. Do not narrate your own process, and keep execution
-details, costs and pipeline errors out of the review; they belong in the journal.
+details, costs and pipeline errors out of the review; they belong in the journal. Also aim to keep the analysis prose to a high-level of findings, rather than going into the weeds.
 
 ## Contract
 
@@ -32,7 +32,7 @@ page shows. You write five records in `report/`, each with a schema beside it:
   from that check's scale, `notes`, `evidence`, the `findings` ids it rests on, the
   `fields` the form asks for, and `impact` on a Flag.
 - `sampling.json`: how the audited items were chosen: population, sample, strategy
-  (census, random, stratified, purposive), strata, seed, expansion, confirmation.
+  (census, random, stratified, purposive), strata, seed, expansion, confirmation, provided to you.
 - `findings.json`: the evidence register, each finding filed under the `check` it bears on.
 - `prose.json`: the reader-facing blocks the template declares, keyed by block id.
 
@@ -56,7 +56,7 @@ for a tool it does not need yet.
 | 1 Reviewability | source, supplied log headers | can tasks, scoring logic and settings be inspected? | the reviewability row |
 | 2 Items | the sample | question-labels and the substantive item checks, two items first, then the rest | `coverage.json`, a provisional scoring row |
 | 3 Attempts | supplied logs, else eval models | read the supplied logs once the labels exist; with none, submit the default eval on the sampled ids only, one epoch, inside `eval_budget_usd`, beside the item batch (the auditors never see it) and read it once the labels exist; with neither, write that down. Measure impact by re-running gold-answer on the defective items alone against that job | the attempts source |
-| 4 Minimum standard | stages 2 and 3 | the four rows in rubric order: scoring impact measured on attempts where defects exist; consistency, elicitation and bias from headers, transcripts and the published methodology. Stop at the first Flag: the rows after it are Not Reviewed | the rows up to and including the first Flag, with its `impact` |
+| 4 Minimum standard | stages 2 and 3 | the four rows in rubric order: scoring with its impact measured on the attempts; consistency, elicitation and bias from headers, transcripts and the published methodology. The first Flag ends the rubric: the rows after it are written Not Reviewed and stage 5 is skipped | the rows up to and including the first Flag, with its `impact` |
 | 5 Quality | no Flag in stage 4 | the seven quality rows; after a Flag they are all Not Reviewed | assessments complete |
 | 6 Publish | the derived verdict | the prose blocks that verdict calls for; publish | the page |
 
@@ -70,8 +70,10 @@ but no rows publishes nothing. `budget()` shows the working time used; when half
 it is gone, stop refining, write what the evidence supports, and publish. A published
 review that names its open questions beats an unpublished one.
 
-The rubric stops at the first Flag. A Flag on scoring leaves consistency, elicitation,
-bias and every quality row Not Reviewed; a Flag on consistency leaves elicitation and
+The rubric stops at the first Flag. A Flag ends the rubric, not the review: the run
+still completes stage 3 when stage 2's provisional scoring row is already a Flag,
+because the Flag has to carry its measured impact, and it always reaches stage 6. A
+Flag on scoring leaves consistency, elicitation, bias and every quality row Not Reviewed; a Flag on consistency leaves elicitation and
 bias and the quality rows Not Reviewed; and so on. `check_report` refuses a level
 written after a Flag. The Flag carries its impact, the prose carries the errors, and
 the page reads "[stop → Flawed]" where it stopped. Observations that would have gone

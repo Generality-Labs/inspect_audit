@@ -31,7 +31,7 @@ verdict:
     reviewability or any minimum-standard check is Not Reviewed; Verified otherwise. Quality checks never
     change the verdict.
   stop: >-
-    a review stops once reviewability is Inadequate, and at the first Flag in rubric order: the
+    the rubric stops once reviewability is Inadequate, and at the first Flag in rubric order: the
     minimum-standard checks after it and every quality check are Not Reviewed, as the published rubric's
     "stop" reads; the Flag is reported with its impact and the review publishes as Flawed
   flag: >-

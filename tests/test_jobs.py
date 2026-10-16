@@ -2295,3 +2295,39 @@ def test_every_job_config_must_state_its_retries(tmp_path: Path) -> None:
         1 + INSPECT_DEFAULT_RETRIES
     )
     assert any("retry_attempts is required" in p for p in validate_config(config, policy, set()))
+
+
+@pytest.mark.parametrize(
+    "models",
+    [["openrouter/openai/gpt-6-luna"], [None], "openrouter/openai/gpt-6-luna"],
+    ids=["model-strings", "null-entry", "models-a-string"],
+)
+def test_a_malformed_models_list_is_refused_not_a_crash(models: object) -> None:
+    """bfcl 10-16 wrote models as bare strings; the rewrite step crashed the investigation."""
+    from inspect_audit._jobs import Worker, canonicalise
+
+    config = filled_example("benchmark.eval-set.yaml")
+    config["models"] = models
+    assert canonicalise(config, [Worker("openai/gpt-6-luna")]) == []
+    assert validate_config(config, policy(), set())  # refused, with a reason the agent reads
+
+
+def test_a_config_that_is_not_a_mapping_is_refused_not_a_crash() -> None:
+    from inspect_audit._jobs import Worker, canonicalise
+
+    assert canonicalise(["not", "a", "mapping"], [Worker("openai/gpt-6-luna")]) == []  # type: ignore[arg-type]
+    assert validate_config(["not", "a", "mapping"], policy(), set()) == ["config must be a mapping"]  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("tasks", 5), ("tasks", [{"items": 5}])],
+    ids=["tasks-a-number", "task-items-a-number"],
+)
+def test_malformed_tasks_are_refused_not_a_crash(key: str, value: object) -> None:
+    from inspect_audit._jobs import Worker, canonicalise
+
+    config = filled_example("benchmark.eval-set.yaml")
+    config[key] = value
+    assert canonicalise(config, [Worker("openai/gpt-6-luna")]) == []
+    assert validate_config(config, policy(), set())

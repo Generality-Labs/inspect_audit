@@ -319,11 +319,14 @@ def render(
             elif sec.layout == "defect_classes":
                 form = check.form if isinstance(check.form, dict) else {}
                 failing = row.level == method.verdict.procedure.minimum["fail_at"]
-                notes = (
-                    f"**Impact:** {row.impact.strip()} {row.notes}"
-                    if failing and row.impact.strip()
-                    else row.notes
-                )
+                # where the Flag is a measured effect, the impact leads with its label;
+                # where the Flag is the row's own measure, the impact follows the note
+                if failing and row.impact.strip() and check.flag_requires_impact:
+                    notes = f"**Impact:** {row.impact.strip()} {row.notes}"
+                elif failing and row.impact.strip():
+                    notes = f"{row.notes.strip()} {row.impact.strip()}"
+                else:
+                    notes = row.notes
                 out.append(
                     f"| {check.name} | {_bullets(list(form.get('examples') or []))} | "
                     f"{form.get('default_threshold', '')} | "

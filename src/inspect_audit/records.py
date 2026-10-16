@@ -188,7 +188,7 @@ class Assessment(BaseModel):
             raise ValueError(f"{name}: an assessed check needs fields {', '.join(sorted(missing))}")
         if self.assessed and not self.evidence:
             raise ValueError(f"{name}: an assessed check needs at least one evidence reference")
-        limit = method.notes_limit
+        limit = check.notes_limit or method.notes_limit
         check_length(
             f"{name} notes",
             self.notes,
@@ -206,7 +206,7 @@ class Assessment(BaseModel):
             raise ValueError(
                 f"{name}: impact belongs to a {method.verdict.procedure.minimum['fail_at']}"
             )
-        budget = method.verdict.impact
+        budget = check.impact_limit or method.verdict.impact
         check_length(
             f"{name} impact",
             self.impact,

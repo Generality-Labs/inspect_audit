@@ -27,7 +27,7 @@
   {
     "check": "scoring_integrity",
     "level": "Pass",
-    "notes": "All 100 puzzles were assessed; 1 has a demonstrated scoring defect, below the 20% threshold. Stockfish supported every reference move, and ordinary correct and incorrect answers were tested. One historical answer on puzzle 86 was rejected because the answer-reading model retained the required MOVE prefix; that run should score 14%, not 13%. Wider scoring corruption was not established; adversarial scorer tests were excluded.",
+    "notes": "All 100 puzzles were assessed and 1 has a scoring defect, below the 20% threshold. Stockfish supported every reference move; one answer on puzzle 86 was rejected for keeping the MOVE prefix.",
     "evidence": [
       {
         "path": "coverage.json",

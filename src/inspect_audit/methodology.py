@@ -54,6 +54,9 @@ class Check(BaseModel):
     form: dict[str, Any] | str | None = None
     fields: list[str] = Field(default_factory=list)
     flag_requires_impact: bool = False
+    # tighter limits than the methodology's for this row's notes and impact
+    notes_limit: dict[str, int] | None = None
+    impact_limit: dict[str, int] | None = None
     threshold: Threshold | None = None
     evidence: list[str] = Field(default_factory=list)
     taxonomy: dict[str, list[str]] = Field(default_factory=dict)

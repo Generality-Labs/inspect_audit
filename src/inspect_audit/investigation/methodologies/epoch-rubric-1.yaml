@@ -36,8 +36,8 @@ verdict:
     "stop" reads; the Flag is reported with its impact and the review publishes as Flawed
   flag: >-
     a Flag on a benchmark-wide check carries an impact statement: the measured effect on the headline
-    results, with numbers, at most 60 words; on scoring the impact is reported when attempts or logs were
-    read and is otherwise the defect rate itself
+    results, with numbers, at most 60 words; on scoring the impact, when attempts or logs were
+    read, is one short sentence after the note, and the row otherwise carries none
   procedure:
     gate:
       check: reviewability
@@ -122,9 +122,9 @@ checks:
     an incorrect one. Report numerator, denominator and selection method. Flag at or above the threshold,
     or on demonstrated grading corruption at scale. Authored attacks on the grader and single false negatives
     are limitations, not Flags; say which kind each defect is.
-    The row is decided by the item audits alone, with no logs read and no attempts run for it. When
-    attempts or supplied logs are on hand, impact is the number of recorded submissions the defects
-    misgraded; otherwise the defect rate stands alone and the row carries no impact statement.
+    The row is decided by the item audits alone, with no logs read and no attempts run for it. The note is the defect rate against the threshold in one sentence, without the counts the
+    prevalence line already prints. When attempts or supplied logs are on hand, the impact is one short
+    sentence after it, the recorded submissions the defects misgraded; otherwise the row carries none.
   scale:
   - Pass
   - Flag
@@ -147,6 +147,12 @@ checks:
     - Flag [stop → Flawed]
     - Not Reviewed
   flag_requires_impact: false
+  notes_limit:
+    max_words: 40
+    max_sentences: 2
+  impact_limit:
+    max_words: 25
+    max_sentences: 1
   evidence:
   - logs
   - source

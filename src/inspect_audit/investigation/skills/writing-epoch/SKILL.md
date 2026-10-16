@@ -96,7 +96,10 @@ yours in bold; you supply only the level, the numbers the form asks for, and the
 notes. Each note is at most eighty words and four sentences: the conclusion and the
 one or two facts that support it, with numbers and denominators. No evidence paths,
 scripts or file names in the notes; those go in the row's `evidence` list, which is
-rendered separately. A Pass or clean row says in one clause what was checked. The
+rendered separately. A Pass or clean row says in one clause what was checked. On the
+scoring row the note is the defect rate against the threshold in one sentence, with no
+repeat of the counts the prevalence line prints, and the impact, when there is one, is one
+short sentence that follows it. The
 page closes with a disclaimer that the review used public information without asking
 the creator; if that is not true of your review, say so in the methodology block.
 

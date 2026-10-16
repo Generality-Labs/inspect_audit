@@ -24,7 +24,7 @@
   {
     "check": "scoring_integrity",
     "level": "Pass",
-    "notes": "An engine search and per-puzzle audits of all 100 puzzles found one defect (1%): in puzzle 14 two knight moves are exactly equal and only one is accepted. The model that reads the answer out of each response matched the model's own stated move in 99.6% of 17,045 cases. Text planted in a response can trick it into crediting a wrong move, but no recorded run did so. One run scored 32 provider failures as wrong answers.",
+    "notes": "All 100 puzzles were audited and one has a defect (1%): puzzle 14 has two exactly equal knight moves and accepts only one. The answer reader matched the model's stated move in 99.6% of 17,045 cases.",
     "evidence": [
       {
         "path": "coverage.json",

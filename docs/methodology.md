@@ -87,3 +87,7 @@ The 16 October runs on the item-only scoring rule showed two remaining time sink
 ## Errors by class, recommendations by practice (2026-10-16)
 
 The 16 October HLE page spent half its Representative Errors bullets on definitions and caveats, and its recommendations named the items to fix. The template's briefs now ask for one bullet per defect class in the errors table, with its row count and an example or two, and for recommendations that are one check or practice per class, one sentence each, naming no item. Both blocks are capped at five bullets; the error bullets are checked for words about the audit, with attempts, agents and candidates allowed since a run-level error is about them.
+
+## The scoring note is the defect rate (2026-10-16)
+
+The 16 October HLE scoring row opened with "Impact:" and a floor of four submissions, then repeated the counts printed in the prevalence line above the table, then added a sampling caveat. The rubric now limits the scoring note to two sentences and forty words, the defect rate against the threshold, and its impact to one sentence of twenty-five words that follows the note unlabelled; on the benchmark-wide checks, where the impact is the Flag, it keeps its label and leads. Per-check `notes_limit` and `impact_limit` in the methodology override the rubric-wide limits.

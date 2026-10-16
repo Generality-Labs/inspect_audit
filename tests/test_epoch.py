@@ -25,7 +25,7 @@ from inspect_audit.records import (
     sentences,
     validate_assessments,
 )
-from inspect_audit.template import load_template, ordinal_date
+from inspect_audit.template import load_template, ordinal_date, render
 
 MINIMUM = ("scoring_integrity", "benchmark_consistency", "elicitation_adequacy", "evaluation_bias")
 
@@ -226,6 +226,33 @@ def test_a_scoring_flag_stands_on_the_defect_rate_alone() -> None:
         {"population": 50, "sample": 50, "strategy": "census"},
     )
     assert derived["verdict"] == "Flawed"
+    # with attempts on hand the impact is one short sentence after the note, unlabelled
+    census = {"population": 50, "sample": 50, "strategy": "census"}
+    row(rows, "scoring_integrity")["notes"] = (
+        "21 of the 50 questions have a confirmed defect, against a threshold of 20%."
+    )
+    row(rows, "scoring_integrity")["impact"] = (
+        "Four correct submissions were rejected on two questions."
+    )
+    method = load_methodology(METHODOLOGY)
+    assessments = validate_assessments([Assessment.model_validate(r) for r in rows], method)
+    derived = derived_for(rows, coverage_of(defect=21, clean=29), census)
+    page = render(
+        load_template("epoch-review"),
+        method,
+        Profile.model_validate(profile()),
+        assessments,
+        Prose.model_validate(flawed_prose()),
+        derived,
+    )
+    assert (
+        "| 21 of the 50 questions have a confirmed defect, against a threshold of 20%. "
+        "Four correct submissions were rejected on two questions. |"
+    ) in page
+    assert "**Impact:**" not in page
+    row(rows, "scoring_integrity")["impact"] = "One. Two."
+    with pytest.raises(ValueError, match="scoring_integrity impact: 2 sentences, limit 1"):
+        derived_for(rows, coverage_of(defect=21, clean=29), census)
 
 
 def test_a_flag_needs_its_impact_and_a_pass_has_none() -> None:
@@ -238,20 +265,25 @@ def test_a_flag_needs_its_impact_and_a_pass_has_none() -> None:
     row(rows, "scoring_integrity")["impact"] = "Stray."
     with pytest.raises(ValueError, match="impact belongs to a Flag"):
         derived_for(rows)
-    rows = filled_assessments(scoring_integrity="Flag")
-    row(rows, "scoring_integrity")["impact"] = " ".join(["w"] * 61)
+    rows = filled_assessments(elicitation_adequacy="Flag")
+    row(rows, "elicitation_adequacy")["impact"] = " ".join(["w"] * 61)
     with pytest.raises(ValueError, match="impact: 61 words, limit 60"):
         derived_for(rows)
 
 
 def test_note_limits_come_from_the_methodology() -> None:
     rows = filled_assessments()
-    row(rows, "scoring_integrity")["notes"] = " ".join(["word"] * 81)
-    with pytest.raises(ValueError, match="scoring_integrity notes: 81 words, limit 80"):
+    row(rows, "benchmark_consistency")["notes"] = " ".join(["word"] * 81)
+    with pytest.raises(ValueError, match="benchmark_consistency notes: 81 words, limit 80"):
         derived_for(rows)
     rows = filled_assessments()
-    row(rows, "scoring_integrity")["notes"] = "One. Two. Three. Four. Five."
+    row(rows, "benchmark_consistency")["notes"] = "One. Two. Three. Four. Five."
     with pytest.raises(ValueError, match="5 sentences, limit 4"):
+        derived_for(rows)
+    # the scoring row's own, tighter limits
+    rows = filled_assessments()
+    row(rows, "scoring_integrity")["notes"] = "One. Two. Three."
+    with pytest.raises(ValueError, match="scoring_integrity notes: 3 sentences, limit 2"):
         derived_for(rows)
     assert sentences("Scores range from 0.54 to 0.72. The e.g. case is fine.") == 2
 

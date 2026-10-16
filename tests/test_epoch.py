@@ -215,6 +215,19 @@ def test_assessments_are_a_closed_vocabulary_with_evidence() -> None:
         Profile.model_validate(profile(review_date="6 October 2026"))
 
 
+def test_a_scoring_flag_stands_on_the_defect_rate_alone() -> None:
+    """The row is decided by the item audits; impact is reported only when logs were read."""
+    rows = filled_assessments(scoring_integrity="Flag")
+    row(rows, "scoring_integrity")["impact"] = ""
+    stop_after(rows, "scoring_integrity")
+    derived = derived_for(
+        rows,
+        coverage_of(defect=21, clean=29),
+        {"population": 50, "sample": 50, "strategy": "census"},
+    )
+    assert derived["verdict"] == "Flawed"
+
+
 def test_a_flag_needs_its_impact_and_a_pass_has_none() -> None:
     rows = filled_assessments(elicitation_adequacy="Flag")
     with pytest.raises(ValueError, match="elicitation_adequacy: a Flag needs `impact`"):

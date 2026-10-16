@@ -23,7 +23,8 @@ def test_the_epoch_rubric_loads_with_its_structure() -> None:
         "evaluation_bias",
     ]
     assert len(m.quality) == 7 and m.quality[0].id == "resource_adequacy"
-    assert all(c.flag_requires_impact for c in m.minimum)
+    # scoring is decided by the item audits alone; the benchmark-wide checks flag on a measured effect
+    assert [c.flag_requires_impact for c in m.minimum] == [False, True, True, True]
     assert all(c.scale == ["Pass", "Flag", "Not Reviewed"] for c in m.minimum)
     scoring = m.check("scoring_integrity")
     assert scoring.threshold is not None and scoring.threshold.bound == 0.2

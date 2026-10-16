@@ -315,7 +315,11 @@ def render(
             elif sec.layout == "defect_classes":
                 form = check.form if isinstance(check.form, dict) else {}
                 failing = row.level == method.verdict.procedure.minimum["fail_at"]
-                notes = f"**Impact:** {row.impact.strip()} {row.notes}" if failing else row.notes
+                notes = (
+                    f"**Impact:** {row.impact.strip()} {row.notes}"
+                    if failing and row.impact.strip()
+                    else row.notes
+                )
                 out.append(
                     f"| {check.name} | {_bullets(list(form.get('examples') or []))} | "
                     f"{form.get('default_threshold', '')} | "

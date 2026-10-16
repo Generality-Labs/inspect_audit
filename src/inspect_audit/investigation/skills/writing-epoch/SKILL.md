@@ -7,15 +7,10 @@ description: Write the Epoch AI benchmark review for readers with a scientific m
 
 The review is read by people with a scientific mindset who do not work on model
 evaluations. They want to know what the benchmark measures, whether its number can be
-trusted, and what to keep in mind when they quote it. They will not read a long document.
-Every block has a word limit and the limits are enforced when you publish.
-
-Write plainly. Short sentences, one idea each. No paragraph longer than five sentences.
-No jargon: say "the model that reads the answer out of the response" rather than
-"the extractor", say "a reference answer" rather than "gold", and expand any acronym the
+trusted, and what to keep in mind when they quote it. So, write plainly. Short sentences, one idea each. No paragraph longer than five sentences. No jargon: e.g. say "the model that reads the answer out of the response" rather than "the extractor", and expand any acronym the
 first time. Prefer numbers with their denominators over adjectives. Lead with the
 conclusion, then the evidence. Do not narrate your own process, and keep execution
-details, costs and pipeline errors out of the review; they belong in the journal. Also aim to keep the analysis prose to a high-level of findings, rather than going into the weeds.
+details, costs and pipeline errors out of the review; they belong in the journal. Keep analysis prose at a high-level, rather than going into the weeds.
 
 ## Contract
 
@@ -23,9 +18,7 @@ The methodology (`report/methodology.md`, with `report/methodology.yaml` as data
 what to check and how to judge it; the template (`report/template.yaml`) says what the
 page shows. You write five records in `report/`, each validated against the schema
 beside it: `profile.json`, `assessments.json`, `sampling.json`, `findings.json` and
-`prose.json`. In `profile.json`, `benchmark` is the name a reader knows ("Chess
-Puzzles", not a registry path) and `creator` is the organisation that published it;
-`review_date` is filled in for you if left empty. The page is rendered from these
+`prose.json`. In `profile.json`, `benchmark` is the common name used in literature and `creator` is the organisation that published it; `review_date` is filled in for you if left empty. The page is rendered from these
 records by `check_report`: the verdict is derived from the assessments, the rubric
 tables from their levels and notes, the commentary from `prose.json`. You never write
 the page, and you never write the verdict.
@@ -34,17 +27,17 @@ the page, and you never write the verdict.
 
 The rubric is the plan. Each stage ends with a record on disk and a `check_report` run,
 so the verdict is always derivable from what has been written. The rules of each stage
-(write as you go, the attempts job beside the item batch, impact measured on the
-defective items alone, the first Flag ending the rubric and not the review) are in your
+(write as you go, scoring decided by the item audits alone, logs and attempts read only
+after a scoring Pass, the first Flag ending the rubric and not the review) are in your
 standing instructions, stated once there; this table is the map.
 
 | Stage | Needs | Do | Writes |
 |---|---|---|---|
 | 0 Orient | source, docs, overview | the benchmark's facts; the population and its strata; the sample design, yours or the operator's | `profile.json`, `sampling.json` |
 | 1 Reviewability | source, supplied log headers | can tasks, scoring logic and settings be inspected? | the reviewability row |
-| 2 Items | the sample | question-labels and the substantive item checks, two items first, then the rest | `coverage.json`, a provisional scoring row |
-| 3 Attempts | supplied logs, else the attempts job | read them once the labels exist; measure impact on the defective items; with neither logs nor eval models, say so in the methodology block | the attempts source |
-| 4 Minimum standard | stages 2 and 3 | the four rows in rubric order; the first Flag ends the rubric, the rows after it are Not Reviewed | the rows up to and including the first Flag, with its `impact` |
+| 2 Items | the sample | question-labels and the substantive item checks, two items first, then the rest; the defect rate decides the scoring row, and a Flag there goes straight to stage 6 | `coverage.json`, the scoring row |
+| 3 Logs | a scoring Pass; supplied logs, else the attempts job | read them; when they are on hand, the scoring row's impact is the submissions the defects misgraded; with neither logs nor eval models, say so in the methodology block | the attempts source |
+| 4 Benchmark-wide | stage 3 | consistency, elicitation and bias in rubric order; the first Flag ends the rubric, the rows after it are Not Reviewed | the rows up to and including the first Flag, with its `impact` |
 | 5 Quality | no Flag in stage 4 | the seven quality rows | assessments complete |
 | 6 Publish | the derived verdict | the prose blocks that verdict calls for; publish | the page |
 
@@ -62,7 +55,7 @@ attempt touches is still a defect for the measure, it simply carries no impact f
 verdicts it belongs to; write against that list. Three things it does not say. The
 lead sentence of **limitations** is rendered for you, so its bullets start straight on
 the point. **recommendations** are addressed to the benchmark's creator: what to
-change, publish or document. A Flawed review has no interpretation, task-analysis or
+change, publish or document, if anything. A Flawed review has no interpretation, task-analysis or
 elicitation block: the rubric notes carry what the reader needs, and the
 **error_examples** table carries one row for every item `coverage.json` records as a
 defect, naming its id in Task, then any run-level errors; the ids audited without a
@@ -71,8 +64,7 @@ defect are listed under the table for you.
 ## The Notes cell
 
 Each row's Notes is one sentence, at most 25 words, that says what is wrong with the
-item: the question's problem first, nothing about how
-it was found. Start from the auditor's `headline` in `coverage.json` and tighten it;
+item. Start from the auditor's `headline` in `coverage.json` and tighten it;
 the explanation and the numbers stay in the record and the findings. `check_report`
 refuses a second sentence and the vocabulary of the audit (auditor, probe,
 independent, established, unresolved, verified, candidate, attempt, agent). The
@@ -88,12 +80,11 @@ Flag a minimum-standard check only when the evidence shows a material effect on 
 benchmark's headline results or on their comparability. A defect that exists but does not
 move scores, or that affects only rows a reader can avoid, is a Pass with the concern
 recorded under limitations. When the evidence leaves the question open, Pass and say what
-would settle it. The methodology's guidance gives the test for each check; the ones that
-decide most reviews are that an unversioned change needs a measured score effect to be a
-Flag, and that under-elicitation is a Flag only when the affected models have no better
-listed configuration. Every Flag carries `impact`: the measured effect in at most three
-sentences with numbers. `check_report` refuses a Flag without it, and the rendered Notes
-cell opens with it.
+would settle it. The methodology's guidance gives the test for each check. A Flag on consistency, elicitation or bias carries `impact`: the measured effect in at
+most three sentences with numbers; `check_report` refuses one without it, and the
+rendered Notes cell opens with it. On scoring, the defect rate is the Flag; give
+`impact` only when attempts or supplied logs were on hand, as the submissions the
+defects misgraded.
 
 ## The rubric notes
 

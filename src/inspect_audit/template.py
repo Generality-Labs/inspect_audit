@@ -42,6 +42,10 @@ class Block(BaseModel):
     max_sentences: int | None = None
     max_sentences_per_paragraph: int | None = None
     max_cell_words: int | None = None
+    # bullets: the most items the block may carry
+    max_items: int | None = None
+    # bullets: each item is about the benchmark, with no account of the audit
+    plain: bool = False
     columns: list[Column] = Field(default_factory=list)
     when: list[str]
     required: list[str] = Field(default_factory=list)

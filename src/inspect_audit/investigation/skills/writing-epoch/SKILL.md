@@ -54,8 +54,10 @@ attempt touches is still a defect for the measure, it simply carries no impact f
 `report/methodology.md` ends with every prose block, its brief, its limit and the
 verdicts it belongs to; write against that list. Three things it does not say. The
 lead sentence of **limitations** is rendered for you, so its bullets start straight on
-the point. **recommendations** are addressed to the benchmark's creator: what to
-change, publish or document, if anything. A Flawed review has no interpretation, task-analysis or
+the point. **representative_errors** is one bullet per defect class in the table, with its row
+count and an example or two, and nothing about the audit; **recommendations** are
+addressed to the benchmark's creator, one check or practice per class, one sentence each,
+naming no item. A Flawed review has no interpretation, task-analysis or
 elicitation block: the rubric notes carry what the reader needs, and the
 **error_examples** table carries one row for every item `coverage.json` records as a
 defect, naming its id in Task, then any run-level errors; the ids audited without a

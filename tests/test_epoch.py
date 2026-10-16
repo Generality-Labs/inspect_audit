@@ -787,3 +787,42 @@ def test_the_review_stops_at_the_first_flag() -> None:
     )
     with pytest.raises(ValueError, match="statistical_adequacy must be Not Reviewed"):
         derived_for(rows)
+
+
+def test_the_error_bullets_name_classes_and_the_recommendations_are_one_sentence_each() -> None:
+    """Representative errors speak of the benchmark, not the audit; recommendations are capped."""
+    template = load_template("epoch-review")
+    good = flawed_prose()
+    good["representative_errors"] = [
+        "Impossible as written, eight rows: a four-point transform is asked of an eight-entry sequence."
+    ]
+    good["recommendations"] = ["Verify that each question determines a unique answer."]
+    Prose.model_validate(good).validate_against(template, "Flawed")
+    for key, value, why in (
+        (
+            "representative_errors",
+            ["The 12 unresolved questions include images."],
+            r"representative_errors bullet 1: says how the audit went \(unresolved\)",
+        ),
+        (
+            "representative_errors",
+            ["Across 19,500 attempts, 925 reached an output limit."],
+            None,
+        ),
+        (
+            "recommendations",
+            ["Fix the keys. Then publish them."],
+            r"recommendations bullet 1: 2 sentences, limit 1",
+        ),
+        (
+            "recommendations",
+            [f"Do thing {i}." for i in range(6)],
+            r"recommendations: 6 bullets, limit 5",
+        ),
+    ):
+        prose = dict(good, **{key: value})
+        if why is None:
+            Prose.model_validate(prose).validate_against(template, "Flawed")
+            continue
+        with pytest.raises(ValueError, match=why):
+            Prose.model_validate(prose).validate_against(template, "Flawed")

@@ -32,11 +32,11 @@ The following issues cross our threshold for a Flawed verdict.
 
 ## Recommendations
 
-- Reserve enough output capacity for a final answer, and test completion rates before publishing a configuration. Rerun settings that routinely exhaust their allowance, using reasonable bounded reasoning or a separate final-answer step.
-- Publish truncation, empty-answer and unscored-attempt counts beside accuracy. Keep results clearly labeled by configuration, and do not present heavily incomplete outputs as estimates of a model’s best attainable performance.
-- Use deterministic parsing for the requested move format, with a defined fallback for other responses. Version changes to the answer-reading model and regrade saved responses consistently.
-- Repeat each configuration at least five times and report uncertainty from both puzzle selection and repeated runs. Small differences on a 100-puzzle benchmark should not be treated as precise rankings.
-- Publish the engine version and search settings used to establish each reference. Maintain fresh, unreleased puzzles to assess later models without relying entirely on publicly available positions and solutions.
+- Reserve enough output capacity for a final answer, and test completion rates before publishing a configuration.
+- Publish truncation, empty-answer and unscored-attempt counts beside accuracy, labelled by configuration.
+- Use deterministic parsing for the requested move format, with a defined fallback and versioned changes to the answer reader.
+- Repeat each configuration at least five times and report uncertainty from both puzzle selection and repeated runs.
+- Publish the engine version and search settings behind each reference, and keep fresh unreleased puzzles for later models.
 
 ## Benchmark Review Rubric
 

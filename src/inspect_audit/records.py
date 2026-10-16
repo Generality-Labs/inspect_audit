@@ -60,15 +60,39 @@ PROCESS_WORDS = frozenset(
 )
 
 
-def check_plain(name: str, text: str, *, max_words: int = 25) -> None:
-    """One sentence, within the limit, about the item and not about the audit."""
-    check_length(name, text, max_words=max_words, max_sentences=1)
-    found = sorted({w for w in re.findall(r"[A-Za-z]+", text.lower()) if w in PROCESS_WORDS})
+# the subset that is about the audit even in a bullet about a run: a bullet may speak of
+# attempts, agents and candidates, since a run-level error is about them
+BULLET_PROCESS_WORDS = frozenset(
+    [
+        "auditor",
+        "auditors",
+        "probe",
+        "probes",
+        "probed",
+        "independently",
+        "established",
+        "unresolved",
+        "unassessed",
+        "verified",
+        "unverified",
+    ]
+)
+
+
+def check_about_the_benchmark(name: str, text: str, words: frozenset[str] = PROCESS_WORDS) -> None:
+    """The text says what is wrong, not how that was found out."""
+    found = sorted({w for w in re.findall(r"[A-Za-z]+", text.lower()) if w in words})
     if found:
         raise ValueError(
             f"{name}: says how the audit went ({', '.join(found)}); say what is wrong with "
-            "the item instead, as its reader would see it"
+            "the benchmark instead, as its reader would see it"
         )
+
+
+def check_plain(name: str, text: str, *, max_words: int = 25) -> None:
+    """One sentence, within the limit, about the item and not about the audit."""
+    check_length(name, text, max_words=max_words, max_sentences=1)
+    check_about_the_benchmark(name, text)
 
 
 def check_length(name: str, text: str, *, max_words: int | None, max_sentences: int | None) -> None:
@@ -298,6 +322,8 @@ class Prose(BaseModel):
             elif block.kind == "bullets":
                 if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
                     raise ValueError(f"{block.id}: a bullets block is a list of strings")
+                if block.max_items is not None and len(value) > block.max_items:
+                    raise ValueError(f"{block.id}: {len(value)} bullets, limit {block.max_items}")
                 for i, item in enumerate(value, 1):
                     if not item.strip():
                         raise ValueError(f"{block.id}: bullet {i} is empty")
@@ -307,6 +333,10 @@ class Prose(BaseModel):
                         max_words=None,
                         max_sentences=block.max_sentences,
                     )
+                    if block.plain:
+                        check_about_the_benchmark(
+                            f"{block.id} bullet {i}", item, BULLET_PROCESS_WORDS
+                        )
             elif block.kind == "table":
                 if not isinstance(value, list) or not all(isinstance(v, dict) for v in value):
                     raise ValueError(f"{block.id}: a table block is a list of rows")

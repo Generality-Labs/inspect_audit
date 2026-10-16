@@ -78,12 +78,18 @@ blocks:
     title: Representative Errors
     kind: bullets
     max_sentences: 3
+    max_items: 5
+    plain: true
     when: [Flawed]
     required: [Flawed]
     lead: The following issues cross our threshold for a Flawed verdict.
     brief: >-
-      The errors that crossed the threshold, one bullet each, followed by the error_examples
-      table.
+      One bullet per defect class present in the errors table, in order of how many rows it
+      covers: name the class as the table names it, say how many rows it covers, and give one
+      or two of those rows as examples described by what is wrong, not by id. A run-level
+      error gets its own bullet. Nothing else: no definitions of the classes, no caveats about
+      unresolved or unassessed items, no sampling notes; those belong in the scoring row and
+      the methodology block.
   - id: error_examples
     kind: table
     when: [Flawed]
@@ -119,12 +125,17 @@ blocks:
   - id: recommendations
     title: Recommendations
     kind: bullets
-    max_sentences: 3
+    max_sentences: 1
+    max_items: 5
     when: [Verified, Flawed, NEI, Incomplete]
     required: [Verified, Flawed]
     brief: >-
-      Addressed to the benchmark's creator: what to change, publish or document. One
-      recommendation per limitation or error is the usual shape.
+      Addressed to the benchmark's creator, one bullet per defect class in the errors table
+      or per limitation, each a check or practice that would catch that class across the
+      whole benchmark: confirm every reference answer independently, verify each question
+      determines a unique answer, test the grader on correct answers phrased differently.
+      Name no individual items. A final bullet on publication or versioning only when the
+      methodology block found results irreproducible. One sentence each.
 rubric:
   title: Benchmark Review Rubric
   intro: rubric

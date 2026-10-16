@@ -71,14 +71,11 @@ While none of these limitations cross our threshold for a Flawed verdict, they d
 
 ## Recommendations
 
-- Report the share of cut-off answers for each row. Raise the output limit, or mark rows where more than a few percent of answers are cut off.
-- Publish logs for every leaderboard row, starting with the seven highest.
-- Recompute the gemini-3.1-pro-preview score from a complete run, or publish the log behind the 55% figure.
+- Report the share of cut-off answers for each row, and raise the output limit or mark rows where more than a few percent are cut off.
+- Publish logs for every leaderboard row, and recompute any score whose log is incomplete.
 - Treat server errors at the provider as errors and retry them, never as wrong answers.
 - Run each model several times, ideally five, to narrow the error bars.
-- Read the final "MOVE:" line directly, and use the answer reader only when that line is missing.
-- Accept both equal moves in puzzle 14, or replace the puzzle.
-- Keep a private set of fresh positions to check for memorisation.
+- Read the final "MOVE:" line directly, accept every equal best move, and keep a private set of fresh positions to check for memorisation.
 
 ## Benchmark Review Rubric
 

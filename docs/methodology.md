@@ -83,3 +83,7 @@ A review with logs read them to measure how many recorded submissions the defect
 ## Two jobs after the batch, then publish (2026-10-16)
 
 The 16 October runs on the item-only scoring rule showed two remaining time sinks. Item auditors given no logs often returned UNRESOLVED on the grounds that attempts were absent, which forced a repair batch; the question-labels skill now says that validity needs no attempts and that the grade tool is the test of the acceptance rule. And once attempts were on hand, the lead chained impact jobs, repairs and retries for an hour and a half after the Flag. The prompt and the writing skill now bound the work after the item batch to two jobs submitted together, one repair batch for what the batch left open and one gold-answer job on the defective items, neither retried nor followed up; what the impact job leaves unjudged is reported as unquantified, and stage 6 follows.
+
+## Errors by class, recommendations by practice (2026-10-16)
+
+The 16 October HLE page spent half its Representative Errors bullets on definitions and caveats, and its recommendations named the items to fix. The template's briefs now ask for one bullet per defect class in the errors table, with its row count and an example or two, and for recommendations that are one check or practice per class, one sentence each, naming no item. Both blocks are capped at five bullets; the error bullets are checked for words about the audit, with attempts, agents and candidates allowed since a run-level error is about them.

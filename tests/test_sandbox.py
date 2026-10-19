@@ -791,3 +791,20 @@ def test_a_tasks_implicit_dockerfile_is_found(tmp_path, monkeypatch) -> None:
     task = Task(dataset=[Sample(input="q")], sandbox="docker")
     spec = _sandbox.sample_sandbox(task, Sample(input="q"))
     assert spec is not None and spec.config == str(tmp_path / "Dockerfile")
+
+
+def test_a_compose_document_built_in_code_is_read_as_itself() -> None:
+    """Inspect Harbor hands a task's sandbox over as a compose object, image and all."""
+    from inspect_ai.util import SandboxEnvironmentSpec
+    from inspect_ai.util._sandbox.compose import ComposeConfig
+
+    from inspect_audit._sandbox import benchmark_source
+
+    compose = ComposeConfig(
+        services={"default": {"image": "public.ecr.aws/example/task:abc", "init": True}}
+    )
+    found = benchmark_source(SandboxEnvironmentSpec("docker", compose))
+    assert found is not None
+    document, anchor = found
+    assert document["services"]["default"]["image"] == "public.ecr.aws/example/task:abc"
+    assert anchor is None

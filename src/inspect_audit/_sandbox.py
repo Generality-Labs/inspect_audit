@@ -586,6 +586,10 @@ def benchmark_source(
     if config is None and spec.type == "docker":
         # a bare `docker` sandbox runs Inspect's generic container
         return yaml.safe_load(COMPOSE_GENERIC_YAML), None
+    if hasattr(config, "model_dump"):
+        # a compose document built in code (Inspect Harbor hands its tasks over this
+        # way, image and all) is the document itself; nothing to re-anchor
+        return dict(config.model_dump(exclude_none=True, by_alias=True)), None
     return None
 
 

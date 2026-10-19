@@ -25,28 +25,37 @@ the page, and you never write the verdict.
 
 ## Order of work
 
-The rubric is the plan. Each stage ends with a record on disk and a `check_report` run,
-so the verdict is always derivable from what has been written. The rules of each stage
-(write as you go, scoring decided by the item audits alone, logs and attempts read only
-after a scoring Pass, the first Flag ending the rubric and not the review) are in your
-standing instructions, stated once there; this table is the map.
+The rubric is the plan, in two phases. Each stage ends with a record on disk and a
+`check_report` run, so the verdict is always derivable from what has been written.
+The rules of each stage are in your standing instructions, stated once there; these
+tables are the map.
 
-| Stage | Needs | Do | Writes |
+Phase 1, the task audit, reads no evaluation logs.
+
+| Stage | Evidence | Do | Writes |
 |---|---|---|---|
 | 0 Orient | source, docs, overview | the benchmark's facts; the population and its strata; the sample design, yours or the operator's | `profile.json`, `sampling.json` |
-| 1 Reviewability | source, supplied log headers | can tasks, scoring logic and settings be inspected? | the reviewability row |
-| 2 Items | the sample | question-labels and the substantive item checks, two items first, then the rest, then at most one repair batch for what the batch left open; the defect rate decides the scoring row, and a Flag there goes straight to stage 6 | `coverage.json`, the scoring row |
-| 3 Logs | a scoring Pass; supplied logs | read them; with none supplied there are no attempts, consistency, elicitation and bias stay Not Reviewed, the page carries a notice, and the methodology block says so | the logs source |
-| 4 Benchmark-wide | stage 3 | consistency, elicitation and bias in rubric order; the first Flag ends the rubric, the rows after it are Not Reviewed | the rows up to and including the first Flag, with its `impact` |
-| 5 Quality | no Flag in stage 4 | the seven quality rows | assessments complete |
-| 6 Publish | the derived verdict | the prose blocks that verdict calls for; publish | the page |
+| 1 Reviewability | source | can tasks, scoring logic and settings be inspected? | the reviewability row |
+| 2 Items | the sample | question-labels and the substantive item checks, two items first, then the rest, then at most one repair batch for what the batch left open; no logs attached to any of them; the defect rate decides the scoring row | `coverage.json`, the scoring row |
+| 3 Consistency | source history, changelog, published methodology | did the scorer, instructions or references change without a version bump? | the consistency row; the quality rows the documentation answers |
+| 4 Publish | the derived verdict | the prose blocks it calls for; publish. Flawed on a Flag, otherwise Incomplete with a notice that phase 2 awaits logs | the page |
+
+Phase 2, the effect analysis, is a resume of a published phase-1 audit with logs attached.
+
+| Stage | Evidence | Do | Writes |
+|---|---|---|---|
+| 5 Effect | the logs | one gold-answer job over every recorded defect; what each defect did to each recorded result | Affected logs, footnotes |
+| 6 Revisit | log headers | reviewability may rise; consistency re-checked against recorded versions and graders | those rows |
+| 7 Benchmark-wide | headers, transcripts | elicitation and bias in rubric order; the first Flag ends the rubric, the rows after it are Not Reviewed | the rows up to and including the first Flag, with its `impact` |
+| 8 Quality | no Flag in stage 7 | the log-dependent quality rows | assessments complete |
+| 9 Publish | the derived verdict | the prose blocks it calls for; republish | the page |
 
 Two consequences for the writing. Observations that would have gone into rows after a
 Flag belong in the findings filed under the flagged check or in the journal, not in
 rows the methodology says are not reviewed; `check_report` refuses a level written
 there, and the page reads "[stop → Flawed]" where the rubric stopped. And the
 supplied logs are the series the review compares against: a defect no logged
-submission touches is still a defect for the measure, it simply has no impact to report.
+submission touches is still a defect for the measure, it simply has no effect to report.
 
 ## The blocks, by verdict
 
@@ -98,9 +107,10 @@ would settle it. The methodology's guidance gives the test for each check. `impa
 exists only on a Flag; `check_report` refuses it on a Pass. A Flag on consistency,
 elicitation or bias carries it as the measured effect in at most three sentences with
 numbers, and the page prints it as a footnote under the row's note. On scoring, the
-defect rate is the Flag; its `impact` is the submissions the defects misgraded in the
-one impact job, run only when logs were supplied; whatever it left unjudged is
-unquantified, not a reason for another job.
+defect rate is the Flag; what the defects did to recorded results is phase 2's effect
+job, run over every defect whatever the row's level, and reported in Affected logs and
+the footnotes, with a scoring Flag's `impact` drawn from it; whatever it left unjudged
+is unquantified, not a reason for another job.
 
 ## The rubric notes
 

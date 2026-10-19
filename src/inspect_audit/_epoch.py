@@ -476,16 +476,15 @@ def assess(report: Path, root: Path | None = None) -> dict[str, Any]:
     notices: list[str] = []
     marker = json.loads((report / "format.json").read_text())
     if marker.get("logs_supplied") is False:
-        # without evaluation logs there is nothing benchmark-wide to review: the checks
-        # that read logs stay Not Reviewed, the page says so, and Verified is out of reach
+        # phase 1, the task audit: the checks answered from evaluation logs stay
+        # unassessed, the page says so, and Verified waits for phase 2
         unfinished = method.verdict.procedure.unfinished["level"]
-        assessed = [
-            c.id for c in method.minimum if c.threshold is None and assessments[c.id].assessed
-        ]
+        assessed = [c.id for c in method.checks if c.needs_logs and assessments[c.id].assessed]
         if assessed:
             raise ValueError(
-                "no evaluation logs were supplied, so the benchmark-wide checks cannot be "
-                f"reviewed: {', '.join(assessed)} must be {unfinished}"
+                "no evaluation logs were supplied (phase 1, the task audit), so the checks "
+                f"answered from logs stay unassessed: {', '.join(assessed)} must be "
+                f"{unfinished}; attach logs in a phase-2 resume to answer them"
             )
         if "no_logs" in template.notices:
             notices.append(template.notices["no_logs"])

@@ -2518,3 +2518,20 @@ def test_forwarded_secrets_reach_every_child_job_but_never_its_config(
 
     plain = Remote(tmp_path, HAWK, TASK_PKG, AUDIT_PKG, IMAGE, ["openai/gpt-5.6-luna"], 10.0)
     assert plain.forwarded_secrets == {}
+
+
+def test_an_item_audit_carries_no_logs() -> None:
+    """Phase 1 judges the items on their own; the effect of defects on results is phase 2."""
+    cfg = filled_example("audit.eval-set.yaml", limit=2, max_connections=2)
+    args = cfg["tasks"][0]["items"][0]["args"]
+    args["items"] = ["question-labels", "gold-answer", "answer-format"]
+    assert any(
+        "an item audit (question-labels) carries no logs" in p
+        for p in validate_config(cfg, policy(), set())
+    )
+    del args["logs"]
+    assert not any("carries no logs" in p for p in validate_config(cfg, policy(), set()))
+    # the phase-2 effect job is a gold-answer job with logs
+    effect = filled_example("audit.eval-set.yaml", limit=2, max_connections=2)
+    effect["tasks"][0]["items"][0]["args"]["items"] = ["gold-answer"]
+    assert not any("carries no logs" in p for p in validate_config(effect, policy(), set()))

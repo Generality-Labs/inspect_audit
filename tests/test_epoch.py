@@ -934,10 +934,38 @@ def test_without_logs_the_benchmark_wide_checks_stay_not_reviewed(tmp_path: Path
     root = workspace(tmp_path, coverage=coverage_of(defect=6, clean=94))
     prepare(root / "work/report", "Chess Puzzles", logs_supplied=False)
     assert json.loads((root / "work/report/format.json").read_text())["logs_supplied"] is False
-    with pytest.raises(ValueError, match="no evaluation logs were supplied.*benchmark_consistency"):
+    with pytest.raises(ValueError, match="phase 1.*elicitation_adequacy, evaluation_bias"):
         prepare_publication(root, [])
+    # consistency is a phase-1 row, answered from the source; the rows that need logs wait
     rows = filled_assessments()
-    stop_after(rows, "scoring_integrity")
+    for check in ("elicitation_adequacy", "evaluation_bias"):
+        row(rows, check).update(level="Not Reviewed", notes="", evidence=[], fields={})
+    row(rows, "contamination").update(
+        level="Assessed",
+        fields={"as_of": "2026-10-19", "tasks_public_pct": 100, "solutions_public_pct": 0},
+        notes="All tasks are public.",
+        evidence=evidence(),
+    )
+    (root / "work/report/assessments.json").write_text(json.dumps(rows))
+    (root / "work/report/prose.json").write_text(
+        json.dumps(
+            dict(
+                flawed_prose(),
+                limitations=["No logs were supplied."],
+                recommendations=["Publish the logs."],
+            )
+        )
+    )
+    derived = prepare_publication(root, [])
+    assert derived["verdict"] == "Incomplete"
+    # a quality row that needs logs is refused in phase 1 even though the verdict is open
+    row(rows, "statistical_adequacy").update(
+        level="Known", fields={"runs_per_model": 1}, notes="One run.", evidence=evidence()
+    )
+    (root / "work/report/assessments.json").write_text(json.dumps(rows))
+    with pytest.raises(ValueError, match="phase 1.*statistical_adequacy"):
+        prepare_publication(root, [])
+    row(rows, "statistical_adequacy").update(level="Not Reviewed", notes="", evidence=[], fields={})
     (root / "work/report/assessments.json").write_text(json.dumps(rows))
     (root / "work/report/prose.json").write_text(
         json.dumps(
@@ -951,7 +979,7 @@ def test_without_logs_the_benchmark_wide_checks_stay_not_reviewed(tmp_path: Path
     derived = prepare_publication(root, [])
     assert derived["verdict"] == "Incomplete"
     md = (root / "work/report/epoch_review.md").read_text()
-    assert md.splitlines()[7].startswith("*No evaluation logs were supplied for this review")
+    assert md.splitlines()[7].startswith("*Phase 1 of 2: the tasks and their scoring were audited without evaluation logs")
     # a restore keeps the marker it finds
     prepare(root / "work/report", "Chess Puzzles")
     assert json.loads((root / "work/report/format.json").read_text())["logs_supplied"] is False

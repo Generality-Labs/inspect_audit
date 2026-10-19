@@ -171,6 +171,8 @@ checks:
   name: Benchmark consistency
   question: Have the scorer, instructions or ground truth changed without a version bump?
   guidance: >-
+    Phase 1 answers this from the source's version history, its changelog and the published
+    methodology; phase 2 re-checks it against the versions and graders the logs record.
     Compare the scorer, instructions and reference answers across the logs' recorded versions and grading
     models against what the leaderboard presents as one series. Flag only when results from different
     versions are shown to be incomparable, with a measured score difference attributable to the change.
@@ -197,6 +199,7 @@ checks:
     inspect-audit@2:
     - comparability.identity
 - id: elicitation_adequacy
+  needs_logs: true
   section: 2. Scoring (minimum standard)
   name: Elicitation
   question: >-
@@ -235,6 +238,7 @@ checks:
     - sensitivity.token_limits
     - implementation.scaffolding
 - id: evaluation_bias
+  needs_logs: true
   section: 2. Scoring (minimum standard)
   name: Bias in evaluation setup
   question: Does the setup give any model a material advantage the others do not get?
@@ -264,6 +268,7 @@ checks:
     inspect-audit@2:
     - comparability.audited_implementation
 - id: resource_adequacy
+  needs_logs: true
   section: 3. Evaluation quality
   name: Elicitation and resource adequacy
   question: >-
@@ -282,6 +287,7 @@ checks:
   evidence:
   - logs
 - id: scaffold_fairness
+  needs_logs: true
   section: 3. Evaluation quality
   name: Scaffold fairness
   question: 'Scaffold fairness: What scaffold does the leaderboard report?'
@@ -363,6 +369,7 @@ checks:
   - ceiling
   form: '{floor} floor; {ceiling} ceiling'
 - id: statistical_adequacy
+  needs_logs: true
   section: 3. Evaluation quality
   name: Statistical adequacy
   question: 'Statistical adequacy: How many runs/model (≥ 5 recommended for error bars)'

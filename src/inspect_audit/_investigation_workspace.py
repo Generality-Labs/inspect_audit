@@ -354,6 +354,9 @@ async def save_state(root: Path) -> None:
     manifest_path = root / "saved-state.json"
     old = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     candidates: dict[str, Path] = {n: root / n for n in STATE_FILES if (root / n).is_file()}
+    if (root / "inputs" / "seed.json").is_file():
+        # the benchmark version this audit was of, for a phase-2 resume to check against
+        candidates["inputs/seed.json"] = root / "inputs" / "seed.json"
     for base in (root / "jobs", root / "work"):
         if base.is_dir():
             for file in base.rglob("*"):

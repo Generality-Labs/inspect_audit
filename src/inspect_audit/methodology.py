@@ -54,6 +54,8 @@ class Check(BaseModel):
     form: dict[str, Any] | str | None = None
     fields: list[str] = Field(default_factory=list)
     flag_requires_impact: bool = False
+    # answered from evaluation logs: without them the check stays unassessed
+    needs_logs: bool = False
     # tighter limits than the methodology's for this row's notes and impact
     notes_limit: dict[str, int] | None = None
     impact_limit: dict[str, int] | None = None

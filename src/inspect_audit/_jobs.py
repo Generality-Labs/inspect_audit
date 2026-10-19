@@ -1189,6 +1189,20 @@ def validate_config(
             )
 
     if kind == "audit":
+        # phase 1 judges the items on their own: an item audit that would read logs is
+        # refused, and the effect of the defects on recorded results is a gold-answer
+        # job with logs in phase 2
+        for task in parsed.tasks:
+            for item in task.items:
+                args = item.args or {}
+                checks = args.get("items") or []
+                if args.get("logs") and "question-labels" in checks:
+                    problems.append(
+                        f"tasks[{task.name}].{item.name}: an item audit (question-labels) "
+                        "carries no logs; phase 1 judges the items on their own, and the "
+                        "effect of the defects on recorded results is a gold-answer job "
+                        "with logs in phase 2"
+                    )
         # one audited item is one long agent that waits on nothing but its model, so a
         # batch runs as many items at once as it has connections; a 48-item batch on
         # Inspect's default of 10 runs in five waves and is the clock of the whole review

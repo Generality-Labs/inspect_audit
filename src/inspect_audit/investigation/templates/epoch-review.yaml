@@ -20,9 +20,9 @@ style:
 title: "{benchmark} Review"
 notices:
   no_logs: >-
-    No evaluation logs were supplied for this review, so the benchmark-wide checks
-    (consistency, elicitation and bias) were not reviewed and the verdict cannot be
-    Verified.
+    Phase 1 of 2: the tasks and their scoring were audited without evaluation logs.
+    Elicitation, bias in the evaluation setup and the effect of the recorded defects on
+    published results await a second phase with logs, so the verdict cannot be Verified.
 footnotes:
   title: Footnotes
   max_words: 60

@@ -1935,7 +1935,28 @@ def restore_state(remote: Remote, root: Path, eval_set_id: str) -> Solver:
         if current == "epoch":
             from ._epoch import prepare_review
 
-            prepare_review(report, json.loads((report / "profile.json").read_text())["benchmark"])
+            seed = json.loads((root / "inputs" / "seed.json").read_text())
+            saved_seed = next(
+                (p for p in (saved / "inputs" / "seed.json", saved / "seed.json") if p.is_file()),
+                None,
+            )
+            if saved_seed is not None:
+                # phase 2 resumes the phase-1 audit of the same benchmark version: logs of
+                # a later version need a fresh task audit, not a join that silently drifts
+                old = json.loads(saved_seed.read_text())
+                for key in ("task", "revision"):
+                    if old.get(key) and seed.get(key) and old[key] != seed[key]:
+                        raise ValueError(
+                            f"{eval_set_id} audited {key} {old[key]!r}; this run names "
+                            f"{seed[key]!r}. A phase-2 resume must carry the same benchmark "
+                            "version as the phase-1 audit; audit the new version afresh"
+                        )
+            prepare_review(
+                report,
+                json.loads((report / "profile.json").read_text())["benchmark"],
+                # attaching logs to a resumed task audit starts phase 2
+                logs_supplied=True if seed.get("logs") else None,
+            )
         shutil.rmtree(staging)
         remote.ledger.reload()
         sources = root / "log_sources.json"

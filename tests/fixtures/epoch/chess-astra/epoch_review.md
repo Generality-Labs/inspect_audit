@@ -30,14 +30,6 @@ The following issues cross our threshold for a Flawed verdict.
 | Opus 4.7: all 100 puzzles | Elicitation | Maximum effort: 88 empty answers, 7% accuracy; low effort: no empty answers, 20% accuracy. | Opus 4.7 max and low (2 logs) |
 | Qwen 3.5 9B: all 100 puzzles | Elicitation | Default reasoning: 97 empty answers, 2% accuracy; reasoning disabled: no empty answers, 12% accuracy. | Qwen 3.5 9B default and none (2 logs) |
 
-## Recommendations
-
-- Reserve enough output capacity for a final answer, and test completion rates before publishing a configuration.
-- Publish truncation, empty-answer and unscored-attempt counts beside accuracy, labelled by configuration.
-- Use deterministic parsing for the requested move format, with a defined fallback and versioned changes to the answer reader.
-- Repeat each configuration at least five times and report uncertainty from both puzzle selection and repeated runs.
-- Publish the engine version and search settings behind each reference, and keep fresh unreleased puzzles for later models.
-
 ## Benchmark Review Rubric
 
 Rubric v1. We expect future revisions to account for new types of benchmark flaws.
@@ -46,7 +38,7 @@ Rubric v1. We expect future revisions to account for new types of benchmark flaw
 
 | Level | Meaning | Status | Notes |
 |---|---|---|---|
-| **Full** | All tasks and scoring logic inspectable, and harness/API settings used for each model (reasoning effort, token/time limits, tool access, system prompts) are fully disclosed | [proceed to 2] | All 100 positions, reference moves and public scoring code are inspectable. Headers and recorded requests disclose prompts, model settings, answer-reading models and tool access across all 193 supplied logs. The runnable package reconstructs the public task; every supplied position, reference and prompt matches it. Some internal reasoning is hidden, but final answers and scores are visible. |
+| **Full** | All tasks and scoring logic inspectable, and harness/API settings used for each model (reasoning effort, token/time limits, tool access, system prompts) are fully disclosed | **[proceed to 2]** | All 100 positions, reference moves and public scoring code are inspectable. Headers and recorded requests disclose prompts, model settings, answer-reading models and tool access across all 193 supplied logs, and the runnable package reconstructs the public task. Some internal reasoning is hidden, but final answers and scores are visible. |
 | Partial | A representative sample of tasks and scoring logic inspectable, with full harness/API settings disclosed | [proceed to 2] |  |
 | Inadequate | Limited, biased, or no inspectable tasks or scoring logic, harness/API settings undisclosed | [stop → NEI] |  |
 
@@ -59,8 +51,8 @@ Scoring prevalence: 1 of 100 inspected tasks (1%); threshold 20%.
 | Defect Class | Examples | Default Threshold for Flawed | Status | Notes |
 |---|---|---|---|---|
 | Scoring | • Essentially impossible to correctly answer as written (e.g. underspecified task, hidden requirement, missing file/tool)<br>• False Negative (e.g. overly strict scorer, stale/incorrect ground truth, dependent on live external state that can drift, sandbox failure independent of the agent)<br>• False Positive (e.g. lax scorer, reward-hackable environment, stated skill can be bypassed via a shortcut such as exploiting an error in the scoring logic or retrieving the answer from the harness/web)<br>• Task egregiously doesn't measure the claimed capability | ≥20% of inspected sample contains errors or issue that corrupts grading at scale | **Pass**<br>Flag [stop → Flawed]<br>Not Reviewed | All 100 puzzles were assessed and 1 has a scoring defect, below the 20% threshold. Stockfish supported every reference move; one answer on puzzle 86 was rejected for keeping the MOVE prefix. |
-| Benchmark consistency | • Scorer, instructions, or ground truth changed without a version bump | Leaderboard has incomparable results from different versions | **Pass**<br>Flag [stop → Flawed]<br>Not Reviewed | Prompts and references match across all 193 logs. Within version 1.1.6, 105 logs use GPT-5 mini to read answers and 51 use GPT-5.6 Terra, an unversioned procedural change. However, 225 identical nonempty answer groups spanning grader models show no correctness disagreements. Material score incomparability was not demonstrated, although these mostly short repeated answers do not establish equivalence on every response. |
-| Elicitation | • Model elicitation is extremely constraining and is not the focus of the benchmark:<br>• Under-resourced relative to task size (token/turn/time limit, sandbox resources)<br>• Poor context management<br>• Lack of agentic environment where one would be natural to provide<br>• Excessive non-voluntary termination for agentic benchmarks | Substantially reduced performance compared to reasonable alternatives for the tasks | Pass<br>**Flag [stop → Flawed]**<br>Not Reviewed | **Impact:** Sonnet 4.6 at maximum effort leaves 95/100 final answers empty and scores 3%; reserving 32,000 of 64,000 tokens for reasoning produces all 100 answers and scores 13%. Similar failures occur for Opus 4.7 and Qwen 3.5. Some published settings regularly exhaust the response allowance before producing an answer. Sonnet 4.6 at maximum effort leaves 95/100 final answers empty and scores 3%; reserving 32,000 of 64,000 tokens for reasoning produces all 100 answers and scores 13%. Similar failures occur for Opus 4.7 and Qwen 3.5. These alternatives establish substantially better achievable performance, but changes in effort and provider behavior prevent attributing the entire difference to the token cap alone. |
+| Benchmark consistency | • Scorer, instructions, or ground truth changed without a version bump | Leaderboard has incomparable results from different versions | **Pass**<br>Flag [stop → Flawed]<br>Not Reviewed | Prompts and references match across all 193 logs. Within version 1.1.6 the answer-reading model changed without a version bump, but 225 identical answer groups spanning both models show no correctness disagreements. Material score incomparability was not demonstrated. |
+| Elicitation | • Model elicitation is extremely constraining and is not the focus of the benchmark:<br>• Under-resourced relative to task size (token/turn/time limit, sandbox resources)<br>• Poor context management<br>• Lack of agentic environment where one would be natural to provide<br>• Excessive non-voluntary termination for agentic benchmarks | Substantially reduced performance compared to reasonable alternatives for the tasks | Pass<br>**Flag [stop → Flawed]**<br>Not Reviewed | Some published settings regularly exhaust the response allowance before producing an answer, and the same models complete their answers and score higher under alternative settings. The alternatives establish substantially better achievable performance, though changes in effort and provider behaviour prevent attributing the whole difference to the token cap.[^1] |
 | Bias in evaluation setup | • Uneven compute/token budgets<br>• Unfair scaffold choice (e.g. only a subset of models optimized) | Material model-specific advantage found | Pass<br>Flag [stop → Flawed]<br>**Not Reviewed** |  |
 
 ### 3. Evaluation Quality
@@ -80,3 +72,15 @@ This is the standard we would like all benchmarks to meet, but it is not necessa
 ## Disclaimer
 
 We undertook this audit without requesting additional information from Epoch AI to provide impartial feedback.
+
+## Recommendations
+
+- Reserve enough output capacity for a final answer, and test completion rates before publishing a configuration.
+- Publish truncation, empty-answer and unscored-attempt counts beside accuracy, labelled by configuration.
+- Use deterministic parsing for the requested move format, with a defined fallback and versioned changes to the answer reader.
+- Repeat each configuration at least five times and report uncertainty from both puzzle selection and repeated runs.
+- Publish the engine version and search settings behind each reference, and keep fresh unreleased puzzles for later models.
+
+## Footnotes
+
+[^1]: Impact: Sonnet 4.6 at maximum effort leaves 95/100 final answers empty and scores 3%; reserving 32,000 of 64,000 tokens for reasoning produces all 100 answers and scores 13%. Similar failures occur for Opus 4.7 and Qwen 3.5.

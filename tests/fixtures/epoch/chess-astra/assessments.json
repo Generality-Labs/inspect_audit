@@ -2,7 +2,7 @@
   {
     "check": "reviewability",
     "level": "Full",
-    "notes": "All 100 positions, reference moves and public scoring code are inspectable. Headers and recorded requests disclose prompts, model settings, answer-reading models and tool access across all 193 supplied logs. The runnable package reconstructs the public task; every supplied position, reference and prompt matches it. Some internal reasoning is hidden, but final answers and scores are visible.",
+    "notes": "All 100 positions, reference moves and public scoring code are inspectable. Headers and recorded requests disclose prompts, model settings, answer-reading models and tool access across all 193 supplied logs, and the runnable package reconstructs the public task. Some internal reasoning is hidden, but final answers and scores are visible.",
     "evidence": [
       {
         "path": "evidence/published___init__.py",
@@ -59,7 +59,7 @@
   {
     "check": "benchmark_consistency",
     "level": "Pass",
-    "notes": "Prompts and references match across all 193 logs. Within version 1.1.6, 105 logs use GPT-5 mini to read answers and 51 use GPT-5.6 Terra, an unversioned procedural change. However, 225 identical nonempty answer groups spanning grader models show no correctness disagreements. Material score incomparability was not demonstrated, although these mostly short repeated answers do not establish equivalence on every response.",
+    "notes": "Prompts and references match across all 193 logs. Within version 1.1.6 the answer-reading model changed without a version bump, but 225 identical answer groups spanning both models show no correctness disagreements. Material score incomparability was not demonstrated.",
     "evidence": [
       {
         "path": "evidence/crosslog_summary.json",
@@ -84,7 +84,7 @@
   {
     "check": "elicitation_adequacy",
     "level": "Flag",
-    "notes": "Some published settings regularly exhaust the response allowance before producing an answer. Sonnet 4.6 at maximum effort leaves 95/100 final answers empty and scores 3%; reserving 32,000 of 64,000 tokens for reasoning produces all 100 answers and scores 13%. Similar failures occur for Opus 4.7 and Qwen 3.5. These alternatives establish substantially better achievable performance, but changes in effort and provider behavior prevent attributing the entire difference to the token cap alone.",
+    "notes": "Some published settings regularly exhaust the response allowance before producing an answer, and the same models complete their answers and score higher under alternative settings. The alternatives establish substantially better achievable performance, though changes in effort and provider behaviour prevent attributing the whole difference to the token cap.",
     "evidence": [
       {
         "path": "evidence/elicitation_examples.json",

@@ -46,9 +46,15 @@ class Block(BaseModel):
     max_items: int | None = None
     # bullets: each item is about the benchmark, with no account of the audit
     plain: bool = False
+    # prose: the most paragraphs the block may carry
+    max_paragraphs: int | None = None
     columns: list[Column] = Field(default_factory=list)
     when: list[str]
     required: list[str] = Field(default_factory=list)
+    # required for every verdict it is shown for once coverage records a defect
+    required_when_defects: bool = False
+    # rendered after the rubric and the disclaimer rather than before them
+    closing: bool = False
     lead: str | dict[str, str] = ""
     # what the renderer appends under a table from the records: `coverage_ids` lists
     # the audited items that were not recorded as defects, so the table of errors is
@@ -95,6 +101,16 @@ class Rubric(BaseModel):
     disclaimer: str = ""
 
 
+class Footnotes(BaseModel):
+    """Numbered notes under the page, referenced as [^n] from prose blocks and rubric notes."""
+
+    model_config = ConfigDict(extra="forbid")
+    title: str = "Footnotes"
+    max_words: int = 60
+    max_items: int = 12
+    brief: str = ""
+
+
 class Template(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
@@ -104,7 +120,10 @@ class Template(BaseModel):
     style: dict[str, Any] = Field(default_factory=dict)
     title: str
     header: list[HeaderLine]
+    # fixed sentences the renderer prints under the header when the run calls for them
+    notices: dict[str, str] = Field(default_factory=dict)
     blocks: list[Block]
+    footnotes: Footnotes | None = None
     rubric: Rubric
 
     @model_validator(mode="after")
@@ -247,6 +266,13 @@ def coverage_id_lines(coverage: dict[str, Any] | None) -> list[str]:
     return lines
 
 
+FOOTNOTE_MARK = re.compile(r"\[\^(\d+)\]")
+
+
+def footnote_marks(text: str) -> list[int]:
+    return [int(n) for n in FOOTNOTE_MARK.findall(text)]
+
+
 def render(
     template: Template,
     method: Methodology,
@@ -263,33 +289,42 @@ def render(
         trailer = "  " if i < len(template.header) - 1 else ""
         out.append(f"{line.label}: {_header_value(line, profile, verdict)}{trailer}")
     out.append("")
+    for notice in derived.get("notices") or []:
+        out += [f"*{notice}*", ""]
+    # the authored footnotes come first; a Flag's impact is appended as one more
+    footnotes: list[str] = prose.footnote_list() if template.footnotes else []
 
-    for block in template.blocks:
-        if not block.shown_for(verdict) or not prose.present(block):
-            continue
+    def _render_block(block: Block) -> None:
         value = prose.block(block.id)
         if block.kind == "table":
-            out += [
-                f"| {' | '.join(c.title for c in block.columns)} |",
-                "|" + "---|" * len(block.columns),
-            ]
-            out += [
+            out.extend(
+                [
+                    f"| {' | '.join(c.title for c in block.columns)} |",
+                    "|" + "---|" * len(block.columns),
+                ]
+            )
+            out.extend(
                 "| " + " | ".join(_cell(str(row[c.key])) for c in block.columns) + " |"
                 for row in value
-            ]
+            )
             out.append("")
             if block.footer == "coverage_ids":
-                out += coverage_id_lines(coverage)
-            continue
+                out.extend(coverage_id_lines(coverage))
+            return
         if block.title:
-            out += [f"## {block.title}", ""]
+            out.extend([f"## {block.title}", ""])
         lead = block.lead_for(verdict)
         if lead:
-            out += [lead, ""]
+            out.extend([lead, ""])
         if block.kind == "prose":
-            out += [str(value).strip(), ""]
+            out.extend([str(value).strip(), ""])
         else:
-            out += [f"- {b.strip()}" for b in value] + [""]
+            out.extend([f"- {b.strip()}" for b in value] + [""])
+
+    for block in template.blocks:
+        if block.closing or not block.shown_for(verdict) or not prose.present(block):
+            continue
+        _render_block(block)
 
     rub = template.rubric
     out += [f"## {rub.title}", ""]
@@ -312,21 +347,22 @@ def render(
                 for level, spec in form.items():
                     chosen = level == row.level
                     notes = _cell(row.notes) if chosen else ""
+                    status = f"**{spec['status']}**" if chosen else spec["status"]
                     out.append(
                         f"| {f'**{level}**' if chosen else level} | {spec['meaning']} | "
-                        f"{spec['status']} | {notes} |"
+                        f"{status} | {notes} |"
                     )
             elif sec.layout == "defect_classes":
                 form = check.form if isinstance(check.form, dict) else {}
                 failing = row.level == method.verdict.procedure.minimum["fail_at"]
-                # where the Flag is a measured effect, the impact leads with its label;
-                # where the Flag is the row's own measure, the impact follows the note
-                if failing and row.impact.strip() and check.flag_requires_impact:
-                    notes = f"**Impact:** {row.impact.strip()} {row.notes}"
+                # a Flag's measured impact is a footnote: the note stays high-level and
+                # the numbers sit under the page where the reader can check them
+                notes = row.notes
+                if failing and row.impact.strip() and template.footnotes:
+                    footnotes.append(f"Impact: {row.impact.strip()}")
+                    notes = f"{row.notes.strip()}[^{len(footnotes)}]"
                 elif failing and row.impact.strip():
-                    notes = f"{row.notes.strip()} {row.impact.strip()}"
-                else:
-                    notes = row.notes
+                    notes = f"{row.notes.strip()} Impact: {row.impact.strip()}"
                 out.append(
                     f"| {check.name} | {_bullets(list(form.get('examples') or []))} | "
                     f"{form.get('default_threshold', '')} | "
@@ -347,6 +383,13 @@ def render(
             ),
             "",
         ]
+    for block in template.blocks:
+        if block.closing and block.shown_for(verdict) and prose.present(block):
+            _render_block(block)
+    if footnotes and template.footnotes:
+        out += [f"## {template.footnotes.title}", ""]
+        out += [f"[^{i}]: {note.strip()}" for i, note in enumerate(footnotes, 1)]
+        out.append("")
     return "\n".join(out)
 
 

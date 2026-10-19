@@ -624,7 +624,9 @@ def prepare_workspace(
     if report_format == "epoch":
         from ._epoch import prepare_review
 
-        prepare_review(work / "report", target_task or Path(repo).name)
+        prepare_review(
+            work / "report", target_task or Path(repo).name, logs_supplied=bool(log_index)
+        )
     else:
         from ._assessment import prepare_assessments
 

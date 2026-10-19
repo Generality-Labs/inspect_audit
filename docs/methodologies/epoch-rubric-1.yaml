@@ -35,9 +35,9 @@ verdict:
     minimum-standard checks after it and every quality check are Not Reviewed, as the published rubric's
     "stop" reads; the Flag is reported with its impact and the review publishes as Flawed
   flag: >-
-    a Flag on a benchmark-wide check carries an impact statement: the measured effect on the headline
-    results, with numbers, at most 60 words; on scoring the impact, when attempts or logs were
-    read, is one short sentence after the note, and the row otherwise carries none
+    a Flag on a benchmark-wide check carries an impact statement, the measured effect on the headline
+    results with numbers, at most 60 words, which the page prints as a footnote under the row's note;
+    a scoring Flag carries one only when logs were on hand, and no Pass carries one
   procedure:
     gate:
       check: reviewability
@@ -123,8 +123,8 @@ checks:
     or on demonstrated grading corruption at scale. Authored attacks on the grader and single false negatives
     are limitations, not Flags; say which kind each defect is.
     The row is decided by the item audits alone, with no logs read and no attempts run for it. The note is the defect rate against the threshold in one sentence, without the counts the
-    prevalence line already prints. When attempts or supplied logs are on hand, the impact is one short
-    sentence after it, the recorded submissions the defects misgraded; otherwise the row carries none.
+    prevalence line already prints. A Flag with logs on hand carries an impact, the recorded submissions
+    the defects misgraded, printed as a footnote; a Pass carries none.
   scale:
   - Pass
   - Flag
@@ -401,5 +401,5 @@ checks:
     inspect-audit@2:
     - construct
 notes_limit:
-  max_words: 80
-  max_sentences: 4
+  max_words: 50
+  max_sentences: 3

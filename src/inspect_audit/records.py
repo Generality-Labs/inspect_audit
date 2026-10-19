@@ -89,6 +89,24 @@ def check_about_the_benchmark(name: str, text: str, words: frozenset[str] = PROC
         )
 
 
+# a rubric note states a conclusion about the benchmark; which model did what belongs in
+# a footnote, so a note that names one is sent there
+MODEL_NAMES = re.compile(
+    r"\b(gpt|claude|gemini|qwen|llama|deepseek|mistral|grok|opus|sonnet|haiku|luna|astra"
+    r"|o[1-9](?:-mini|-pro)?)\b",
+    re.IGNORECASE,
+)
+
+
+def check_no_model_names(name: str, text: str) -> None:
+    found = sorted({m.group(0) for m in MODEL_NAMES.finditer(text)}, key=str.lower)
+    if found:
+        raise ValueError(
+            f"{name}: names a model ({', '.join(found)}); a note states the conclusion, "
+            "and which model did what is a footnote"
+        )
+
+
 def check_plain(name: str, text: str, *, max_words: int = 25) -> None:
     """One sentence, within the limit, about the item and not about the audit."""
     check_length(name, text, max_words=max_words, max_sentences=1)
@@ -195,6 +213,7 @@ class Assessment(BaseModel):
             max_words=limit.get("max_words"),
             max_sentences=limit.get("max_sentences"),
         )
+        check_no_model_names(f"{name} notes", self.notes)
         failing = self.level == method.verdict.procedure.minimum["fail_at"]
         if check.flag_requires_impact and failing and not self.impact.strip():
             raise ValueError(
@@ -288,8 +307,30 @@ class Prose(BaseModel):
             return bool(value.strip())
         return bool(value)
 
+    def footnote_list(self) -> list[str]:
+        """The authored footnotes, an empty list when none are written."""
+        value = (self.model_extra or {}).get("footnotes")
+        return list(value) if isinstance(value, list) else []
+
+    def marks(self) -> set[int]:
+        """Every footnote number the prose blocks refer to."""
+        from .template import footnote_marks
+
+        found: set[int] = set()
+        for key, value in self.model_dump().items():
+            if key == "footnotes":
+                continue
+            if isinstance(value, str):
+                found |= set(footnote_marks(value))
+            elif isinstance(value, list):
+                for item in value:
+                    cells = item.values() if isinstance(item, dict) else [item]
+                    for cell in cells:
+                        found |= set(footnote_marks(str(cell)))
+        return found
+
     def validate_against(self, template: Template, verdict: str) -> None:
-        known = {b.id for b in template.blocks}
+        known = {b.id for b in template.blocks} | ({"footnotes"} if template.footnotes else set())
         if unknown := set(self.model_dump()) - known:
             raise ValueError(
                 f"prose: unknown blocks {', '.join(sorted(unknown))}; template declares {', '.join(sorted(known))}"
@@ -297,6 +338,31 @@ class Prose(BaseModel):
         missing = [b.id for b in template.blocks if b.required_for(verdict) and not self.present(b)]
         if missing:
             raise ValueError(f"a {verdict} review needs the {', '.join(missing)} block(s)")
+        if template.footnotes:
+            notes = (self.model_extra or {}).get("footnotes")
+            if notes is not None and (
+                not isinstance(notes, list) or not all(isinstance(n, str) for n in notes)
+            ):
+                raise ValueError("footnotes: a list of strings")
+            notes = self.footnote_list()
+            if len(notes) > template.footnotes.max_items:
+                raise ValueError(
+                    f"footnotes: {len(notes)} notes, limit {template.footnotes.max_items}"
+                )
+            for i, note in enumerate(notes, 1):
+                if not note.strip():
+                    raise ValueError(f"footnote {i} is empty")
+                check_length(
+                    f"footnote {i}",
+                    note,
+                    max_words=template.footnotes.max_words,
+                    max_sentences=None,
+                )
+            if dangling := sorted(n for n in self.marks() if not 1 <= n <= len(notes)):
+                raise ValueError(
+                    f"prose refers to footnote(s) {', '.join(map(str, dangling))} but "
+                    f"{len(notes)} are written"
+                )
         for block in template.blocks:
             value = self.block(block.id)
             present = self.present(block)
@@ -310,6 +376,10 @@ class Prose(BaseModel):
                 if not isinstance(value, str):
                     raise ValueError(f"{block.id}: a prose block is a string")
                 check_length(block.id, value, max_words=block.max_words, max_sentences=None)
+                if block.max_paragraphs and len(paragraphs(value)) > block.max_paragraphs:
+                    raise ValueError(
+                        f"{block.id}: {len(paragraphs(value))} paragraphs, limit {block.max_paragraphs}"
+                    )
                 for i, para in enumerate(paragraphs(value), 1):
                     if (
                         block.max_sentences_per_paragraph

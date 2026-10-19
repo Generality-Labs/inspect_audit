@@ -18,7 +18,7 @@ from pydantic import TypeAdapter
 
 from .methodology import METHODOLOGIES, Methodology, load_methodology
 from .records import Assessment, Profile, Prose, Sampling, validate_assessments
-from .template import TEMPLATES, Template, coverage_ids, load_template, render
+from .template import TEMPLATES, Template, coverage_ids, footnote_marks, load_template, render
 
 FORMAT = "epoch"
 METHODOLOGY = "epoch-rubric@1"
@@ -91,8 +91,30 @@ def methodology_markdown(method: Methodology, template: Template) -> str:
             if block.kind == "bullets"
             else f"a table with columns {', '.join(c.title for c in block.columns)}"
         )
+        extras = []
+        if block.max_paragraphs:
+            extras.append(f"at most {block.max_paragraphs} paragraphs")
+        if block.required_when_defects:
+            extras.append("required whenever coverage.json records a defect")
+        if block.closing:
+            extras.append("rendered after the rubric and the disclaimer")
         out.append(
-            f"- `{block.id}` ({block.kind}, {limit}; verdicts {', '.join(block.when)}): {block.brief}"
+            f"- `{block.id}` ({block.kind}, {limit}"
+            + "".join(f", {x}" for x in extras)
+            + f"; verdicts {', '.join(block.when)}): {block.brief}"
+        )
+    if template.footnotes:
+        f = template.footnotes
+        out.append(
+            f"- `footnotes` (list of at most {f.max_items} notes of at most {f.max_words} words, "
+            f"referenced as [^n] from any block or rubric note; a Flag's impact is appended as "
+            f"one automatically): {f.brief}"
+        )
+    if template.notices:
+        out.append("")
+        out.append(
+            "Notices the renderer prints under the header when the run calls for them: "
+            + "; ".join(f"`{k}`: {v}" for k, v in template.notices.items())
         )
     out.append("")
     return "\n".join(line for line in out if line is not None)
@@ -122,6 +144,12 @@ def _prose_schema(template: Template) -> dict[str, Any]:
                 },
                 "description": block.brief,
             }
+    if template.footnotes:
+        props["footnotes"] = {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": template.footnotes.brief,
+        }
     return {"title": "Prose", "type": "object", "properties": props, "additionalProperties": False}
 
 
@@ -130,17 +158,24 @@ def skeleton_assessments(method: Methodology) -> list[dict[str, Any]]:
     return [Assessment(check=c.id, level=level).model_dump() for c in method.checks]
 
 
-def prepare_review(report: Path, benchmark: str) -> None:
-    """Stage the methodology, the template, the schemas and empty records."""
+def prepare_review(report: Path, benchmark: str, logs_supplied: bool | None = None) -> None:
+    """Stage the methodology, the template, the schemas and empty records.
+
+    `logs_supplied` records whether the run was given evaluation logs; left None on a
+    restore, the marker keeps what the original run wrote.
+    """
     from ._report import Finding
 
     method = load_methodology(METHODOLOGY)
     template = load_template(TEMPLATE)
     template.check_methodology(method)
-    (report / "format.json").write_text(
-        json.dumps({"format": FORMAT, "methodology": method.key, "template": template.id}, indent=2)
-        + "\n"
-    )
+    marker: dict[str, Any] = {"format": FORMAT, "methodology": method.key, "template": template.id}
+    previous = report / "format.json"
+    if logs_supplied is None and previous.is_file():
+        logs_supplied = json.loads(previous.read_text()).get("logs_supplied")
+    if logs_supplied is not None:
+        marker["logs_supplied"] = bool(logs_supplied)
+    previous.write_text(json.dumps(marker, indent=2) + "\n")
     shutil.copy(METHODOLOGIES / f"{method.id}-{method.version}.yaml", report / "methodology.yaml")
     shutil.copy(TEMPLATES / f"{template.id}.yaml", report / "template.yaml")
     (report / "methodology.md").write_text(methodology_markdown(method, template))
@@ -359,16 +394,52 @@ def derive_verdict(
     }
 
 
+def has_defects(coverage: dict[str, Any] | None) -> bool:
+    if not coverage:
+        return False
+    return (
+        bool(coverage_ids(coverage, "DEFECT"))
+        or int((coverage.get("counts") or {}).get("DEFECT", 0)) > 0
+    )
+
+
 def check_prose(
     prose: Prose,
     template: Template,
     profile: Profile,
     verdict: str,
     coverage: dict[str, Any] | None = None,
+    assessments: dict[str, Assessment] | None = None,
 ) -> None:
     prose.validate_against(template, verdict)
     if not profile.creator.strip():
         raise ValueError("profile.creator is empty")
+    # the errors blocks are part of every page once an item is recorded as a defect
+    if has_defects(coverage):
+        missing = [
+            b.id
+            for b in template.blocks
+            if b.required_when_defects and b.shown_for(verdict) and not prose.present(b)
+        ]
+        if missing:
+            raise ValueError(
+                f"coverage.json records a defect, so the page needs the {', '.join(missing)} "
+                "block(s) whatever the verdict"
+            )
+    if template.footnotes:
+        notes = prose.footnote_list()
+        marks = prose.marks()
+        for row in (assessments or {}).values():
+            marks |= set(footnote_marks(row.notes))
+        if dangling := sorted(n for n in marks if not 1 <= n <= len(notes)):
+            raise ValueError(
+                f"rubric notes refer to footnote(s) {', '.join(map(str, dangling))} but "
+                f"{len(notes)} are written"
+            )
+        if unused := sorted(set(range(1, len(notes) + 1)) - marks):
+            raise ValueError(
+                f"footnote(s) {', '.join(map(str, unused))} are written but nothing refers to them"
+            )
     # a table that lists the sound items beneath it must name every defect above them:
     # the reader counts the rows against the measure, so a sample of them misleads
     for block in template.blocks:
@@ -402,7 +473,24 @@ def assess(report: Path, root: Path | None = None) -> dict[str, Any]:
     coverage = json.loads(coverage_path.read_text()) if coverage_path.is_file() else None
     measured = measures(method, assessments, coverage, sampling)
     derived = derive_verdict(method, assessments, measured)
-    check_prose(prose, template, profile, derived["verdict"], coverage)
+    notices: list[str] = []
+    marker = json.loads((report / "format.json").read_text())
+    if marker.get("logs_supplied") is False:
+        # without evaluation logs there is nothing benchmark-wide to review: the checks
+        # that read logs stay Not Reviewed, the page says so, and Verified is out of reach
+        unfinished = method.verdict.procedure.unfinished["level"]
+        assessed = [
+            c.id for c in method.minimum if c.threshold is None and assessments[c.id].assessed
+        ]
+        if assessed:
+            raise ValueError(
+                "no evaluation logs were supplied, so the benchmark-wide checks cannot be "
+                f"reviewed: {', '.join(assessed)} must be {unfinished}"
+            )
+        if "no_logs" in template.notices:
+            notices.append(template.notices["no_logs"])
+    derived["notices"] = notices
+    check_prose(prose, template, profile, derived["verdict"], coverage, assessments)
     if not profile.review_date:
         profile.review_date = datetime.now(UTC).date().isoformat()
         (report / "profile.json").write_text(json.dumps(profile.model_dump(), indent=2) + "\n")

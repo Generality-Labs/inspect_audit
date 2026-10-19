@@ -21,15 +21,11 @@ We searched every position with the Stockfish 17 chess engine, about 30 half-mov
 
 ## Interpretation
 
-A score is the share of 100 positions in which the model named the engine's best move. In 99 positions every other move is worse by at least 1.5 pawns of value, as the engine measures it. So the score cleanly measures one skill: finding a single strong move in an unfamiliar position, from a text description alone.
+The benchmark measures one skill: finding the single strong move in an unfamiliar chess position given as text. A score is the share of 100 positions in which the model named the engine's best move, and in 99 of them every other move is clearly worse by the engine's measure. A random legal move scores about 5% and a perfect player 99-100%; the best public score is 72%, and strong human players scored at most 75% on a harder sample of 20 puzzles.
 
-The scale has room. A random legal move would score about 5%. A perfect player would score 99-100%. The best public score is 72%. Five strong human players scored at most 75% on a harder-than-average sample of 20 puzzles.
+Each row is one pass over 100 puzzles at one setting, with a standard error of about four to five points, so rows less than ten points apart should not be ranked against each other. A row describes a model at that setting, not the model at its best: several rows are dominated by answers cut off at the output limit, and the same models score far higher at a lower effort.[^1] Compare models by their best row, and treat rows with many cut-off answers as measuring the limit, not the model.
 
-Each row is a single pass over 100 puzzles, so its standard error is about 4-5 percentage points. Two rows less than about 10 points apart should not be ranked against each other.
-
-A row describes a model at one setting, not the model at its best. Eight rows are dominated by answers cut off at the output limit. Claude-opus-4-7 scores 7% at its maximum effort setting but 20% at low effort. Compare models by their best row. Treat rows with many cut-off answers as measuring the limit, not the model.
-
-Some rows need specific care. MiniMax-M3 is listed at 14%, but 32 of its 100 answers were server errors at the provider, counted as wrong. It solved 14 of the 65 puzzles where it gave a real answer. Gemini-3.1-pro-preview is listed at 55%, but its public log shows 53 failed calls and 61.7% on the 47 puzzles that completed; we could not reproduce the listed figure. The seven highest rows, including the 72% top score, have no public log, so we could not check their settings or answers.
+Three findings bear on how far single rows can be trusted. One listed score counts provider errors as wrong answers, and another could not be reproduced from its public log.[^2] The seven highest rows, including the top score, have no public log, so their settings and answers could not be checked.
 
 ## Task Analysis
 
@@ -55,6 +51,16 @@ These rows measure the limit more than the model. Claude-sonnet-5 at maximum eff
 
 Every affected model has a better setting on the leaderboard, so the benchmark as a whole is not held back. No developer's models get a different prompt or an unusual limit, so we found no bias.
 
+## Representative Errors
+
+The following errors were found in specific tasks. They do not cross our threshold for a Flawed verdict.
+
+- False negative (1 row): in puzzle 14 two knight moves are exactly equal, and only one of them is accepted.
+
+| Task | Error type | Notes | Affected logs |
+|---|---|---|---|
+| 14 | False negative | Two knight moves are exactly equal and only one is accepted. | No recorded run chose the move that is rejected. |
+
 ## Limitations
 
 While none of these limitations cross our threshold for a Flawed verdict, they do inform how a reader should characterize this benchmark.
@@ -69,14 +75,6 @@ While none of these limitations cross our threshold for a Flawed verdict, they d
 - All positions and reference moves are public, so future models may have seen them in training. We did not test for memorisation.
 - We reviewed a reconstruction of Epoch's code, not its private scoring setup. The logs show the same prompt, reference moves and scoring behaviour.
 
-## Recommendations
-
-- Report the share of cut-off answers for each row, and raise the output limit or mark rows where more than a few percent are cut off.
-- Publish logs for every leaderboard row, and recompute any score whose log is incomplete.
-- Treat server errors at the provider as errors and retry them, never as wrong answers.
-- Run each model several times, ideally five, to narrow the error bars.
-- Read the final "MOVE:" line directly, accept every equal best move, and keep a private set of fresh positions to check for memorisation.
-
 ## Benchmark Review Rubric
 
 Rubric v1. We expect future revisions to account for new types of benchmark flaws.
@@ -86,7 +84,7 @@ Rubric v1. We expect future revisions to account for new types of benchmark flaw
 | Level | Meaning | Status | Notes |
 |---|---|---|---|
 | Full | All tasks and scoring logic inspectable, and harness/API settings used for each model (reasoning effort, token/time limits, tool access, system prompts) are fully disclosed | [proceed to 2] |  |
-| **Partial** | A representative sample of tasks and scoring logic inspectable, with full harness/API settings disclosed | [proceed to 2] | All 100 puzzles, their reference moves and the scoring code are public. 187 of 227 leaderboard rows have a readable public log that records the model's settings and every answer. The other 40 rows, including the seven highest scores, have no log we could read. One linked log (gemini-3.1-pro-preview) does not reproduce its listed score. |
+| **Partial** | A representative sample of tasks and scoring logic inspectable, with full harness/API settings disclosed | **[proceed to 2]** | All 100 puzzles, their reference moves and the scoring code are public. 187 of 227 leaderboard rows have a readable public log recording settings and answers; the other 40, including the seven highest scores, have none. One linked log does not reproduce its listed score. |
 | Inadequate | Limited, biased, or no inspectable tasks or scoring logic, harness/API settings undisclosed | [stop → NEI] |  |
 
 ### 2. Scoring
@@ -98,9 +96,9 @@ Scoring prevalence: 1 of 100 inspected tasks (1%); threshold 20%.
 | Defect Class | Examples | Default Threshold for Flawed | Status | Notes |
 |---|---|---|---|---|
 | Scoring | • Essentially impossible to correctly answer as written (e.g. underspecified task, hidden requirement, missing file/tool)<br>• False Negative (e.g. overly strict scorer, stale/incorrect ground truth, dependent on live external state that can drift, sandbox failure independent of the agent)<br>• False Positive (e.g. lax scorer, reward-hackable environment, stated skill can be bypassed via a shortcut such as exploiting an error in the scoring logic or retrieving the answer from the harness/web)<br>• Task egregiously doesn't measure the claimed capability | ≥20% of inspected sample contains errors or issue that corrupts grading at scale | **Pass**<br>Flag [stop → Flawed]<br>Not Reviewed | All 100 puzzles were audited and one has a defect (1%): puzzle 14 has two exactly equal knight moves and accepts only one. The answer reader matched the model's stated move in 99.6% of 17,045 cases. |
-| Benchmark consistency | • Scorer, instructions, or ground truth changed without a version bump | Leaderboard has incomparable results from different versions | **Pass**<br>Flag [stop → Flawed]<br>Not Reviewed | All 193 logs, versions 1.0.0 to 1.1.6, use the same prompt, the same 100 reference moves and the same scoring code. Only the model that reads out answers changed: three were used, and one switch came without a version bump. All three agree with the stated move in 98.7-99.9% of cases, so results stay comparable. One listed score (gemini-3.1-pro-preview, 0.55) does not match its log (0.617 on 47 puzzles). |
-| Elicitation | • Model elicitation is extremely constraining and is not the focus of the benchmark:<br>• Under-resourced relative to task size (token/turn/time limit, sandbox resources)<br>• Poor context management<br>• Lack of agentic environment where one would be natural to provide<br>• Excessive non-voluntary termination for agentic benchmarks | Substantially reduced performance compared to reasonable alternatives for the tasks | **Pass**<br>Flag [stop → Flawed]<br>Not Reviewed | Each model gets one response, is told it may think as long as it likes, and has an output cap with a median of 65,536 tokens. Most runs finish their answers. Eight of 193 logged runs lost at least half their answers to the cap and scored 0-16%. Each of those models scores higher at another listed setting, so the cap misleads single rows but does not depress the benchmark as a whole. |
-| Bias in evaluation setup | • Uneven compute/token budgets<br>• Unfair scaffold choice (e.g. only a subset of models optimized) | Material model-specific advantage found | **Pass**<br>Flag [stop → Flawed]<br>Not Reviewed | All models get the same prompt, one response and no tools. Output caps appear to follow each model's own limit or a shared batch setting. Cut-off answers hit models from Alibaba, Anthropic and OpenAI alike, and each affected model has a better setting listed. We found no setting that gives one model or developer a material advantage. |
+| Benchmark consistency | • Scorer, instructions, or ground truth changed without a version bump | Leaderboard has incomparable results from different versions | **Pass**<br>Flag [stop → Flawed]<br>Not Reviewed | All 193 logs use the same prompt, reference moves and scoring code. The model that reads out answers changed three times, once without a version bump, but all three agree with the stated move in over 98% of cases. One listed score does not match its log. |
+| Elicitation | • Model elicitation is extremely constraining and is not the focus of the benchmark:<br>• Under-resourced relative to task size (token/turn/time limit, sandbox resources)<br>• Poor context management<br>• Lack of agentic environment where one would be natural to provide<br>• Excessive non-voluntary termination for agentic benchmarks | Substantially reduced performance compared to reasonable alternatives for the tasks | **Pass**<br>Flag [stop → Flawed]<br>Not Reviewed | Each model gets one response under an output cap, and most runs finish their answers. Eight of 193 runs lost at least half their answers to the cap, but each of those models scores higher at another listed setting, so single rows mislead without depressing the benchmark. |
+| Bias in evaluation setup | • Uneven compute/token budgets<br>• Unfair scaffold choice (e.g. only a subset of models optimized) | Material model-specific advantage found | **Pass**<br>Flag [stop → Flawed]<br>Not Reviewed | All models get the same prompt, one response and no tools. Output caps follow each model's own limit or a shared batch setting, and cut-off answers hit models from several developers alike, each with a better setting listed. No setting gives one model or developer a material advantage. |
 
 ### 3. Evaluation Quality
 
@@ -108,14 +106,27 @@ This is the standard we would like all benchmarks to meet, but it is not necessa
 
 | Question | Status | Notes |
 |---|---|---|
-| Elicitation and resource adequacy: Are the resources given to models (reasoning token/turn budget, tool access, etc.) sufficient for them to perform near their ceiling? | Sufficient<br>**Constraining**<br>Unreasonably constraining<br>Unknown<br>Not Reviewed | Most runs have room to finish: the median output cap is 65,536 tokens. At the highest reasoning settings several models ran out of room before naming a move. 925 of 19,442 answers (4.8%) were cut off, and eight rows lost at least half their answers. The same models score higher at lower settings that are also listed. |
+| Elicitation and resource adequacy: Are the resources given to models (reasoning token/turn budget, tool access, etc.) sufficient for them to perform near their ceiling? | Sufficient<br>**Constraining**<br>Unreasonably constraining<br>Unknown<br>Not Reviewed | Most runs have room to finish. At the highest reasoning settings several models ran out of room before naming a move: 925 of 19,442 answers were cut off, and eight rows lost at least half their answers. The same models score higher at lower listed settings. |
 | Scaffold fairness: What scaffold does the leaderboard report? | **Shared common scaffold**<br>Mix of model-specific and common scaffolds<br>Model-specific scaffolds<br>Not Reviewed | Every model gets the same single prompt and gives one response, with no tools. Only each model's own settings vary, such as reasoning effort and output cap. |
-| Is there evidence/risk of contamination? | **As of 2026-10-08: 100% of tasks public<br>100% of solutions public**<br>Not Reviewed | The positions were generated from engine games for this benchmark, not taken from puzzle collections. But all 100 positions and their reference moves are public in the task code and in public logs. Models trained after release could have seen them. We did not test for memorisation. |
-| Has human completability been assessed? | All tasks<br>**Representative set of tasks**<br>Poor implementation (Unrepresentative set of tasks, unreasonable set of participants)<br>Not established<br>Not reviewed | Epoch asked five players rated 1700-2400 to each solve 20 randomly chosen puzzles without an engine. The best two scored 75%. Epoch notes the sample was harder than average. Our engine search confirms every reference move, so every puzzle is solvable. |
+| Is there evidence/risk of contamination? | **As of 2026-10-08: 100% of tasks public<br>100% of solutions public**<br>Not Reviewed | The positions were generated from engine games for this benchmark, not taken from puzzle collections, but all 100 positions and their reference moves are public in the task code and in public logs. Models trained after release could have seen them. Memorisation was not tested. |
+| Has human completability been assessed? | All tasks<br>**Representative set of tasks**<br>Poor implementation (Unrepresentative set of tasks, unreasonable set of participants)<br>Not established<br>Not reviewed | Five players rated 1700-2400 each solved 20 randomly chosen puzzles without an engine, and the best two scored 75% on a sample the creator notes was harder than average. The engine search confirms every reference move, so every puzzle is solvable. |
 | Score range (if possible to estimate) | **about 5% (random legal move) floor<br>99-100% (puzzle 14 has two equally good moves) ceiling**<br>Not Reviewed | Positions have about 34 legal moves on average, so a random legal move scores about 5%. A perfect player scores 99-100%, because only one of the two equal moves in puzzle 14 is accepted. The best public score is 72%. |
 | Statistical adequacy: How many runs/model (≥ 5 recommended for error bars) | **1 runs/model**<br>Unknown<br>Not Reviewed | Each leaderboard row is one pass over the 100 puzzles; two runs used two passes. Standard errors are about 4-5 percentage points, so rows less than about 10 points apart cannot be ranked reliably. At least five runs are recommended. |
-| Construct validity | **Measures stated capabilities**<br>Partially measures stated capabilities<br>Does not measure stated capabilities<br>Not Reviewed | Epoch says the benchmark asks for the single best move as judged by Stockfish. In 99 of 100 puzzles the reference move beats every alternative by at least 1.5 pawns, so the score tracks that skill. Epoch's wider suggestion that it plausibly reflects spatial reasoning and planning is hedged, and we did not test it. |
+| Construct validity | **Measures stated capabilities**<br>Partially measures stated capabilities<br>Does not measure stated capabilities<br>Not Reviewed | The benchmark asks for the single best move as judged by Stockfish. In 99 of 100 puzzles the reference move beats every alternative by at least 1.5 pawns, so the score tracks that skill. The creator's wider suggestion of spatial reasoning and planning is hedged and was not tested. |
 
 ## Disclaimer
 
 We undertook this audit without requesting additional information from Epoch AI to provide impartial feedback.
+
+## Recommendations
+
+- Report the share of cut-off answers for each row, and raise the output limit or mark rows where more than a few percent are cut off.
+- Publish logs for every leaderboard row, and recompute any score whose log is incomplete.
+- Treat server errors at the provider as errors and retry them, never as wrong answers.
+- Run each model several times, ideally five, to narrow the error bars.
+- Read the final "MOVE:" line directly, accept every equal best move, and keep a private set of fresh positions to check for memorisation.
+
+## Footnotes
+
+[^1]: Eight rows lose at least half their answers to the output cap; Claude Opus 4.7 scores 7% at maximum effort and 20% at low effort.
+[^2]: MiniMax-M3 is listed at 14% with 32 of 100 answers counted wrong as server errors, having solved 14 of the 65 it answered; gemini-3.1-pro-preview is listed at 55% but its log shows 53 failed calls and 61.7% on the 47 that completed.

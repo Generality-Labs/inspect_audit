@@ -2,7 +2,7 @@
   {
     "check": "reviewability",
     "level": "Partial",
-    "notes": "All 100 puzzles, their reference moves and the scoring code are public. 187 of 227 leaderboard rows have a readable public log that records the model's settings and every answer. The other 40 rows, including the seven highest scores, have no log we could read. One linked log (gemini-3.1-pro-preview) does not reproduce its listed score.",
+    "notes": "All 100 puzzles, their reference moves and the scoring code are public. 187 of 227 leaderboard rows have a readable public log recording settings and answers; the other 40, including the seven highest scores, have none. One linked log does not reproduce its listed score.",
     "evidence": [
       {
         "path": "evidence/source/puzzles.csv",
@@ -51,7 +51,7 @@
   {
     "check": "benchmark_consistency",
     "level": "Pass",
-    "notes": "All 193 logs, versions 1.0.0 to 1.1.6, use the same prompt, the same 100 reference moves and the same scoring code. Only the model that reads out answers changed: three were used, and one switch came without a version bump. All three agree with the stated move in 98.7-99.9% of cases, so results stay comparable. One listed score (gemini-3.1-pro-preview, 0.55) does not match its log (0.617 on 47 puzzles).",
+    "notes": "All 193 logs use the same prompt, reference moves and scoring code. The model that reads out answers changed three times, once without a version bump, but all three agree with the stated move in over 98% of cases. One listed score does not match its log.",
     "evidence": [
       {
         "path": "evidence/prompt_by_version.csv",
@@ -74,7 +74,7 @@
   {
     "check": "elicitation_adequacy",
     "level": "Pass",
-    "notes": "Each model gets one response, is told it may think as long as it likes, and has an output cap with a median of 65,536 tokens. Most runs finish their answers. Eight of 193 logged runs lost at least half their answers to the cap and scored 0-16%. Each of those models scores higher at another listed setting, so the cap misleads single rows but does not depress the benchmark as a whole.",
+    "notes": "Each model gets one response under an output cap, and most runs finish their answers. Eight of 193 runs lost at least half their answers to the cap, but each of those models scores higher at another listed setting, so single rows mislead without depressing the benchmark.",
     "evidence": [
       {
         "path": "evidence/truncation_by_run.csv",
@@ -97,7 +97,7 @@
   {
     "check": "evaluation_bias",
     "level": "Pass",
-    "notes": "All models get the same prompt, one response and no tools. Output caps appear to follow each model's own limit or a shared batch setting. Cut-off answers hit models from Alibaba, Anthropic and OpenAI alike, and each affected model has a better setting listed. We found no setting that gives one model or developer a material advantage.",
+    "notes": "All models get the same prompt, one response and no tools. Output caps follow each model's own limit or a shared batch setting, and cut-off answers hit models from several developers alike, each with a better setting listed. No setting gives one model or developer a material advantage.",
     "evidence": [
       {
         "path": "evidence/per_log_with_leaderboard.csv",
@@ -120,7 +120,7 @@
   {
     "check": "resource_adequacy",
     "level": "Constraining",
-    "notes": "Most runs have room to finish: the median output cap is 65,536 tokens. At the highest reasoning settings several models ran out of room before naming a move. 925 of 19,442 answers (4.8%) were cut off, and eight rows lost at least half their answers. The same models score higher at lower settings that are also listed.",
+    "notes": "Most runs have room to finish. At the highest reasoning settings several models ran out of room before naming a move: 925 of 19,442 answers were cut off, and eight rows lost at least half their answers. The same models score higher at lower listed settings.",
     "evidence": [
       {
         "path": "evidence/truncation_by_run.csv",
@@ -153,7 +153,7 @@
   {
     "check": "contamination",
     "level": "Assessed",
-    "notes": "The positions were generated from engine games for this benchmark, not taken from puzzle collections. But all 100 positions and their reference moves are public in the task code and in public logs. Models trained after release could have seen them. We did not test for memorisation.",
+    "notes": "The positions were generated from engine games for this benchmark, not taken from puzzle collections, but all 100 positions and their reference moves are public in the task code and in public logs. Models trained after release could have seen them. Memorisation was not tested.",
     "evidence": [
       {
         "path": "evidence/source/puzzles.csv",
@@ -177,7 +177,7 @@
   {
     "check": "human_completability",
     "level": "Representative set of tasks",
-    "notes": "Epoch asked five players rated 1700-2400 to each solve 20 randomly chosen puzzles without an engine. The best two scored 75%. Epoch notes the sample was harder than average. Our engine search confirms every reference move, so every puzzle is solvable.",
+    "notes": "Five players rated 1700-2400 each solved 20 randomly chosen puzzles without an engine, and the best two scored 75% on a sample the creator notes was harder than average. The engine search confirms every reference move, so every puzzle is solvable.",
     "evidence": [
       {
         "path": "evidence/leaderboard/epoch_human_baseline_2026-10-08.csv",
@@ -246,7 +246,7 @@
   {
     "check": "construct_validity",
     "level": "Measures stated capabilities",
-    "notes": "Epoch says the benchmark asks for the single best move as judged by Stockfish. In 99 of 100 puzzles the reference move beats every alternative by at least 1.5 pawns, so the score tracks that skill. Epoch's wider suggestion that it plausibly reflects spatial reasoning and planning is hedged, and we did not test it.",
+    "notes": "The benchmark asks for the single best move as judged by Stockfish. In 99 of 100 puzzles the reference move beats every alternative by at least 1.5 pawns, so the score tracks that skill. The creator's wider suggestion of spatial reasoning and planning is hedged and was not tested.",
     "evidence": [
       {
         "path": "evidence/engine/sf_t45_classified.csv",

@@ -18,6 +18,20 @@ style:
     - Numbers with their denominators, not adjectives. Lead with the conclusion, then the evidence.
     - Do not narrate the investigation; execution details, costs and pipeline errors belong in the journal.
 title: "{benchmark} Review"
+notices:
+  no_logs: >-
+    No evaluation logs were supplied for this review, so the benchmark-wide checks
+    (consistency, elicitation and bias) were not reviewed and the verdict cannot be
+    Verified.
+footnotes:
+  title: Footnotes
+  max_words: 60
+  max_items: 12
+  brief: >-
+    Evidence detail that supports a sentence on the page without cluttering it: counts with
+    their denominators, model names and settings, dates, versions, locators. Refer to a
+    footnote as [^n] from any prose block or rubric note; a Flag's impact is appended as a
+    footnote for you. A footnote supports a claim already made; it never introduces one.
 header:
   - label: Benchmark
     value: profile.benchmark
@@ -45,17 +59,24 @@ blocks:
     when: [Verified, Flawed, NEI, Incomplete]
     required: [Verified, Flawed, NEI, Incomplete]
     brief: >-
-      What was done: which logs and source were read, what was computed, which per-item
-      audits ran and on how many items, what was not done.
+      What was done: which logs were supplied, or that none were; which source was read;
+      which per-item audits ran and on how many items; what was computed; what was not done.
+      The prevalence line in the rubric prints the counts, so do not repeat them here.
   - id: interpretation
     title: Interpretation
     kind: prose
-    max_words: 300
+    max_words: 250
+    max_paragraphs: 3
+    max_sentences_per_paragraph: 4
     when: [Verified]
     required: [Verified]
     brief: >-
-      What the benchmark measures, how its headline number is made (what is scored, how, and
-      how results are aggregated), and how a reader should and should not interpret it.
+      Three short paragraphs at most, in this order. First, what the benchmark claims to
+      measure and what one score means in a reader's terms. Second, what the number is and is
+      not: what counts as a success, how results are aggregated, and the reading a reader
+      should not make of it. Third, which of the review's findings bear on that reading, and
+      how and why. No run statistics, settings or harness details; those belong in the
+      elicitation block or a footnote.
   - id: task_analysis
     title: Task Analysis
     kind: prose
@@ -80,9 +101,14 @@ blocks:
     max_sentences: 3
     max_items: 5
     plain: true
-    when: [Flawed]
+    when: [Verified, Flawed, NEI, Incomplete]
     required: [Flawed]
-    lead: The following issues cross our threshold for a Flawed verdict.
+    required_when_defects: true
+    lead:
+      Flawed: The following issues cross our threshold for a Flawed verdict.
+      default: >-
+        The following errors were found in specific tasks. They do not cross our threshold for
+        a Flawed verdict.
     brief: >-
       One bullet per defect class present in the errors table, in order of how many rows it
       covers: name the class as the table names it, say how many rows it covers, and give one
@@ -92,8 +118,9 @@ blocks:
       the methodology block.
   - id: error_examples
     kind: table
-    when: [Flawed]
+    when: [Verified, Flawed, NEI, Incomplete]
     required: [Flawed]
+    required_when_defects: true
     max_cell_words: 30
     footer: coverage_ids
     columns:
@@ -127,6 +154,7 @@ blocks:
     kind: bullets
     max_sentences: 1
     max_items: 5
+    closing: true
     when: [Verified, Flawed, NEI, Incomplete]
     required: [Verified, Flawed]
     brief: >-

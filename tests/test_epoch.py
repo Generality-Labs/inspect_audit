@@ -76,6 +76,17 @@ def verified_prose(**overrides) -> dict:
         "elicitation_and_scaffolding": "One prompt, no tools.",
         "limitations": ["Single run per model.", "No human baseline."],
         "recommendations": ["Publish the engine version."],
+        "representative_errors": [
+            "False negative (1 row): puzzle 86 keeps a prefix in the answer."
+        ],
+        "error_examples": [
+            {
+                "task": "Puzzle 86",
+                "error_type": "False negative",
+                "notes": "Prefix kept in the extracted answer.",
+                "affected_logs": "1 run (GPT-5.4 high)",
+            }
+        ],
     }
     prose.update(overrides)
     return prose
@@ -246,9 +257,10 @@ def test_a_scoring_flag_stands_on_the_defect_rate_alone() -> None:
         derived,
     )
     assert (
-        "| 21 of the 50 questions have a confirmed defect, against a threshold of 20%. "
-        "Four correct submissions were rejected on two questions. |"
-    ) in page
+        "| 21 of the 50 questions have a confirmed defect, against a threshold of 20%.[^1] |"
+        in page
+    )
+    assert "[^1]: Impact: Four correct submissions were rejected on two questions." in page
     assert "**Impact:**" not in page
     row(rows, "scoring_integrity")["impact"] = "One. Two."
     with pytest.raises(ValueError, match="scoring_integrity impact: 2 sentences, limit 1"):
@@ -274,11 +286,16 @@ def test_a_flag_needs_its_impact_and_a_pass_has_none() -> None:
 def test_note_limits_come_from_the_methodology() -> None:
     rows = filled_assessments()
     row(rows, "benchmark_consistency")["notes"] = " ".join(["word"] * 81)
-    with pytest.raises(ValueError, match="benchmark_consistency notes: 81 words, limit 80"):
+    with pytest.raises(ValueError, match="benchmark_consistency notes: 81 words, limit 50"):
         derived_for(rows)
     rows = filled_assessments()
     row(rows, "benchmark_consistency")["notes"] = "One. Two. Three. Four. Five."
-    with pytest.raises(ValueError, match="5 sentences, limit 4"):
+    with pytest.raises(ValueError, match="5 sentences, limit 3"):
+        derived_for(rows)
+    # a note states the conclusion; which model did what is a footnote
+    rows = filled_assessments()
+    row(rows, "benchmark_consistency")["notes"] = "GPT-5 mini abstained on 33 questions."
+    with pytest.raises(ValueError, match=r"names a model \(GPT\)"):
         derived_for(rows)
     # the scoring row's own, tighter limits
     rows = filled_assessments()
@@ -381,9 +398,9 @@ def test_a_purposive_sample_does_not_measure_prevalence() -> None:
 def test_prose_blocks_follow_the_verdict_and_the_template_limits() -> None:
     template = load_template(TEMPLATE)
     Prose.model_validate(verified_prose()).validate_against(template, "Verified")
-    with pytest.raises(ValueError, match="representative_errors is not part of a Verified review"):
-        Prose.model_validate(verified_prose(representative_errors=["Oops."])).validate_against(
-            template, "Verified"
+    with pytest.raises(ValueError, match="interpretation is not part of a Flawed review"):
+        Prose.model_validate(dict(flawed_prose(), interpretation="Oops.")).validate_against(
+            template, "Flawed"
         )
     with pytest.raises(ValueError, match="a Verified review needs the interpretation block"):
         Prose.model_validate(verified_prose(interpretation="")).validate_against(
@@ -392,7 +409,12 @@ def test_prose_blocks_follow_the_verdict_and_the_template_limits() -> None:
     with pytest.raises(
         ValueError, match="a Flawed review needs the representative_errors, error_examples block"
     ):
-        Prose.model_validate(verified_prose()).validate_against(template, "Flawed")
+        without = {
+            k: v
+            for k, v in verified_prose().items()
+            if k not in ("representative_errors", "error_examples")
+        }
+        Prose.model_validate(without).validate_against(template, "Flawed")
     with pytest.raises(ValueError, match="needs the recommendations block"):
         Prose.model_validate(verified_prose(recommendations=[])).validate_against(
             template, "Verified"
@@ -458,7 +480,7 @@ def test_prepare_stages_the_methodology_template_schemas_and_records(tmp_path: P
     assert "section" not in schema["properties"]
     assert set(json.loads((report / "prose.schema.json").read_text())["properties"]) == {
         b.id for b in load_template(TEMPLATE).blocks
-    }
+    } | {"footnotes"}
     assert (report / "methodology.yaml").is_file() and (report / "template.yaml").is_file()
     text = (report / "methodology.md").read_text()
     assert "### `scoring_integrity`: Scoring" in text and "sampled_defect_rate >= 0.20" in text
@@ -519,20 +541,25 @@ def test_a_verified_review_renders_the_page(tmp_path: Path) -> None:
         "## Task Analysis",
         "## Elicitation and Scaffolding",
         "## Limitations",
-        "## Recommendations",
+        "## Representative Errors",
         "## Benchmark Review Rubric",
         "### 1. Reviewability",
         "### 2. Scoring",
         "### 3. Evaluation Quality",
         "## Disclaimer",
+        "## Recommendations",
     ):
         assert heading in md, heading
-    assert "## Representative Errors" not in md
+    # recommendations close the page, after the disclaimer; the errors found in specific
+    # tasks are shown with the lead sentence of a page that passes
+    assert md.index("## Disclaimer") < md.index("## Recommendations")
+    assert "They do not cross our threshold for a Flawed verdict." in md
+    assert "| **Full** | All tasks and scoring logic inspectable" in md
+    assert "| **[proceed to 2]** |" in md and md.count("**[proceed to 2]**") == 1
     assert "While none of these limitations cross our threshold for a Flawed verdict" in md
     assert "- Single run per model." in md and "- Publish the engine version." in md
     assert "Scoring prevalence: 6 of 100 inspected tasks (6%); threshold 20%." in md
     # the form: every level row printed, notes only on the chosen one, choice in bold
-    assert "| **Full** | All tasks and scoring logic inspectable" in md
     assert "| Partial | A representative sample" in md and "| Inadequate | Limited, biased" in md
     assert md.count("Logs and gist.") == 1
     assert "**Pass**<br>Flag [stop → Flawed]<br>Not Reviewed" in md
@@ -577,7 +604,13 @@ def test_a_flawed_review_renders_representative_errors(tmp_path: Path) -> None:
         "Verdict: Flawed" in md
         and "The following issues cross our threshold for a Flawed verdict." in md
     )
-    assert "**Impact:** Rows graded by the two models differ by 9 points. Checked." in md
+    # the Flag's impact is a footnote under the page, the note stays high-level
+    assert "| Checked.[^1] |" in md
+    assert (
+        "## Footnotes" in md
+        and "[^1]: Impact: Rows graded by the two models differ by 9 points." in md
+    )
+    assert md.index("## Disclaimer") < md.index("## Recommendations") < md.index("## Footnotes")
     assert "**Flag [stop → Flawed]**" in md and "- Bump the version when the grader changes." in md
     assert "| Task | Error type | Notes | Affected logs |" in md
     assert (
@@ -858,3 +891,76 @@ def test_the_error_bullets_name_classes_and_the_recommendations_are_one_sentence
             continue
         with pytest.raises(ValueError, match=why):
             Prose.model_validate(prose).validate_against(template, "Flawed")
+
+
+def test_footnotes_carry_the_detail_and_must_match_their_marks(tmp_path: Path) -> None:
+    """Prose and rubric notes refer to footnotes as [^n]; every mark resolves and every note is used."""
+    template = load_template(TEMPLATE)
+    prose = verified_prose(
+        interpretation="The number is the share of positions solved.[^1]",
+        footnotes=["92 of 100 puzzles were solved by the best run, at medium effort."],
+    )
+    Prose.model_validate(prose).validate_against(template, "Verified")
+    with pytest.raises(ValueError, match="refers to footnote\\(s\\) 2 but 1 are written"):
+        Prose.model_validate(dict(prose, interpretation="Solved.[^2]")).validate_against(
+            template, "Verified"
+        )
+    with pytest.raises(ValueError, match="footnote 1: 61 words, limit 60"):
+        Prose.model_validate(dict(prose, footnotes=[" ".join(["w"] * 61)])).validate_against(
+            template, "Verified"
+        )
+    # an unreferenced note is refused once the rubric notes have been scanned too
+    rows = filled_assessments()
+    root = workspace(tmp_path, rows, dict(prose, interpretation="Solved."), coverage_of(0, 100))
+    with pytest.raises(ValueError, match="footnote\\(s\\) 1 are written but nothing refers"):
+        prepare_publication(root, [])
+    # a mark in a rubric note counts, and the page prints the note under the disclaimer
+    row(rows, "benchmark_consistency")["notes"] = "One series throughout.[^1]"
+    root = workspace(
+        tmp_path / "b", rows, dict(prose, interpretation="Solved."), coverage_of(0, 100)
+    )
+    prepare_publication(root, [])
+    md = (root / "work/report/epoch_review.md").read_text()
+    assert "| One series throughout.[^1] |" in md
+    assert md.rstrip().endswith(
+        "[^1]: 92 of 100 puzzles were solved by the best run, at medium effort."
+    )
+
+
+def test_without_logs_the_benchmark_wide_checks_stay_not_reviewed(tmp_path: Path) -> None:
+    """No logs, no attempts: consistency, elicitation and bias are Not Reviewed, the page says so."""
+    from inspect_audit._epoch import prepare_review as prepare
+
+    root = workspace(tmp_path, coverage=coverage_of(defect=6, clean=94))
+    prepare(root / "work/report", "Chess Puzzles", logs_supplied=False)
+    assert json.loads((root / "work/report/format.json").read_text())["logs_supplied"] is False
+    with pytest.raises(ValueError, match="no evaluation logs were supplied.*benchmark_consistency"):
+        prepare_publication(root, [])
+    rows = filled_assessments()
+    stop_after(rows, "scoring_integrity")
+    (root / "work/report/assessments.json").write_text(json.dumps(rows))
+    (root / "work/report/prose.json").write_text(
+        json.dumps(
+            dict(
+                flawed_prose(),
+                limitations=["No logs were supplied."],
+                recommendations=["Publish the logs."],
+            )
+        )
+    )
+    derived = prepare_publication(root, [])
+    assert derived["verdict"] == "Incomplete"
+    md = (root / "work/report/epoch_review.md").read_text()
+    assert md.splitlines()[7].startswith("*No evaluation logs were supplied for this review")
+    # a restore keeps the marker it finds
+    prepare(root / "work/report", "Chess Puzzles")
+    assert json.loads((root / "work/report/format.json").read_text())["logs_supplied"] is False
+
+
+def test_the_interpretation_is_three_short_paragraphs() -> None:
+    template = load_template(TEMPLATE)
+    four = "\n\n".join(["One idea."] * 4)
+    with pytest.raises(ValueError, match="interpretation: 4 paragraphs, limit 3"):
+        Prose.model_validate(verified_prose(interpretation=four)).validate_against(
+            template, "Verified"
+        )

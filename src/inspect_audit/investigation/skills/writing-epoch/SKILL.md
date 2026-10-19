@@ -36,7 +36,7 @@ standing instructions, stated once there; this table is the map.
 | 0 Orient | source, docs, overview | the benchmark's facts; the population and its strata; the sample design, yours or the operator's | `profile.json`, `sampling.json` |
 | 1 Reviewability | source, supplied log headers | can tasks, scoring logic and settings be inspected? | the reviewability row |
 | 2 Items | the sample | question-labels and the substantive item checks, two items first, then the rest, then at most one repair batch for what the batch left open; the defect rate decides the scoring row, and a Flag there goes straight to stage 6 | `coverage.json`, the scoring row |
-| 3 Logs | a scoring Pass; supplied logs, else the attempts job | read them; when they are on hand, the scoring row's impact is the submissions the defects misgraded, from one gold-answer job on the defective items, neither retried nor followed up; with neither logs nor eval models, say so in the methodology block | the attempts source |
+| 3 Logs | a scoring Pass; supplied logs | read them; with none supplied there are no attempts, consistency, elicitation and bias stay Not Reviewed, the page carries a notice, and the methodology block says so | the logs source |
 | 4 Benchmark-wide | stage 3 | consistency, elicitation and bias in rubric order; the first Flag ends the rubric, the rows after it are Not Reviewed | the rows up to and including the first Flag, with its `impact` |
 | 5 Quality | no Flag in stage 4 | the seven quality rows | assessments complete |
 | 6 Publish | the derived verdict | the prose blocks that verdict calls for; publish | the page |
@@ -45,23 +45,35 @@ Two consequences for the writing. Observations that would have gone into rows af
 Flag belong in the findings filed under the flagged check or in the journal, not in
 rows the methodology says are not reviewed; `check_report` refuses a level written
 there, and the page reads "[stop → Flawed]" where the rubric stopped. And the
-published results are the series the review compares against: the review's own
-attempts measure what the confirmed defects do to real submissions, and a defect no
-attempt touches is still a defect for the measure, it simply carries no impact figure.
+supplied logs are the series the review compares against: a defect no logged
+submission touches is still a defect for the measure, it simply has no impact to report.
 
 ## The blocks, by verdict
 
 `report/methodology.md` ends with every prose block, its brief, its limit and the
-verdicts it belongs to; write against that list. Three things it does not say. The
-lead sentence of **limitations** is rendered for you, so its bullets start straight on
-the point. **representative_errors** is one bullet per defect class in the table, with its row
-count and an example or two, and nothing about the audit; **recommendations** are
-addressed to the benchmark's creator, one check or practice per class, one sentence each,
-naming no item. A Flawed review has no interpretation, task-analysis or
-elicitation block: the rubric notes carry what the reader needs, and the
-**error_examples** table carries one row for every item `coverage.json` records as a
-defect, naming its id in Task, then any run-level errors; the ids audited without a
-defect are listed under the table for you.
+verdicts it belongs to; write against that list. What it does not say. The lead
+sentences of **limitations** and **representative_errors** are rendered for you, so
+their bullets start straight on the point. **representative_errors** and the
+**error_examples** table appear on every page, whatever the verdict, as soon as
+`coverage.json` records a defect: one bullet per defect class with its row count and an
+example or two, nothing about the audit, and one table row for every recorded defect,
+naming its id in Task, then any run-level errors; the ids audited without a defect are
+listed under the table for you. **recommendations** are addressed to the benchmark's
+creator, one check or practice per class, one sentence each, naming no item; they are
+printed after the disclaimer, so they close the page. A Flawed review has no
+interpretation, task-analysis or elicitation block: the rubric notes carry what the
+reader needs. **interpretation** is three short paragraphs: what the benchmark claims to
+measure and what a score means; what the number is and is not; which findings bear on
+that reading and how.
+
+## Footnotes
+
+Detail that supports a sentence but would clutter it goes in `footnotes`, a list in
+`prose.json`, referred to as `[^n]` from any prose block or rubric note. Counts with
+their denominators, which model did what at which setting, dates, versions and
+locators belong there; the sentence on the page states the conclusion. A Flag's
+`impact` is appended as a footnote for you. `check_report` refuses a marker with no
+note and a note nothing refers to.
 
 ## The Notes cell
 
@@ -82,42 +94,41 @@ Flag a minimum-standard check only when the evidence shows a material effect on 
 benchmark's headline results or on their comparability. A defect that exists but does not
 move scores, or that affects only rows a reader can avoid, is a Pass with the concern
 recorded under limitations. When the evidence leaves the question open, Pass and say what
-would settle it. The methodology's guidance gives the test for each check. A Flag on consistency, elicitation or bias carries `impact`: the measured effect in at
-most three sentences with numbers; `check_report` refuses one without it, and the
-rendered Notes cell opens with it. On scoring, the defect rate is the Flag; give
-`impact` only when attempts or supplied logs were on hand, as the submissions the
-defects misgraded in the one impact job; whatever it left unjudged is unquantified, not
-a reason for another job.
+would settle it. The methodology's guidance gives the test for each check. `impact`
+exists only on a Flag; `check_report` refuses it on a Pass. A Flag on consistency,
+elicitation or bias carries it as the measured effect in at most three sentences with
+numbers, and the page prints it as a footnote under the row's note. On scoring, the
+defect rate is the Flag; its `impact` is the submissions the defects misgraded in the
+one impact job, run only when logs were supplied; whatever it left unjudged is
+unquantified, not a reason for another job.
 
 ## The rubric notes
 
 The rendered rubric prints Epoch's form from the methodology, every option listed and
 yours in bold; you supply only the level, the numbers the form asks for, and the
-notes. Each note is at most eighty words and four sentences: the conclusion and the
-one or two facts that support it, with numbers and denominators. No evidence paths,
-scripts or file names in the notes; those go in the row's `evidence` list, which is
-rendered separately. A Pass or clean row says in one clause what was checked. On the
-scoring row the note is the defect rate against the threshold in one sentence, with no
-repeat of the counts the prevalence line prints, and the impact, when there is one, is one
-short sentence that follows it. The
-page closes with a disclaimer that the review used public information without asking
-the creator; if that is not true of your review, say so in the methodology block.
+notes. A note is the conclusion in at most fifty words and three sentences, written
+for the reader of the page: "abstention handling is a material choice", not "GPT-5
+mini abstained on 33 questions". No model names, no run figures and no evidence paths
+in a note; `check_report` refuses a model name, and the figures go in a footnote the
+note refers to, with the paths in the row's `evidence` list. A Pass or clean row says
+in one clause what was checked. On the scoring row the note is the defect rate against
+the threshold in one sentence, with no repeat of the counts the prevalence line prints.
+The disclaimer says the review used public information without asking the creator; if
+that is not true of your review, say so in the methodology block.
 
 ## The scoring measure and the sample
 
 The measure is computed from `report/coverage.json`: questions labelled DEFECT over
 questions with a resolved label, unresolved and unassessed counts beside it. It is
-admissible only from a sample selected for prevalence, recorded in `sampling.json`. A
-sample is random when its draw was random, whoever drew it: when the operator supplies
-items an independent reviewer drew with a stated random design, record that design
-and name the drawer in `drawn_by`, seed unknown if it is. Call a sample `purposive`
-only when the items were chosen for a reason; its counts show that defects exist, not
-how common they are, so a scoring row that passes on them leaves the review
-Incomplete, though it can still be a Flag on a measured impact or carry a `measure`
-obtained some other way. `check_report` refuses a Pass or Flag that contradicts the
-computed threshold unless `threshold_override_reason` says why. A question-level
-defect is not automatically a misgraded submission, and an attack you authored against
-the current grader is not a historical score error; say which kind each defect is.
+admissible only from a sample selected for prevalence, recorded in `sampling.json`:
+with logs supplied, the population is the items they contain and the sample is a
+census of them or a random draw, one line to record; a draw made by someone else with a
+stated random design is random, with the drawer named in `drawn_by`. A `purposive`
+sample shows that defects exist, not how common they are, and leaves a passing scoring
+row Incomplete. `check_report` refuses a Pass or Flag that contradicts the computed
+threshold unless `threshold_override_reason` says why. A question-level defect is not
+automatically a misgraded submission, and an attack you authored against the current
+grader is not a historical score error; say which kind each defect is.
 
 ## Benchmark-wide checks need benchmark-wide evidence
 

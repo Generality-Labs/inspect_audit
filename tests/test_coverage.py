@@ -149,3 +149,99 @@ def test_a_defects_headline_is_one_plain_sentence_about_the_item():
     assert validate_labels([ok], ["q"], require_classification=True)[0].headline.endswith("D.")
     # historical labels carry no headline and are still read
     assert validate_labels([label("old", "DEFECT")], ["old"])[0].headline is None
+
+
+def test_labels_from_two_checks_combine_per_question():
+    """Phase 1 labels the item as written, phase 2 its recorded grades; either defect counts."""
+    blind = [label(q, "NO_ISSUE_FOUND") for q in ("a", "b", "c", "d")]
+    graded = [
+        {**label("a", "DEFECT"), "check": "grading-labels", "defect_types": ["false_negative"]},
+        {**label("b", "NO_ISSUE_FOUND"), "check": "grading-labels"},
+        {**label("c", "UNRESOLVED"), "check": "grading-labels"},
+        # d: the grading audit ran on the sample but skipped d
+    ]
+    result = coverage_summary(["a", "b", "c", "d"], blind + graded)
+    assert {r["question_id"]: r["status"] for r in result["questions"]} == {
+        "a": "DEFECT",
+        "b": "NO_ISSUE_FOUND",
+        "c": "UNRESOLVED",
+        "d": "NOT_ASSESSED",
+    }
+    assert result["questions"][0]["by_check"] == {
+        "question-labels": "NO_ISSUE_FOUND",
+        "grading-labels": "DEFECT",
+    }
+    assert result["counts_by_check"]["question-labels"]["NO_ISSUE_FOUND"] == 4
+    assert result["counts_by_check"]["grading-labels"] == {
+        "NO_ISSUE_FOUND": 1,
+        "DEFECT": 1,
+        "UNRESOLVED": 1,
+        "NOT_ASSESSED": 1,
+    }
+    assert result["defect_counts"] == {"false_negative": 1}
+    # untagged labels are phase-1 labels, and one check alone behaves as before
+    alone = coverage_summary(["a", "b"], [label("a", "DEFECT"), label("b", "NO_ISSUE_FOUND")])
+    assert list(alone["counts_by_check"]) == ["question-labels"]
+    assert alone["counts"]["DEFECT"] == 1
+    # within one check, two auditors who disagree leave the question unresolved
+    split = coverage_summary(
+        ["a"],
+        [
+            {**label("a", "DEFECT"), "check": "grading-labels", "defect_types": ["false_positive"]},
+            {**label("a", "NO_ISSUE_FOUND"), "check": "grading-labels"},
+        ],
+    )
+    assert split["questions"][0]["status"] == "UNRESOLVED"
+
+
+def test_grading_labels_round_trip_into_coverage_tagged(tmp_path):
+    """export_coverage reads the grading audit's labels and tags them with its check."""
+    import json
+
+    from inspect_ai import Task, eval
+    from inspect_ai.dataset import Sample
+    from inspect_ai.solver import solver
+
+    from inspect_audit._agent import Evidence, audit_items, item_scorer, record_verdict
+    from inspect_audit._coverage import export_coverage
+
+    item = audit_items(["grading-labels"])[0]
+    assert item.tools == ["grade"] and "misgraded" in item.details
+    record = record_verdict([item])
+
+    @solver
+    def review():
+        async def solve(state, generate):
+            row = {
+                **label("1", "DEFECT"),
+                "defect_types": ["false_negative"],
+                "headline": "The grader rejects the reference answer given with its middle name.",
+            }
+            await record(
+                item="grading-labels",
+                grade="DEFECT",
+                approaches="reviewed",
+                tried="checked",
+                remarks="",
+                evidence=[Evidence(observed="check", source="log.eval sample=1")],
+                details=json.dumps(
+                    {"question_assessments": [row], "misgraded": [{"question_id": "1"}]}
+                ),
+            )
+            return state
+
+        return solve
+
+    task = Task(
+        dataset=[Sample(id="1", input="review", metadata={"benchmark_metadata": {}})],
+        solver=review(),
+        scorer=item_scorer(item),
+    )
+    log = eval(task, model="mockllm/model", log_dir=str(tmp_path / "logs"), display="none")[0]
+    assert log.status == "success", log.error
+    result = export_coverage([log.location], ["1"], tmp_path / "coverage.json")
+    assert result["counts"]["DEFECT"] == 1
+    assert result["questions"][0]["assessments"][0]["check"] == "grading-labels"
+    assert result["counts_by_check"] == {
+        "grading-labels": {"NO_ISSUE_FOUND": 0, "DEFECT": 1, "UNRESOLVED": 0, "NOT_ASSESSED": 0}
+    }

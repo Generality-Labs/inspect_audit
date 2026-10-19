@@ -283,7 +283,7 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
             asks = ", ".join(f"{key} ({skill.details[key]})" for key in missing)
             raise ToolError(f"This item also requires details: {asks}.")
 
-        if item == "question-labels":
+        if item in ("question-labels", "grading-labels"):
             from ._coverage import validate_labels
 
             current = sample_state()

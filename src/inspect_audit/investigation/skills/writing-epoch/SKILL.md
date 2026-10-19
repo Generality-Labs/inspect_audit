@@ -30,7 +30,8 @@ The rubric is the plan, in two phases. Each stage ends with a record on disk and
 The rules of each stage are in your standing instructions, stated once there; these
 tables are the map.
 
-Phase 1, the task audit, reads no evaluation logs.
+Phase 1, the task audit, reads no evaluation logs, whether or not the run holds any:
+the `logs` tool and `hawk_submit` refuse them until `close_phase1` has frozen the labels.
 
 | Stage | Evidence | Do | Writes |
 |---|---|---|---|
@@ -38,13 +39,14 @@ Phase 1, the task audit, reads no evaluation logs.
 | 1 Reviewability | source | can tasks, scoring logic and settings be inspected? | the reviewability row |
 | 2 Items | the sample | question-labels and the substantive item checks, two items first, then the rest, then at most one repair batch for what the batch left open; no logs attached to any of them; the defect rate decides the scoring row | `coverage.json`, the scoring row |
 | 3 Consistency | source history, changelog, published methodology | did the scorer, instructions or references change without a version bump? | the consistency row; the quality rows the documentation answers |
-| 4 Publish | the derived verdict | the prose blocks it calls for; publish. Flawed on a Flag, otherwise Incomplete with a notice that phase 2 awaits logs | the page |
+| 4 Close | the labels and the source rows | with logs on hand, `close_phase1` and go on to stage 5, no prose written; without logs, the prose blocks the derived verdict calls for, then publish: Flawed on a Flag, otherwise Incomplete with a notice that phase 2 awaits logs | `report/phase1/`, or the page |
 
-Phase 2, the effect analysis, is a resume of a published phase-1 audit with logs attached.
+Phase 2, the effect analysis, follows in the same run once phase 1 closes, or in a resume
+of a published phase-1 audit with logs attached. It never relabels phase 1's items.
 
 | Stage | Evidence | Do | Writes |
 |---|---|---|---|
-| 5 Effect | the logs | one gold-answer job over every recorded defect; what each defect did to each recorded result | Affected logs, footnotes |
+| 5 Effect and grading | the logs | two jobs together: gold-answer over every recorded defect, for what each did to each recorded result; grading-labels over the whole sample, one agent per item, for the recorded grades that are wrong, then at most one repair batch; `export_coverage` over the phase-1 and grading batches together. After a phase-1 Flag, the effect job alone, then stage 9 | `coverage.json` (union), the scoring row, Affected logs, footnotes |
 | 6 Revisit | log headers | reviewability may rise; consistency re-checked against recorded versions and graders | those rows |
 | 7 Benchmark-wide | headers, transcripts | elicitation and bias in rubric order; the first Flag ends the rubric, the rows after it are Not Reviewed | the rows up to and including the first Flag, with its `impact` |
 | 8 Quality | no Flag in stage 7 | the log-dependent quality rows | assessments complete |
@@ -129,7 +131,11 @@ that is not true of your review, say so in the methodology block.
 ## The scoring measure and the sample
 
 The measure is computed from `report/coverage.json`: questions labelled DEFECT over
-questions with a resolved label, unresolved and unassessed counts beside it. It is
+questions with a resolved label, unresolved and unassessed counts beside it. After
+phase 2 the labels come from two checks, the item as written (question-labels) and
+its recorded grades (grading-labels); an item defective under either counts once, an
+item is clean only when both found nothing, and the prevalence line prints the two
+counts apart. It is
 admissible only from a sample selected for prevalence, recorded in `sampling.json`:
 with logs supplied, the population is the items they contain and the sample is a
 census of them or a random draw, one line to record; a draw made by someone else with a

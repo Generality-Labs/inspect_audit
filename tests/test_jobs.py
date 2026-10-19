@@ -2535,3 +2535,22 @@ def test_an_item_audit_carries_no_logs() -> None:
     effect = filled_example("audit.eval-set.yaml", limit=2, max_connections=2)
     effect["tasks"][0]["items"][0]["args"]["items"] = ["gold-answer"]
     assert not any("carries no logs" in p for p in validate_config(effect, policy(), set()))
+
+
+def test_a_grading_audit_needs_logs_and_phase_1_refuses_them() -> None:
+    """Phase 2's grading audit judges recorded grades; until phase 1 closes no job reads logs."""
+    cfg = filled_example("audit.eval-set.yaml", limit=2, max_connections=2)
+    args = cfg["tasks"][0]["items"][0]["args"]
+    args["items"] = ["grading-labels"]
+    assert not any("grading-labels" in p for p in validate_config(cfg, policy(), set()))
+    # the same job while phase 1 is open: the logs argument is the problem, not the item
+    open_problems = validate_config(cfg, policy(), set(), phase1_open=True)
+    assert any("while phase 1 is open" in p and "close_phase1" in p for p in open_problems)
+    del args["logs"]
+    assert any(
+        "a grading audit (grading-labels)" in p and "needs the logs" in p
+        for p in validate_config(cfg, policy(), set())
+    )
+    # a logless item audit is fine while phase 1 is open
+    args["items"] = ["question-labels"]
+    assert not any("phase 1" in p for p in validate_config(cfg, policy(), set(), phase1_open=True))

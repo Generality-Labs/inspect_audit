@@ -420,6 +420,54 @@ def check_report(root: str) -> Tool:
 
 
 @tool
+def close_phase1(root: str) -> Tool:
+    """Freeze the task audit's labels and open the supplied logs (Epoch reviews)."""
+
+    async def execute() -> str:
+        """Close phase 1: freeze coverage.json and the source rows, then open the logs.
+
+        Call it once the item audits' labels are in report/coverage.json and the
+        reviewability, scoring and consistency rows are written from them and the
+        source. From then on the `logs` tool reads the supplied logs, jobs may carry
+        them, and the checks that need logs may be assessed. The frozen records are
+        copied to report/phase1/ so the final page can be compared with the blind
+        audit. A run given no logs has no phase 2 to open: publish instead.
+        """
+        from ._epoch import PHASE1_SNAPSHOT
+        from ._epoch import close_phase1 as close
+        from ._investigation_workspace import pull, remote_workspace
+
+        await pull(Path(root))
+        report = Path(root) / "work/report"
+        if report_format(report) != "epoch":
+            raise ToolError("phases belong to the Epoch review format; this report has none")
+        try:
+            marker = close(report)
+        except (ValueError, OSError, KeyError, TypeError) as ex:
+            raise ToolError(f"Phase 1 cannot close: {ex}") from ex
+        if remote_workspace(Path(root)):
+            # the box holds the records the host mirrors back on every pull, so what
+            # the host wrote goes into the box or the next pull reopens the phase
+            await sandbox().write_file(
+                "/workspace/report/format.json", (report / "format.json").read_bytes()
+            )
+            for name in PHASE1_SNAPSHOT:
+                if (report / "phase1" / name).is_file():
+                    await sandbox().write_file(
+                        f"/workspace/report/phase1/{name}",
+                        (report / "phase1" / name).read_bytes(),
+                    )
+        return (
+            f"Phase 1 closed at {marker['phase1_closed_at']}: its labels and rows are frozen "
+            "under report/phase1/. The supplied logs are open: read them with the logs "
+            "tool, submit the effect and grading jobs, and answer the checks that need "
+            "logs. Phase-1 labels stay as written; the grading audit adds its own."
+        )
+
+    return execute
+
+
+@tool
 def publish_report(root: str, required_coverage: float | None = None) -> Tool:
     """Render and persist a report before entering discussion mode."""
 
@@ -434,6 +482,15 @@ def publish_report(root: str, required_coverage: float | None = None) -> Tool:
         )
 
         await pull(Path(root))
+        if report_format(Path(root) / "work/report") == "epoch":
+            from ._epoch import phase1_open
+
+            if phase1_open(Path(root) / "work/report"):
+                raise ToolError(
+                    "phase 1 is open: this run was given logs, so the review continues "
+                    "into phase 2 once the task audit is closed (close_phase1). A page "
+                    "is published at phase 1 only when the run has no logs."
+                )
         try:
             _prepare_report(root)
         except (ValueError, OSError, KeyError, TypeError) as ex:

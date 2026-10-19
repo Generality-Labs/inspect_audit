@@ -1489,3 +1489,78 @@ def test_a_hawk_run_prepared_for_another_report_cannot_be_continued(
 
     with pytest.raises(ValueError, match="prepared for the 'gl' report"):
         run_setup()
+
+
+def test_a_logless_phase_1_resumed_with_logs_is_closed_on_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fixture_log: str
+) -> None:
+    """The published phase-1 labels were written blind: attaching logs freezes them as phase 1."""
+    from inspect_ai.model import ModelName
+    from test_epoch import filled_assessments
+
+    from inspect_audit import _investigate
+    from inspect_audit._epoch import phase1_open
+
+    async def noop_generate(state, **kwargs):
+        return state
+
+    repo = origin_repo(tmp_path / "repo")
+    coverage = {
+        "denominator": 1,
+        "counts": {"NO_ISSUE_FOUND": 1, "DEFECT": 0, "UNRESOLVED": 0, "NOT_ASSESSED": 0},
+        "questions": [],
+    }
+
+    class RestoringHawk:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def download_artifacts(
+            self, eval_set_id: str, sample_key: str, out_dir: Path, prefix: str = ""
+        ) -> list[Path]:
+            saved = out_dir / "state"
+            files = {
+                "jobs.json": "[]",
+                "local_spend.json": json.dumps(
+                    {"prior_usd": 0.0, "prior_unpriced": [], "this_run_usd": 1.0, "unpriced": []}
+                ),
+                "work/journal.md": "# Activity journal\n\nPublished phase 1.\n",
+                "work/report/format.json": json.dumps({"format": "epoch", "logs_supplied": False}),
+                "work/report/profile.json": json.dumps({"benchmark": "bfcl"}),
+                "work/report/assessments.json": json.dumps(filled_assessments()),
+                "work/report/coverage.json": json.dumps(coverage),
+            }
+            written = []
+            for name, text in files.items():
+                path = saved / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text)
+                written.append(path)
+            return written
+
+        async def eval_set_exists(self, eval_set_id: str) -> bool:
+            return True
+
+    monkeypatch.setattr(_investigate, "Hawk", RestoringHawk)
+    common = {"hawk_api_url": "https://hawk.example", "output_dir": str(tmp_path / "runs")}
+    cont = investigate(
+        repo,
+        resume="hawk:bfcl-phase1",
+        report="epoch",
+        logs=[fixture_log],
+        **common,
+        execution="local",
+    )  # type: ignore[arg-type]
+    root = Path(cont.metadata["investigation_dir"])
+    state = TaskState(
+        model=ModelName("mockllm/model"), sample_id="investigation", epoch=1, input="", messages=[]
+    )
+    setup = cont.setup
+    for step in setup if isinstance(setup, list) else [setup]:
+        if step is not None:
+            asyncio.run(step(state, noop_generate))
+    report = root / "work" / "report"
+    marker = json.loads((report / "format.json").read_text())
+    assert marker["logs_supplied"] is True and marker["phase1_closed"] is True
+    assert not phase1_open(report)
+    assert json.loads((report / "phase1" / "coverage.json").read_text()) == coverage

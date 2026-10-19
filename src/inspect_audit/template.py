@@ -393,6 +393,10 @@ def render(
     return "\n".join(out)
 
 
+# how the page names each label-writing check's defects in the prevalence line
+CHECK_PHRASES = {"question-labels": "defective as written", "grading-labels": "misgraded"}
+
+
 def _measure_line(check: Check, row: "Assessment", derived: dict[str, Any], unit: str) -> str:
     measured = (derived.get("measures") or {}).get(check.id)
     if not measured or measured.get("value") is None:
@@ -402,6 +406,10 @@ def _measure_line(check: Check, row: "Assessment", derived: dict[str, Any], unit
         f"{unit}s ({measured['value']:.0%}); threshold {measured['threshold']:.0%}."
     )
     beside = measured.get("beside") or {}
+    by_check = beside.get("by_check") or {}
+    if len(by_check) > 1:
+        parts = [f"{n} {CHECK_PHRASES.get(check, check)}" for check, n in by_check.items()]
+        line += " Of these, " + " and ".join(parts) + "; a task may count under both."
     if beside.get("unresolved") or beside.get("not_assessed"):
         line += (
             f" Unresolved {beside.get('unresolved', 0)}, not assessed "

@@ -68,6 +68,7 @@ from ._prices import valid_price
 from ._report import (
     InvestigationState,
     check_report,
+    close_phase1,
     investigation_outcome,
     operator_turn,
     report_blocker,
@@ -1310,7 +1311,7 @@ def hawk_submit(remote: Remote, root: Path) -> Tool:
         # either spelling of a worker is accepted and rewritten to the one its position
         # needs; the agent is told what changed rather than refused for it
         rewrites = canonicalise(data, remote.workers)
-        problems = validate_config(data, remote.policy, remote.known_sources)
+        problems = validate_config(data, remote.policy, remote.known_sources, _phase1_open(root))
         if problems:
             raise ToolError("config refused:\n- " + "\n- ".join(problems))
 
@@ -1951,12 +1952,29 @@ def restore_state(remote: Remote, root: Path, eval_set_id: str) -> Solver:
                             f"{seed[key]!r}. A phase-2 resume must carry the same benchmark "
                             "version as the phase-1 audit; audit the new version afresh"
                         )
+            before = json.loads((report / "format.json").read_text())
             prepare_review(
                 report,
                 json.loads((report / "profile.json").read_text())["benchmark"],
                 # attaching logs to a resumed task audit starts phase 2
                 logs_supplied=True if seed.get("logs") else None,
             )
+            if (
+                seed.get("logs")
+                and before.get("logs_supplied") is False
+                and not before.get("phase1_closed")
+                and (report / "coverage.json").is_file()
+            ):
+                # the logless run's labels were written blind and published: they are
+                # the frozen phase 1 of this continuation. A run that died before its
+                # rows were written stays open, and the lead closes it after writing them
+                from ._epoch import close_phase1 as close
+
+                try:
+                    close(report)
+                except ValueError as ex:
+                    with (root / "work" / "journal.md").open("a") as journal:
+                        journal.write(f"\n- Phase 1 not closed on restore: {ex}\n")
         shutil.rmtree(staging)
         remote.ledger.reload()
         sources = root / "log_sources.json"
@@ -1979,6 +1997,18 @@ def restore_state(remote: Remote, root: Path, eval_set_id: str) -> Solver:
         return state
 
     return solve
+
+
+def _phase1_open(root: Path) -> bool:
+    """Whether the review under `root` holds logs its task audit may not read yet."""
+    from ._epoch import phase1_open
+    from ._report import report_format
+
+    report = root / "work" / "report"
+    try:
+        return report_format(report) == "epoch" and phase1_open(report)
+    except (OSError, ValueError):
+        return False
 
 
 def source_alias(source: str) -> str:
@@ -2024,6 +2054,11 @@ def supplied_logs(remote: Remote | None, root: Path, sources: list[str]) -> Tool
                 null for every argument an action does not use.
         """
         known = {source_alias(s): s for s in sources}
+        if action != "list" and _phase1_open(root):
+            raise ToolError(
+                "phase 1 is open: the task audit is blind to the logs. Write the labels "
+                "and the source rows, call close_phase1, then read them."
+            )
         if action == "list":
             if not known:
                 return "no supplied log sources; the logs given to you are files under /inputs/logs"
@@ -2611,6 +2646,8 @@ def investigate(
         publish_report(str(root), required_coverage),
         report_blocker(),
     ]
+    if report == "epoch":
+        tools.append(close_phase1(str(root)))
     if required_coverage is not None:
         seed_path = root / "inputs" / "seed.json"
         seed = json.loads(seed_path.read_text())

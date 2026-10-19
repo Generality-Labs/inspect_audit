@@ -30,6 +30,7 @@ def test_every_skill_loads_and_names_are_unique() -> None:
         "insufficiently-specified",
         "other-findings",
         "question-labels",
+        "grading-labels",
         "red-teaming",
         "reading-logs",
         "analyzing-logs",

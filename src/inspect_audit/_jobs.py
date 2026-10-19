@@ -821,7 +821,11 @@ def _model_items(config: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
 
 
 def _task_arg_problems(
-    where: str, args: dict[str, Any], policy: Policy, known_log_sources: set[str]
+    where: str,
+    args: dict[str, Any],
+    policy: Policy,
+    known_log_sources: set[str],
+    phase1_open: bool = False,
 ) -> list[str]:
     """The task arguments are the configuration that actually executes.
 
@@ -893,6 +897,15 @@ def _task_arg_problems(
                 problems.append(f"{where}: {path}={value!r} must be a whole number from 1 to {cap}")
             return
         if LOG_ARG.search(lowered):
+            if phase1_open:
+                # the task audit is blind to the logs: until close_phase1 has frozen its
+                # labels, no job reads them
+                problems.append(
+                    f"{where}: {path} names logs while phase 1 is open; the task audit "
+                    "reads no logs. Close phase 1 (close_phase1) once the labels and the "
+                    "source rows are written, then submit jobs that read them"
+                )
+                return
             for source in value if isinstance(value, list) else [value]:
                 if not _known_log_source(str(source), known_log_sources):
                     problems.append(
@@ -1009,12 +1022,16 @@ def worst_case_usd(parsed: Any, policy: Policy) -> float | None:
 
 
 def validate_config(
-    config: dict[str, Any], policy: Policy, known_log_sources: set[str]
+    config: dict[str, Any],
+    policy: Policy,
+    known_log_sources: set[str],
+    phase1_open: bool = False,
 ) -> list[str]:
     """Every way the config could do something other than run an allowed eval, as a list.
 
     Empty list means submit. `known_log_sources` are the `hawk:` sources this
-    investigation created (staged inputs, its own finished jobs).
+    investigation created (staged inputs, its own finished jobs). `phase1_open` says
+    the review holds logs its task audit may not read yet: no job carries any.
     """
     problems: list[str] = []
     if not isinstance(config, dict):
@@ -1117,7 +1134,9 @@ def validate_config(
                 problems.append(
                     f"{where}: {len(item.sample_ids)} sample_ids exceeds {policy.max_limit}"
                 )
-            problems += _task_arg_problems(where, item.args or {}, policy, known_log_sources)
+            problems += _task_arg_problems(
+                where, item.args or {}, policy, known_log_sources, phase1_open
+            )
             if task.name == "inspect_audit":
                 # our own tasks' rules, checked here rather than minutes into the runner
                 from ._registry import task_arg_problems
@@ -1202,6 +1221,12 @@ def validate_config(
                         "carries no logs; phase 1 judges the items on their own, and the "
                         "effect of the defects on recorded results is a gold-answer job "
                         "with logs in phase 2"
+                    )
+                if "grading-labels" in checks and not args.get("logs"):
+                    problems.append(
+                        f"tasks[{task.name}].{item.name}: a grading audit (grading-labels) "
+                        "judges the recorded grades, so it needs the logs that hold them "
+                        "as its logs argument"
                     )
         # one audited item is one long agent that waits on nothing but its model, so a
         # batch runs as many items at once as it has connections; a 48-item batch on

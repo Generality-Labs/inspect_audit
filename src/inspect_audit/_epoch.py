@@ -25,6 +25,74 @@ METHODOLOGY = "epoch-rubric@1"
 TEMPLATE = "epoch-review"
 
 RECORDS = ("profile.json", "assessments.json", "prose.json", "findings.json")
+PHASE_KEYS = ("phase1_closed", "phase1_closed_at")
+# what close_phase1 freezes: the labels the task audit wrote blind to the logs, and
+# the rows derived from them
+PHASE1_SNAPSHOT = ("coverage.json", "assessments.json", "sampling.json")
+
+
+def phase_marker(report: Path) -> dict[str, Any]:
+    marker = report / "format.json"
+    return json.loads(marker.read_text()) if marker.is_file() else {}
+
+
+def phase1_open(report: Path) -> bool:
+    """Whether the run holds logs it may not read yet.
+
+    A run given logs at launch audits the tasks blind first; until close_phase1 has
+    frozen those labels, no tool reads the logs and no job carries them. A run given
+    no logs has nothing to read, and a run that never declared either is not a phased
+    review.
+    """
+    marker = phase_marker(report)
+    return marker.get("logs_supplied") is True and not marker.get("phase1_closed")
+
+
+def close_phase1(report: Path) -> dict[str, Any]:
+    """Freeze the task audit's labels and open the logs.
+
+    Requires the labels in coverage.json and the three source-only rows assessed:
+    reviewability, scoring and consistency. Copies the frozen records into
+    report/phase1/ and marks the format record; the copies are what a reader
+    compares the final page against to see what the logs changed.
+    """
+    marker = phase_marker(report)
+    if marker.get("logs_supplied") is not True:
+        raise ValueError(
+            "no evaluation logs were supplied to this run: there is no phase 2 to open; "
+            "publish the phase-1 page, and resume it with logs attached to continue"
+        )
+    if marker.get("phase1_closed"):
+        raise ValueError(f"phase 1 was closed at {marker.get('phase1_closed_at')}; it stays closed")
+    if not (report / "coverage.json").is_file():
+        raise ValueError(
+            "phase 1 closes on its labels: write coverage.json from the item audits "
+            "(export_coverage) before closing it"
+        )
+    method, _ = workspace_methodology(report)
+    _, assessments, _, _ = load_records(report)
+    # the gate and the minimum-standard rows the source answers; the quality rows phase
+    # 1 can answer are not a condition of closing it
+    blind = [
+        c.id
+        for c in (method.gate, *method.minimum)
+        if not c.needs_logs and not assessments[c.id].assessed
+    ]
+    if blind:
+        raise ValueError(
+            "phase 1 closes with its rows written: assess "
+            + ", ".join(blind)
+            + " from the source and the labels before closing it"
+        )
+    snapshot = report / "phase1"
+    snapshot.mkdir(exist_ok=True)
+    for name in PHASE1_SNAPSHOT:
+        if (report / name).is_file():
+            shutil.copy(report / name, snapshot / name)
+    marker["phase1_closed"] = True
+    marker["phase1_closed_at"] = datetime.now(UTC).isoformat(timespec="seconds")
+    (report / "format.json").write_text(json.dumps(marker, indent=2) + "\n")
+    return marker
 
 
 def _sentence(text: str) -> str:
@@ -171,10 +239,16 @@ def prepare_review(report: Path, benchmark: str, logs_supplied: bool | None = No
     template.check_methodology(method)
     marker: dict[str, Any] = {"format": FORMAT, "methodology": method.key, "template": template.id}
     previous = report / "format.json"
-    if logs_supplied is None and previous.is_file():
-        logs_supplied = json.loads(previous.read_text()).get("logs_supplied")
+    before = json.loads(previous.read_text()) if previous.is_file() else {}
+    if logs_supplied is None:
+        logs_supplied = before.get("logs_supplied")
     if logs_supplied is not None:
         marker["logs_supplied"] = bool(logs_supplied)
+    # a closed phase 1 stays closed across a restore: its labels were frozen when the
+    # logs were first opened, and a fresh marker must not reopen them
+    for key in PHASE_KEYS:
+        if key in before:
+            marker[key] = before[key]
     previous.write_text(json.dumps(marker, indent=2) + "\n")
     shutil.copy(METHODOLOGIES / f"{method.id}-{method.version}.yaml", report / "methodology.yaml")
     shutil.copy(TEMPLATES / f"{template.id}.yaml", report / "template.yaml")
@@ -259,6 +333,13 @@ def measures(
                 "not_assessed": int(counts.get("NOT_ASSESSED", 0)),
                 "population": int(coverage.get("denominator") or 0),
             }
+            by_check = coverage.get("counts_by_check") or {}
+            if len(by_check) > 1:
+                # the item as written and its recorded grades are counted apart on
+                # the page; a question defective in both counts once in the measure
+                beside["by_check"] = {
+                    check: _sum_states(spec.numerator, states) for check, states in by_check.items()
+                }
             source = "coverage.json"
         elif row.measure is not None:
             num, den, beside, source = (
@@ -474,19 +555,30 @@ def assess(report: Path, root: Path | None = None) -> dict[str, Any]:
     measured = measures(method, assessments, coverage, sampling)
     derived = derive_verdict(method, assessments, measured)
     notices: list[str] = []
-    marker = json.loads((report / "format.json").read_text())
-    if marker.get("logs_supplied") is False:
+    marker = phase_marker(report)
+    if marker.get("logs_supplied") is False or phase1_open(report):
         # phase 1, the task audit: the checks answered from evaluation logs stay
-        # unassessed, the page says so, and Verified waits for phase 2
+        # unassessed until the logs are opened, which a run without logs never does
+        # (the page says so, and Verified waits for phase 2) and a run with logs does
+        # by closing phase 1
         unfinished = method.verdict.procedure.unfinished["level"]
         assessed = [c.id for c in method.checks if c.needs_logs and assessments[c.id].assessed]
         if assessed:
             raise ValueError(
-                "no evaluation logs were supplied (phase 1, the task audit), so the checks "
-                f"answered from logs stay unassessed: {', '.join(assessed)} must be "
-                f"{unfinished}; attach logs in a phase-2 resume to answer them"
+                (
+                    "phase 1 is open (the task audit, blind to the logs), so the checks "
+                    f"answered from logs stay unassessed: {', '.join(assessed)} must be "
+                    f"{unfinished}; close_phase1 once the labels and the source rows are "
+                    "written, then answer them"
+                )
+                if marker.get("logs_supplied")
+                else (
+                    "no evaluation logs were supplied (phase 1, the task audit), so the "
+                    f"checks answered from logs stay unassessed: {', '.join(assessed)} must "
+                    f"be {unfinished}; attach logs in a phase-2 resume to answer them"
+                )
             )
-        if "no_logs" in template.notices:
+        if marker.get("logs_supplied") is False and "no_logs" in template.notices:
             notices.append(template.notices["no_logs"])
     derived["notices"] = notices
     check_prose(prose, template, profile, derived["verdict"], coverage, assessments)

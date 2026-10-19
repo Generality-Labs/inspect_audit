@@ -122,8 +122,11 @@ checks:
     an incorrect one. Report numerator, denominator and selection method. Flag at or above the threshold,
     or on demonstrated grading corruption at scale. Authored attacks on the grader and single false negatives
     are limitations, not Flags; say which kind each defect is.
-    The row is decided by the item audits alone, with no logs read and no attempts run for it. The note is the defect rate against the threshold in one sentence, without the counts the
-    prevalence line already prints. A Flag with logs on hand carries an impact, the recorded submissions
+    The row is decided by the item audits, with no attempts run for it: in phase 1 the question-labels
+    audit judges each sampled item as written, with no logs read; in phase 2 the grading-labels audit
+    judges the same items' recorded grades from the logs, and the measure is their union, an item
+    defective as written or as graded counting once. The note is the defect rate against the threshold
+    in one sentence, without the counts the prevalence line already prints. A Flag with logs on hand carries an impact, the recorded submissions
     the defects misgraded, printed as a footnote; a Pass carries none.
   scale:
   - Pass

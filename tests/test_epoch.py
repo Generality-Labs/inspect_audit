@@ -979,7 +979,9 @@ def test_without_logs_the_benchmark_wide_checks_stay_not_reviewed(tmp_path: Path
     derived = prepare_publication(root, [])
     assert derived["verdict"] == "Incomplete"
     md = (root / "work/report/epoch_review.md").read_text()
-    assert md.splitlines()[7].startswith("*Phase 1 of 2: the tasks and their scoring were audited without evaluation logs")
+    assert md.splitlines()[7].startswith(
+        "*Phase 1 of 2: the tasks and their scoring were audited without evaluation logs"
+    )
     # a restore keeps the marker it finds
     prepare(root / "work/report", "Chess Puzzles")
     assert json.loads((root / "work/report/format.json").read_text())["logs_supplied"] is False
@@ -992,3 +994,85 @@ def test_the_interpretation_is_three_short_paragraphs() -> None:
         Prose.model_validate(verified_prose(interpretation=four)).validate_against(
             template, "Verified"
         )
+
+
+def test_a_run_with_logs_audits_blind_until_phase_1_closes(tmp_path: Path) -> None:
+    """Logs at launch: the task audit is blind, close_phase1 freezes it, then the logs open."""
+    from inspect_audit._epoch import close_phase1, phase1_open
+    from inspect_audit._epoch import prepare_review as prepare
+
+    root = workspace(tmp_path, coverage=coverage_of(defect=6, clean=94))
+    report = root / "work/report"
+    prepare(report, "Chess Puzzles", logs_supplied=True)
+    assert phase1_open(report)
+    # the checks that need logs are refused while the phase is open, and the message
+    # says how to open it, not that logs are missing
+    with pytest.raises(ValueError, match=r"phase 1 is open.*close_phase1"):
+        prepare_publication(root, [])
+    rows = filled_assessments()
+    for check in ("elicitation_adequacy", "evaluation_bias"):
+        row(rows, check).update(level="Not Reviewed", notes="", evidence=[], fields={})
+    (report / "assessments.json").write_text(json.dumps(rows))
+    (report / "prose.json").write_text(
+        json.dumps(dict(flawed_prose(), limitations=["Open."], recommendations=["Close."]))
+    )
+    derived = prepare_publication(root, [])
+    assert derived["verdict"] == "Incomplete" and derived["notices"] == [], (
+        "the no-logs notice belongs to a page published without logs, not to an open phase"
+    )
+    # closing needs the labels and the source rows
+    (report / "coverage.json").unlink()
+    with pytest.raises(ValueError, match=r"coverage\.json"):
+        close_phase1(report)
+    (report / "coverage.json").write_text(json.dumps(coverage_of(defect=6, clean=94)))
+    row(rows, "scoring_integrity").update(level="Not Reviewed", notes="", evidence=[], fields={})
+    (report / "assessments.json").write_text(json.dumps(rows))
+    with pytest.raises(ValueError, match="assess scoring_integrity"):
+        close_phase1(report)
+    rows = filled_assessments()
+    for check in ("elicitation_adequacy", "evaluation_bias"):
+        row(rows, check).update(level="Not Reviewed", notes="", evidence=[], fields={})
+    (report / "assessments.json").write_text(json.dumps(rows))
+    marker = close_phase1(report)
+    assert marker["phase1_closed"] is True and marker["phase1_closed_at"]
+    assert not phase1_open(report)
+    assert json.loads((report / "phase1/coverage.json").read_text()) == coverage_of(6, 94)
+    assert (report / "phase1/assessments.json").is_file()
+    with pytest.raises(ValueError, match="stays closed"):
+        close_phase1(report)
+    # the logs are open: the rows that need them may be assessed, and the verdict can rise
+    (report / "assessments.json").write_text(json.dumps(filled_assessments()))
+    (report / "prose.json").write_text(json.dumps(verified_prose()))
+    assert prepare_publication(root, [])["verdict"] == "Verified"
+    # a restore keeps the phase closed
+    prepare(report, "Chess Puzzles")
+    assert json.loads((report / "format.json").read_text())["phase1_closed"] is True
+    assert not phase1_open(report)
+    # a run without logs has no phase 2 to open
+    prepare(report, "Chess Puzzles", logs_supplied=False)
+    assert not phase1_open(report)
+    bare = json.loads((report / "format.json").read_text())
+    del bare["phase1_closed"], bare["phase1_closed_at"]
+    (report / "format.json").write_text(json.dumps(bare))
+    with pytest.raises(ValueError, match="no evaluation logs were supplied"):
+        close_phase1(report)
+
+
+def test_the_prevalence_line_counts_the_two_checks_apart(tmp_path: Path) -> None:
+    """After phase 2 the page says how many defects are in the item and how many in its grading."""
+    coverage = coverage_of(defect=6, clean=94)
+    coverage["counts_by_check"] = {
+        "question-labels": {"NO_ISSUE_FOUND": 98, "DEFECT": 2, "UNRESOLVED": 0, "NOT_ASSESSED": 0},
+        "grading-labels": {"NO_ISSUE_FOUND": 95, "DEFECT": 5, "UNRESOLVED": 0, "NOT_ASSESSED": 0},
+    }
+    root = workspace(tmp_path, coverage=coverage)
+    derived = prepare_publication(root, [])
+    assert derived["measures"]["scoring_integrity"]["beside"]["by_check"] == {
+        "question-labels": 2,
+        "grading-labels": 5,
+    }
+    md = (root / "work/report/epoch_review.md").read_text()
+    assert (
+        "Scoring prevalence: 6 of 100 inspected tasks (6%); threshold 20%. Of these, "
+        "2 defective as written and 5 misgraded; a task may count under both." in md
+    )

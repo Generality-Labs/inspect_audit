@@ -14,6 +14,9 @@ HERE = Path(__file__).parent
 # so the auditor can read and run the real grading code in place.
 DOCKERFILE = (HERE / "auditor.Dockerfile").read_text()
 
+# The v2 auditor box: no benchmark packages, which run in the benchmark's own task.
+AUDITOR_DOCKERFILE = (HERE / "auditor-v2.Dockerfile").read_text()
+
 # Our own compose rather than Inspect's auto-generated one, which sets
 # `network_mode: none`. An auditor without egress either reports that it cannot verify
 # or invents citations, and both have been observed.
@@ -30,4 +33,4 @@ COMPOSE = (HERE / "auditor.compose.yaml").read_text()
 # DNS plus world, so the same "can verify" property holds off Docker.
 EGRESS_POLICY = (HERE / "egress.helm.yaml").read_text()
 
-__all__ = ["COMPOSE", "DOCKERFILE", "EGRESS_POLICY"]
+__all__ = ["AUDITOR_DOCKERFILE", "COMPOSE", "DOCKERFILE", "EGRESS_POLICY"]

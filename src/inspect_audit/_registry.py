@@ -21,6 +21,7 @@ from ._sandbox import (
     BENCHMARK_SERVICE,
     has_benchmark_box,
 )
+from ._task import audit_task as audit_task_v2
 
 
 @task
@@ -110,6 +111,56 @@ def audit(
         benchmark_image=benchmark_image,
         assessment_ids=assessment_ids,
         concordance_limit=concordance_limit,
+    )
+
+
+@task
+def audit_v2(
+    task: str,
+    samples: list[str] | str,
+    checks: list[str],
+    task_args: dict[str, Any] | None = None,
+    logs: list[str] | None = None,
+    judge: dict[str, str] | None = None,
+    source: str | None = None,
+    compose: str | None = None,
+    assessment_ids: dict[str, list[str]] | None = None,
+    redact: list[str] | None = None,
+    confidential: bool = False,
+    notes: str | None = None,
+    auditor_image: str | None = None,
+    message_limit: int | None = None,
+    token_limit: int | None = None,
+    time_limit: int | None = None,
+    working_limit: int | None = None,
+    cost_limit: float | None = None,
+) -> Task:
+    """Audit a benchmark task from inside its own samples (see `audit_task` in `_task`).
+
+    Everything is declared: `samples` is a list of ids or the literal "all"; the
+    auditor model is the eval's own `--model`, configured with the eval's own flags.
+    """
+    if isinstance(samples, str) and samples != "all":
+        raise ValueError('samples must be a list of sample ids or the literal "all"')
+    return audit_task_v2(
+        task,
+        samples=samples if samples == "all" else list(samples),
+        checks=checks,
+        task_args=task_args,
+        logs=logs,
+        judge=judge,
+        source=source,
+        compose=compose,
+        assessment_ids=assessment_ids,
+        redact=redact or (),
+        confidential=confidential,
+        notes=notes,
+        auditor_image=auditor_image,
+        message_limit=message_limit,
+        token_limit=token_limit,
+        time_limit=time_limit,
+        working_limit=working_limit,
+        cost_limit=cost_limit,
     )
 
 

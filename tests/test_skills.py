@@ -307,6 +307,7 @@ def test_every_prompt_is_a_file_and_every_placeholder_gets_filled() -> None:
 
     filled = {
         "AUDIT": {"root": "/audit", "items": "- `x`: y", "confidential": "", "notes": ""},
+        "AUDITOR": {"items": "- `x`: y", "confidential": "", "notes": ""},
         "AUDIT_CONFIDENTIAL": {"root": "/audit"},
         "AUDIT_NOTES": {"notes": "look at the grader"},
         "INVESTIGATE": {},

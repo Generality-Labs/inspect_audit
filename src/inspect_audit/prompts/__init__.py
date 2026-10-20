@@ -23,6 +23,10 @@ def _read(name: str) -> str:
 # sections below, which are empty strings when they do not apply.
 AUDIT = _read("audit.md")
 
+# The v2 auditor, running inside the benchmark's own sample. Filled with `items`,
+# `confidential` and `notes`.
+AUDITOR = _read("auditor.md")
+
 # Rendered into the audit prompt only when the benchmark is unpublished. The auditor
 # keeps its shell and its internet -- an auditor that cannot check anything invents
 # citations -- but it must not hand the item to a third party to do the checking. The
@@ -39,6 +43,7 @@ INVESTIGATE = _read("investigate.md")
 
 __all__ = [
     "AUDIT",
+    "AUDITOR",
     "AUDIT_CONFIDENTIAL",
     "AUDIT_NOTES",
     "INVESTIGATE",

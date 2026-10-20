@@ -957,7 +957,8 @@ def investigate(
         revision: Commit to snapshot (default HEAD).
         paths: Repository paths to include in the snapshot. Defaults to the audited
             task's own directory and the modules its package shares.
-        output_dir: Where the host keeps the investigation's files.
+        output_dir: Where the host keeps the investigation's files, including the
+            published report. Defaults to ~/.inspect-audit/investigations.
         runs: Where the agent's jobs run: "hawk" or "local". None gives it no jobs.
         box: The agent's own box: "docker" (default), or "k8s" for a pod on Hawk.
         hawk_api_url: Hawk's API, for jobs and balances on Hawk. Defaults to
@@ -1040,7 +1041,8 @@ def investigate(
         target_task = target_task or _only_task(local_repo)
         paths = paths or paths_from_metadata(local_repo, target_task)
         paper = paper or paper_from_metadata(local_repo, target_task)
-    output_dir = output_dir or "investigations"
+    # somewhere every machine running this can write, and a person can find
+    output_dir = output_dir or str(Path.home() / ".inspect-audit" / "investigations")
     root = prepare_workspace(
         repo,
         revision,
@@ -1121,6 +1123,11 @@ def investigate(
     sandbox = configure(root, investigator_image) if box == "k8s" else docker_box(root)
     if artifact_dir:
         (root / "artifacts.json").write_text(json.dumps({"artifact_dir": artifact_dir}))
+    elif box == "k8s":
+        logger.warning(
+            "no artifact_dir: the published report stays on this host only, and on a "
+            "Hawk runner it is lost when the pod ends"
+        )
 
     async def on_continue(state: AgentState) -> bool | str:
         return await _continue(state, interactive)

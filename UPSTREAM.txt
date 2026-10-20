@@ -1,0 +1,18 @@
+What we want from Hawk, Inspect and inspect_k8s_sandbox. One line each: the ask, why, where it stands.
+Add when we hit one; delete when it lands. Last checked 2026-10-20.
+
+HAWK
+- Per-service egress (only `auditor` gets internet). Today internet is per sandbox (docs/user-guide/sandbox-network-isolation.md); the limit is the k8s chart's top-level allowDomains. No PR or issue. We accept sandbox-wide internet on Hawk for now.
+- Merge #2026 (per-user capped OpenRouter keys) upstream. Running on our fork; it is our budget mechanism. Open.
+- Fork lags upstream on #2163, #1871, #2183.
+- A public way to read the runner's credentials (current access token, rotated refresh token). We import inspect_ai.hooks._hooks and read the refresh hook's private _current_refresh_token (src/inspect_audit/_runs.py).
+
+INSPECT_K8S_SANDBOX
+- Compose `include:` support in the converter. It refuses include today, so the audit's compose must be flattened first; without docker on the Hawk runner that means our own merge. No issue.
+- Per-service allowDomains in the agent-env chart (same ask as Hawk's per-service egress, at its root).
+
+INSPECT_AI
+- Scoring spend counted against cost_limit. Graders run outside the sample's cost cap.
+- Id-less samples are numbered after sample_shuffle (_eval/run.py, loader.py), so the same id names different questions across shuffled runs. Raise as an issue.
+- #5034: our pending comment.
+- Pricing for models Inspect has no entry for: set_model_cost refuses an unknown model, so new OpenRouter models need set_model_info first.

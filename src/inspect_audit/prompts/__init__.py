@@ -18,12 +18,7 @@ def _read(name: str) -> str:
     return (HERE / name).read_text()
 
 
-# The sample auditor. Filled with `root` (where the item is staged), `items` (the audit
-# items this auditor was granted, rendered from their skills), and the two optional
-# sections below, which are empty strings when they do not apply.
-AUDIT = _read("audit.md")
-
-# The v2 auditor, running inside the benchmark's own sample. Filled with `items`,
+# The auditor, running inside the benchmark's own sample. Filled with `items`,
 # `confidential` and `notes`.
 AUDITOR = _read("auditor.md")
 
@@ -42,7 +37,6 @@ AUDIT_NOTES = _read("audit_notes.md")
 INVESTIGATE = _read("investigate.md")
 
 __all__ = [
-    "AUDIT",
     "AUDITOR",
     "AUDIT_CONFIDENTIAL",
     "AUDIT_NOTES",

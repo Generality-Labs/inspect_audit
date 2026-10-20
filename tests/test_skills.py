@@ -59,8 +59,8 @@ def test_descriptions_stay_within_the_always_visible_budget() -> None:
 
 def test_a_skill_directory_is_the_whole_contract(tmp_path: Path, monkeypatch) -> None:
     """Dropping a skill directory in is all it takes: prompt, validation and scoring derive."""
-    import inspect_audit._agent as agent_module
-    from inspect_audit._agent import audit_items
+    import inspect_audit._verdicts as agent_module
+    from inspect_audit._verdicts import audit_items
 
     # a new item, added as a directory and nothing else
     for name, grades in (
@@ -96,8 +96,8 @@ def test_malformed_frontmatter_fails_at_load(tmp_path: Path, monkeypatch) -> Non
 
     import pytest
 
-    import inspect_audit._agent as agent_module
-    from inspect_audit._agent import audit_items
+    import inspect_audit._verdicts as agent_module
+    from inspect_audit._verdicts import audit_items
 
     monkeypatch.setattr(agent_module, "SKILLS", tmp_path)
 
@@ -130,7 +130,7 @@ def test_verdicts_are_validated_and_scored_per_item(monkeypatch) -> None:
     from inspect_ai.tool import ToolError
     from inspect_ai.util._store import Store, init_subtask_store
 
-    from inspect_audit._agent import (
+    from inspect_audit._verdicts import (
         AuditItemSkill,
         Evidence,
         Verdicts,
@@ -204,11 +204,10 @@ def test_the_confidential_section_is_off_by_default_and_names_the_boundary() -> 
     """
     from inspect_audit import prompts
 
-    default = prompts.AUDIT.format(root="/audit", items="- `x`: y", confidential="", notes="")
+    default = prompts.AUDITOR.format(items="- `x`: y", confidential="", notes="")
     assert "unpublished" not in default
 
-    on = prompts.AUDIT.format(
-        root="/audit",
+    on = prompts.AUDITOR.format(
         items="- `x`: y",
         confidential=prompts.AUDIT_CONFIDENTIAL.format(root="/audit"),
         notes="",
@@ -243,7 +242,7 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
     from inspect_ai.util import store_as
     from inspect_ai.util._store import Store, init_subtask_store
 
-    from inspect_audit._agent import (
+    from inspect_audit._verdicts import (
         AuditItemSkill,
         Evidence,
         Verdicts,
@@ -306,7 +305,6 @@ def test_every_prompt_is_a_file_and_every_placeholder_gets_filled() -> None:
     from inspect_audit import prompts
 
     filled = {
-        "AUDIT": {"root": "/audit", "items": "- `x`: y", "confidential": "", "notes": ""},
         "AUDITOR": {"items": "- `x`: y", "confidential": "", "notes": ""},
         "AUDIT_CONFIDENTIAL": {"root": "/audit"},
         "AUDIT_NOTES": {"notes": "look at the grader"},
@@ -336,7 +334,7 @@ def test_verdict_schema_survives_openrouter_serialization() -> None:
     from inspect_ai.model._openai import openai_chat_tool_param
     from inspect_ai.tool import ToolDef, ToolInfo
 
-    from inspect_audit._agent import audit_items, record_verdict
+    from inspect_audit._verdicts import audit_items, record_verdict
 
     definition = ToolDef(record_verdict(audit_items()))
     wire = openai_chat_tool_param(
@@ -369,7 +367,7 @@ def test_a_missing_verdict_says_why() -> None:
     from inspect_ai.dataset import Sample
     from inspect_ai.solver import generate
 
-    from inspect_audit._agent import AuditItemSkill, item_scorer
+    from inspect_audit._verdicts import AuditItemSkill, item_scorer
 
     item = AuditItemSkill(name="gold-answer", description="Check the key", grades=["CORRECT"])
     task = Task(

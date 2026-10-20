@@ -39,7 +39,7 @@ from inspect_ai.util import LimitExceededError, StoreModel, sample_limits, store
 from pydantic import Field
 
 from . import prompts
-from ._agent import SKILLS, SUPPORT_SKILLS, view_image
+from ._image import view_image
 from ._jobs import (
     JOB_TERMINAL,
     Hawk,
@@ -79,6 +79,7 @@ from ._report import (
 from ._report import (
     validate_findings as validate_findings,
 )
+from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS
 
 logger = getLogger(__name__)
 
@@ -2196,7 +2197,7 @@ def investigate(
     if not math.isfinite(budget_usd) or budget_usd <= 0:
         raise ValueError("budget_usd must be finite and positive")
     skill_paths = [str(ASSETS / "skills" / name) for name in INVESTIGATION_SKILLS] + [
-        str(SKILLS / name) for name in SUPPORT_SKILLS
+        str(SKILLS / name) for name in (*LOG_SKILLS, *SUPPORT_SKILLS)
     ]
     for path in extra_skills or []:
         resolved = Path(path).expanduser().resolve()

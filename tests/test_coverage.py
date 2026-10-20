@@ -53,9 +53,16 @@ def test_recorded_question_verdicts_round_trip_into_coverage(tmp_path, units):
     from inspect_ai.dataset import Sample
     from inspect_ai.solver import solver
     from inspect_ai.tool import ToolError
+    from inspect_ai.util import store_as
 
-    from inspect_audit._agent import Evidence, audit_items, item_scorer, record_verdict
     from inspect_audit._coverage import export_coverage
+    from inspect_audit._verdicts import (
+        AssessmentUnits,
+        Evidence,
+        audit_items,
+        item_scorer,
+        record_verdict,
+    )
 
     expected = units if units is not None else ["1"]
     item = audit_items(["question-labels"])[0]
@@ -64,6 +71,7 @@ def test_recorded_question_verdicts_round_trip_into_coverage(tmp_path, units):
     @solver
     def review():
         async def solve(state, generate):
+            store_as(AssessmentUnits).ids = expected  # what the auditor sets at sample start
             args = {
                 "item": "question-labels",
                 "grade": "NO_ISSUE_FOUND",
@@ -92,8 +100,6 @@ def test_recorded_question_verdicts_round_trip_into_coverage(tmp_path, units):
         return solve
 
     metadata = {"benchmark_metadata": {"arbitrary_structure": ["not", "assessment", "ids"]}}
-    if units is not None:
-        metadata["assessment_ids"] = units
     task = Task(
         dataset=[Sample(id="1", input="review", metadata=metadata)],
         solver=review(),

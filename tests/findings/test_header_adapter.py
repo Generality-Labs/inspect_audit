@@ -101,12 +101,12 @@ def test_multi_task_package_matches_logs_by_yaml_task_names(tmp_path: Path) -> N
 def test_resolve_skips_when_the_resolved_dataset_has_no_ids(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import inspect_audit._resolve as resolve_module
+    import inspect_ai.util as resolve_module
 
     root = make_root(tmp_path)
     log = _log(tmp_path / "logs", samples=3)
     idless = Task(dataset=MemoryDataset([Sample(input="q") for _ in range(3)]), scorer=match())
-    monkeypatch.setattr(resolve_module, "resolve_task", lambda spec, args=None: idless)
+    monkeypatch.setattr(resolve_module, "registry_create", lambda type, name, **args: idless)
     result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log], resolve=True))
     assert not any(f.rule == "header.unknown_sample_ids" for f in result.findings)
     skip = next(o for o in result.outcomes if o.rule == "header.unknown_sample_ids")
@@ -116,12 +116,12 @@ def test_resolve_skips_when_the_resolved_dataset_has_no_ids(
 def test_resolve_compares_logged_ids_against_the_resolved_dataset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import inspect_audit._resolve as resolve_module
+    import inspect_ai.util as resolve_module
 
     root = make_root(tmp_path)
     log = _log(tmp_path / "logs", samples=3)  # ids 1, 2, 3
     smaller = Task(dataset=MemoryDataset([Sample(id=i, input="q") for i in (1, 2)]), scorer=match())
-    monkeypatch.setattr(resolve_module, "resolve_task", lambda spec, args=None: smaller)
+    monkeypatch.setattr(resolve_module, "registry_create", lambda type, name, **args: smaller)
     result = run("inspect_evals/stereoset", Context(ie_root=root, logs=[log], resolve=True))
     finding = next(f for f in result.findings if f.rule == "header.unknown_sample_ids")
     assert "1 of 3" in finding.summary

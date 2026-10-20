@@ -22,9 +22,9 @@ SKILLS = Path(__file__).parent / "skills"
 # asked to investigate one of these
 SUPPORT_SKILLS = ("map-inspect-packages", "audit-framework")
 
-# v1's log skills teach reading .eval files in the box; v2 reads logs host-side, so
-# they are neither checks nor given to the auditor (deleted with v1)
-V1_ONLY_SKILLS = ("reading-logs", "analyzing-logs")
+# skills for reading .eval files in a box: the investigator's, never the auditor's (the
+# auditor reads logs host-side), and never checks
+LOG_SKILLS = ("reading-logs", "analyzing-logs")
 
 
 class AuditItemSkill(BaseModel):
@@ -128,7 +128,7 @@ def audit_items(items: list[str] | None = None) -> list[AuditItemSkill]:
     dirs = [
         path
         for path in sorted(SKILLS.iterdir())
-        if path.is_dir() and path.name not in (*SUPPORT_SKILLS, *V1_ONLY_SKILLS)
+        if path.is_dir() and path.name not in (*SUPPORT_SKILLS, *LOG_SKILLS)
     ]
     read = [
         _item_skill(s.name, s.description, s.metadata or {})

@@ -280,20 +280,21 @@ def test_hawk_cli_is_the_venvs_own_not_paths(monkeypatch, tmp_path):
     assert _jobs.Hawk("https://hawk.example").binary == str(own / "hawk")
 
 
-def test_an_audit_job_on_hawk_registers_prices_before_hawk_applies_them(monkeypatch):
+def test_an_audit_job_registers_the_prices_it_was_submitted_with():
     """Hawk's set_model_cost refuses models Inspect has no entry for (the gpt-6 children died so)."""
-    from inspect_audit import _investigate, _registry
+    from inspect_ai.model import get_model_info
 
-    class RegisteredError(Exception):
-        pass
+    from inspect_audit import _registry
 
-    def register():
-        raise RegisteredError
-
-    monkeypatch.setattr(_investigate, "register_openrouter_costs", register)
-    monkeypatch.setenv("HAWK_JOB_ID", "inv-child")
-    with pytest.raises(RegisteredError):
-        _registry.audit.__wrapped__(task="bench/Chess Puzzles")  # type: ignore[attr-defined]
+    with pytest.raises(Exception):  # noqa: B017 -- the task itself is not resolvable here
+        _registry.audit.__wrapped__(  # type: ignore[attr-defined]
+            task="bench/no_such_task",
+            samples=["1"],
+            checks=["gold-answer"],
+            model_prices={"openrouter/test/priced-model": {"input": 1.0, "output": 2.0}},
+        )
+    info = get_model_info("openrouter/test/priced-model")
+    assert info is not None and info.cost is not None and info.cost.output == 2.0
 
 
 def test_children_default_to_the_operators_key_and_say_so_when_it_is_missing(monkeypatch, tmp_path):

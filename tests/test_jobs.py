@@ -183,6 +183,10 @@ def filled_example(filename: str, **overrides) -> dict:
             "<remote.supplied_logs, or hawk:<eval set id of your job>>",
             "hawk:inv-staged-abc/inputs/logs",
         )
+        .replace(
+            "<module of the task's file, e.g. inspect_evals.simpleqa.simpleqa>",
+            "inspect_evals.task_name.task_name",
+        )
     )
     config = yaml.safe_load(text)
     config.update(overrides)
@@ -221,25 +225,15 @@ def test_the_example_configs_pass_the_policy_once_filled_in() -> None:
 
 def test_an_audit_job_our_task_would_refuse_is_refused_at_submission() -> None:
     """09-28 Luna smoke: the child installed for ten minutes, then died loading the
-    audit task on reasoning_effort without model; Hawk cannot know our task's rules."""
+    audit task on an argument it refused; Hawk cannot know our task's rules."""
     config = filled_example("audit.eval-set.yaml")
     args = config["tasks"][0]["items"][0]["args"]
-    args["reasoning_effort"] = "medium"
-    problems = validate_config(config, policy(), {"inv-staged-abc"})
-    assert len(problems) == 1
-    assert "reasoning_effort needs an explicit model" in problems[0]
-    assert "models[].items[].args.config.reasoning_effort" in problems[0]
-
-    # the ways it runs: with the model it binds to, or on the model item (the example)
-    args["model"] = "openrouter/openai/gpt-5.6-luna"
     assert validate_config(config, policy(), {"inv-staged-abc"}) == []
-
-    del args["model"], args["reasoning_effort"]
-    args["item"] = ["gold-answer"]  # misspelt
-    args["items"] = ["gold-answr"]
+    args["check"] = ["gold-answer"]  # misspelt
+    args["checks"] = ["gold-answr"]
     problems = validate_config(config, policy(), {"inv-staged-abc"})
-    assert any("unexpected keyword argument 'item'" in p for p in problems)
-    del args["item"]
+    assert any("unexpected keyword argument 'check'" in p for p in problems)
+    del args["check"]
     assert any("gold-answr" in p for p in validate_config(config, policy(), {"inv-staged-abc"}))
 
 

@@ -18,7 +18,6 @@ from inspect_ai.util import ComposeConfig, SandboxEnvironmentSpec
 from .containers import AUDITOR_DOCKERFILE
 
 AUDITOR = "auditor"
-AUDITOR_NETWORK = "auditor_net"
 
 
 class UnsupportedBenchmarkError(ValueError):
@@ -40,7 +39,7 @@ def their_sandbox(task_sandbox: object, samples: list[Sample]) -> SandboxEnviron
     """The one sandbox every audited sample runs in, None if it has none, or a loud refusal.
 
     A sample-level sandbox equal to the task's is fine; any other means the
-    benchmark gives samples different environments, which v1 does not support.
+    benchmark gives samples different environments, which the auditor does not support.
     """
     task_spec = sandbox_spec(task_sandbox)
     distinct: dict[str, SandboxEnvironmentSpec] = {}
@@ -120,10 +119,14 @@ def audit_compose(
     if AUDITOR in services:
         raise UnsupportedBenchmarkError(f"the benchmark already has a service named {AUDITOR!r}")
 
+    # egress through Docker's shared default bridge, not a named network: a named
+    # network takes a /24 per sample from Docker's ~31-subnet pool, exhausts it at
+    # concurrency and leaks on a hard kill (an earlier auditor hit this). Their box stays on its own
+    # network or none; the auditor reaches it through exec, never the network.
     auditor: dict[str, Any] = {
         "command": "tail -f /dev/null",
         "init": True,
-        "networks": [AUDITOR_NETWORK],
+        "network_mode": "bridge",
     }
     if auditor_image is not None:
         auditor["image"] = auditor_image
@@ -131,10 +134,7 @@ def audit_compose(
         (stage / "auditor.Dockerfile").write_text(AUDITOR_DOCKERFILE)
         auditor["build"] = {"context": str(stage), "dockerfile": "auditor.Dockerfile"}
         auditor["x-local"] = True
-    wrapper: dict[str, Any] = {
-        "services": {AUDITOR: auditor},
-        "networks": {AUDITOR_NETWORK: {}},
-    }
+    wrapper: dict[str, Any] = {"services": {AUDITOR: auditor}}
     if benchmark_compose is not None:
         wrapper = {"include": [str(benchmark_compose)], **wrapper}
     else:

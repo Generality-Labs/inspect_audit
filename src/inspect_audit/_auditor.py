@@ -8,7 +8,6 @@ recorded attempts at this item -- and runs a react agent with the checks in scop
 import base64
 import json
 from collections.abc import Sequence
-from io import BytesIO
 from typing import Any
 
 from inspect_ai.agent import AgentState, AgentSubmit, react
@@ -16,13 +15,13 @@ from inspect_ai.dataset import Sample
 from inspect_ai.model import ChatMessage, ChatMessageUser, ContentImage
 from inspect_ai.scorer import Scorer
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.tool import Tool, ToolDef, ToolError, ToolResult, bash, skill, tool
-from inspect_ai.util import sandbox, store_as
-from PIL import Image
+from inspect_ai.tool import Tool, ToolDef, bash, skill
+from inspect_ai.util import sample_limits, sandbox, store_as
 
 from . import prompts
 from ._compose import AUDITOR
 from ._grade import grade_tool
+from ._image import view_image
 from ._logs import LogIndex, log_tools
 from ._reset import reset_tool
 from ._source import SourceCopy
@@ -101,35 +100,6 @@ async def stage_item(
             raise RuntimeError(f"could not unpack the benchmark source: {unpacked.stderr}")
 
 
-@tool
-def view_image() -> Tool:
-    async def execute(path: str) -> ToolResult:
-        """Look at an image in your box: the item's media, or a figure you drew.
-
-        Reading the bytes with bash establishes nothing; call this to see the picture.
-
-        Args:
-            path: The image's path in your box.
-        """
-        try:
-            data = await sandbox(AUDITOR).read_file(path, text=False)
-        except Exception as ex:
-            raise ToolError(f"Could not read {path!r}: {type(ex).__name__}: {ex}") from None
-        try:
-            with Image.open(BytesIO(data)) as preview:
-                image_format = preview.format
-                preview.verify()
-        except Exception as ex:
-            raise ToolError(f"Cannot preview {path!r}: {ex}; export a PNG") from None
-        mime = {"PNG": "image/png", "JPEG": "image/jpeg", "GIF": "image/gif", "WEBP": "image/webp"}
-        if (image_format or "") not in mime:
-            raise ToolError(f"Unsupported image format {image_format}; export a PNG")
-        encoded = base64.b64encode(data).decode()
-        return [ContentImage(image=f"data:{mime[image_format or '']};base64,{encoded}")]
-
-    return execute
-
-
 def _bash(name: str, service: str | None, description: str, timeout: int) -> Tool:
     return ToolDef(
         bash(timeout=timeout, sandbox=service), name=name, description=description
@@ -166,6 +136,10 @@ def auditor(
     )
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
+        if sample_limits().cost.limit is None:
+            raise RuntimeError(
+                "the audit is capped in dollars: set cost_limit on the task or the eval"
+            )
         sample_id = str(state.sample_id)
         their_sample = their_samples[sample_id]
         their_messages = list(state.messages)
@@ -176,7 +150,7 @@ def auditor(
             _bash("auditor_bash", AUDITOR, "Run bash in your own box (internet, /audit).", 300),
             skill(skill_dirs),
             record_verdict(checks),
-            view_image(),
+            view_image(AUDITOR),
             *log_tools(index, sample_id),
         ]
         if their_scorers:

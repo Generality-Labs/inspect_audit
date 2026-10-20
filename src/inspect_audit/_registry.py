@@ -1,125 +1,55 @@
+"""The package's Inspect tasks: `audit`, `benchmark` and `investigate`."""
+
+import importlib.util
 import inspect as inspect_module
 import json
 import os
 import shutil
 import tempfile
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
 from inspect_ai import Task, task, task_with
 from inspect_ai.log import list_eval_logs
-from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.util import sandbox
+from inspect_ai.util import registry_create, registry_info
 
-from ._agent import audit_items, effort_problem
-from ._audit import audit_task
-from ._concordance import Concordance
 from ._investigate import investigate as investigate
+from ._logs import WRAPPED
 from ._prices import register_prices
-from ._resolve import resolve_task, resolve_task_from_log
-from ._sandbox import (
-    BENCHMARK_SERVICE,
-    has_benchmark_box,
-)
-from ._task import audit_task as audit_task_v2
+from ._task import audit_task
+from ._verdicts import audit_items
+
+
+def resolve_source(source: str | None) -> str | None:
+    """`source=` as a path: a file or directory, or a module name resolved by Python."""
+    if source is None or Path(source).exists():
+        return source
+    spec = importlib.util.find_spec(source)
+    if spec is None or spec.origin is None:
+        raise ValueError(f"source={source!r} is neither a path nor an importable module")
+    return spec.origin
+
+
+def log_files(logs: list[str]) -> list[str]:
+    """Each `logs` entry as files: a `.eval` path, or `hawk:<eval set id>` fetched whole."""
+    files: list[str] = []
+    for entry in logs:
+        if entry.startswith("hawk:"):
+            files += [i.name.removeprefix("file://") for i in list_eval_logs(fetch_logs(entry))]
+        elif entry.endswith((".eval", ".json")):
+            files.append(entry)
+        else:
+            raise ValueError(f"logs entry {entry!r} must be a .eval file or hawk:<eval set id>")
+    return files
 
 
 @task
 def audit(
-    task: str | None = None,
-    task_args: dict[str, object] | None = None,
-    logs: str | list[str] | None = None,
-    samples: list[str] | None = None,
-    limit: int | None = None,
-    items: list[str] | None = None,
-    model: str | None = None,
-    reasoning_effort: str | None = None,
-    notes: str | None = None,
-    confidential: bool = False,
-    redact: list[str] | None = None,
-    attempts_task: str | None = None,
-    auditor_image: str | None = None,
-    benchmark_image: str | None = None,
-    assessment_ids: dict[str, list[str]] | None = None,
-    concordance_limit: int = 15,
-    model_prices: dict[str, dict[str, float]] | None = None,
-) -> Task:
-    """Audit a benchmark task from its logs.
-
-    Args:
-        task: Task to audit (defaults to the task the logs record).
-        task_args: Task arguments used to resolve the audited task.
-        logs: Log file or directory of logs holding the recorded attempts.
-        samples: Sample ids to audit (defaults to all, subject to `limit`).
-        limit: Audit at most this many samples.
-        items: Audit items to investigate (defaults to all of them).
-        model: Model to audit with (defaults to the evaluated model).
-        reasoning_effort: Reasoning effort for the auditor model, when it takes one.
-        notes: A free-form operator steer inserted into the auditor's system prompt.
-        confidential: The benchmark is unpublished -- instruct the auditor not to
-            transmit item content off the box.
-        redact: Explicit metadata keys to strip from the item the auditor reads.
-        attempts_task: Task whose attempts to join, when the logs record a sibling
-            variant of the audited task (e.g. no-tools attempts at a tools task).
-        auditor_image: Published auditor image; switches to Helm-values emission
-            for k8s providers.
-        benchmark_image: Published image for benchmark services that `build:`.
-        assessment_ids: Optional mapping from sample IDs to assessment-unit IDs.
-            Defaults to one unit per sample. Supply every selected sample; IDs
-            must be nonempty and globally unique.
-        concordance_limit: Maximum recorded attempts to regrade at setup.
-        model_prices: Per-million prices by Inspect model name, set by the investigator
-            at submission. Registered before Hawk applies the job's model_cost_config
-            with set_model_cost, which refuses a model the runner's Inspect does not know.
-    """
-    if model_prices:
-        register_prices(model_prices)
-    elif os.environ.get("HAWK_JOB_ID"):
-        # a job submitted without its price table: fetch OpenRouter's, best effort
-        from ._investigate import register_openrouter_costs
-
-        register_openrouter_costs()
-    resolved_logs = fetch_logs(logs) if logs else None
-    if task is None:
-        if not resolved_logs:
-            raise ValueError("Provide a task to audit, or logs recording one.")
-        files = (
-            [resolved_logs]
-            if resolved_logs.endswith((".eval", ".json"))
-            else [info.name for info in list_eval_logs(resolved_logs)]
-        )
-        if not files:
-            raise ValueError(f"No logs found at {logs!r}.")
-        target: str | Task = resolve_task_from_log(files[0])
-    else:
-        target = task
-
-    return audit_task(
-        target,
-        resolved_logs,
-        samples=samples,
-        limit=limit,
-        task_args=task_args,
-        items=items,
-        model=model,
-        reasoning_effort=reasoning_effort,
-        notes=notes,
-        confidential=confidential,
-        redact=redact,
-        attempts_task=attempts_task,
-        auditor_image=auditor_image,
-        benchmark_image=benchmark_image,
-        assessment_ids=assessment_ids,
-        concordance_limit=concordance_limit,
-    )
-
-
-@task
-def audit_v2(
     task: str,
     samples: list[str] | str,
     checks: list[str],
-    cost_limit: float,
+    cost_limit: float | None = None,
     task_args: dict[str, Any] | None = None,
     logs: list[str] | None = None,
     judge: dict[str, str] | None = None,
@@ -133,32 +63,37 @@ def audit_v2(
     message_limit: int | None = None,
     time_limit: int | None = None,
     working_limit: int | None = None,
+    model_prices: dict[str, dict[str, float]] | None = None,
 ) -> Task:
     """Audit a benchmark task from inside its own samples (see `audit_task` in `_task`).
 
-    Everything is declared: `samples` is a list of ids or the literal "all"; the
-    auditor model is the eval's own `--model`, configured with the eval's own flags.
+    Everything is declared: `samples` is a list of ids or the literal "all"; `logs` are
+    `.eval` files or `hawk:<eval set id>`; `source` is the task's file, a directory, or
+    a module name. The auditor is the eval's own `--model`; `model_prices` registers
+    prices for a job whose models Inspect does not price.
     """
     if isinstance(samples, str) and samples != "all":
         raise ValueError('samples must be a list of sample ids or the literal "all"')
-    return audit_task_v2(
+    if model_prices:
+        register_prices(model_prices)
+    return audit_task(
         task,
         samples=samples if samples == "all" else list(samples),
         checks=checks,
         task_args=task_args,
-        logs=logs,
+        logs=log_files(logs) if logs is not None else None,
         judge=judge,
-        source=source,
+        source=resolve_source(source),
         compose=compose,
         assessment_ids=assessment_ids,
         redact=redact or (),
         confidential=confidential,
         notes=notes,
         auditor_image=auditor_image,
+        cost_limit=cost_limit,
         message_limit=message_limit,
         time_limit=time_limit,
         working_limit=working_limit,
-        cost_limit=cost_limit,
     )
 
 
@@ -173,8 +108,9 @@ def benchmark(
     Hawk applies a job's model_cost_config with set_model_cost, which refuses a model
     the runner's Inspect has no entry for; a benchmark runs none of our code, so the
     investigator submits its tasks through this one. It registers the prices and
-    returns the benchmark's own task under the benchmark's own name, so its log reads
-    as the benchmark's (the registry entry records this wrapper and its arguments).
+    returns the benchmark's own task under the benchmark's own name. Its header then
+    names this wrapper, so the wrapped task, its arguments and the installed benchmark
+    version are recorded in the task metadata for an audit to check.
 
     Args:
         task: The benchmark task, e.g. `inspect_evals/simpleqa`.
@@ -183,74 +119,22 @@ def benchmark(
     """
     if model_prices:
         register_prices(model_prices)
-    target = resolve_task(task, dict(task_args or {}))
-    return task_with(target, name=target.name)
-
-
-@solver
-def audit_probe() -> Solver:
-    """Assert the audit sandbox was assembled correctly, without spending on a model.
-
-    Checks the auditor's filesystem and egress, that the sliced logs open with the
-    installed inspect_ai, and that the benchmark service is populated and isolated.
-    """
-
-    async def solve(state: TaskState, generate: Generate) -> TaskState:
-        checks: dict[str, str] = {}
-
-        async def run(name: str, target: str | None, cmd: str) -> None:
-            # `sandbox(name)` falls back to the default box when the sample has
-            # only one, so a benchmark check on a box-less item would report the
-            # auditor's own filesystem as the benchmark's
-            if target is not None and not has_benchmark_box():
-                checks[name] = "SKIP no benchmark box"
-                return
-            box = sandbox() if target is None else sandbox(target)
-            try:
-                r = await box.exec(["bash", "-c", cmd], timeout=120)
-                checks[name] = (r.stdout or r.stderr).strip()[:200]
-            except Exception as ex:
-                checks[name] = f"EXCEPTION {type(ex).__name__}: {ex}"[:200]
-
-        await run("auditor_fs", None, "ls /audit && ls /audit/logs | head -3")
-        await run(
-            "auditor_logs_open",
-            None,
-            'python -c "from inspect_ai.log import list_eval_logs, read_eval_log; '
-            "ls=list_eval_logs('/audit/logs'); print(len(ls), read_eval_log(ls[0].name, header_only=True).eval.task)\"",
-        )
-        await run(
-            "auditor_egress",
-            None,
-            "python -c \"import urllib.request; print(urllib.request.urlopen('https://example.com', timeout=10).status)\"",
-        )
-        await run(
-            "benchmark_content", BENCHMARK_SERVICE, "pwd; ls / | head -8; ls 2>/dev/null | head -8"
-        )
-        await run("benchmark_isolated", BENCHMARK_SERVICE, "ls /audit 2>&1 | head -1")
-        await run(
-            "benchmark_egress",
-            BENCHMARK_SERVICE,
-            "timeout 10 python -c \"import urllib.request; print(urllib.request.urlopen('https://example.com', timeout=8).status)\" 2>&1 | tail -1 || echo BLOCKED",
-        )
-
-        # concordance: prove the resolution and the grade channel against the
-        # logs -- replay recorded attempts and require our regrade to reproduce
-        # their scores. writes a machine-readable artifact the orchestrator reads.
-        await _probe_concordance(state, checks)
-
-        state.store.set("probe", checks)
-        state.output.completion = json.dumps(checks, indent=1)
-        return state
-
-    return solve
-
-
-async def _probe_concordance(state: TaskState, checks: dict[str, str]) -> None:
-    # the gate ran at setup; report what it stored
-    con = state.store_as(Concordance)
-    checks["concordance"] = con.verdict
-    checks["concordance_reasons"] = ", ".join(con.reasons)[:200]
+    target = registry_create("task", task, **dict(task_args or {}))
+    name = registry_info(target).name
+    package = name.split("/")[0] if "/" in name else None
+    try:
+        installed = version(package) if package else None
+    except PackageNotFoundError:
+        installed = None
+    wrapped = {
+        "task": name,
+        "task_args": dict(task_args or {}),
+        "package": package,
+        "version": installed,
+    }
+    return task_with(
+        target, name=target.name, metadata={**(target.metadata or {}), WRAPPED: wrapped}
+    )
 
 
 def fetch_logs(logs: str | list[str]) -> str:
@@ -369,10 +253,9 @@ def _hawk_token() -> str:
 def task_arg_problems(name: str, args: dict[str, Any]) -> list[str]:
     """What this package's task `name` would refuse in `args` before it touches anything.
 
-    A child job installs for minutes before its task loads; the 09-28 Luna smoke
-    child died there on reasoning_effort without model, and Hawk had accepted the
-    config because the rule is ours. The checks that need the audited benchmark
-    still run only in the runner.
+    A child job installs for minutes before its task loads; refusing here, at
+    submission, costs nothing. The checks that need the audited benchmark still run
+    only in the runner.
     """
     tasks = {"audit": audit, "benchmark": benchmark, "investigate": investigate}
     if name not in tasks:
@@ -383,14 +266,8 @@ def task_arg_problems(name: str, args: dict[str, Any]) -> list[str]:
         return [f"{name}: {ex}"]
     if name != "audit":
         return []
-    problems: list[str] = []
-    if problem := effort_problem(args.get("model"), args.get("reasoning_effort")):
-        problems.append(
-            f"audit: {problem}. On Hawk, set the auditor's effort on its model item "
-            "instead: models[].items[].args.config.reasoning_effort"
-        )
     try:
-        audit_items(args.get("items"))
+        audit_items(list(args.get("checks") or []))
     except ValueError as ex:
-        problems.append(f"audit: {ex}")
-    return problems
+        return [f"audit: {ex}"]
+    return []

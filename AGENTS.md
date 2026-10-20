@@ -15,10 +15,9 @@ The audit is the benchmark's own Inspect task with the auditor in place of its s
 | `_reset.py`    | `reset`: force-recreate their boxes, lay files and run setup again (Docker only)                          |
 | `_logs.py`     | the declared logs: header checks, the attempt index, host-side reading tools                              |
 | `_verdicts.py` | checks as skills, `record_verdict`, `submit`, one scorer per check                                        |
+| `_image.py`    | `view_image`: an image in a box (the auditor's or the investigator's), SVGs rasterised there              |
 | `_source.py`   | the benchmark's code for the auditor: the task's package followed by import, data files, install specs    |
 | `_regrade.py`  | standalone concordance: Inspect's `score_async` on the declared logs, diffed against the recorded grades  |
-
-The v1 modules (`_audit`, `_item`, `_state`, `_sandbox`, `_contract`, `_resolve`, `_concordance`, `_agent`) are being replaced and will be deleted at the switch. Do not extend them.
 
 ## Load-bearing rules
 
@@ -29,7 +28,7 @@ The v1 modules (`_audit`, `_item`, `_state`, `_sandbox`, `_contract`, `_resolve`
 5. **Their grader runs only when the auditor calls `grade`.** The task's scorers are ours. Their scorers judge with model roles bound from the logs or declared; a scorer that judged with the evaluated model itself is refused.
 6. **Override, never inherit.** Every limit, the generate config, epochs, metrics and approval of theirs is replaced explicitly in `audit_task`.
 7. **Fail loudly.** Unsupported inputs raise with the reason. A value the source never recorded is unknown, never a default.
-8. **Private Inspect imports live in `_reset.py` only.** Everything else uses Inspect's public API. If you need an internal, the answer is an upstream request, not an import.
+8. **Private Inspect imports in the auditor live in `_reset.py` only.** Everything else uses Inspect's public API. If you need an internal, the answer is an upstream request, not an import.
 9. **Logs never enter a box.** They are read on the host. Only what the auditor asks to export is written, and only into its own box.
 
 ## Unsupported, on purpose
@@ -42,5 +41,5 @@ The v1 modules (`_audit`, `_item`, `_state`, `_sandbox`, `_contract`, `_resolve`
 ## Tests
 
 - Test behaviour against real Inspect, real logs and real Docker. A test that only checks our code agrees with itself measures nothing.
-- `tests/test_audit_v2.py` runs a real audit of `tests/fixtures/toy_benchmark` with a scripted mockllm auditor. Docker tests are deselected by default: `uv run pytest -m docker`.
+- `tests/test_audit.py` runs a real audit of `tests/fixtures/toy_benchmark` with a scripted mockllm auditor. Docker tests are deselected by default: `uv run pytest -m docker`.
 - No model spend in tests. Paid validation runs are separate and need an explicit go.

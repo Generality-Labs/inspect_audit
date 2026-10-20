@@ -116,7 +116,7 @@ def audit_task(
     confidential: bool = False,
     notes: str | None = None,
     auditor_image: str | None = None,
-    cost_limit: float,
+    cost_limit: float | None = None,
     message_limit: int | None = None,
     time_limit: int | None = None,
     working_limit: int | None = None,
@@ -145,8 +145,9 @@ def audit_task(
         notes: A free-form steer for the auditor.
         auditor_image: A published auditor image (required on k8s, which cannot build).
         cost_limit: Dollars per audited sample, the auditor's and its `grade` judge calls
-            together. Required: the cap the audit is governed by. Inspect refuses to start
-            when any model in the run has no registered price.
+            together. The audit is governed by a dollar cap: this one, or the eval's own
+            (`--cost-limit`, an eval set's `cost_limit`); a sample with neither refuses to
+            start. Inspect refuses a cost-capped run with any unpriced model.
         message_limit: The auditor's message limit (the benchmark's is not inherited).
         time_limit: The auditor's time limit, seconds.
         working_limit: The auditor's working-time limit, seconds.

@@ -107,6 +107,17 @@ def same_build(logged: str, installed: str) -> bool:
     return a.group(1)[:short] == b.group(1)[:short]
 
 
+WRAPPER = "inspect_audit/benchmark"
+WRAPPED = "inspect_audit_benchmark"
+
+
+def _installed(package: str) -> str:
+    try:
+        return version(package)
+    except PackageNotFoundError:
+        raise LogMismatchError(f"the benchmark package {package!r} is not installed") from None
+
+
 def _check_header(
     path: str,
     header: EvalLog,
@@ -116,6 +127,23 @@ def _check_header(
     package: str | None,
 ) -> None:
     spec = header.eval
+    if spec.task_registry_name == WRAPPER:
+        # the investigator's `benchmark` wrapper: its header names the wrapper, and the
+        # wrapped run is recorded in the task metadata
+        wrapped = (spec.metadata or {}).get(WRAPPED)
+        if not isinstance(wrapped, dict):
+            raise LogMismatchError(f"{path} is a benchmark-wrapper log with no recorded run")
+        if wrapped.get("task") != task_name or wrapped.get("task_args") != task_args:
+            raise LogMismatchError(
+                f"{path} wrapped {wrapped.get('task')!r} with {wrapped.get('task_args')!r}, "
+                f"not the declared {task_name!r} with {task_args!r}"
+            )
+        if package is not None and not same_build(str(wrapped.get("version")), _installed(package)):
+            raise LogMismatchError(
+                f"{path} was produced by {package} {wrapped.get('version')}; "
+                f"{_installed(package)} is installed"
+            )
+        return
     recorded = spec.task_registry_name or spec.task
     if recorded != task_name:
         raise LogMismatchError(f"{path} records task {recorded!r}, not the declared {task_name!r}")

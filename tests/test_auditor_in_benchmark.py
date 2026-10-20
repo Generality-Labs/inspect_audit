@@ -15,14 +15,12 @@ Their scorer must never grade the auditor itself: Inspect's end-of-sample scorin
 runs our scorer only.
 """
 
-import subprocess
 import sys
 from copy import copy
 from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 from inspect_ai import Task, eval, task_with
 from inspect_ai.dataset import Sample
 from inspect_ai.model import ChatMessageAssistant, ModelOutput
@@ -45,36 +43,12 @@ INTERNET = [
 
 
 def wrap_compose(their_compose: Path, out: Path) -> Path:
-    """Their compose plus an `auditor` service on its own network, flattened by Docker."""
-    wrapper = {
-        "include": [str(their_compose)],
-        "services": {
-            AUDITOR: {
-                "image": "python:3.12-slim",
-                "command": "tail -f /dev/null",
-                "init": True,
-                "networks": ["auditor_net"],
-            }
-        },
-        "networks": {"auditor_net": {}},
-    }
-    (out / "wrapper.yaml").write_text(yaml.safe_dump(wrapper, sort_keys=False))
-    flat = subprocess.run(
-        ["docker", "compose", "-f", str(out / "wrapper.yaml"), "config"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    merged = yaml.safe_load(flat)
-    # names Docker derives from the project: the project is Inspect's to name, and
-    # the k8s converter rejects a network carrying one
-    merged.pop("name", None)
-    for network in (merged.get("networks") or {}).values():
-        if isinstance(network, dict):
-            network.pop("name", None)
-    path = out / "compose.yaml"
-    path.write_text(yaml.safe_dump(merged, sort_keys=False))
-    return path
+    """The package's own audit sandbox: their compose plus the auditor's box."""
+    from inspect_audit._compose import audit_compose
+
+    spec = audit_compose(their_compose, stage=out)
+    assert isinstance(spec.config, str)
+    return Path(spec.config)
 
 
 async def grade(state: TaskState, scorers: list[Scorer], answer: str) -> list[Score]:

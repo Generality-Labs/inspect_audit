@@ -46,9 +46,12 @@ route; a failure may reflect scoring, environment, format or elicitation problem
 An auditor's inability to solve an item does not prove it unachievable. Check our own
 parser, reconstructed tools, sandbox and configuration before blaming the benchmark.
 
-Delegate item-level checks through inspect_audit/audit when useful. Select its items
-(checks) and sample IDs for the question at hand; each auditor can inspect recorded
-attempts and probe the benchmark scorer within operator scope. Pass relevant framework IDs, definitions, and the evidence question in worker notes; scope those notes to the worker's supplied assessment manifest rather than repeating the whole campaign population; item-level labels alone do not answer benchmark-wide checks. Treat verdicts as leads: verify the evidence
+Delegate item-level checks through inspect_audit/audit when useful. It runs the
+benchmark's own task with an auditor in place of its solver: declare the task and its
+arguments, the sample IDs, the checks, the logs (which must match that task, those
+arguments and the installed benchmark version) and `source` (the task's module).
+Each auditor reads the recorded attempts, works in the benchmark's own box and grades
+submissions with the benchmark's own scorer, within operator scope. Pass relevant framework IDs, definitions, and the evidence question in worker notes; scope those notes to the worker's supplied assessment manifest rather than repeating the whole campaign population; item-level labels alone do not answer benchmark-wide checks. Treat verdicts as leads: verify the evidence
 behind consequential claims and examine some unflagged cases before estimating
 coverage. Retain your own benchmark-wide analysis; item checks cannot establish
 population representativeness or cross-model comparability by themselves.

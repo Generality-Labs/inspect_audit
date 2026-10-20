@@ -13,10 +13,13 @@ tasks:
       - name: audit
         args:
           task: <registry name of the audited task, e.g. benchmark/task>
-          logs: <remote.supplied_logs, or hawk:<eval set id of your job>>
-          items: [gold-answer, answer-format, red-teaming, insufficiently-specified, other-findings]
+          # task_args: {...}                    # exactly as the logs ran it; checked against every header
+          samples: ["1"]                        # the benchmark's sample ids to audit, or "all"
+          checks: [gold-answer, answer-format, red-teaming, insufficiently-specified, other-findings]
+          logs: [<remote.supplied_logs, or hawk:<eval set id of your job>>]
+          source: <module of the task's file, e.g. inspect_evals.simpleqa.simpleqa>
           auditor_image: <remote.auditor_image>
-          # samples: ["<benchmark item id>", ...]   # audit named items instead of the first N
+          # judge: {grader: openrouter/...}     # only without logs; with logs the judge is the logged one
           # notes: a general steer for every auditor; never an answer
 models:
   - package: openai
@@ -27,7 +30,7 @@ models:
           config:
             reasoning_effort: medium       # the auditor's effort goes here, not in task args
 model_roles:
-  grader:                                  # the model the benchmark's scorer calls, if it calls one
+  grader:                                  # the benchmark's judge: must be the model its logs record
     package: openai
     name: openrouter
     items:
@@ -38,7 +41,7 @@ model_roles:
 runner:
   environment:
     HAWK_API_URL: <remote.hawk>
-limit: 1                                   # audited items; the size the reservation uses
+limit: 1                                   # audited items (= len(samples)); the size the reservation uses
 cost_limit: 2.00                           # dollars per audited item, enforced in the runner
 epochs: 1
 time_limit: 7200

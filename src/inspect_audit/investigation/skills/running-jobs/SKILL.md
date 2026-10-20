@@ -15,7 +15,8 @@ jobs(wait/collect) with the runner's first error line and settled at $0.
 A benchmark job generates attempts; inspect_audit/audit investigates dataset items
 with selected checks and optional recorded attempts. Choose the actual candidate and
 judge explicitly, including task-specific judge arguments. model_roles alone does not
-configure a judge that the task constructs independently.
+configure a judge that the task constructs independently. An audit's judge is the one
+its logs record: bind that model under the same role, or the audit refuses.
 
 Write the config from the examples in the investigating skill, set task arguments
 and sample selection, save it under /workspace/jobs/, then submit the path with hawk_submit. Do not
@@ -31,7 +32,9 @@ seed.evidence_access before relying on supplied logs. An S3 prefix is not proof 
 indexing or access. Do not repeatedly fetch a source whose access probe failed.
 Use logs() for remote population tables and selected transcripts; do not download an
 entire corpus simply to count it. Adding historical logs to a child audit may still
-require substantial fetching/staging. Verify dataset identity before joining attempts.
+require substantial fetching/staging. Verify dataset identity before joining attempts: the audit refuses a log whose
+question differs from the installed benchmark's (a run with sample_shuffle numbers its
+samples after shuffling, so its ids name different questions).
 
 ## Smoke, inspect, expand
 

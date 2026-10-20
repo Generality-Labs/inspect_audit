@@ -307,11 +307,11 @@ def _resolved_ids(
     target: str, headers: Sequence[tuple[Path, EvalLog]]
 ) -> tuple[set[str] | None, str | None]:
     """The resolved dataset's sample ids, or None with the reason they cannot be compared."""
-    from inspect_audit._resolve import resolve_task
+    from inspect_ai.util import registry_create
 
     task_args = dict(headers[0][1].eval.task_args or {}) if headers else {}
     try:
-        task = resolve_task(target, task_args)
+        task = registry_create("task", target, **task_args)
         ids = [sample.id for sample in task.dataset]
     except Exception as ex:
         return None, f"could not resolve the task to compare sample ids: {type(ex).__name__}: {ex}"

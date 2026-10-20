@@ -360,7 +360,7 @@ def render_probe(root: str) -> Solver:
         )
         assert result.success, result.stderr
         # Exercise the same SVG preview that crashed real investigations.
-        from inspect_audit._agent import view_image
+        from inspect_audit._image import view_image
 
         await sandbox().write_file(
             "/workspace/report/architecture.svg",
@@ -913,7 +913,7 @@ def test_every_tool_schema_survives_a_strict_provider() -> None:
 
     from inspect_ai.tool._tool_def import ToolDef
 
-    from inspect_audit._agent import view_image
+    from inspect_audit._image import view_image
     from inspect_audit._investigate import (
         hawk_submit,
         investigation_budget,

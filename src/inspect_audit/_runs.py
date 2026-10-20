@@ -40,6 +40,9 @@ class Job:
     task_args: dict[str, Any] = field(default_factory=dict)
     model_roles: dict[str, str] = field(default_factory=dict)
     sample_ids: list[str] | None = None
+    # positions in the dataset, first to last counting from 1, inclusive: how a dataset
+    # whose samples carry no ids is selected (Inspect filters ids before numbering them)
+    sample_range: tuple[int, int] | None = None
     epochs: int = 1
     extra_packages: list[str] = field(default_factory=list)
 
@@ -64,8 +67,10 @@ def hawk_config(job: Job) -> dict[str, Any]:
     item: dict[str, Any] = {"name": task_name, "args": job.task_args}
     if job.sample_ids is not None:
         item["sample_ids"] = job.sample_ids
+    limit = [job.sample_range[0] - 1, job.sample_range[1]] if job.sample_range else None
     return {
         "name": job.label,
+        "limit": limit,
         "packages": [job.package, *job.extra_packages],
         "tasks": [{"package": job.package, "name": package_name, "items": [item]}],
         "models": [group(m) for m in job.models],
@@ -255,6 +260,8 @@ class LocalRuns:
             args += ["--model-role", f"{role}={self.provider}/{model}"]
         if job.sample_ids is not None:
             args += ["--sample-id", ",".join(job.sample_ids)]
+        if job.sample_range is not None:
+            args += ["--limit", f"{job.sample_range[0]}-{job.sample_range[1]}"]
         await asyncio.to_thread(_start, args, run_dir)
         return run_dir.name
 

@@ -723,6 +723,7 @@ def run_benchmark(inv: Investigation) -> Tool:
         label: str,
         models: list[str],
         sample_ids: list[str] | None,
+        sample_range: list[int] | None,
         epochs: int,
         task_args: str,
         model_roles: str,
@@ -733,7 +734,12 @@ def run_benchmark(inv: Investigation) -> Tool:
         Args:
             label: A short name for this job, unique in the investigation.
             models: Models to evaluate, as OpenRouter ids from the subject list.
-            sample_ids: The benchmark's sample ids to run; null runs every sample.
+            sample_ids: The benchmark's own sample ids to run, when its samples have
+                ids; null for none.
+            sample_range: [first, last] positions in the dataset, counting from 1,
+                inclusive: how to select samples that have no ids of their own (they
+                are numbered by position). Null for none. Give at most one of
+                sample_ids and sample_range; neither runs every sample.
             epochs: Attempts per sample per model.
             task_args: The task's arguments as a JSON object, exactly as the
                 benchmark takes them; "{}" for its defaults. A model named in one must
@@ -745,6 +751,12 @@ def run_benchmark(inv: Investigation) -> Tool:
         """
         args = json_object(task_args, "task_args")
         roles = {str(k): str(v) for k, v in json_object(model_roles, "model_roles").items()}
+        if sample_ids is not None and sample_range is not None:
+            raise ToolError("give sample_ids or sample_range, not both")
+        if sample_range is not None and not (
+            len(sample_range) == 2 and 1 <= sample_range[0] <= sample_range[1]
+        ):
+            raise ToolError("sample_range is [first, last], counting from 1, first <= last")
         inv.allow(models, inv.menu.subjects, "evaluated")
         inv.allow(list(roles.values()), inv.menu.judges, "judges")
         check_arguments(args, inv.menu.judges)
@@ -756,6 +768,7 @@ def run_benchmark(inv: Investigation) -> Tool:
             task_args=args,
             model_roles=roles,
             sample_ids=sample_ids,
+            sample_range=(sample_range[0], sample_range[1]) if sample_range else None,
             epochs=epochs,
         )
         return await inv.launch(job, "benchmark", note)

@@ -197,7 +197,7 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
     runs = FakeRuns()
     inv = _investigation(tmp_path, runs)
     benchmark = _investigate.run_benchmark(inv)
-    out = asyncio.run(benchmark("smoke", ["openai/subject"], ["1"], 1, "{}", "{}", "why"))  # type: ignore[arg-type]
+    out = asyncio.run(benchmark("smoke", ["openai/subject"], ["1"], None, 1, "{}", "{}", "why"))  # type: ignore[arg-type]
     assert "hawk:run-1" in out
     assert record.jobs == [
         {
@@ -211,9 +211,9 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
     from inspect_ai.tool import ToolError
 
     with pytest.raises(ToolError, match="may not be evaluated"):
-        asyncio.run(benchmark("other", ["openai/auditor"], None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
+        asyncio.run(benchmark("other", ["openai/auditor"], None, None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
     with pytest.raises(ToolError, match="exists"):
-        asyncio.run(benchmark("smoke", ["openai/subject"], None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
+        asyncio.run(benchmark("smoke", ["openai/subject"], None, None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
 
 
 def test_an_audit_reads_logs_by_job_label_or_supplied_source(
@@ -350,3 +350,40 @@ def test_the_runner_credentials_come_from_hawks_real_hook(
     assert asyncio.run(login.access_token()) == "access-1"
     # the child job gets the refresh token as rotated by that refresh
     assert asyncio.run(login.refresh_token()) == "refresh-1"
+
+
+def test_a_dataset_without_ids_is_selected_by_position(tmp_path: Path) -> None:
+    """Inspect matches sample ids before it numbers id-less samples, so a positional
+    range is the only selection that works for them (2026-10-20: sample_ids=["1"] on
+    SimpleQA Verified failed at task load on Hawk)."""
+    from hawk.core.types import EvalSetConfig
+
+    job = Job(label="r", task="b/t", package="b", models=["m/x"], sample_range=(3, 5))
+    assert EvalSetConfig.model_validate(hawk_config(job)).limit == (2, 5)
+
+    (tmp_path / "noids.py").write_text(
+        TASK_FILE.replace(", id=str(i)) for i in range(1, 4)", ") for i in range(1, 4)").replace(
+            "Sample(input=greeting", "Sample(input=f'{greeting} {i}'"
+        )
+    )
+    runs = LocalRuns(tmp_path / "runs", provider="mockllm")
+    job = Job(
+        label="pos",
+        task=f"{tmp_path / 'noids.py'}@tiny",
+        package="",
+        models=["model"],
+        sample_range=(2, 3),
+    )
+
+    async def run() -> list[Path]:
+        run_id = await runs.submit(job)
+        deadline = time.monotonic() + 120
+        while await runs.status(run_id) not in FINISHED:
+            assert time.monotonic() < deadline, await runs.runner_log(run_id)
+            await asyncio.sleep(1)
+        return await runs.logs(run_id, tmp_path / "out")
+
+    from inspect_ai.log import read_eval_log
+
+    [log] = [read_eval_log(str(p)) for p in asyncio.run(run())]
+    assert [s.input for s in log.samples or []] == ["hello 2", "hello 3"]

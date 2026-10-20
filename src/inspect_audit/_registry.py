@@ -1,5 +1,6 @@
 """The package's Inspect tasks: `audit`, `benchmark` and `investigate`."""
 
+import asyncio
 import importlib.util
 import inspect as inspect_module
 import json
@@ -167,55 +168,43 @@ def _hawk_fetch(eval_sets: str) -> str:
     Talks to the Hawk API directly with the runner's own credentials -- the hawk
     CLI stores tokens in an OS keyring, which headless runner pods do not have.
     Not `_jobs.Hawk`: that takes its token from Hawk's model-key hook, which direct
-    children switch off (HAWK_RUNNER_REFRESH_URL=''), and it is async while task
-    construction is not. The HAWK_TOKEN_REFRESH_* variables survive either way.
+    children switch off (HAWK_RUNNER_REFRESH_URL=''). The HAWK_TOKEN_REFRESH_*
+    variables survive either way.
     Requires HAWK_API_URL, plus either HAWK_ACCESS_TOKEN or the runner's token
     refresh environment (HAWK_TOKEN_REFRESH_URL, HAWK_TOKEN_REFRESH_CLIENT_ID,
     HAWK_REFRESH_TOKEN).
     """
-    import urllib.parse
-    import urllib.request
+    import concurrent.futures
 
-    api = os.environ["HAWK_API_URL"].rstrip("/")
-    headers = {"Authorization": f"Bearer {_hawk_token()}"}
-
-    def get_json(path: str) -> dict[str, Any]:
-        req = urllib.request.Request(api + path, headers=headers)
-        with urllib.request.urlopen(req, timeout=180) as r:
-            return dict(json.load(r))
-
-    def post_json(path: str, body: dict[str, Any]) -> dict[str, Any]:
-        req = urllib.request.Request(
-            api + path,
-            data=json.dumps(body).encode(),
-            headers={**headers, "Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=180) as r:
-            return dict(json.load(r))
+    from hawk.cli.download import download_file
+    from hawk.client import HawkClient
 
     fetched = Path(tempfile.mkdtemp(prefix="hawk_logs_"))
     sets = eval_sets.split(",")
-    for address in sets:
-        eval_set, _, selected_file = address.partition("/")
-        files = get_json(f"/view/logs/logs?log_dir={urllib.parse.quote(eval_set)}")["files"]
-        names = [f["name"] for f in files if str(f.get("name", "")).endswith(".eval")]
-        if selected_file:
-            names = [name for name in names if Path(name).name == selected_file]
-            if len(names) != 1:
-                raise ValueError(
-                    f"Expected exactly one Hawk log at {address!r}, found {len(names)}"
-                )
-        if not names:
-            raise ValueError(f"No .eval files found in Hawk eval set {eval_set!r}.")
-        # several sets share one flat directory: prefix so same-named files
-        # cannot silently overwrite each other
-        prefix = f"{eval_set}_" if len(sets) > 1 else ""
-        urls = post_json("/view/logs/log-download-urls", {"logs": names})["urls"]
-        for item in urls:
-            dest = fetched / f"{prefix}{Path(item['filename']).name}"
-            with urllib.request.urlopen(item["url"], timeout=600) as r, open(dest, "wb") as f:
-                while chunk := r.read(1 << 20):
-                    f.write(chunk)
+
+    async def fetch() -> None:
+        async with HawkClient(token=_hawk_token(), api_url=os.environ["HAWK_API_URL"]) as client:
+            for address in sets:
+                eval_set, _, selected_file = address.partition("/")
+                files = await client.get_log_files(eval_set)
+                names = [f["name"] for f in files if str(f.get("name", "")).endswith(".eval")]
+                if selected_file:
+                    names = [name for name in names if Path(name).name == selected_file]
+                    if len(names) != 1:
+                        raise ValueError(
+                            f"Expected exactly one Hawk log at {address!r}, found {len(names)}"
+                        )
+                if not names:
+                    raise ValueError(f"No .eval files found in Hawk eval set {eval_set!r}.")
+                # several sets share one flat directory: prefix so same-named files
+                # cannot silently overwrite each other
+                prefix = f"{eval_set}_" if len(sets) > 1 else ""
+                async for url, filename in client.get_download_urls(names):
+                    await download_file(url, fetched / f"{prefix}{Path(filename).name}")
+
+    # task construction may already be inside inspect's event loop
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        pool.submit(asyncio.run, fetch()).result()
     return str(fetched)
 
 

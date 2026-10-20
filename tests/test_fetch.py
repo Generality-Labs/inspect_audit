@@ -1,7 +1,5 @@
 """Log sources an audit can be pointed at, resolved before anything reads them."""
 
-import io
-import json
 import urllib.request
 from pathlib import Path
 
@@ -36,31 +34,40 @@ def test_paths_and_native_urls_pass_through() -> None:
 
 
 def test_exact_hawk_files_exclude_partial_runs(monkeypatch):
+    import hawk.cli.download
+    import hawk.client
+
     monkeypatch.setenv("HAWK_API_URL", "https://hawk.test")
     monkeypatch.setenv("HAWK_ACCESS_TOKEN", "test-token")
-    downloaded = []
+    presigned, downloaded = [], []
 
-    def open_url(request, timeout=None):
-        if isinstance(request, str):
-            downloaded.append(request)
-            return io.BytesIO(b"selected log")
-        if request.full_url.endswith("logs?log_dir=run"):
-            return io.BytesIO(
-                json.dumps(
-                    {"files": [{"name": "run/complete.eval"}, {"name": "run/partial.eval"}]}
-                ).encode()
-            )
-        payload = json.loads(request.data)
-        assert payload["logs"] == ["run/complete.eval"]
-        return io.BytesIO(
-            json.dumps(
-                {"urls": [{"filename": "complete.eval", "url": "https://download.test/complete"}]}
-            ).encode()
-        )
+    class Client:
+        def __init__(self, token, api_url):
+            assert (token, api_url) == ("test-token", "https://hawk.test")
 
-    monkeypatch.setattr(urllib.request, "urlopen", open_url)
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get_log_files(self, eval_set_id):
+            assert eval_set_id == "run"
+            return [{"name": "run/complete.eval"}, {"name": "run/partial.eval"}]
+
+        async def get_download_urls(self, names):
+            presigned.extend(names)
+            yield "https://download.test/complete", "complete.eval"
+
+    async def download_file(url, dest):
+        downloaded.append(url)
+        dest.write_bytes(b"selected log")
+
+    monkeypatch.setattr(hawk.client, "HawkClient", Client)
+    monkeypatch.setattr(hawk.cli.download, "download_file", download_file)
     result = Path(fetch_logs("hawk:run/complete.eval"))
     assert (result / "complete.eval").read_bytes() == b"selected log"
+    assert presigned == ["run/complete.eval"]
     assert downloaded == ["https://download.test/complete"]
 
 

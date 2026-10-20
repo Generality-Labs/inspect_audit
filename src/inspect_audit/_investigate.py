@@ -697,6 +697,17 @@ def argument_problems(args: Any, allowed: list[str], where: str = "task_args") -
     return problems
 
 
+def json_object(text: str, name: str) -> dict[str, Any]:
+    """A JSON object argument. Strict tool schemas cannot carry a free-form object."""
+    try:
+        value = json.loads(text or "{}")
+    except json.JSONDecodeError as ex:
+        raise ToolError(f"{name} must be a JSON object: {ex}") from ex
+    if not isinstance(value, dict):
+        raise ToolError(f"{name} must be a JSON object, not {type(value).__name__}")
+    return value
+
+
 def check_arguments(task_args: dict[str, Any], allowed: list[str]) -> None:
     if problems := argument_problems(task_args, allowed):
         raise ToolError("task_args refused:\n- " + "\n- ".join(problems))
@@ -709,8 +720,8 @@ def run_benchmark(inv: Investigation) -> Tool:
         models: list[str],
         sample_ids: list[str] | None,
         epochs: int,
-        task_args: dict[str, Any],
-        model_roles: dict[str, str],
+        task_args: str,
+        model_roles: str,
         note: str,
     ) -> str:
         """Run the audited benchmark: fresh attempts by the models you name.
@@ -720,24 +731,26 @@ def run_benchmark(inv: Investigation) -> Tool:
             models: Models to evaluate, as OpenRouter ids from the subject list.
             sample_ids: The benchmark's sample ids to run; null runs every sample.
             epochs: Attempts per sample per model.
-            task_args: The task's arguments, exactly as the benchmark takes them;
-                {} for its defaults. A model named in one must be a judge, written
-                openrouter/<id>; arguments that set a sandbox, image, path or file
-                are refused.
-            model_roles: Role name to model for the benchmark's own judges, from the
-                judge list; {} when it has none.
+            task_args: The task's arguments as a JSON object, exactly as the
+                benchmark takes them; "{}" for its defaults. A model named in one must
+                be a judge, written openrouter/<id>; arguments that set a sandbox,
+                image, path or file are refused.
+            model_roles: Role name to model for the benchmark's own judges, as a JSON
+                object, from the judge list; "{}" when it has none.
             note: Why you are running this.
         """
+        args = json_object(task_args, "task_args")
+        roles = {str(k): str(v) for k, v in json_object(model_roles, "model_roles").items()}
         inv.allow(models, inv.menu.subjects, "evaluated")
-        inv.allow(list(model_roles.values()), inv.menu.judges, "judges")
-        check_arguments(task_args, inv.menu.judges)
+        inv.allow(list(roles.values()), inv.menu.judges, "judges")
+        check_arguments(args, inv.menu.judges)
         job = Job(
             label=label,
             task=inv.task,
             package=inv.task_package,
             models=models,
-            task_args=task_args,
-            model_roles=model_roles,
+            task_args=args,
+            model_roles=roles,
             sample_ids=sample_ids,
             epochs=epochs,
         )
@@ -755,8 +768,8 @@ def run_audit(inv: Investigation) -> Tool:
         logs: list[str],
         auditor_model: str,
         item_cost_limit: float,
-        task_args: dict[str, Any],
-        judge: dict[str, str],
+        task_args: str,
+        judge: str,
         note: str,
     ) -> str:
         """Audit benchmark items with inspect_audit's auditor, one sample per item.
@@ -769,15 +782,18 @@ def run_audit(inv: Investigation) -> Tool:
                 ran, or supplied log sources from the seed; [] for none.
             auditor_model: The auditor, an OpenRouter id from the auditor list.
             item_cost_limit: Dollars one audited item may spend.
-            task_args: The benchmark's arguments, exactly as the logs ran it, under
-                the same rules as run_benchmark's.
-            judge: Role name to model for the benchmark's judge, from the judge list.
-                With logs, it must be the model the logs record; {} for none.
+            task_args: The benchmark's arguments as a JSON object, exactly as the logs
+                ran it, under the same rules as run_benchmark's.
+            judge: Role name to model for the benchmark's judge, as a JSON object, from
+                the judge list. With logs, it must be the model the logs record; "{}"
+                for none.
             note: Why you are running this.
         """
+        args = json_object(task_args, "task_args")
+        judges = {str(k): str(v) for k, v in json_object(judge, "judge").items()}
         inv.allow([auditor_model], inv.menu.auditors, "the auditor")
-        inv.allow(list(judge.values()), inv.menu.judges, "judges")
-        check_arguments(task_args, inv.menu.judges)
+        inv.allow(list(judges.values()), inv.menu.judges, "judges")
+        check_arguments(args, inv.menu.judges)
         addresses = []
         for name in logs:
             known = [j for j in inv.record().jobs if j["label"] == name]
@@ -791,7 +807,7 @@ def run_audit(inv: Investigation) -> Tool:
                     f"({', '.join(inv.supplied) or 'none supplied'})"
                 )
         try:
-            prices = openrouter_prices([auditor_model, *judge.values()])
+            prices = openrouter_prices([auditor_model, *judges.values()])
         except Exception as ex:
             raise ToolError(f"cannot price the auditor for its cost limit: {ex}") from ex
         job = Job(
@@ -802,11 +818,11 @@ def run_audit(inv: Investigation) -> Tool:
             models=[auditor_model],
             task_args={
                 "task": inv.task,
-                "task_args": task_args,
+                "task_args": args,
                 "samples": samples,
                 "checks": checks,
                 "logs": addresses or None,
-                "judge": {r: f"openrouter/{m}" for r, m in judge.items()} or None,
+                "judge": {r: f"openrouter/{m}" for r, m in judges.items()} or None,
                 "auditor_image": inv.auditor_image,
                 "cost_limit": item_cost_limit,
                 "model_prices": prices,

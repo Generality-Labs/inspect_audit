@@ -4,6 +4,7 @@ import asyncio
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 from inspect_ai import eval, task_with
@@ -816,12 +817,26 @@ def test_every_tool_schema_survives_a_strict_provider(tmp_path: Path) -> None:
         check_report("/tmp"),
         publish_report("/tmp"),
     ]
+
+    def free_form(schema: Any) -> bool:
+        """An object with no declared properties: strict schemas refuse it (2026-10-20)."""
+        if schema is None:
+            return False
+        if schema.type == "object" and not schema.properties:
+            return True
+        return any(free_form(s) for s in (schema.anyOf or [])) or free_form(schema.items)
+
     for tool in ours:
         definition = ToolDef(tool)
         missing = set(definition.parameters.properties) - set(definition.parameters.required or [])
         assert not missing, (
             f"{definition.name} has optional parameters {sorted(missing)}; a strict "
             "provider refuses the whole request. Make them nullable and required."
+        )
+        loose = [n for n, p in definition.parameters.properties.items() if free_form(p)]
+        assert not loose, (
+            f"{definition.name} takes free-form objects {loose}; Azure's strict schemas "
+            "refuse them. Take a JSON string instead."
         )
 
 

@@ -193,7 +193,7 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
     runs = FakeRuns()
     inv = _investigation(tmp_path, runs)
     benchmark = _investigate.run_benchmark(inv)
-    out = asyncio.run(benchmark("smoke", ["openai/subject"], ["1"], 1, {}, {}, "why"))  # type: ignore[arg-type]
+    out = asyncio.run(benchmark("smoke", ["openai/subject"], ["1"], 1, "{}", "{}", "why"))  # type: ignore[arg-type]
     assert "hawk:run-1" in out
     assert record.jobs == [
         {
@@ -207,9 +207,9 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
     from inspect_ai.tool import ToolError
 
     with pytest.raises(ToolError, match="may not be evaluated"):
-        asyncio.run(benchmark("other", ["openai/auditor"], None, 1, {}, {}, ""))  # type: ignore[arg-type]
+        asyncio.run(benchmark("other", ["openai/auditor"], None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
     with pytest.raises(ToolError, match="exists"):
-        asyncio.run(benchmark("smoke", ["openai/subject"], None, 1, {}, {}, ""))  # type: ignore[arg-type]
+        asyncio.run(benchmark("smoke", ["openai/subject"], None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
 
 
 def test_an_audit_reads_logs_by_job_label_or_supplied_source(
@@ -234,8 +234,8 @@ def test_an_audit_reads_logs_by_job_label_or_supplied_source(
             ["smoke", "hawk:supplied-logs"],
             "openai/auditor",
             0.5,
-            {},
-            {"grader": "openai/judge"},
+            "{}",
+            '{"grader": "openai/judge"}',
             "",
         )
     )
@@ -250,7 +250,9 @@ def test_an_audit_reads_logs_by_job_label_or_supplied_source(
     }
     with pytest.raises(ToolError, match="neither a job of yours nor a supplied source"):
         asyncio.run(
-            audit("a2", ["1"], ["gold-answer"], ["/etc/passwd"], "openai/auditor", 0.5, {}, {}, "")  # type: ignore[arg-type]
+            audit(
+                "a2", ["1"], ["gold-answer"], ["/etc/passwd"], "openai/auditor", 0.5, "{}", "{}", ""
+            )  # type: ignore[arg-type]
         )
 
 

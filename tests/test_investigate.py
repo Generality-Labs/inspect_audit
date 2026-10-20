@@ -4,6 +4,7 @@ import asyncio
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -930,3 +931,112 @@ def test_inputs_are_staged_into_a_plain_box_and_survive_nothing_mounted(tmp_path
     [staged, budget, _] = [m for m in log.samples[0].messages if isinstance(m, ChatMessageTool)]
     assert staged.text.split() == ["1", "True", "True", "True"], staged.text
     assert not budget.error, budget.error
+
+
+def test_every_agent_tool_schema_meets_openais_strict_rules(tmp_path: Path) -> None:
+    """Strict mode as OpenAI documents it, for every tool either agent is given.
+
+    Every object declares its properties, lists all of them as required and allows
+    no others; a property may be nullable but not absent. Azure applies these rules
+    to whatever OpenRouter routes there (2026-10-20: a free-form task_args object
+    was refused before the investigator's first turn).
+    """
+    from inspect_ai.tool._tool_def import ToolDef
+
+    from inspect_audit import _investigate
+    from inspect_audit._image import view_image
+    from inspect_audit._report import check_report, publish_report, report_blocker
+
+    inv = _investigate.Investigation(
+        root=tmp_path,
+        runs=None,
+        where="local",
+        task="b/t",
+        task_package="b",  # type: ignore[arg-type]
+        audit_package="a",
+        auditor_image="i",
+        menu=every(["m"]),
+        supplied=[],
+    )
+    tools = [
+        _investigate.run_benchmark(inv),
+        _investigate.run_audit(inv),
+        _investigate.jobs(inv),
+        _investigate.budget(None, openrouter=False),
+        view_image(),
+        check_report("/tmp"),
+        publish_report("/tmp"),
+        report_blocker(),
+        *_auditor_tools(),
+    ]
+
+    def problems(schema: dict[str, Any], where: str, top: bool = False) -> list[str]:
+        found: list[str] = []
+        for option in schema.get("anyOf") or []:
+            found += problems(option, where)
+        if schema.get("type") == "object" or "properties" in schema:
+            properties = schema.get("properties") or {}
+            # a tool with no parameters is fine; a free-form object argument is not
+            if not properties and not top:
+                found.append(f"{where}: an object with no declared properties")
+            if set(schema.get("required") or []) != set(properties):
+                found.append(f"{where}: required must list every property")
+            if schema.get("additionalProperties", False) is not False:
+                found.append(f"{where}: additionalProperties must be false")
+            for name, sub in properties.items():
+                found += problems(sub, f"{where}.{name}")
+        if isinstance(schema.get("items"), dict):
+            found += problems(schema["items"], f"{where}[]")
+        return found
+
+    refused: list[str] = []
+    for tool in tools:
+        definition = ToolDef(tool)
+        schema = definition.parameters.model_dump(exclude_none=True)
+        schema.setdefault("additionalProperties", False)  # Inspect adds it when strict
+        refused += problems(schema, definition.name, top=True)
+    assert not refused, "\n".join(refused)
+
+
+def _auditor_tools() -> list[Any]:
+    """The auditor's own tools, from the factories its solver calls (never executed)."""
+    from inspect_audit._grade import grade_tool
+    from inspect_audit._image import view_image
+    from inspect_audit._logs import log_tools
+    from inspect_audit._reset import reset_tool
+    from inspect_audit._verdicts import audit_items, record_verdict, submit_audit
+
+    checks = audit_items()
+    return [
+        record_verdict(checks),
+        submit_audit(checks),
+        view_image("auditor"),
+        *log_tools(None, "1"),
+        grade_tool(SimpleNamespace(sample_id="1"), [], [], None),  # type: ignore[arg-type]
+        reset_tool(None, [], None, None),  # type: ignore[arg-type]
+    ]
+
+
+def test_the_investigator_builds_from_a_directory_it_cannot_write(tmp_path: Path) -> None:
+    """A Hawk runner's working directory is read-only (2026-10-20: the relative
+    default output folder failed task construction there)."""
+    import os
+    import stat
+
+    readonly = tmp_path / "readonly"
+    readonly.mkdir()
+    readonly.chmod(stat.S_IRUSR | stat.S_IXUSR)
+    home = tmp_path / "home"
+    home.mkdir()
+    cwd = Path.cwd()
+    old_home = os.environ.get("HOME")
+    try:
+        os.chdir(readonly)
+        os.environ["HOME"] = str(home)
+        task = investigate("https://example.org/benchmark.git", revision="abc")
+    finally:
+        os.chdir(cwd)
+        if old_home is not None:
+            os.environ["HOME"] = old_home
+        readonly.chmod(stat.S_IRWXU)
+    assert Path(task.metadata["investigation_dir"]).is_relative_to(home)

@@ -311,3 +311,42 @@ def test_task_arguments_cannot_place_code_or_name_other_models() -> None:
         "task_args.nested.judge",
         "task_args.items[0].docker_image",
     ]
+
+
+def test_the_runner_credentials_come_from_hawks_real_hook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hawk's own RefreshTokenHook, as installed, not a copy of its behaviour.
+
+    2026-10-20: a fake modelled on an older hook passed while hawk 3.7's hook declined
+    the ask and the budget tool got no token on a runner. Only the network refresh
+    is replaced; the hook's own rules about which asks it answers run as shipped.
+    """
+    from hawk.runner import refresh_token as hawk_hook
+    from inspect_ai.hooks import _hooks
+
+    refreshes: list[str] = []
+
+    def refresh(token: str, url: str, client: str) -> tuple[Any, str]:
+        refreshes.append(token)
+        rotated = f"refresh-{len(refreshes)}"
+        return (
+            hawk_hook._TokenRefreshResponse(  # pyright: ignore[reportPrivateUsage]
+                access_token=f"access-{len(refreshes)}", expires_in=3600, refresh_token=rotated
+            ),
+            token,
+        )
+
+    monkeypatch.setattr(hawk_hook, "_do_token_refresh_with_recovery", refresh)
+    # what a runner's environment holds: the gateway's address and its own credential
+    monkeypatch.setenv("AI_GATEWAY_BASE_URL", "https://middleman.example")
+    monkeypatch.setenv("BASE_API_KEY", "startup-jwt")
+    hook = hawk_hook.refresh_token_hook(
+        "https://idp.example/token", "client", "refresh-0", validate=False
+    )()
+    monkeypatch.setattr(_hooks, "get_all_hooks", lambda: [hook])
+
+    login = HawkLogin("https://hawk.example")
+    assert asyncio.run(login.access_token()) == "access-1"
+    # the child job gets the refresh token as rotated by that refresh
+    assert asyncio.run(login.refresh_token()) == "refresh-1"

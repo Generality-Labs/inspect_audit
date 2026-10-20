@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from inspect_ai import eval
 from inspect_ai.dataset import Sample
-from inspect_ai.event import ToolEvent
+from inspect_ai.event import ModelEvent, ToolEvent
 from inspect_ai.log import read_eval_log
 from inspect_ai.model import ModelOutput, get_model
 
@@ -46,9 +46,8 @@ def test_a_non_docker_sandbox_is_refused() -> None:
         their_sandbox(("k8s", "values.yaml"), [Sample(input="q")])
 
 
-def test_no_sandbox_is_refused() -> None:
-    with pytest.raises(UnsupportedBenchmarkError, match="no sandbox"):
-        their_sandbox(None, [Sample(input="q")])
+def test_a_benchmark_without_a_sandbox_has_no_box_of_theirs() -> None:
+    assert their_sandbox(None, [Sample(input="q")]) is None
 
 
 def test_a_bare_docker_sandbox_needs_its_compose_declared(tmp_path: Path) -> None:
@@ -239,3 +238,50 @@ def test_the_checks_and_prompt_name_only_what_the_v2_auditor_has() -> None:
         texts[name] = (SKILLS / name / "SKILL.md").read_text()
     found = {name: [s for s in stale if s in text] for name, text in texts.items()}
     assert not {k: v for k, v in found.items() if v}
+
+
+@pytest.mark.docker
+def test_an_audit_of_a_benchmark_without_a_box(graded_log: str, tmp_path: Path) -> None:
+    from test_helpers.logs import fixture_task
+
+    [recorded] = [read_eval_log(graded_log, header_only=True)]
+    script = [
+        _call("grade", answer="ANSWER"),
+        _call("grade", answer="WRONG"),
+        _call("grade", eval_id=recorded.eval.eval_id, epoch=1),
+        _call(
+            "record_verdict",
+            item="gold-answer",
+            evidence=[{"observed": "the grader credits ANSWER", "source": "grade"}],
+            approaches="one",
+            tried="graded both",
+            remarks="sound",
+            grade="CORRECT",
+            details=json.dumps({"independent": "false"}),
+        ),
+        _call("submit", environment_issues=[], unresolved=[], improvements=[]),
+    ]
+    audit = audit_task(
+        fixture_task("graded_task"),
+        samples=["2"],
+        checks=["gold-answer"],
+        logs=[graded_log],
+        source=str(tmp_path),
+    )
+    [log] = eval(
+        audit,
+        model=get_model("mockllm/model", custom_outputs=script),
+        log_dir=str(tmp_path / "a"),
+        display="none",
+    )
+    assert log.status == "success", log.error
+    [sample] = read_eval_log(log.location).samples or []
+    offered = {t.name for e in sample.events if isinstance(e, ModelEvent) for t in e.tools}
+    assert "benchmark_bash" not in offered and "reset" not in offered and "grade" in offered
+    grades = [
+        json.loads(str(e.result))["scores"][0]["value"]
+        for e in sample.events
+        if isinstance(e, ToolEvent) and e.function == "grade"
+    ]
+    assert grades == ["C", "I", "I"]  # sample 2 was recorded WRONG
+    assert sample.scores and sample.scores["gold-answer"].value == "CORRECT"

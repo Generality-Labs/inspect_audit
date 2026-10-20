@@ -40,6 +40,10 @@ ITEM_PROMPT = (
     "Audit this benchmark item. It is described in /audit/item.json in your box; "
     "the benchmark's source is under /audit/benchmark/."
 )
+NO_BOX = (
+    " This benchmark gives the evaluated agent no box of its own, so there is no "
+    "benchmark_bash and no reset: grade still runs its real grader."
+)
 
 
 async def _write_media(messages: Sequence[ChatMessage]) -> list[Any]:
@@ -139,6 +143,7 @@ def auditor(
     their_scorers: list[Scorer],
     their_setup: list[Solver],
     their_samples: dict[str, Sample],
+    benchmark_box: bool,
     index: LogIndex | None,
     source: SourceCopy | None,
     assessment_ids: dict[str, list[str]] | None = None,
@@ -169,12 +174,6 @@ def auditor(
 
         tools: list[Tool] = [
             _bash("auditor_bash", AUDITOR, "Run bash in your own box (internet, /audit).", 300),
-            _bash(
-                "benchmark_bash",
-                None,
-                "Run bash in the benchmark's box, off the record. What you change persists.",
-                900,
-            ),
             skill(skill_dirs),
             record_verdict(checks),
             view_image(),
@@ -182,8 +181,17 @@ def auditor(
         ]
         if their_scorers:
             tools.append(grade_tool(state, their_messages, their_scorers, index))
-        if "reset" in granted:
-            tools.append(reset_tool(their_sample, their_setup, state, generate))
+        if benchmark_box:
+            tools.append(
+                _bash(
+                    "benchmark_bash",
+                    None,
+                    "Run bash in the benchmark's box, off the record. What you change persists.",
+                    900,
+                )
+            )
+            if "reset" in granted:
+                tools.append(reset_tool(their_sample, their_setup, state, generate))
 
         agent = react(
             name="auditor",
@@ -192,7 +200,8 @@ def auditor(
             tools=tools,
             submit=AgentSubmit(tool=submit_audit(checks), name="submit", keep_in_messages=True),
         )
-        result = await agent(AgentState(messages=[ChatMessageUser(content=ITEM_PROMPT)]))
+        prompt = ITEM_PROMPT if benchmark_box else ITEM_PROMPT + NO_BOX
+        result = await agent(AgentState(messages=[ChatMessageUser(content=prompt)]))
         state.messages = result.messages
         state.output = result.output
         return state

@@ -158,8 +158,12 @@ def audit_task(
 
     stage = Path(tempfile.mkdtemp(prefix="inspect_audit_"))
     spec = their_sandbox(their.sandbox, selected)
+    if spec is None and compose is not None:
+        raise UnsupportedBenchmarkError("compose= was given but the benchmark declares no sandbox")
     sandbox = audit_compose(
-        their_compose(spec, compose, stage), stage=stage / "sandbox", auditor_image=auditor_image
+        their_compose(spec, compose, stage) if spec is not None else None,
+        stage=stage / "sandbox",
+        auditor_image=auditor_image,
     )
 
     their_scorers: list[Scorer] = _as_list(their.scorer)
@@ -169,6 +173,7 @@ def audit_task(
         their_scorers=their_scorers,
         their_setup=their_setup,
         their_samples=by_id,
+        benchmark_box=spec is not None,
         index=index,
         source=_task_source(their, name, source),
         assessment_ids=assessment_ids,

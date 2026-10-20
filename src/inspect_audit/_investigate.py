@@ -789,6 +789,7 @@ def run_audit(inv: Investigation) -> Tool:
         checks: list[str],
         logs: list[str],
         auditor_model: str,
+        source: str,
         item_cost_limit: float,
         task_args: str,
         judge: str,
@@ -803,6 +804,8 @@ def run_audit(inv: Investigation) -> Tool:
             logs: Recorded attempts to audit against: labels of benchmark jobs you
                 ran, or supplied log sources from the seed; [] for none.
             auditor_model: The auditor, an OpenRouter id from the auditor list.
+            source: The Python module that defines the benchmark's task, e.g.
+                inspect_evals.simpleqa.simpleqa: its code is what the auditor reads.
             item_cost_limit: Dollars one audited item may spend.
             task_args: The benchmark's arguments as a JSON object, exactly as the logs
                 ran it, under the same rules as run_benchmark's.
@@ -813,6 +816,8 @@ def run_audit(inv: Investigation) -> Tool:
         """
         args = json_object(task_args, "task_args")
         judges = {str(k): str(v) for k, v in json_object(judge, "judge").items()}
+        if not re.fullmatch(r"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*", source):
+            raise ToolError(f"source must be a module name like pkg.mod.task, not {source!r}")
         inv.allow([auditor_model], inv.menu.auditors, "the auditor")
         inv.allow(list(judges.values()), inv.menu.judges, "judges")
         check_arguments(args, inv.menu.judges)
@@ -843,6 +848,7 @@ def run_audit(inv: Investigation) -> Tool:
                 "task_args": args,
                 "samples": samples,
                 "checks": checks,
+                "source": source,
                 "logs": addresses or None,
                 "judge": {r: f"openrouter/{m}" for r, m in judges.items()} or None,
                 "auditor_image": inv.auditor_image,

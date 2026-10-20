@@ -239,6 +239,7 @@ def test_an_audit_reads_logs_by_job_label_or_supplied_source(
             ["gold-answer"],
             ["smoke", "hawk:supplied-logs"],
             "openai/auditor",
+            "benchmark.task",
             0.5,
             "{}",
             '{"grader": "openai/judge"}',
@@ -250,6 +251,7 @@ def test_an_audit_reads_logs_by_job_label_or_supplied_source(
     assert job.task_args["logs"] == ["hawk:r", "hawk:supplied-logs"]
     assert job.task_args["judge"] == {"grader": "openrouter/openai/judge"}
     assert job.task_args["cost_limit"] == 0.5
+    assert job.task_args["source"] == "benchmark.task"
     assert set(job.task_args["model_prices"]) == {
         "openrouter/openai/auditor",
         "openrouter/openai/judge",
@@ -257,7 +259,16 @@ def test_an_audit_reads_logs_by_job_label_or_supplied_source(
     with pytest.raises(ToolError, match="neither a job of yours nor a supplied source"):
         asyncio.run(
             audit(
-                "a2", ["1"], ["gold-answer"], ["/etc/passwd"], "openai/auditor", 0.5, "{}", "{}", ""
+                "a2",
+                ["1"],
+                ["gold-answer"],
+                ["/etc/passwd"],
+                "openai/auditor",
+                "b.t",
+                0.5,
+                "{}",
+                "{}",
+                "",
             )  # type: ignore[arg-type]
         )
 

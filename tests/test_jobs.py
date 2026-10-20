@@ -3,6 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -29,6 +30,9 @@ EXAMPLES = (
 
 
 class FakeHawk:
+    async def refresh_token(self) -> str:
+        return "fake-refresh"
+
     def __init__(self) -> None:
         self.submitted: list[Path] = []
         self.eval_status = "running"
@@ -601,7 +605,6 @@ def test_local_logs_remain_local_when_remote_work_is_enabled(
 def test_jobs_status_wait_collect_release_reservation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-
     from inspect_audit import _investigate
 
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
@@ -1411,23 +1414,51 @@ def test_the_fake_hawk_matches_the_real_one() -> None:
         )
 
 
-def test_submit_passes_the_flags_the_run_needs_and_no_provider_key() -> None:
-    """Models route through Hawk's proxy, so no secrets file travels with a job."""
-    from inspect_audit._jobs import Hawk
+def test_a_laptop_submits_through_hawks_client_with_the_operators_login(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No `hawk eval-set run` and no scraping its output: the same client call as a runner."""
+    import hawk.client
+
+    from inspect_audit import _jobs
 
     seen: list[tuple[str, ...]] = []
+    received: dict[str, Any] = {}
 
     async def fake_run(*args: str, timeout: int = 600) -> str:
         seen.append(args)
-        return "Eval set ID: inv-abc-123\n"
+        return {"access-token": "laptop-access\n", "refresh-token": "laptop-refresh\n"}[args[1]]
 
-    h = Hawk("https://hawk.example")
+    class Client:
+        def __init__(self, **kwargs: Any) -> None:
+            received.update(kwargs)
+
+        async def __aenter__(self) -> "Client":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def create_eval_set(self, config: Any, **kwargs: Any) -> dict[str, Any]:
+            received.update(kwargs)
+            return {"eval_set_id": "inv-abc-123", "warnings": []}
+
+    monkeypatch.delenv("HAWK_JOB_ID", raising=False)
+    monkeypatch.setattr(hawk.client, "HawkClient", Client)
+    monkeypatch.setattr(_jobs, "parse_config", lambda config: (config, []))
+    config = tmp_path / "c.yaml"
+    config.write_text("name: c\n")
+    h = _jobs.Hawk("https://hawk.example")
     h._run = fake_run  # type: ignore[method-assign]
-    assert run(h.submit(Path("/tmp/c.yaml"))) == "inv-abc-123"
-    args = seen[0]
-    assert args[:2] == ("eval-set", "run") and "/tmp/c.yaml" in args
-    assert "--skip-confirm" in args and "--log-dir-allow-dirty" in args
-    assert "--secrets-file" not in args
+    assert run(h.submit(config)) == "inv-abc-123"
+    assert [a[:2] for a in seen] == [("auth", "access-token"), ("auth", "refresh-token")]
+    assert received == {
+        "token": "laptop-access",
+        "api_url": "https://hawk.example",
+        "refresh_token": "laptop-refresh",
+        "secrets": None,
+        "log_dir_allow_dirty": True,
+    }
 
 
 def test_a_cost_the_runner_recorded_is_used_as_measured(tmp_path: Path) -> None:

@@ -156,17 +156,42 @@ class Hawk:
         return str(result.stdout)
 
     async def submit(self, config_path: Path, secrets: dict[str, str] | None = None) -> str:
+        """Create the eval set through Hawk's client, on a runner or a laptop alike.
+
+        The runner's refresh credential comes from its token hook; a laptop's from the
+        operator's `hawk login`. Either way the job gets one, so its own runner can keep
+        its credentials fresh on the cluster.
+        """
+        from hawk.client import HawkClient
+
+        config, errors = parse_config(yaml.safe_load(config_path.read_text()))
+        if errors:
+            raise ValueError(errors)
+        # the access token first: refreshing it may rotate the refresh token
+        token = await self.access_token()
+        refresh_token = await self.refresh_token()
+        async with HawkClient(token=token, api_url=self.env["HAWK_API_URL"]) as client:
+            # the runner installs the server's hawk, whose client may return the
+            # API body {"eval_set_id": ..., "warnings": [...]} rather than the id
+            created: Any = await client.create_eval_set(
+                config,
+                refresh_token=refresh_token,
+                secrets=secrets,
+                # what `hawk eval-set run --log-dir-allow-dirty` set from a laptop
+                log_dir_allow_dirty=not os.environ.get("HAWK_JOB_ID"),
+            )
+        if isinstance(created, dict):
+            return str(created["eval_set_id"])
+        return str(getattr(created, "eval_set_id", created))
+
+    async def refresh_token(self) -> str:
+        """The refresh credential a child job's runner renews its access with."""
         if os.environ.get("HAWK_JOB_ID"):
-            from hawk.client import HawkClient
             from inspect_ai.hooks._hooks import get_all_hooks
 
-            config, errors = parse_config(yaml.safe_load(config_path.read_text()))
-            if errors:
-                raise ValueError(errors)
-            token = await self.access_token()
-            # Use the runner hook's current token after a possible rotation;
-            # the environment holds only the credential supplied at startup.
-            refresh_token = next(
+            # the runner hook's current token, after a possible rotation; the
+            # environment holds only the credential supplied at startup
+            token = next(
                 (
                     getattr(hook, "_current_refresh_token", None)
                     for hook in get_all_hooks()
@@ -174,35 +199,11 @@ class Hawk:
                 ),
                 None,
             ) or os.environ.get("HAWK_RUNNER_REFRESH_TOKEN")
-            if not refresh_token:
-                raise RuntimeError("Hawk runner has no refresh credential for child jobs")
-            async with HawkClient(token=token, api_url=self.env["HAWK_API_URL"]) as client:
-                # the runner installs the server's hawk, whose client may return the
-                # API body {"eval_set_id": ..., "warnings": [...]} rather than the id
-                created: Any = await client.create_eval_set(
-                    config, refresh_token=refresh_token, secrets=secrets
-                )
-                if isinstance(created, dict):
-                    return str(created["eval_set_id"])
-                return str(created)
-        # a provider key, when the job goes direct, travels as a runner secret
-        args = ["eval-set", "run", str(config_path), "--skip-confirm", "--log-dir-allow-dirty"]
-        secrets_file = None
-        if secrets:
-            # the CLI takes secrets from a dotenv file; written beside the config, owner-only
-            secrets_file = config_path.with_suffix(".secrets")
-            secrets_file.write_text("".join(f"{k}={v}\n" for k, v in secrets.items()))
-            secrets_file.chmod(0o600)
-            args += ["--secrets-file", str(secrets_file)]
-        try:
-            out = await self._run(*args)
-        finally:
-            if secrets_file is not None:
-                secrets_file.unlink(missing_ok=True)
-        match = re.search(r"Eval set ID:\s*(\S+)", out)
-        if not match:
-            raise RuntimeError(f"could not find the eval set id in hawk's output:\n{out[-800:]}")
-        return match.group(1)
+        else:
+            token = (await self._run("auth", "refresh-token", timeout=60)).strip()
+        if not token:
+            raise RuntimeError("no Hawk refresh credential for child jobs: run `hawk login`")
+        return token
 
     @asynccontextmanager
     async def _client(self) -> AsyncGenerator[Any]:

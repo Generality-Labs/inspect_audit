@@ -249,6 +249,7 @@ def test_child_submission_uses_rotated_runner_credentials(monkeypatch, tmp_path)
         "token": "current-access",
         "api_url": "https://hawk.example",
         "refresh_token": "rotated",
+        "log_dir_allow_dirty": False,
     }
 
 

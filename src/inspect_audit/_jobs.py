@@ -623,7 +623,12 @@ class Policy:
 
     packages: list[str]  # exact git/pip specs allowed in packages: and tasks[].package
     task_names: list[str]  # registry package names allowed in tasks[].name
-    models: list[str]  # OpenRouter model ids allowed anywhere a model is named
+    # OpenRouter model ids, by the part they may play. An auditor and the evaluated
+    # subject are the investigation's choice; a judge is the benchmark's, fixed by the
+    # logs under audit and declared by the operator, never picked to suit a result.
+    auditor_models: list[str]  # the models of an `inspect_audit/audit` job
+    subject_models: list[str]  # the models of a benchmark job (the agent evaluated)
+    judge_models: list[str]  # model_roles and judge-shaped task arguments
     auditor_images: list[str]  # every image any task argument may name
     hawk_api_url: str
     # the only runner environment a job may set: where the audit task finds Hawk
@@ -648,6 +653,11 @@ class Policy:
     max_connections: int = 50
     max_retries: int = 20
     id_prefix: str = "inv-"
+
+    @property
+    def models(self) -> list[str]:
+        """Every model the investigation may name in any part, without duplicates."""
+        return list(dict.fromkeys([*self.auditor_models, *self.subject_models, *self.judge_models]))
 
 
 ALLOWED_TOP_LEVEL = {
@@ -731,6 +741,26 @@ def parse_config(config: dict[str, Any]) -> tuple[Any, list[str]]:
         return None, [f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in ex.errors()[:12]]
 
 
+def job_kind(config: dict[str, Any]) -> tuple[str | None, str | None]:
+    """`audit` or `benchmark`, and a problem when a config mixes the two.
+
+    The models a job names play one part for all of its tasks, so a job either audits
+    (its models are auditors) or runs a benchmark (its models are the subject).
+    """
+    kinds = set()
+    for task in config.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        for item in task.get("items") or []:
+            name = item.get("name") if isinstance(item, dict) else None
+            kinds.add(
+                "audit" if task.get("name") == "inspect_audit" and name == "audit" else "benchmark"
+            )
+    if len(kinds) > 1:
+        return None, "a job either audits or runs a benchmark; submit them as separate jobs"
+    return (kinds.pop() if kinds else None), None
+
+
 def _model_items(config: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     found: list[tuple[str, dict[str, Any]]] = []
     for group in config.get("models") or []:
@@ -784,13 +814,14 @@ def _task_arg_problems(
                 # a task builds a model from this string with Inspect's own providers,
                 # so only the metered route is allowed: a bare `openai/...` would reach
                 # the provider directly, outside the job's prices and cost limit
-                allowed = {f"openrouter/{name}" for name in policy.models}
+                allowed = {f"openrouter/{name}" for name in policy.judge_models}
                 if "/" in model and model not in allowed:
                     problems.append(
-                        f"{where}: {path}={model!r} is not an allowed model; task arguments "
-                        f"name a worker by its Inspect name: {', '.join(sorted(allowed))}"
+                        f"{where}: {path}={model!r} is not an allowed model; a model named in "
+                        "a task argument is the benchmark's judge; name a worker by its Inspect name: "
+                        f"{', '.join(sorted(allowed)) or '(no judge models declared)'}"
                     )
-                elif "/" not in model and model in policy.models:
+                elif "/" not in model and model in policy.judge_models:
                     continue
             return
         if IMAGE_ARG.search(lowered):
@@ -984,14 +1015,24 @@ def validate_config(
         problems.append(f"runner.environment must set HAWK_API_URL to {policy.hawk_api_url}")
     if config.get("secrets"):
         problems.append("top-level secrets are not allowed; models route through Hawk's proxy")
+    kind, kind_problem = job_kind(config)
+    if kind_problem:
+        problems.append(kind_problem)
     for where, group in _model_items(config):
         if group.get("package") != "openai" or group.get("name") != "openrouter":
             problems.append(f"{where}: models must use package openai, provider openrouter")
+        role, menu = (
+            ("judge", policy.judge_models)
+            if where.startswith("model_roles")
+            else ("auditor", policy.auditor_models)
+            if kind == "audit"
+            else ("subject", policy.subject_models)
+        )
         for item in group.get("items") or []:
-            if item.get("name") not in policy.models:
+            if item.get("name") not in menu:
                 problems.append(
-                    f"{where}: model not allowed: {item.get('name')!r}; model items are "
-                    f"{', '.join(sorted(policy.models))}"
+                    f"{where}: model not allowed: {item.get('name')!r} as the {role}; {role} "
+                    f"models are {', '.join(sorted(menu)) or '(none declared)'}"
                 )
             args = item.get("args") or {}
             extra = set(args) - ALLOWED_MODEL_ARGS

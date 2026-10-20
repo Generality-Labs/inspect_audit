@@ -144,6 +144,13 @@ class FakeHawk:
         return paths
 
 
+def every(models: list[str]):
+    """A model menu letting each model play every part (auditor, subject, judge)."""
+    from inspect_audit._investigate import ModelMenu
+
+    return ModelMenu(auditors=list(models), subjects=list(models), judges=list(models))
+
+
 def remote(tmp_path: Path, allowance: float = 10.0) -> Remote:
     (tmp_path / "work").mkdir(exist_ok=True)
     # a real run registers every worker's price at prep; without this a test would
@@ -156,7 +163,7 @@ def remote(tmp_path: Path, allowance: float = 10.0) -> Remote:
         TASK_PKG,
         AUDIT_PKG,
         IMAGE,
-        ["openai/gpt-5.6-luna", "openai/gpt-5-mini"],
+        every(["openai/gpt-5.6-luna", "openai/gpt-5-mini"]),
         allowance,
     )
     r.hawk = FakeHawk()  # type: ignore[assignment]
@@ -210,7 +217,9 @@ def policy() -> Policy:
     return Policy(
         packages=[TASK_PKG, AUDIT_PKG],
         task_names=["inspect_evals", "inspect_audit"],
-        models=["openai/gpt-5.6-luna", "openai/gpt-5-mini"],
+        auditor_models=["openai/gpt-5.6-luna", "openai/gpt-5-mini"],
+        subject_models=["openai/gpt-5.6-luna", "openai/gpt-5-mini"],
+        judge_models=["openai/gpt-5.6-luna", "openai/gpt-5-mini"],
         auditor_images=[IMAGE],
         hawk_api_url=HAWK,
     )
@@ -241,7 +250,9 @@ def test_hawk_public_route_keeps_its_prefix_in_configs_and_cost_keys() -> None:
     from inspect_audit._investigate import qualified_model_name
 
     p = policy()
-    p.models = ["openrouter/" + name for name in p.models]
+    p.auditor_models = ["openrouter/" + name for name in p.auditor_models]
+    p.subject_models = ["openrouter/" + name for name in p.subject_models]
+    p.judge_models = ["openrouter/" + name for name in p.judge_models]
     p.known_models = frozenset(["openai/gpt-5.6-luna", "openai/gpt-5-mini"])
     config = filled_example("audit.eval-set.yaml")
     for group in [*config["models"], *config.get("model_roles", {}).values()]:
@@ -713,7 +724,7 @@ import json, sys, time
 from pathlib import Path
 sys.path.insert(0, {src!r})
 from inspect_audit import _investigate
-from inspect_audit._investigate import Remote
+from inspect_audit._investigate import ModelMenu, Remote
 from inspect_audit._jobs import Job
 
 root, label, amount, allowance, hold = Path(sys.argv[1]), sys.argv[2], float(sys.argv[3]), float(sys.argv[4]), float(sys.argv[5])
@@ -724,7 +735,7 @@ def slow_spend():
     return (0.0, [])
 
 _investigate._local_spend = slow_spend
-r = Remote(root, "https://hawk.example", "pkg", "pkg", "img", ["m"], allowance)
+r = Remote(root, "https://hawk.example", "pkg", "pkg", "img", ModelMenu(["m"], ["m"], ["m"]), allowance)
 job = Job(label=label, kind="eval-set", eval_set_id="inv-" + label, config_path="x",
           submitted_at="now", estimated_usd=amount, reserved_usd=amount, status="pending")
 try:
@@ -1089,7 +1100,7 @@ def test_submission_is_refused_when_a_named_model_has_no_registered_price(
 
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (0.0, []))
     unpriced = "openai/gpt-5.6-nowhere"
-    r = Remote(tmp_path, HAWK, TASK_PKG, AUDIT_PKG, IMAGE, [unpriced], 10.0)
+    r = Remote(tmp_path, HAWK, TASK_PKG, AUDIT_PKG, IMAGE, every([unpriced]), 10.0)
     r.hawk = FakeHawk()  # type: ignore[assignment]
     (tmp_path / "work").mkdir(exist_ok=True)
     (tmp_path / "inputs").mkdir(exist_ok=True)
@@ -1833,10 +1844,12 @@ def test_a_middleman_spelling_is_refused_as_a_direct_worker(
     monkeypatch.setattr(_investigate, "OPENROUTER_IDS", {"openai/gpt-6-luna", "openai/gpt-5-mini"})
     args = (tmp_path, HAWK, TASK_PKG, AUDIT_PKG, IMAGE)
     with pytest.raises(ValueError, match="OpenRouter lists 'openai/gpt-6-luna'"):
-        Remote(*args, ["openrouter/openai/gpt-6-luna"], 10.0, "openrouter-direct", "key")
-    Remote(*args, ["openai/gpt-6-luna", "openai/gpt-5-mini"], 10.0, "openrouter-direct", "key")
+        Remote(*args, every(["openrouter/openai/gpt-6-luna"]), 10.0, "openrouter-direct", "key")
+    Remote(
+        *args, every(["openai/gpt-6-luna", "openai/gpt-5-mini"]), 10.0, "openrouter-direct", "key"
+    )
     # through Middleman the route name is the right one
-    Remote(*args, ["openrouter/openai/gpt-6-luna"], 10.0, "middleman")
+    Remote(*args, every(["openrouter/openai/gpt-6-luna"]), 10.0, "middleman")
 
 
 def openrouter(monkeypatch: pytest.MonkeyPatch, reply) -> list[dict]:
@@ -2199,7 +2212,14 @@ def test_openrouter_direct_ships_the_operators_key_and_routes_past_the_proxy(
     _price("openrouter/openai/gpt-5.6-luna")
     with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
         Remote(
-            tmp_path, HAWK, "pkg", "pkg", IMAGE, ["openai/gpt-5.6-luna"], 10.0, "openrouter-direct"
+            tmp_path,
+            HAWK,
+            "pkg",
+            "pkg",
+            IMAGE,
+            every(["openai/gpt-5.6-luna"]),
+            10.0,
+            "openrouter-direct",
         )
     r = remote(tmp_path)
     r.provider, r.provider_key = "openrouter-direct", "sk-or-test"
@@ -2289,3 +2309,51 @@ def test_every_job_config_must_state_its_retries(tmp_path: Path) -> None:
         1 + INSPECT_DEFAULT_RETRIES
     )
     assert any("retry_attempts is required" in p for p in validate_config(config, policy, set()))
+
+
+def split_policy() -> Policy:
+    """Auditor, subject and judge each a different model, so a mix-up shows."""
+    return Policy(
+        packages=[TASK_PKG, AUDIT_PKG],
+        task_names=["inspect_evals", "inspect_audit"],
+        auditor_models=["openai/gpt-5.6-luna"],
+        subject_models=["openai/gpt-6-astra"],
+        judge_models=["openai/gpt-5-mini"],
+        auditor_images=[IMAGE],
+        hawk_api_url=HAWK,
+    )
+
+
+def test_each_model_plays_only_its_declared_part() -> None:
+    audit = filled_example("audit.eval-set.yaml")  # auditor luna, judge gpt-5-mini
+    assert validate_config(audit, split_policy(), {"inv-staged-abc"}) == []
+
+    # the subject cannot audit
+    audit["models"][0]["items"][0]["name"] = "openai/gpt-6-astra"
+    problems = validate_config(audit, split_policy(), {"inv-staged-abc"})
+    assert any("as the auditor" in p for p in problems), problems
+
+    # the auditor cannot be the judge: the judge is the benchmark's, not ours to pick
+    audit = filled_example("audit.eval-set.yaml")
+    audit["model_roles"]["grader"]["items"][0]["name"] = "openai/gpt-5.6-luna"
+    problems = validate_config(audit, split_policy(), {"inv-staged-abc"})
+    assert any("as the judge" in p for p in problems), problems
+
+
+def test_a_job_audits_or_runs_a_benchmark_not_both() -> None:
+    audit = filled_example("audit.eval-set.yaml")
+    bench = filled_example("benchmark.eval-set.yaml")
+    audit["tasks"] = [*audit["tasks"], *bench["tasks"]]
+    problems = validate_config(audit, policy(), {"inv-staged-abc"})
+    assert any("either audits or runs a benchmark" in p for p in problems), problems
+
+
+def test_the_old_single_model_list_is_refused_with_its_replacement(tmp_path) -> None:
+    from inspect_audit._investigate import investigate
+
+    config = tmp_path / "investigation.yaml"
+    config.write_text("worker_models: [openai/gpt-5-mini]\n")
+    with pytest.raises(ValueError, match=r"does not take: \['worker_models'\]") as refused:
+        investigate(config=str(config))
+    for name in ("auditor_models", "subject_models", "judge_models"):
+        assert name in str(refused.value)

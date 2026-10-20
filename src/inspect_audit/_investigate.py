@@ -12,7 +12,7 @@ import subprocess
 import tarfile
 import tempfile
 import urllib.request
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from importlib.metadata import version
 from logging import getLogger
 from pathlib import Path
@@ -115,6 +115,21 @@ INVESTIGATION_SKILLS = (
 COMPACTION_TOKENS = 200_000
 OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"
 OPENROUTER_IDS: set[str] = set()  # every id the price registry has seen this process
+
+
+@dataclass(frozen=True)
+class ModelMenu:
+    """The models an investigation may use, by the part each plays."""
+
+    auditors: list[str]
+    subjects: list[str]
+    judges: list[str]
+
+    @property
+    def all(self) -> list[str]:
+        return list(dict.fromkeys([*self.auditors, *self.subjects, *self.judges]))
+
+
 DEFAULT_WORKERS = [
     "openai/gpt-5.6-luna",
     "google/gemini-3.6-flash",
@@ -676,7 +691,7 @@ class Remote:
         task_package: str,
         audit_package: str,
         auditor_image: str,
-        worker_models: list[str],
+        models: "ModelMenu",
         allowance_usd: float,
         provider: str = "middleman",
         provider_key: str | None = None,
@@ -691,7 +706,7 @@ class Remote:
                 "Pass provider='middleman' to route child jobs through Hawk's proxy instead."
             )
         if provider == "openrouter-direct":
-            _check_openrouter_ids(worker_models)
+            _check_openrouter_ids(models.all)
         self.root = root
         self.provider = provider
         self.provider_key = provider_key
@@ -700,9 +715,9 @@ class Remote:
         self.task_package = task_package
         self.audit_package = audit_package
         self.auditor_image = auditor_image
-        self.worker_models = worker_models
+        self.menu = models
         self.workers = [
-            Worker(item=m, price=_registered_price(qualified_model_name(m))) for m in worker_models
+            Worker(item=m, price=_registered_price(qualified_model_name(m))) for m in models.all
         ]
         self.allowance_usd = allowance_usd
         self.ledger = JobLedger(root)
@@ -710,7 +725,9 @@ class Remote:
             known_models=frozenset(OPENROUTER_IDS),
             packages=[task_package, audit_package],
             task_names=[task_package_name(task_package), "inspect_audit"],
-            models=worker_models,
+            auditor_models=models.auditors,
+            subject_models=models.subjects,
+            judge_models=models.judges,
             auditor_images=[auditor_image],
             hawk_api_url=hawk_api_url,
         )
@@ -727,9 +744,9 @@ class Remote:
         self._sources_path.write_text(json.dumps(sorted(self.known_sources)))
 
     def check_model(self, model: str) -> None:
-        if model not in self.worker_models:
+        if model not in self.menu.all:
             raise ToolError(
-                f"{model!r} is not an allowed worker model. Allowed: {', '.join(self.worker_models)}"
+                f"{model!r} is not an allowed model. Allowed: {', '.join(self.menu.all)}"
             )
 
     def new_eval_set_id(self, label: str) -> str:
@@ -969,7 +986,7 @@ def _check_openrouter_ids(worker_models: list[str]) -> None:
     ]
     raise ValueError(
         "provider 'openrouter-direct' sends each worker's name to OpenRouter as its model "
-        f"id, and OpenRouter does not serve: {', '.join(hints)}. Write worker_models as "
+        f"id, and OpenRouter does not serve: {', '.join(hints)}. Write the model lists as "
         f"OpenRouter ids ({OPENROUTER_MODELS}), or pass provider='middleman'."
     )
 
@@ -1669,7 +1686,7 @@ def check_workers(remote: Remote, root: Path) -> Solver:
 
         checks: list[dict[str, Any]] = []
         async with httpx.AsyncClient(timeout=60) as client:
-            for model in remote.worker_models:
+            for model in remote.menu.all:
                 checks.append(await _probe_worker(client, model, remote.provider_key or ""))
         seed_path = root / "inputs" / "seed.json"
         seed = json.loads(seed_path.read_text())
@@ -2053,7 +2070,9 @@ def investigate(
     audit_package: str | None = None,
     task_package: str | None = None,
     auditor_image: str | None = None,
-    worker_models: list[str] | None = None,
+    auditor_models: list[str] | None = None,
+    subject_models: list[str] | None = None,
+    judge_models: list[str] | None = None,
     secrets_file: str | None = None,
     execution: str | None = None,
     investigator_image: str | None = None,
@@ -2103,8 +2122,13 @@ def investigate(
         task_package: Explicit benchmark pip spec for remote workers, including optional
             dependencies when needed. Defaults to the source repository and revision.
         auditor_image: Published auditor image for sample-audit jobs on k8s.
-        worker_models: OpenRouter model ids the agent may run (benchmark workers, auditors,
-            graders). Prices for these are registered so costs are accounted.
+        auditor_models: OpenRouter model ids an audit job may use as its auditor.
+        subject_models: OpenRouter model ids a benchmark job may evaluate.
+        judge_models: OpenRouter model ids the benchmark's own judges may be (model_roles
+            and judge-shaped task arguments). Not the investigation's choice: declare the
+            judges the audited logs record. None by default, so a judged benchmark's jobs
+            are refused until they are declared. Prices for every model in the three lists
+            are registered so costs are accounted.
         secrets_file: Dotenv file holding the operator's OpenRouter key
             (INSPECT_AUDIT_OPENROUTER_API_KEY or OPENROUTER_API_KEY), for
             provider='openrouter-direct'. On a Hawk runner, pass it as the secret
@@ -2151,7 +2175,14 @@ def investigate(
     audit_package = settings.get("audit_package", audit_package)
     task_package = settings.get("task_package", task_package)
     auditor_image = settings.get("auditor_image", auditor_image)
-    worker_models = settings.get("worker_models", worker_models)
+    auditor_models = settings.get("auditor_models", auditor_models)
+    subject_models = settings.get("subject_models", subject_models)
+    judge_models = settings.get("judge_models", judge_models)
+    menu = ModelMenu(
+        auditors=list(auditor_models or DEFAULT_WORKERS),
+        subjects=list(subject_models or DEFAULT_WORKERS),
+        judges=list(judge_models or []),
+    )
     secrets_file = settings.get("secrets_file", secrets_file)
     execution = settings.get("execution", execution) or "hawk"
     investigator_image = (
@@ -2278,7 +2309,7 @@ def investigate(
             task_package or "",
             audit_package or "",
             auditor_image,
-            worker_models or DEFAULT_WORKERS,
+            menu,
             budget_usd,
             provider,
             provider_key,
@@ -2296,7 +2327,9 @@ def investigate(
         seed["remote"] = {
             "hawk": hawk_api_url,
             "task_package": task_package,
-            "worker_models": worker_models or DEFAULT_WORKERS,
+            "auditor_models": menu.auditors,
+            "subject_models": menu.subjects,
+            "judge_models": menu.judges,
             # one row per worker: the model item a config names under the openrouter
             # provider group, the name task arguments use, and the price it is held to.
             # hawk_submit accepts either spelling in either place and rewrites it

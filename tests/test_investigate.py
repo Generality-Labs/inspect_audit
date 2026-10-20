@@ -23,6 +23,13 @@ from inspect_audit._investigate import investigate, publish_report, save_publica
 from inspect_audit._jobs import JobLedger
 
 
+def every(models: list[str]):
+    """A model menu letting each model play every part (auditor, subject, judge)."""
+    from inspect_audit._investigate import ModelMenu
+
+    return ModelMenu(auditors=list(models), subjects=list(models), judges=list(models))
+
+
 @pytest.fixture(autouse=True)
 def _no_price_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
     from inspect_audit import _investigate
@@ -683,7 +690,7 @@ def test_a_remote_reservation_stops_the_investigator_spending_the_same_money_loc
 
     (tmp_path / "work").mkdir()
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (3.0, []))
-    r = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
+    r = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", every(["m"]), 10.0)
     assert r.over_allowance() is None
 
     with r.ledger.transaction() as ledger:
@@ -720,13 +727,13 @@ def test_a_resumed_investigation_remembers_what_it_already_spent(
 
     (tmp_path / "work").mkdir()
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (2.0, []))
-    first = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
+    first = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", every(["m"]), 10.0)
     first.record_local_spend()
     assert first.local_usd() == 2.0
 
     # a second run of the same investigation: Inspect's usage starts from zero again
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (1.5, []))
-    resumed = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
+    resumed = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", every(["m"]), 10.0)
     assert resumed.prior_local_usd == 2.0
     assert resumed.local_usd() == 3.5, (
         "the earlier run's spend must still count against the allowance"
@@ -1151,7 +1158,7 @@ def test_a_retried_sample_carries_the_first_attempts_spend(
 
     (tmp_path / "work").mkdir()
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (4.0, []))
-    r = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
+    r = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", every(["m"]), 10.0)
     r.fold_prior_spend()  # attempt 1 starts
     r.record_local_spend()  # attempt 1 spent 4
     assert r.local_usd() == 4.0
@@ -1234,7 +1241,7 @@ def test_a_checkpoint_resume_restores_the_ledger_without_counting_spend_twice(
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (3.0, []))
 
     r = Remote(
-        first, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0, provider="middleman"
+        first, "https://hawk.example", "pkg", "pkg", "img", every(["m"]), 10.0, provider="middleman"
     )
     r.fold_prior_spend()  # the first attempt starts: nothing prior
     r.snapshot_record()
@@ -1264,7 +1271,7 @@ def test_a_checkpoint_resume_restores_the_ledger_without_counting_spend_twice(
 
     # a resume on a fresh runner: no files, only the restored Store
     r2 = Remote(
-        fresh, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0, provider="middleman"
+        fresh, "https://hawk.example", "pkg", "pkg", "img", every(["m"]), 10.0, provider="middleman"
     )
     assert r2.ledger.get("pilot") is None
     r2.restore_record()
@@ -1297,12 +1304,12 @@ def test_unpriced_spend_stays_unknown_across_a_retry(
 
     (tmp_path / "work").mkdir()
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (2.0, ["openrouter/mystery"]))
-    first = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
+    first = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", every(["m"]), 10.0)
     first.record_local_spend()
 
     # the retry's own calls are all priced
     monkeypatch.setattr(_investigate, "_local_spend", lambda: (1.0, []))
-    retry = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", ["m"], 10.0)
+    retry = Remote(tmp_path, "https://hawk.example", "pkg", "pkg", "img", every(["m"]), 10.0)
     retry.fold_prior_spend()
     assert "missing prices for openrouter/mystery" in (retry.over_allowance() or "")
     with pytest.raises(ToolError, match="costs are unknown"):

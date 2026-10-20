@@ -1153,8 +1153,14 @@ def investigate(
         dataset=[
             Sample(
                 id="investigation",
-                input="Read /inputs/seed.json and invoke the investigating skill. Begin the investigation autonomously."
-                + (f"\n\nOperator instructions:\n{instructions}" if instructions else ""),
+                input=(
+                    "Operator instructions, which take precedence over the default "
+                    f"workflow below:\n{instructions}\n\n"
+                    if instructions
+                    else ""
+                )
+                + "Read /inputs/seed.json and invoke the investigating skill. Begin the "
+                "investigation autonomously.",
             )
         ],
         scorer=investigation_outcome(),

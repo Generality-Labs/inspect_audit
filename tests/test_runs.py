@@ -75,6 +75,9 @@ def test_a_child_job_runs_as_this_runs_user_with_its_current_credentials(
     hook = Hook()
 
     def refresh(name: str, value: str) -> str:
+        # hawk >= 3.7 answers only an ask it can tell is gateway traffic
+        if value != "gateway-marker":
+            return ""
         hook._current_refresh_token = "rotated"
         return "current-access"
 
@@ -94,6 +97,7 @@ def test_a_child_job_runs_as_this_runs_user_with_its_current_credentials(
             # hawk >= 3.5 returns the API body rather than the bare id
             return {"eval_set_id": "child-job", "warnings": []}
 
+    monkeypatch.setenv("BASE_API_KEY", "gateway-marker")
     monkeypatch.setattr(_hooks, "override_api_key", refresh)
     monkeypatch.setattr(_hooks, "get_all_hooks", lambda: [hook])
     monkeypatch.setattr(hawk.client, "HawkClient", Client)

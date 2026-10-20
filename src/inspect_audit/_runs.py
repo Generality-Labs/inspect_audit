@@ -120,7 +120,9 @@ class HawkLogin:
         if self._runner_hook() is not None:
             from inspect_ai.hooks._hooks import override_api_key
 
-            token = override_api_key("HAWK_ACCESS_TOKEN", "")
+            # asked with the runner's own gateway credential: hawk >= 3.7 answers an
+            # empty ask only for a provider it routed through its gateway
+            token = override_api_key("HAWK_ACCESS_TOKEN", os.environ.get("BASE_API_KEY", ""))
             if not token:
                 raise RuntimeError("Hawk runner's token refresh hook gave no token")
             return token

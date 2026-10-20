@@ -26,6 +26,11 @@ from ._logs import LogIndex, LogMismatchError, index_logs
 from ._source import SourceCopy, collect_directory, collect_source
 from ._verdicts import audit_items, item_scorer
 
+# task settings of theirs the audit keeps on purpose: `setup` prepares their box,
+# `cleanup` tears their resources down, `model` is the eval's own --model (the
+# auditor), `version` and `description` describe their task
+KEPT = frozenset({"setup", "cleanup", "model", "version", "description"})
+
 
 def _as_list(value: Any) -> list[Any]:
     if value is None:
@@ -237,6 +242,13 @@ def audit_task(
         "fail_on_error": None,
         "continue_on_fail": None,
         "score_on_error": None,
+        "review": None,
+        "on_checkpoint": None,
+        "on_resume": None,
+        "headline_metric": None,
+        "sentinel": None,
+        "tags": None,
+        "viewer": None,
         "message_limit": message_limit,
         "token_limit": None,
         "turn_limit": None,
@@ -252,4 +264,12 @@ def audit_task(
         },
     }
     accepted = set(pyinspect.signature(task_with).parameters)
+    unclassified = accepted - set(overrides) - KEPT - {"task"}
+    if unclassified:
+        # a new Inspect added a task setting: decide whether the audit overrides or keeps
+        # it before it can quietly govern the auditor
+        raise RuntimeError(
+            f"task_with takes {', '.join(sorted(unclassified))}, which the audit neither "
+            "overrides nor keeps; classify them in _task.py"
+        )
     return task_with(their, **{k: v for k, v in overrides.items() if k in accepted})

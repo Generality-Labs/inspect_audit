@@ -350,3 +350,47 @@ def test_an_unpriced_auditor_is_refused(graded_log: str, tmp_path: Path) -> None
     )
     with pytest.raises(Exception, match="cost_limit requires cost data"):
         eval(audit, model="mockllm/model", log_dir=str(tmp_path / "a"), display="none")
+
+
+def test_every_task_setting_is_either_overridden_or_kept_on_purpose(tmp_path: Path) -> None:
+    """A setting Inspect adds to task_with must not quietly govern the auditor."""
+    import inspect as pyinspect
+
+    from inspect_ai import task_with
+
+    from inspect_audit._task import KEPT
+
+    audit = audit_task(toy.toy(), samples=["a"], checks=["gold-answer"], judge={}, cost_limit=1.0)
+    for name in set(pyinspect.signature(task_with).parameters) - KEPT - {"task"}:
+        assert name in {
+            "dataset",
+            "solver",
+            "scorer",
+            "metrics",
+            "sandbox",
+            "config",
+            "model_roles",
+            "epochs",
+            "approval",
+            "checkpoint",
+            "early_stopping",
+            "fail_on_error",
+            "continue_on_fail",
+            "score_on_error",
+            "review",
+            "on_checkpoint",
+            "on_resume",
+            "headline_metric",
+            "sentinel",
+            "tags",
+            "viewer",
+            "message_limit",
+            "token_limit",
+            "turn_limit",
+            "time_limit",
+            "working_limit",
+            "cost_limit",
+            "name",
+            "metadata",
+        }, name
+    assert audit.approval is None and getattr(audit, "review", None) is None

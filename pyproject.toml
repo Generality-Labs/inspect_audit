@@ -28,6 +28,7 @@ inspect_audit = "inspect_audit._registry"
 
 [project.scripts]
 inspect-audit-findings = "inspect_audit.findings.cli:main"
+inspect-audit-regrade = "inspect_audit._regrade:main"
 
 [project.optional-dependencies]
 remote = [

@@ -15,6 +15,8 @@ The audit is the benchmark's own Inspect task with the auditor in place of its s
 | `_reset.py`    | `reset`: force-recreate their boxes, lay files and run setup again (Docker only)                          |
 | `_logs.py`     | the declared logs: header checks, the attempt index, host-side reading tools                              |
 | `_verdicts.py` | checks as skills, `record_verdict`, `submit`, one scorer per check                                        |
+| `_source.py`   | the benchmark's code for the auditor: the task's package followed by import, data files, install specs    |
+| `_regrade.py`  | standalone concordance: Inspect's `score_async` on the declared logs, diffed against the recorded grades  |
 
 The v1 modules (`_audit`, `_item`, `_state`, `_sandbox`, `_contract`, `_resolve`, `_concordance`, `_agent`) are being replaced and will be deleted at the switch. Do not extend them.
 

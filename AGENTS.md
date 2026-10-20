@@ -9,7 +9,7 @@ The audit is the benchmark's own Inspect task with the auditor in place of its s
 | Module         | Owns                                                                                                      |
 | -------------- | --------------------------------------------------------------------------------------------------------- |
 | `_task.py`     | `audit_task`: declared inputs, `task_with(theirs, ...)`, every override, loud refusals                    |
-| `_compose.py`  | their compose plus the `auditor` service, merged by `include:`, flattened by `docker compose config`      |
+| `_compose.py`  | their compose plus the `auditor` service, merged in Python with their relative paths made absolute        |
 | `_auditor.py`  | the solver: stages the item and source into the auditor's box, binds tools to the live sample, runs react |
 | `_grade.py`    | `grade`: a copy of the live state with the transcript under test, handed to their scorers                 |
 | `_reset.py`    | `reset`: force-recreate their boxes, lay files and run setup again (Docker only)                          |

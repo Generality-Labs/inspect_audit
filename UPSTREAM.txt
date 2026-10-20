@@ -8,7 +8,7 @@ HAWK
 - A public way to read the runner's credentials (current access token, rotated refresh token). We import inspect_ai.hooks._hooks and read the refresh hook's private _current_refresh_token (src/inspect_audit/_runs.py).
 
 INSPECT_K8S_SANDBOX
-- Compose `include:` support in the converter. It refuses include today, so the audit's compose must be flattened first; without docker on the Hawk runner that means our own merge. No issue.
+- Compose `include:` support in the converter. It refuses include today, so we merge the audit's compose ourselves (_compose.py) rather than include theirs. No issue.
 - Per-service allowDomains in the agent-env chart (same ask as Hawk's per-service egress, at its root).
 
 INSPECT_AI

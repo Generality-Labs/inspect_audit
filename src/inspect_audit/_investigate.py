@@ -308,7 +308,11 @@ def git_package_spec(repo: Path, revision: str | None = None) -> str | None:
 
 
 def own_package_spec() -> str | None:
-    """The spec that installs the inspect_audit a runner should use: this one."""
+    """The spec that installs the inspect_audit a runner should use: this one.
+
+    With the `remote` extra: a Hawk runner's own hawk has no keyring, which
+    hawk.client imports, so jobs that talk to Hawk need it installed beside us.
+    """
     from importlib.metadata import Distribution, PackageNotFoundError
 
     try:
@@ -316,16 +320,16 @@ def own_package_spec() -> str | None:
     except PackageNotFoundError:  # pragma: no cover - not installed
         return None
     direct_url = dist.read_text("direct_url.json")
+    spec: str | None = None
     if direct_url:
         data = json.loads(direct_url)
         vcs = data.get("vcs_info") or {}
         if vcs.get("vcs") == "git" and vcs.get("commit_id"):
-            return f"git+{data['url'].removesuffix('.git')}@{vcs['commit_id']}"
+            spec = f"git+{data['url'].removesuffix('.git')}@{vcs['commit_id']}"
         # an editable or local install: the code is a working tree, so ask git
-        local = data.get("url", "")
-        if local.startswith("file://"):
-            return git_package_spec(Path(local.removeprefix("file://")))
-    return None
+        elif (local := data.get("url", "")).startswith("file://"):
+            spec = git_package_spec(Path(local.removeprefix("file://")))
+    return f"inspect_audit[remote] @ {spec}" if spec else None
 
 
 def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | None:

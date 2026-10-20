@@ -32,7 +32,7 @@ jobs:
         run: |
           uv sync --locked
           uv pip install "inspect-ai @ git+https://github.com/UKGovernmentBEIS/inspect_ai@main"
-          uv run python -c "import inspect_ai; print('inspect_ai', inspect_ai.__version__)"
+          uv run --no-sync python -c "import inspect_ai; print('inspect_ai', inspect_ai.__version__)"
       - name: Pytest
         run: uv run --no-sync pytest
       - name: Pytest (docker)

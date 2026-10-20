@@ -238,3 +238,50 @@ def test_the_artifact_destination_is_keyed_by_sample_and_epoch(tmp_path):
     settings["sample_key"] = "investigation-epoch1"
     (root / "artifacts.json").write_text(json.dumps(settings))
     assert workspace._destination(root, "published").endswith("/investigation-epoch1/published")
+
+
+def test_cited_evidence_only_in_the_box_is_recovered_before_validation(monkeypatch, tmp_path):
+    """After a resume on a fresh host the restored box has inputs this host lacks;
+    checking the report must fetch what it cites before looking for it."""
+    from inspect_audit import _report
+
+    report = tmp_path / "work/report"
+    report.mkdir(parents=True)
+    (report / "findings.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "F1",
+                    "section": "grading",
+                    "claim": "c",
+                    "status": "supported",
+                    "origin": "historical",
+                    "reproduce": "read",
+                    "limitations": "",
+                    "evidence": [{"path": "/inputs/jobs/bench/table.csv", "location": "row 1"}],
+                }
+            ]
+        )
+    )
+    fetched = []
+
+    async def pull(root):
+        return []
+
+    async def push(root):
+        pass
+
+    async def fetch(root, paths):
+        # what the box holds: the cited file appears on the host once fetched
+        for path in paths:
+            host = root / "inputs" / Path(path).relative_to("/inputs")
+            host.parent.mkdir(parents=True, exist_ok=True)
+            host.write_text("id,score\n")
+            fetched.append(path)
+
+    monkeypatch.setattr(workspace, "pull", pull)
+    monkeypatch.setattr(workspace, "push_assessments", push)
+    monkeypatch.setattr(workspace, "fetch_inputs_files", fetch)
+    result = asyncio.run(_report.check_report(str(tmp_path))())
+    assert "validated" in result
+    assert fetched == ["/inputs/jobs/bench/table.csv"]

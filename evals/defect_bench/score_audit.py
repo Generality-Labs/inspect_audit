@@ -1,62 +1,73 @@
-"""Score an audit of defect_bench against its planted labels; write a CSV beside the log.
+"""Score an audit of defect_bench against labels.json; write a CSV beside the log.
 
   uv run python evals/defect_bench/score_audit.py <audit .eval log>
 
-One row per (item, check): the label, the auditor's grade, and whether they agree.
-Then per check: agreements, and of the planted defects how many were found.
+The population is every (item, check) the labels define, not what the log holds:
+a missing sample or verdict is counted as MISSING, never dropped from the
+denominator. One row per pair; then per check: agreements, planted defects found,
+clean items misjudged, missing.
 """
 
 import csv
+import json
 import sys
-from collections import defaultdict
 from pathlib import Path
 
-from defect_bench import CLEAN, ITEMS
 from inspect_ai.log import read_eval_log
 
-EXPECTED = {sid: ({**CLEAN, **planted}, planted) for sid, _, _, planted, _ in ITEMS}
+LABELS = json.loads((Path(__file__).parent / "labels.json").read_text())
+MISSING = "MISSING"
+
+
+def expected() -> dict[tuple[str, str], tuple[str, bool]]:
+    """(item, check) -> (expected grade, whether a defect was planted there)."""
+    pairs = {}
+    for item, planted in LABELS["planted"].items():
+        for check, clean in LABELS["clean"].items():
+            pairs[(item, check)] = (planted.get(check, clean), check in planted)
+    return pairs
 
 
 def main(path: str) -> None:
     log = read_eval_log(path)
-    rows = []
+    got: dict[tuple[str, str], str] = {}
     for sample in log.samples or []:
-        expected, planted = EXPECTED[str(sample.id)]
         for check, score in (sample.scores or {}).items():
-            name = check.removesuffix("_scorer")
-            if name not in expected:
-                continue
-            got = str(score.value)
-            rows.append(
-                {
-                    "item": sample.id,
-                    "check": name,
-                    "planted": name in planted,
-                    "expected": expected[name],
-                    "got": got,
-                    "agree": got == expected[name],
-                }
-            )
+            got[(str(sample.id), check)] = str(score.value)
+    rows = []
+    for (item, check), (want, planted) in sorted(expected().items()):
+        grade = got.get((item, check), MISSING)
+        rows.append(
+            {
+                "item": item,
+                "check": check,
+                "planted": planted,
+                "expected": want,
+                "got": grade,
+                "outcome": "missing"
+                if grade == MISSING
+                else "agree"
+                if grade == want
+                else "disagree",
+            }
+        )
     out = Path(path).with_suffix(".defects.csv")
     with open(out, "w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]) if rows else ["item"])
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-    by_check: dict[str, list[dict]] = defaultdict(list)
-    for row in rows:
-        by_check[row["check"]].append(row)
-    for check, checked in sorted(by_check.items()):
-        planted = [r for r in checked if r["planted"]]
-        found = sum(r["agree"] for r in planted)
-        clean = [r for r in checked if not r["planted"]]
-        false_alarms = sum(not r["agree"] for r in clean)
+    for check in LABELS["clean"]:
+        mine = [r for r in rows if r["check"] == check]
+        planted = [r for r in mine if r["planted"]]
+        clean = [r for r in mine if not r["planted"]]
         print(
-            f"{check}: {sum(r['agree'] for r in checked)}/{len(checked)} agree; "
-            f"planted found {found}/{len(planted)}; clean items misjudged {false_alarms}/{len(clean)}"
+            f"{check}: {sum(r['outcome'] == 'agree' for r in mine)}/{len(mine)} agree; "
+            f"planted found {sum(r['outcome'] == 'agree' for r in planted)}/{len(planted)}; "
+            f"clean misjudged {sum(r['outcome'] == 'disagree' for r in clean)}/{len(clean)}; "
+            f"missing {sum(r['outcome'] == 'missing' for r in mine)}/{len(mine)}"
         )
     print(f"wrote {out}")
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).parent))
     main(sys.argv[1])

@@ -318,9 +318,12 @@ def check_report(root: str) -> Tool:
 
     async def execute() -> str:
         """Check findings, assessments and totals; update report/assessments.tex."""
-        from ._investigation_workspace import pull, push_assessments
+        from ._investigation_workspace import fetch_inputs_files, pull, push_assessments
 
         await pull(Path(root))
+        # cited /inputs evidence the host lacks (a run resumed on a fresh host has it
+        # only in the restored box) comes back before validation looks for it
+        await fetch_inputs_files(Path(root), cited_inputs(Path(root)))
         try:
             _prepare_report(root)
         except (ValueError, OSError, KeyError, TypeError) as ex:
@@ -345,6 +348,7 @@ def publish_report(root: str, required_coverage: float | None = None) -> Tool:
         )
 
         await pull(Path(root))
+        await fetch_inputs_files(Path(root), cited_inputs(Path(root)))
         try:
             _prepare_report(root)
         except (ValueError, OSError, KeyError, TypeError) as ex:

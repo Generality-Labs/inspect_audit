@@ -850,7 +850,8 @@ def run_audit(inv: Investigation) -> Tool:
                 "checks": checks,
                 "source": source,
                 "logs": addresses or None,
-                "judge": {r: f"openrouter/{m}" for r, m in judges.items()} or None,
+                # {} is "their grader calls no model", not "unknown": pass it as given
+                "judge": {r: f"openrouter/{m}" for r, m in judges.items()},
                 "auditor_image": inv.auditor_image,
                 "cost_limit": item_cost_limit,
                 "model_prices": prices,

@@ -518,3 +518,20 @@ def test_a_balance_without_a_number_is_unknown_not_zero(monkeypatch: pytest.Monk
     )
     [line] = asyncio.run(_investigate.key_balance(None, openrouter=True))
     assert "unknown" in line and "$0.00" not in line
+
+
+def test_an_empty_judge_reaches_the_audit_as_empty(
+    tmp_path: Path, record: InvestigationRecord, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """{} means "their grader calls no model"; None means "infer it from the logs"."""
+    runs = FakeRuns()
+    inv = _investigation(tmp_path, runs)
+    monkeypatch.setattr(
+        _investigate, "openrouter_prices", lambda models: {f"openrouter/{m}": {} for m in models}
+    )
+    asyncio.run(
+        _investigate.run_audit(inv)(  # type: ignore[arg-type]
+            "a", ["1"], ["gold-answer"], [], "openai/auditor", "b.t", 0.5, "{}", "{}", ""
+        )
+    )
+    assert runs.submitted[0].task_args["judge"] == {}

@@ -1,25 +1,20 @@
-"""The package's Inspect tasks: `audit`, `benchmark` and `investigate`."""
+"""The package's Inspect tasks, `audit` and `investigate`, and log fetching."""
 
 import asyncio
 import importlib.util
-import inspect as inspect_module
 import json
 import os
 import shutil
 import tempfile
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-from inspect_ai import Task, task, task_with
+from inspect_ai import Task, task
 from inspect_ai.log import list_eval_logs
-from inspect_ai.util import registry_create, registry_info
 
 from ._investigate import investigate as investigate
-from ._logs import WRAPPED
 from ._prices import register_prices
 from ._task import audit_task
-from ._verdicts import audit_items
 
 
 def resolve_source(source: str | None) -> str | None:
@@ -98,46 +93,6 @@ def audit(
     )
 
 
-@task
-def benchmark(
-    task: str,
-    task_args: dict[str, object] | None = None,
-    model_prices: dict[str, dict[str, float]] | None = None,
-) -> Task:
-    """A benchmark task, run with the prices its job was submitted with.
-
-    Hawk applies a job's model_cost_config with set_model_cost, which refuses a model
-    the runner's Inspect has no entry for; a benchmark runs none of our code, so the
-    investigator submits its tasks through this one. It registers the prices and
-    returns the benchmark's own task under the benchmark's own name. Its header then
-    names this wrapper, so the wrapped task, its arguments and the installed benchmark
-    version are recorded in the task metadata for an audit to check.
-
-    Args:
-        task: The benchmark task, e.g. `inspect_evals/simpleqa`.
-        task_args: The benchmark task's own arguments.
-        model_prices: Per-million prices by Inspect model name.
-    """
-    if model_prices:
-        register_prices(model_prices)
-    target = registry_create("task", task, **dict(task_args or {}))
-    name = registry_info(target).name
-    package = name.split("/")[0] if "/" in name else None
-    try:
-        installed = version(package) if package else None
-    except PackageNotFoundError:
-        installed = None
-    wrapped = {
-        "task": name,
-        "task_args": dict(task_args or {}),
-        "package": package,
-        "version": installed,
-    }
-    return task_with(
-        target, name=target.name, metadata={**(target.metadata or {}), WRAPPED: wrapped}
-    )
-
-
 def fetch_logs(logs: str | list[str]) -> str:
     """Resolve a `logs` argument to something inspect can read locally.
 
@@ -167,9 +122,8 @@ def _hawk_fetch(eval_sets: str) -> str:
 
     Talks to the Hawk API directly with the runner's own credentials -- the hawk
     CLI stores tokens in an OS keyring, which headless runner pods do not have.
-    Not `_jobs.Hawk`: that takes its token from Hawk's model-key hook, which direct
-    children switch off (HAWK_RUNNER_REFRESH_URL=''). The HAWK_TOKEN_REFRESH_*
-    variables survive either way.
+    Not `_runs.HawkLogin`: task construction may run where no hook or login exists
+    yet, and the HAWK_TOKEN_REFRESH_* variables are there either way.
     Requires HAWK_API_URL, plus either HAWK_ACCESS_TOKEN or the runner's token
     refresh environment (HAWK_TOKEN_REFRESH_URL, HAWK_TOKEN_REFRESH_CLIENT_ID,
     HAWK_REFRESH_TOKEN).
@@ -237,26 +191,3 @@ def _hawk_token() -> str:
             "Fetching hawk: logs needs HAWK_ACCESS_TOKEN or the runner's token refresh environment."
         )
     return token
-
-
-def task_arg_problems(name: str, args: dict[str, Any]) -> list[str]:
-    """What this package's task `name` would refuse in `args` before it touches anything.
-
-    A child job installs for minutes before its task loads; refusing here, at
-    submission, costs nothing. The checks that need the audited benchmark still run
-    only in the runner.
-    """
-    tasks = {"audit": audit, "benchmark": benchmark, "investigate": investigate}
-    if name not in tasks:
-        return [f"inspect_audit has no task {name!r}; it has {', '.join(sorted(tasks))}"]
-    try:
-        inspect_module.signature(tasks[name]).bind(**args)
-    except TypeError as ex:
-        return [f"{name}: {ex}"]
-    if name != "audit":
-        return []
-    try:
-        audit_items(list(args.get("checks") or []))
-    except ValueError as ex:
-        return [f"audit: {ex}"]
-    return []

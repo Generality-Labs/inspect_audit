@@ -1,0 +1,320 @@
+"""Where child eval sets run: one job description, two places to run it.
+
+A job is an Inspect eval set: one task, its arguments, the samples, the models. The
+investigator says what to run; a backend decides where. `HawkRuns` submits it
+through Hawk's own client, as whoever this process is logged in as, so its model
+calls bill to the same key as the investigator's. `LocalRuns` starts
+`inspect eval-set` in a detached process on this machine, with this process's
+environment and so its key. Both hand back finished logs as local files.
+"""
+
+import asyncio
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Protocol
+
+# a job's lifecycle as both backends report it
+RUNNING = "running"
+COMPLETE = "complete"
+FAILED = "failed"
+STOPPED = "stopped"
+FINISHED = frozenset({COMPLETE, FAILED, STOPPED})
+
+
+@dataclass
+class Job:
+    """One child eval set: what runs, never where."""
+
+    label: str
+    task: str  # registry name, e.g. inspect_evals/simpleqa_verified
+    package: str  # pip spec that installs the task's package
+    models: list[str]  # OpenRouter model ids, e.g. openai/gpt-5-mini
+    task_args: dict[str, Any] = field(default_factory=dict)
+    model_roles: dict[str, str] = field(default_factory=dict)
+    sample_ids: list[str] | None = None
+    epochs: int = 1
+    extra_packages: list[str] = field(default_factory=list)
+
+
+class Runs(Protocol):
+    """A place jobs run. Ids are the backend's own."""
+
+    async def submit(self, job: Job) -> str: ...
+    async def status(self, run_id: str) -> str: ...
+    async def logs(self, run_id: str, out_dir: Path) -> list[Path]: ...
+    async def runner_log(self, run_id: str) -> str: ...
+    async def stop(self, run_id: str) -> None: ...
+
+
+def hawk_config(job: Job) -> dict[str, Any]:
+    """The eval-set config Hawk runs for a job. Models route through Hawk's proxy."""
+    package_name, _, task_name = job.task.partition("/")
+
+    def group(model: str) -> dict[str, Any]:
+        return {"package": "openai", "name": "openrouter", "items": [{"name": model}]}
+
+    item: dict[str, Any] = {"name": task_name, "args": job.task_args}
+    if job.sample_ids is not None:
+        item["sample_ids"] = job.sample_ids
+    return {
+        "name": job.label,
+        "packages": [job.package, *job.extra_packages],
+        "tasks": [{"package": job.package, "name": package_name, "items": [item]}],
+        "models": [group(m) for m in job.models],
+        "model_roles": {role: group(m) for role, m in job.model_roles.items()} or None,
+        "epochs": job.epochs,
+        # a failed child is reported, not retried behind the investigator's back
+        "retry_attempts": 0,
+    }
+
+
+class HawkLogin:
+    """Hawk credentials for whoever this process runs as.
+
+    On a Hawk runner, the runner's own refresh hook. On a laptop, the operator's
+    `hawk` login: only the `hawk` binary that wrote it can read it from the keychain
+    without asking, so that binary is asked, past the venv's copy `uv run` puts
+    first on PATH.
+    """
+
+    def __init__(self, api_url: str) -> None:
+        self.api_url = api_url
+        venv = Path(sys.executable).with_name("hawk")
+        others = [
+            found
+            for directory in os.environ.get("PATH", "").split(os.pathsep)
+            if (found := shutil.which("hawk", path=directory))
+            and Path(found).resolve() != venv.resolve()
+        ]
+        self.binary = others[0] if others else "hawk"
+
+    async def _hawk(self, *args: str) -> str:
+        from inspect_ai.util import subprocess as run
+
+        result = await run(
+            [self.binary, *args], text=True, env={"HAWK_API_URL": self.api_url}, timeout=60
+        )
+        if not result.success:
+            raise RuntimeError(f"hawk {' '.join(args)} failed: {result.stderr[-1500:]}")
+        return str(result.stdout).strip()
+
+    async def access_token(self) -> str:
+        if os.environ.get("HAWK_JOB_ID"):
+            from inspect_ai.hooks._hooks import override_api_key
+
+            token = override_api_key("HAWK_ACCESS_TOKEN", "")
+            if not token:
+                raise RuntimeError("Hawk runner's token refresh hook is not available")
+            return token
+        # fetched each time, not cached: the login refreshes it, a copy expires
+        return await self._hawk("auth", "access-token")
+
+    async def refresh_token(self) -> str:
+        """The credential a child job's runner renews its access with: this user's."""
+        if os.environ.get("HAWK_JOB_ID"):
+            from inspect_ai.hooks._hooks import get_all_hooks
+
+            # the runner hook's current token, after a possible rotation; the
+            # environment holds only the credential supplied at startup
+            token = next(
+                (
+                    getattr(hook, "_current_refresh_token", None)
+                    for hook in get_all_hooks()
+                    if type(hook).__module__ == "hawk.runner.refresh_token"
+                ),
+                None,
+            ) or os.environ.get("HAWK_RUNNER_REFRESH_TOKEN")
+        else:
+            token = await self._hawk("auth", "refresh-token")
+        if not token:
+            raise RuntimeError("no Hawk refresh credential for child jobs: run `hawk login`")
+        return token
+
+
+class HawkRuns:
+    """Jobs on Hawk, through `hawk.client.HawkClient`."""
+
+    def __init__(self, api_url: str) -> None:
+        self.login = HawkLogin(api_url)
+
+    @asynccontextmanager
+    async def _client(self) -> AsyncGenerator[Any]:
+        from hawk.client import HawkClient
+
+        async with HawkClient(
+            token=await self.login.access_token(), api_url=self.login.api_url
+        ) as client:
+            yield client
+
+    async def submit(self, job: Job) -> str:
+        from hawk.core.types import EvalSetConfig
+
+        config = EvalSetConfig.model_validate(hawk_config(job))
+        # the access token first: refreshing it may rotate the refresh token
+        token = await self.login.access_token()
+        refresh_token = await self.login.refresh_token()
+        from hawk.client import HawkClient
+
+        async with HawkClient(token=token, api_url=self.login.api_url) as client:
+            created: Any = await client.create_eval_set(config, refresh_token=refresh_token)
+        # a newer server's client may return the API body rather than the id
+        if isinstance(created, dict):
+            return str(created["eval_set_id"])
+        return str(getattr(created, "eval_set_id", created))
+
+    async def status(self, run_id: str) -> str:
+        async with self._client() as client:
+            found = await client.get_job_status(run_id)
+        if found is None:
+            return FAILED
+        status = str(found.status)
+        if status == "complete":
+            return COMPLETE
+        if status in ("failed", "deleted"):
+            return FAILED
+        return RUNNING
+
+    async def logs(self, run_id: str, out_dir: Path) -> list[Path]:
+        from hawk.cli.download import download_file
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        files: list[Path] = []
+        async with self._client() as client:
+            names = [str(f["name"]) for f in await client.get_log_files(run_id)]
+            names = [n for n in names if n.endswith(".eval")]
+            async for url, filename in client.get_download_urls(names):
+                dest = out_dir / Path(filename).name
+                await download_file(url, dest)
+                files.append(dest)
+        return sorted(files)
+
+    async def runner_log(self, run_id: str) -> str:
+        async with self._client() as client:
+            entries = await client.fetch_logs(run_id, limit=120)
+        lines = [
+            f"[{e.timestamp:%H:%M:%S}] {e.message}"
+            for e in sorted(entries, key=lambda e: e.timestamp)
+        ]
+        return "\n".join(lines)[-6000:] or "(no runner log yet)"
+
+    async def stop(self, run_id: str) -> None:
+        async with self._client() as client:
+            await client.stop_eval_set(run_id)
+
+
+class LocalRuns:
+    """Jobs as detached `inspect eval-set` processes, logs under `root/<id>/`.
+
+    Models are OpenRouter ids, run through Inspect's `openrouter` provider on this
+    process's OPENROUTER_API_KEY; `provider` exists so tests can run `mockllm`.
+    """
+
+    def __init__(self, root: Path, provider: str = "openrouter") -> None:
+        self.root = root
+        self.provider = provider
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def _dir(self, run_id: str) -> Path:
+        path = (self.root / run_id).resolve()
+        if path.parent != self.root.resolve() or not path.is_dir():
+            raise ValueError(f"no local run {run_id!r}")
+        return path
+
+    async def submit(self, job: Job) -> str:
+        run_dir = Path(tempfile.mkdtemp(prefix=f"{job.label}-", dir=self.root))
+        args = [
+            sys.executable,
+            "-m",
+            "inspect_ai",
+            "eval-set",
+            job.task,
+            "--model",
+            ",".join(f"{self.provider}/{m}" for m in job.models),
+            "--log-dir",
+            str(run_dir / "logs"),
+            "--epochs",
+            str(job.epochs),
+            "--retry-attempts",
+            "0",
+            "--display",
+            "plain",
+        ]
+        for key, value in job.task_args.items():
+            args += ["-T", f"{key}={_cli_value(value)}"]
+        for role, model in job.model_roles.items():
+            args += ["--model-role", f"{role}={self.provider}/{model}"]
+        if job.sample_ids is not None:
+            args += ["--sample-id", ",".join(job.sample_ids)]
+        await asyncio.to_thread(_start, args, run_dir)
+        return run_dir.name
+
+    def _alive(self, run_dir: Path) -> bool:
+        try:
+            pid = int((run_dir / "pid").read_text())
+            os.kill(pid, 0)
+        except (OSError, ValueError):
+            return False
+        # a finished child is a zombie until reaped; it no longer runs
+        try:
+            done, _ = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:  # not our child (another process started it)
+            return True
+        return done == 0
+
+    async def status(self, run_id: str) -> str:
+        from inspect_ai.log import list_eval_logs, read_eval_log
+
+        run_dir = self._dir(run_id)
+        if (run_dir / "stopped").exists():
+            return STOPPED
+        if self._alive(run_dir):
+            return RUNNING
+        logs = list_eval_logs(str(run_dir / "logs"))
+        if logs and all(
+            read_eval_log(log.name, header_only=True).status == "success" for log in logs
+        ):
+            return COMPLETE
+        return FAILED
+
+    async def logs(self, run_id: str, out_dir: Path) -> list[Path]:
+        run_dir = self._dir(run_id)
+        return sorted((run_dir / "logs").glob("*.eval"))
+
+    async def runner_log(self, run_id: str) -> str:
+        path = self._dir(run_id) / "runner.log"
+        lines = path.read_text(errors="replace").splitlines() if path.exists() else []
+        return "\n".join(lines[-120:]) or "(no runner log yet)"
+
+    async def stop(self, run_id: str) -> None:
+        run_dir = self._dir(run_id)
+        (run_dir / "stopped").write_text("")
+        if self._alive(run_dir):
+            # the whole process group: `inspect eval-set` and anything it started
+            os.killpg(int((run_dir / "pid").read_text()), signal.SIGTERM)
+            await asyncio.sleep(0)
+
+
+def _start(args: list[str], run_dir: Path) -> None:
+    """Start a detached process group, its output and pid in the run's directory."""
+    with open(run_dir / "runner.log", "wb") as out:
+        process = subprocess.Popen(
+            args, stdout=out, stderr=subprocess.STDOUT, start_new_session=True
+        )
+    (run_dir / "pid").write_text(str(process.pid))
+
+
+def _cli_value(value: Any) -> str:
+    """A task argument as `-T` reads it: YAML, so lists and mappings survive."""
+    import yaml
+
+    if isinstance(value, str):
+        return value
+    return yaml.safe_dump(value, default_flow_style=True).strip()

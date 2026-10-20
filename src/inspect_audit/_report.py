@@ -4,7 +4,7 @@ import hashlib
 import json
 import shutil
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from acp.schema import ElicitationSchema, ElicitationStringPropertySchema
@@ -47,9 +47,6 @@ class InvestigationState(StoreModel):
     """Publication state belongs to the sample, including across compaction."""
 
     published: str | None = None
-    # set when the agent has been told the shared allowance is gone; the next turn
-    # ends the sample rather than asking again
-    allowance_notified: bool = False
     # how the investigation ended, for the outcome scorer: published_complete,
     # published_incomplete (short of the operator's required coverage), blocked
     outcome: str | None = None
@@ -165,7 +162,7 @@ def cited_inputs(root: Path) -> list[str]:
     )
 
 
-def save_publication(root: Path) -> Path:
+def save_publication(root: Path, jobs: dict[str, str] | None = None) -> Path:
     """Copy a self-contained rendered report outside the agent's writable mount."""
     report = root / "work" / "report"
     if report.is_symlink() or any(p.is_symlink() for p in report.rglob("*")):
@@ -229,7 +226,7 @@ def save_publication(root: Path) -> Path:
             relative = path.relative_to("/inputs")
             source = (root / "inputs" / relative).resolve()
             if _is_log(relative):
-                address = log_address(root, relative)
+                address = log_address(root, relative, jobs or {})
                 references.append(
                     {
                         "cited": str(path),
@@ -270,36 +267,37 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def log_address(root: Path, relative: Path) -> str:
-    """Where a log under /inputs came from: a hawk: address or the operator's path.
+def log_address(root: Path, relative: Path, jobs: dict[str, str]) -> str:
+    """Where a log under /inputs came from: its job's address or the operator's source.
 
-    Three places put logs there: `logs(action="fetch")` into index/<alias>/logs/,
-    `jobs(action="collect")` into jobs/<label>/, and preparation into logs/<n>/.
+    Two places put logs there: `jobs(action="collect")` into jobs/<label>/, with
+    `jobs` mapping each label to its run's address, and preparation into logs/<n>/.
     """
     parts = list(relative.parts)
     if not parts:
         return "/inputs"
-    seed_path = root / "inputs" / "seed.json"
-    seed = json.loads(seed_path.read_text()) if seed_path.is_file() else {}
-    if parts[0] == "index" and len(parts) >= 3:
-        from ._investigate import source_alias
-
-        remote = [str(e["remote"]) for e in seed.get("logs") or [] if e.get("remote")]
-        for address in remote:
-            if source_alias(address) == parts[1]:
-                return f"{address.rstrip('/')}/{parts[-1]}"
-    if parts[0] == "jobs" and len(parts) >= 3:
-        ledger_path = root / "jobs.json"
-        ledger = json.loads(ledger_path.read_text()) if ledger_path.is_file() else []
-        for job in ledger:
-            if job.get("label") == parts[1]:
-                return f"hawk:{job['eval_set_id']}/{parts[-1]}"
+    if parts[0] == "jobs" and len(parts) >= 3 and parts[1] in jobs:
+        return f"{jobs[parts[1]].rstrip('/')}/{parts[-1]}"
     if parts[0] == "logs":
+        seed_path = root / "inputs" / "seed.json"
+        seed = json.loads(seed_path.read_text()) if seed_path.is_file() else {}
         staged = f"/inputs/{relative.as_posix()}"
         for entry in seed.get("logs") or []:
             if entry.get("staged") == staged:
                 return str(entry["source"])
     return f"/inputs/{relative.as_posix()}"
+
+
+def job_addresses() -> dict[str, str]:
+    """Each launched job's label and the address its logs live at, from the store."""
+    record = store_as(InvestigationRecord)
+    return {job["label"]: job["address"] for job in record.jobs if job.get("address")}
+
+
+class InvestigationRecord(StoreModel):
+    """The jobs this investigation launched. The store is checkpointed, so they survive."""
+
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def _prepare_report(root: str) -> None:
@@ -344,7 +342,6 @@ def publish_report(root: str, required_coverage: float | None = None) -> Tool:
             persist,
             pull,
             push_assessments,
-            remote_workspace,
         )
 
         await pull(Path(root))
@@ -373,7 +370,7 @@ def publish_report(root: str, required_coverage: float | None = None) -> Tool:
         # the restored box, not in the fresh runner's scratch directory)
         await fetch_inputs_files(Path(root), cited_inputs(Path(root)))
         try:
-            destination = save_publication(Path(root))
+            destination = save_publication(Path(root), job_addresses())
         except (ValueError, OSError) as ex:
             raise ToolError(str(ex)) from ex
         investigation = store_as(InvestigationState)
@@ -386,7 +383,7 @@ def publish_report(root: str, required_coverage: float | None = None) -> Tool:
             if investigation.outcome == "published_incomplete"
             else ""
         )
-        if remote_workspace(Path(root)):
+        if (Path(root) / "artifacts.json").exists():
             durable = await persist(Path(root), destination, f"published/{destination.name}")
             investigation.published = durable
             return f"Published {durable}/report.pdf.{shortfall} Give the operator a concise summary and the report path."

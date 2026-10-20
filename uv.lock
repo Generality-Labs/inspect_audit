@@ -1068,20 +1068,21 @@ wheels = [
 
 [[package]]
 name = "hawk"
-version = "3.6.0"
+version = "3.7.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "packaging", marker = "python_full_version >= '3.13'" },
     { name = "pydantic", marker = "python_full_version >= '3.13'" },
     { name = "ruamel-yaml", marker = "python_full_version >= '3.13'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/05/a6/8f8b449c46f10632d9d0e181c711921a83fcb711c86ce431909d117e4162/hawk-3.6.0.tar.gz", hash = "sha256:ecfad0b2c7e932ab536c88607bba81c2fa0d44f0977b57a0804d2420e55c1db9", size = 4172054, upload-time = "2026-09-24T13:08:49.038Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b4/aa/b7fd8f8796d6b21dd53ed9b7ec72919dcf5427c0d6c7c9d75b22bb9efaa6/hawk-3.7.2.tar.gz", hash = "sha256:e2695e71e8007385c28fc8487cd84eb0f81bb4a74460ce18729bd28d8a5b3246", size = 4621910, upload-time = "2026-10-07T20:32:36.15Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/eb/72/2bc56c146c9f21674e076a13191a6d5742b29677a834ed231645c59b1a5f/hawk-3.6.0-py3-none-any.whl", hash = "sha256:b524beebed4aebcbd75692ec4ac40cceb8348766674d42c254481af272d5bda8", size = 1027436, upload-time = "2026-09-24T13:08:46.76Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/df/192f791d4ee5af0c3b28aba24c2d6e054acd06c275c2de6dd49d2cf0e319/hawk-3.7.2-py3-none-any.whl", hash = "sha256:89990955450c9fdf2c7112d8f2eb02c32eb8fc96008e90ab300e2315a54bd0d7", size = 1172112, upload-time = "2026-10-07T20:32:34.039Z" },
 ]
 
 [package.optional-dependencies]
 cli = [
+    { name = "aiofiles", marker = "python_full_version >= '3.13'" },
     { name = "aiohttp", marker = "python_full_version >= '3.13'" },
     { name = "click", version = "8.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "inspect-ai", version = "0.3.266", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },

@@ -19,6 +19,19 @@ The audit is the benchmark's own Inspect task with the auditor in place of its s
 | `_source.py`   | the benchmark's code for the auditor: the task's package followed by import, data files, install specs    |
 | `_regrade.py`  | standalone concordance: Inspect's `score_async` on the declared logs, diffed against the recorded grades  |
 
+## What the investigator is
+
+One Inspect task: a react agent in its own box, launching benchmark and audit jobs. It runs wherever Inspect runs it (a Docker container locally, a pod on Hawk); only its jobs' backend differs.
+
+| Module                        | Owns                                                                                         |
+| ----------------------------- | -------------------------------------------------------------------------------------------- |
+| `_investigate.py`             | `investigate`: declared inputs staged on the host, the job tools, the budget tool, the task  |
+| `_runs.py`                    | a `Job` and where it runs: Hawk through `HawkClient`, or a detached local `inspect eval-set` |
+| `_investigation_workspace.py` | staging inputs into the box, reading the report back out, publishing to Hawk's artifacts     |
+| `_report.py`                  | findings, publication, the store's record of launched jobs, the outcome scorer               |
+
+Budget is the model key every call bills to (a capped OpenRouter key locally, the run's Hawk user's assigned key on Hawk); nothing here prices or reserves. Resume is Inspect's checkpointing of `/workspace`, `/inputs` and the store.
+
 ## Load-bearing rules
 
 1. **Declared inputs only.** The benchmark task and its arguments, the sample ids, the checks and the logs are passed in. Nothing is inferred from log headers, the registry, the filesystem or naming conventions. If the auditor needs something it was not given, it refuses and says what to declare.

@@ -1,4 +1,11 @@
-"""Transfer investigator files across the runner/sandbox boundary."""
+"""The investigator's box and the host's trusted copy of what is in it.
+
+The box is the agent's only workspace, on Docker locally and on Kubernetes on Hawk
+alike. The host keeps the inputs it staged and the logs its tools collected, and
+reads the report back out of the box when the agent checks or publishes it: the
+report is validated and published from the host, never trusted in place. Inspect's
+checkpointing carries the box and the sample store across a crash.
+"""
 
 import io
 import json
@@ -8,13 +15,12 @@ import shutil
 import tarfile
 import tempfile
 from pathlib import Path
-from typing import Any
 
 import anyio
 import anyio.to_thread
 import yaml
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.tool import Tool, ToolDef, ToolError
+from inspect_ai.tool import ToolError
 from inspect_ai.util import sandbox
 
 from .containers import EGRESS_POLICY
@@ -40,16 +46,8 @@ def max_pull_bytes() -> int:
     return int(SandboxEnvironmentLimits.MAX_READ_FILE_SIZE * 0.9)
 
 
-# Host-side records that must outlive the runner pod.
-STATE_FILES = ("jobs.json", "local_spend.json", "log_sources.json")
-
-
-def remote_workspace(root: Path) -> bool:
-    return (root / "remote-workspace.json").is_file()
-
-
 def configure(root: Path, image: str, artifact_dir: str) -> tuple[str, str]:
-    (root / "remote-workspace.json").write_text(json.dumps({"artifact_dir": artifact_dir}))
+    (root / "artifacts.json").write_text(json.dumps({"artifact_dir": artifact_dir}))
     values = {
         "services": {
             "default": {
@@ -67,45 +65,6 @@ def configure(root: Path, image: str, artifact_dir: str) -> tuple[str, str]:
     path = root / "investigator.values.yaml"
     path.write_text(yaml.safe_dump(values) + EGRESS_POLICY)
     return "k8s", str(path)
-
-
-async def push(root: Path, *, initial: bool = False) -> None:
-    """Send changed inputs; only initialize the agent's workspace once."""
-    if not remote_workspace(root):
-        return
-    manifest_path = root / "transferred-inputs.json"
-    old = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
-    current = {}
-    changed = False
-    stream = io.BytesIO()
-    with tarfile.open(fileobj=stream, mode="w:gz", dereference=True) as archive:
-        for file in sorted((root / "inputs").rglob("*")):
-            if not file.is_file():
-                continue
-            relative = file.relative_to(root).as_posix()
-            stat = file.stat()
-            current[relative] = [stat.st_size, stat.st_mtime_ns]
-            if old.get(relative) != current[relative]:
-                archive.add(file, arcname=relative)
-                changed = True
-        if initial:
-            archive.add(root / "work", arcname="workspace")
-            changed = True
-    if not changed:
-        return
-    await sandbox().write_file("/tmp/investigator-inputs.tar.gz", stream.getvalue())
-    result = await sandbox().exec(
-        [
-            "python",
-            "-c",
-            "import tarfile; t=tarfile.open('/tmp/investigator-inputs.tar.gz'); "
-            "t.extractall('/', filter='data')",
-        ],
-        timeout=300,
-    )
-    if not result.success:
-        raise ToolError(f"Could not stage investigator inputs: {result.stderr}")
-    manifest_path.write_text(json.dumps(current))
 
 
 def extract_workspace(data: bytes, destination: Path) -> list[str]:
@@ -129,9 +88,7 @@ def extract_workspace(data: bytes, destination: Path) -> list[str]:
 
 
 async def pull(root: Path) -> list[str]:
-    """Mirror the report and journal to the host; return notes for the agent."""
-    if not remote_workspace(root):
-        return []
+    """Copy the report and journal to the host; return notes for the agent."""
     listing = await sandbox().exec(
         [
             "sh",
@@ -199,25 +156,6 @@ async def pull(root: Path) -> list[str]:
     return []
 
 
-async def fetch_workspace_file(root: Path, path: str) -> Path:
-    """Copy one file the agent wrote (e.g. a job config) to the host mirror."""
-    normal = posixpath.normpath(path)
-    if not normal.startswith("/workspace/"):
-        raise ToolError("path must be under /workspace")
-    host = root / "work" / Path(normal).relative_to("/workspace")
-    if remote_workspace(root):
-        try:
-            content = await sandbox().read_file(normal, text=False)
-        except FileNotFoundError as ex:
-            raise ToolError(f"no such file: {path}") from ex
-        host.parent.mkdir(parents=True, exist_ok=True)
-        host.write_bytes(content)
-    resolved = host.resolve()
-    if not resolved.is_relative_to((root / "work").resolve()) or not resolved.is_file():
-        raise ToolError(f"no such file: {path}")
-    return resolved
-
-
 async def fetch_inputs_files(root: Path, paths: list[str]) -> None:
     """Copy /inputs files the host does not have back from the box, on demand.
 
@@ -225,8 +163,6 @@ async def fetch_inputs_files(root: Path, paths: list[str]) -> None:
     not in the host's scratch directory; publication validates cited evidence on the
     host, so it asks for exactly the files it cites.
     """
-    if not remote_workspace(root):
-        return
     for path in paths:
         normal = posixpath.normpath(path)
         if not normal.startswith("/inputs/"):
@@ -243,17 +179,16 @@ async def fetch_inputs_files(root: Path, paths: list[str]) -> None:
 
 
 async def push_assessments(root: Path) -> None:
-    if remote_workspace(root):
-        path = root / "work/report/assessments.tex"
-        if path.exists():
-            await sandbox().write_file("/workspace/report/assessments.tex", path.read_bytes())
+    path = root / "work/report/assessments.tex"
+    if path.exists():
+        await sandbox().write_file("/workspace/report/assessments.tex", path.read_bytes())
 
 
 def _destination(root: Path, name: str) -> str:
-    settings = json.loads((root / "remote-workspace.json").read_text())
+    settings = json.loads((root / "artifacts.json").read_text())
     # keyed by sample and epoch, not by uuid: Inspect gives a resumed sample a new
     # uuid, and a resume must find (and add to) what the interrupted run saved
-    key = settings.get("sample_key") or settings["sample_uuid"]
+    key = settings["sample_key"]
     return f"{settings['artifact_dir'].rstrip('/')}/{key}/{name}"
 
 
@@ -338,114 +273,52 @@ async def persist(root: Path, source: Path, name: str) -> str:
     raise ToolError(f"Could not save {name} to {destination}: {last}. Try again.")
 
 
-async def save_state(root: Path) -> None:
-    """Keep the ledger, spend, journal and draft report outside the runner pod.
-
-    Written after every host tool call and at cleanup, so a run that dies keeps its
-    record of child jobs and spend and the report as far as it got.
-    """
-    if not remote_workspace(root):
-        return
-    manifest_path = root / "saved-state.json"
-    old = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
-    candidates: dict[str, Path] = {n: root / n for n in STATE_FILES if (root / n).is_file()}
-    for base in (root / "jobs", root / "work"):
-        if base.is_dir():
-            for file in base.rglob("*"):
-                # collected child logs stay on Hawk, where their job wrote them: the
-                # ledger names the eval set, and a copy here would be imported
-                if file.suffix == ".eval" or "downloads" in file.relative_to(base).parts:
-                    continue
-                if file.is_file() and not file.is_symlink():
-                    candidates[file.relative_to(root).as_posix()] = file
-    current = {k: [f.stat().st_size, f.stat().st_mtime_ns] for k, f in candidates.items()}
-    changed = {k: f for k, f in candidates.items() if old.get(k) != current[k]}
-    if not changed:
-        return
-    await anyio.to_thread.run_sync(_upload, changed, _destination(root, "state"))
-    manifest_path.write_text(json.dumps(current))
-
-
 @solver
-def stage_workspace(root: Path) -> Solver:
+def stage_inputs(root: Path) -> Solver:
+    """Lay the staged inputs and the starting workspace into a fresh box, once.
+
+    A resumed sample skips this: checkpointing restores /inputs and /workspace as
+    the interrupted run left them.
+    """
+
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        path = root / "remote-workspace.json"
-        settings = json.loads(path.read_text())
-        settings["sample_uuid"] = state.uuid
-        settings["sample_key"] = sample_key(state)
-        path.write_text(json.dumps(settings))
-        # a retried sample gets a fresh pod: everything must be sent again
-        for name in ("transferred-inputs.json", "saved-state.json"):
-            (root / name).unlink(missing_ok=True)
-        await push(root, initial=True)
-        result = await sandbox().exec(["latexmk", "-v"], timeout=60)
-        if not result.success:
-            raise RuntimeError("The investigator image cannot run latexmk")
-        probe = root / "preflight"
-        probe.mkdir(exist_ok=True)
-        (probe / "preflight.json").write_text(
-            json.dumps(
-                {
-                    "sandbox": "ready",
-                    "latex": "available",
-                    "sample_uuid": state.uuid,
-                }
-            )
-        )
-        await persist(root, probe, "preflight")
+        settings_path = root / "artifacts.json"
+        if settings_path.exists():
+            settings = json.loads(settings_path.read_text())
+            # keyed by sample and epoch: a resumed sample gets a new uuid
+            settings["sample_key"] = sample_key(state)
+            settings_path.write_text(json.dumps(settings))
+        marker = await sandbox().exec(["test", "-e", "/workspace/.staged"])
+        if marker.success:
+            return state
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w:gz", dereference=True) as archive:
+            archive.add(root / "inputs", arcname="inputs")
+            archive.add(root / "work", arcname="workspace")
+        await write_into(stream.getvalue(), "/")
+        await sandbox().exec(["touch", "/workspace/.staged"])
         return state
 
     return solve
 
 
-def cleanup(root: Path) -> Any:
-    """Task cleanup: save what exists however the sample ended."""
-
-    async def run(state: TaskState) -> None:
-        if not remote_workspace(root):
-            return
-        try:
-            await pull(root)
-        except Exception as ex:
-            logger.warning(f"Final workspace pull failed: {ex}")
-        await save_state(root)
-
-    return run
+async def write_into(archive: bytes, destination: str) -> None:
+    """Unpack a gzipped tar into the box at `destination`."""
+    await sandbox().write_file("/tmp/staged.tar.gz", archive)
+    result = await sandbox().exec(
+        ["tar", "-xzf", "/tmp/staged.tar.gz", "-C", destination, "--no-same-owner"],
+        timeout=600,
+    )
+    await sandbox().exec(["rm", "-f", "/tmp/staged.tar.gz"])
+    if not result.success:
+        raise ToolError(f"Could not stage files into the box: {result.stderr}")
 
 
-def synchronized(tool: Tool, root: Path) -> Tool:
-    """Deliver what a trusted host tool wrote to the box, and save the records.
-
-    Sync problems are reported alongside the tool's own result, never instead of
-    it: a submission that went through must not look like one that failed.
-    """
-    definition = ToolDef(tool)
-
-    async def execute(**kwargs: Any) -> Any:
-        # no pull first: these tools read nothing the agent wrote except a job config,
-        # which hawk_submit fetches itself. What they write (collected logs, indexes,
-        # transcripts) goes into the box afterwards, and the records are saved.
-        notes: list[str] = []
-        try:
-            result = await tool(**kwargs)
-        finally:
-            for step in (push, save_state):
-                try:
-                    await step(root)
-                except Exception as ex:
-                    notes.append(f"{step.__name__} after this call failed: {ex}")
-                    logger.warning(f"{step.__name__} failed: {ex}")
-        if notes and isinstance(result, str):
-            result += "\n\n[workspace] " + "\n[workspace] ".join(notes)
-        return result
-
-    return ToolDef(
-        execute,
-        name=definition.name,
-        description=definition.description,
-        parameters=definition.parameters,
-        parallel=False,
-        viewer=definition.viewer,
-        model_input=definition.model_input,
-        max_output=definition.max_output,
-    ).as_tool()
+async def copy_into_box(files: list[Path], destination: str) -> None:
+    """Copy host files into one box directory, as one archive."""
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
+        for file in files:
+            archive.add(file, arcname=file.name)
+    await sandbox().exec(["mkdir", "-p", destination])
+    await write_into(stream.getvalue(), destination)

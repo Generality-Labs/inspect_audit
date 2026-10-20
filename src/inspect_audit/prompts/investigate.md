@@ -28,9 +28,9 @@ Use Inspect's log, scoring and execution APIs instead of recreating them. Read t
 relevant log skill or supplied API docs before an unfamiliar operation. Other skills
 are references to load when needed, not a reading list to complete upfront.
 
-If remote work is configured, read running-jobs before submitting. The seed lists
-allowed workers; tool validation and budget() govern what you can commission. Unknown
-cost is not zero. Preserve time and allowance for publication. Infrastructure failures
+If jobs are configured, read running-jobs before launching one. The seed lists the
+models each part may use. Every call you and your jobs make draws on one model key;
+budget() says what it has left. Preserve time and money for publication. Infrastructure failures
 in our audit setup are limitations, not automatically benchmark defects.
 
 External discussions are leads: verify them independently and record exposure to prior

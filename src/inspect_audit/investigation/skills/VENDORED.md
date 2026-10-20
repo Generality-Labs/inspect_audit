@@ -12,14 +12,9 @@ below derive from upstream skills and are adapted, not verbatim copies.
 | check-trajectories-workflow | same | 67a9ea5 |
 | eval-report-workflow | same | 67a9ea5 |
 | read-eval-logs | same | 67a9ea5 |
-| view-results | METR hawk `.claude/skills` | 45f629c (2026-08-25) |
-| debug-stuck-eval | same | 45f629c |
-| babysit-eval | same | 45f629c |
-| babysitting-evals | meridianlabs-ai/inspect-skills `plugins/inspect-skills/skills` (0.4.5) | 8a9dbaf (2026-09-26) |
 
 All source repositories are MIT licensed (Copyright (c) 2024 UK AI Security Institute;
-Copyright (c) 2026 METR; Meridian Labs, see ../../skills/LICENSE.meridian). babysitting-evals is
-verbatim apart from an added `In this container` section mapping `inspect ctl` onto `jobs()`. `reading-logs`, `analyzing-logs` and `map-inspect-packages`
+Meridian Labs, see ../../skills/LICENSE.meridian). `reading-logs`, `analyzing-logs` and `map-inspect-packages`
 are mounted too and live in `../../skills` with their own note.
 
 ## What was changed
@@ -40,3 +35,11 @@ eval-report-workflow, read-eval-logs and babysit-eval. The maintained investigat
 writing and running-jobs skills cover the workflow; reading-logs/analyzing-logs provide
 the Inspect APIs. Focused validity, dataset, security and Hawk diagnostic references
 remain available. INVESTIGATION_SKILLS in _investigate.py is the authoritative loadout.
+
+## Removed 2026-10-20
+
+view-results, debug-stuck-eval, babysit-eval (METR hawk) and babysitting-evals (Meridian)
+mapped Hawk and `inspect ctl` diagnostics onto `jobs()` actions (watch, trace,
+stacktrace, samples, transcripts) that the investigator no longer has: jobs now run
+through one small interface on Hawk or locally, and a job's runner log is the
+diagnostic both places share.

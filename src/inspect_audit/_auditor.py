@@ -6,12 +6,9 @@ recorded attempts at this item -- and runs a react agent with the checks in scop
 """
 
 import base64
-import io
 import json
-import tarfile
 from collections.abc import Sequence
 from io import BytesIO
-from pathlib import Path
 from typing import Any
 
 from inspect_ai.agent import AgentState, AgentSubmit, react
@@ -28,6 +25,7 @@ from ._compose import AUDITOR
 from ._grade import grade_tool
 from ._logs import LogIndex, log_tools
 from ._reset import reset_tool
+from ._source import SourceCopy
 from ._verdicts import (
     SKILLS,
     SUPPORT_SKILLS,
@@ -42,25 +40,6 @@ ITEM_PROMPT = (
     "Audit this benchmark item. It is described in /audit/item.json in your box; "
     "the benchmark's source is under /audit/benchmark/."
 )
-MAX_SOURCE_BYTES = 100 * 1024 * 1024
-
-
-def source_archive(source: Path) -> bytes:
-    """The benchmark's source directory as a tar, refusing anything oversized."""
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        archive.add(
-            source,
-            arcname="benchmark",
-            filter=lambda info: None if "__pycache__" in info.name else info,
-        )
-    data = buffer.getvalue()
-    if len(data) > MAX_SOURCE_BYTES:
-        raise ValueError(
-            f"the benchmark source at {source} is {len(data) // 2**20} MiB compressed; "
-            "declare a narrower source="
-        )
-    return data
 
 
 async def _write_media(messages: Sequence[ChatMessage]) -> list[Any]:
@@ -91,7 +70,7 @@ async def _write_media(messages: Sequence[ChatMessage]) -> list[Any]:
 async def stage_item(
     state: TaskState,
     their_sample: Sample,
-    archive: bytes | None,
+    source: SourceCopy | None,
     redact: Sequence[str],
 ) -> None:
     """Write the item and the benchmark's source into the auditor's box."""
@@ -106,10 +85,11 @@ async def stage_item(
         "files_in_their_box": sorted((their_sample.files or {}).keys()),
         "has_setup_script": their_sample.setup is not None,
         "assessment_ids": store_as(AssessmentUnits).ids,
+        "benchmark_source": source.manifest() if source is not None else None,
     }
     await box.write_file(f"{AUDIT_ROOT}/item.json", json.dumps(item, indent=2, default=str))
-    if archive is not None:
-        await box.write_file(f"{AUDIT_ROOT}/benchmark.tar.gz", archive)
+    if source is not None:
+        await box.write_file(f"{AUDIT_ROOT}/benchmark.tar.gz", source.archive())
         unpacked = await box.exec(
             ["tar", "-xzf", f"{AUDIT_ROOT}/benchmark.tar.gz", "-C", AUDIT_ROOT]
         )
@@ -160,14 +140,13 @@ def auditor(
     their_setup: list[Solver],
     their_samples: dict[str, Sample],
     index: LogIndex | None,
-    source: Path | None,
+    source: SourceCopy | None,
     assessment_ids: dict[str, list[str]] | None = None,
     redact: Sequence[str] = (),
     confidential: bool = False,
     notes: str | None = None,
 ) -> Solver:
     """Audit the sample this solver runs in, in place of the benchmark's solver."""
-    archive = source_archive(source) if source is not None else None
     granted = {name for check in checks for name in check.tools}
     skill_dirs = [
         str(path)
@@ -186,7 +165,7 @@ def auditor(
         their_sample = their_samples[sample_id]
         their_messages = list(state.messages)
         store_as(AssessmentUnits).ids = list((assessment_ids or {}).get(sample_id) or [sample_id])
-        await stage_item(state, their_sample, archive, redact)
+        await stage_item(state, their_sample, source, redact)
 
         tools: list[Tool] = [
             _bash("auditor_bash", AUDITOR, "Run bash in your own box (internet, /audit).", 300),

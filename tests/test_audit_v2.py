@@ -181,6 +181,38 @@ def test_an_audit_runs_inside_the_benchmark(tmp_path: Path) -> None:
     assert grades == ["C", "I", "C", "C"]  # right, broken box, rebuilt, recorded completion
     assert "rebuilt default" in by_call[5]
     staged, _, listing = by_call[8].rpartition("}")
-    assert json.loads(staged + "}")["target"] == ["42"] and "toy.py" in listing
+    item = json.loads(staged + "}")
+    assert item["target"] == ["42"] and "toy.py" in listing
+    assert "toy.py" in item["benchmark_source"]["copied"]
     assert sample.scores and sample.scores["red-teaming"].value == "RESISTANT"
     assert toy.SCORER_CALLS == ["a"] * 4  # their grader ran only for grade, never on the auditor
+
+
+# -- the benchmark's code, as staged for the auditor ----------------------------------
+
+
+def test_the_source_copy_follows_imports_within_the_package() -> None:
+    from inspect_audit._source import collect_source
+
+    package = Path(__file__).parent / "fixtures" / "source_pkg"
+    copied = set(collect_source(package / "bench" / "tasks" / "qa" / "qa.py").manifest()["copied"])  # type: ignore[arg-type]
+    assert {
+        "bench/__init__.py",
+        "bench/tasks/__init__.py",
+        "bench/tasks/qa/__init__.py",
+        "bench/tasks/qa/qa.py",
+        "bench/tasks/qa/items.csv",  # the task folder's data
+        "bench/tasks/shared.py",  # a relative import
+        "bench/utils/__init__.py",
+        "bench/utils/data.py",
+        "bench/utils/grading.py",  # imported lazily, inside a function
+        "bench/utils/templates/judge.txt",  # a helper's data folder
+    } <= copied
+    assert "bench/other/unrelated.py" not in copied
+
+
+def test_without_logs_the_judge_must_be_declared() -> None:
+    with pytest.raises(ValueError, match="declare their scorers' judge"):
+        judge_roles(None, None)
+    assert judge_roles(None, {}) == {}
+    assert judge_roles(None, {"grader": "openai/gpt-4.1"}) == {"grader": "openai/gpt-4.1"}

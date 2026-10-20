@@ -23,6 +23,7 @@ from inspect_ai.util import registry_create, registry_info
 from ._auditor import auditor
 from ._compose import UnsupportedBenchmarkError, audit_compose, their_compose, their_sandbox
 from ._logs import LogIndex, LogMismatchError, index_logs
+from ._source import SourceCopy, collect_directory, collect_source
 from ._verdicts import audit_items, item_scorer
 
 
@@ -32,19 +33,29 @@ def _as_list(value: Any) -> list[Any]:
     return list(value) if isinstance(value, list) else [value]
 
 
-def _task_source(task: Task, name: str) -> Path:
-    """The directory holding the task's code, as `@task` recorded it."""
+def _task_source(task: Task, name: str, source: str | None) -> SourceCopy:
+    """The benchmark code to stage: a declared directory whole, else followed from the task file."""
+    if source is not None:
+        directory = Path(source)
+        if not directory.is_dir():
+            raise ValueError(f"source={source!r} is not a directory")
+        return collect_directory(directory)
     file = getattr(task, "__task_file__", None)
     if not file:
         raise UnsupportedBenchmarkError(f"task {name!r} records no source file; pass source=")
-    return Path(file).parent
+    return collect_source(Path(file))
 
 
 def judge_roles(index: LogIndex | None, judge: dict[str, str] | None) -> dict[str, str]:
     """The model roles their scorers grade with: recorded in the logs, or declared."""
-    declared = dict(judge or {})
     if index is None:
-        return declared
+        if judge is None:
+            raise ValueError(
+                "without logs, declare their scorers' judge: judge={role: model}, "
+                "or judge={} when their scorers call no model"
+            )
+        return dict(judge)
+    declared = dict(judge or {})
     for role, model in declared.items():
         recorded = index.judges.get(role)
         if recorded is not None and recorded != model:
@@ -94,10 +105,12 @@ def audit_task(
         task_args: The benchmark task's arguments, exactly as the logs ran it.
         logs: `.eval` files recording attempts at this task; every header must
             match the declared task, arguments and installed benchmark version.
-        judge: Model roles for their scorers, role -> model. Taken from the logs
-            when they record them; declared values must agree with the logs.
-        source: Directory of the benchmark's code to copy into the auditor's box.
-            Defaults to the registered task's own directory.
+        judge: Model roles for their scorers (the LLM judge), role -> model. Taken
+            from the logs when given; declared values must agree with them. Required
+            without logs: `{}` when their scorers call no model.
+        source: A directory of the benchmark's code to copy whole into the auditor's
+            box. By default the task's file and every module it imports from its own
+            package are copied, with their folders' data files (see `_source`).
         compose: The benchmark's compose file, when its task names only `"docker"`.
         assessment_ids: Assessment-unit ids per sample for question labels.
         redact: Metadata keys withheld from the staged item.
@@ -157,7 +170,7 @@ def audit_task(
         their_setup=their_setup,
         their_samples=by_id,
         index=index,
-        source=Path(source) if source is not None else _task_source(their, name),
+        source=_task_source(their, name, source),
         assessment_ids=assessment_ids,
         redact=redact,
         confidential=confidential,

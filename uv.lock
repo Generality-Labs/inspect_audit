@@ -1485,7 +1485,7 @@ dev = [
     { name = "aiofiles", marker = "python_full_version >= '3.13'" },
     { name = "basedpyright", specifier = ">=1.39" },
     { name = "hawk", extras = ["cli"], marker = "python_full_version >= '3.13'", specifier = ">=3.4,<4" },
-    { name = "inspect-evals", specifier = "==0.14.4" },
+    { name = "inspect-evals", git = "https://github.com/Generality-Labs/inspect_evals?rev=67a9ea5333d3fc672ebce3ca9724bcfdad87f541" },
     { name = "inspect-k8s-sandbox", specifier = ">=0.13" },
     { name = "pandas-stubs" },
     { name = "pre-commit", specifier = ">=4.0.0" },
@@ -1497,8 +1497,8 @@ dev = [
 
 [[package]]
 name = "inspect-evals"
-version = "0.14.4"
-source = { registry = "https://pypi.org/simple" }
+version = "0.0.1.dev2706+unknown.g67a9ea533"
+source = { git = "https://github.com/Generality-Labs/inspect_evals?rev=67a9ea5333d3fc672ebce3ca9724bcfdad87f541#67a9ea5333d3fc672ebce3ca9724bcfdad87f541" }
 dependencies = [
     { name = "backoff" },
     { name = "datasets" },
@@ -1515,10 +1515,6 @@ dependencies = [
     { name = "requests" },
     { name = "tiktoken" },
     { name = "toml" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/24/64dc2dff7c9a263cd452b0141523e1ea79fea048faa69a21de2b7001bca9/inspect_evals-0.14.4.tar.gz", hash = "sha256:ec49d99c625afff3a0be5c7563355039ab7f3bd263663b662eab576f9753c47b", size = 44671551, upload-time = "2026-07-14T03:21:28.41Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/25/1b/6f442b941446450ac73a736a708bb06fa516077988aed00f20b7b3598327/inspect_evals-0.14.4-py3-none-any.whl", hash = "sha256:729e4301d93d3a76a41e702deeb98eeb3bc4506620a78bcb26ae967f35623b06", size = 28336614, upload-time = "2026-07-14T03:21:24.922Z" },
 ]
 
 [[package]]

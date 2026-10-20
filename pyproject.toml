@@ -52,7 +52,7 @@ dev = [
     "hawk[cli]>=3.4,<4; python_version >= '3.13'",
     "inspect-k8s-sandbox>=0.13",
     "aiofiles; python_version >= '3.13'",
-    "inspect-evals==0.14.4",
+    "inspect-evals",
 ]
 
 [tool.hatch.version]
@@ -134,3 +134,6 @@ pythonpath = ["src", "tests"]
 markers = ["docker: needs a running Docker daemon"]
 # The docker suite is deselected by default; `pytest -m docker` runs it alone.
 addopts = "-rA --durations=10 --color=yes --cov=src --cov-report=term-missing -m 'not docker'"
+
+[tool.uv.sources]
+inspect-evals = { git = "https://github.com/Generality-Labs/inspect_evals", rev = "67a9ea5333d3fc672ebce3ca9724bcfdad87f541" }

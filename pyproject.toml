@@ -52,6 +52,7 @@ dev = [
     "hawk[cli]>=3.4,<4; python_version >= '3.13'",
     "inspect-k8s-sandbox>=0.13",
     "aiofiles; python_version >= '3.13'",
+    "inspect-evals==0.14.4",
 ]
 
 [tool.hatch.version]

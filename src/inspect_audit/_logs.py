@@ -63,6 +63,8 @@ class LogIndex:
     scorer_models: set[str] = field(default_factory=set)
     """Models the recorded scorers actually called, from scoring spans."""
     eval_models: set[str] = field(default_factory=set)
+    shuffled: bool = False
+    """Whether any recorded run shuffled its dataset (positional ids then unstable)."""
 
     def for_sample(self, sample_id: str) -> list[Attempt]:
         return self.attempts.get(sample_id, [])
@@ -162,6 +164,7 @@ def index_logs(
             )
         roles_seen = roles
         index.eval_models.add(header.eval.model)
+        index.shuffled = index.shuffled or bool(header.eval.dataset.shuffled)
         summaries = read_eval_log_sample_summaries(path)
         for summary in summaries:
             key = (header.eval.eval_id, str(summary.id), summary.epoch)
@@ -186,7 +189,13 @@ def index_logs(
             )
         scored = next((s for s in summaries if s.scores), None)
         if scored is not None:
-            index.scorer_models |= _scorer_models(path, scored.id, scored.epoch)
+            try:
+                index.scorer_models |= _scorer_models(path, scored.id, scored.epoch)
+            except (IndexError, KeyError):
+                raise LogMismatchError(
+                    f"{path} lists {len(summaries)} samples but holds none of them (a compacted "
+                    "log): it has no transcripts to audit"
+                ) from None
     index.judges = roles_seen or {}
     return index
 

@@ -34,16 +34,43 @@ def _as_list(value: Any) -> list[Any]:
 
 
 def _task_source(task: Task, name: str, source: str | None) -> SourceCopy:
-    """The benchmark code to stage: a declared directory whole, else followed from the task file."""
+    """The benchmark code to stage.
+
+    `source=` a `.py` file: imports followed from it within its package. A directory:
+    copied whole. Otherwise the task's own file, which Inspect records only for tasks
+    not from an installed package.
+    """
     if source is not None:
-        directory = Path(source)
-        if not directory.is_dir():
-            raise ValueError(f"source={source!r} is not a directory")
-        return collect_directory(directory)
+        path = Path(source)
+        if path.is_file() and path.suffix == ".py":
+            return collect_source(path)
+        if path.is_dir():
+            return collect_directory(path)
+        raise ValueError(f"source={source!r} is neither a .py file nor a directory")
     file = getattr(task, "__task_file__", None)
     if not file:
-        raise UnsupportedBenchmarkError(f"task {name!r} records no source file; pass source=")
+        raise UnsupportedBenchmarkError(
+            f"task {name!r} comes from an installed package, for which Inspect records no "
+            "source file: pass source= with the task's .py file"
+        )
     return collect_source(Path(file))
+
+
+def check_same_items(index: LogIndex, samples: list[Sample]) -> None:
+    """Each audited sample's input must be the input its logged attempts were given."""
+    from inspect_ai.log import read_eval_log_sample
+
+    for sample in samples:
+        attempts = index.for_sample(str(sample.id))
+        if not attempts:
+            continue
+        first = attempts[0]
+        logged = read_eval_log_sample(first.log, id=first.sample_id, epoch=first.epoch).input
+        if logged != sample.input:
+            raise LogMismatchError(
+                f"sample {sample.id}: the installed benchmark's input differs from the input "
+                f"logged in {first.log}"
+            )
 
 
 def judge_roles(index: LogIndex | None, judge: dict[str, str] | None) -> dict[str, str]:
@@ -108,9 +135,10 @@ def audit_task(
         judge: Model roles for their scorers (the LLM judge), role -> model. Taken
             from the logs when given; declared values must agree with them. Required
             without logs: `{}` when their scorers call no model.
-        source: A directory of the benchmark's code to copy whole into the auditor's
-            box. By default the task's file and every module it imports from its own
-            package are copied, with their folders' data files (see `_source`).
+        source: The benchmark's code for the auditor's box: the task's `.py` file (its
+            imports within its package are followed, with their folders' data files;
+            see `_source`) or a directory copied whole. Required for tasks from an
+            installed package; otherwise defaults to the task's own file.
         compose: The benchmark's compose file, when its task names only `"docker"`.
         assessment_ids: Assessment-unit ids per sample for question labels.
         redact: Metadata keys withheld from the staged item.
@@ -133,10 +161,15 @@ def audit_task(
         package = name.split("/")[0] if "/" in name else None
     scoped = audit_items(list(checks))
 
-    # their samples, as declared
+    # their samples, as declared. Samples without ids get Inspect's own rule, position + 1
+    # over the whole dataset before any selection, exactly as an eval would number them
     dataset = list(their.dataset)
-    if any(s.id is None for s in dataset):
-        raise UnsupportedBenchmarkError("the benchmark's samples have no ids to declare")
+    missing = [s for s in dataset if s.id is None]
+    positional = bool(missing)
+    if positional and len(missing) != len(dataset):
+        raise UnsupportedBenchmarkError("some of the benchmark's samples have ids and some do not")
+    if positional:
+        dataset = [s.model_copy(update={"id": i + 1}) for i, s in enumerate(dataset)]
     by_id: dict[str, Sample] = {str(s.id): s for s in dataset}
     if samples == "all":
         chosen = list(by_id)
@@ -155,6 +188,13 @@ def audit_task(
         else None
     )
     roles = judge_roles(index, judge)
+    if index is not None:
+        if positional and index.shuffled:
+            raise LogMismatchError(
+                "the benchmark's samples are numbered by position and the logged run shuffled "
+                "them, so a logged id need not be the same question"
+            )
+        check_same_items(index, selected)
 
     stage = Path(tempfile.mkdtemp(prefix="inspect_audit_"))
     spec = their_sandbox(their.sandbox, selected)

@@ -16,7 +16,6 @@ import re
 import shutil
 import subprocess
 import tarfile
-import tempfile
 import urllib.request
 from dataclasses import dataclass
 from importlib.metadata import version
@@ -577,12 +576,13 @@ def docker_box(root: Path) -> tuple[str, str]:
     return "docker", str(root / "compose.yaml")
 
 
-async def key_balance(runs: str | None) -> list[str]:
+async def key_balance(hawk_api_url: str | None, openrouter: bool) -> list[str]:
     """What the model keys this investigation spends on have left, as their owners say.
 
-    On Hawk, every call (this agent's and its jobs') is made as this run's user, and
-    Hawk reports that user's key. Locally, calls go to OpenRouter on
-    OPENROUTER_API_KEY, which OpenRouter reports. Neither is computed here.
+    Calls made as a Hawk user (the investigator in a Hawk pod, jobs run on Hawk)
+    bill to that user's key, which Hawk reports. Calls made on OPENROUTER_API_KEY
+    (the investigator in a local box, local jobs) bill to that key, which OpenRouter
+    reports. Which applies is declared by the caller; nothing is computed here.
     """
 
     def get(url: str, token: str) -> dict[str, Any]:
@@ -591,38 +591,45 @@ async def key_balance(runs: str | None) -> list[str]:
             return dict(json.load(response))
 
     lines: list[str] = []
-    if os.environ.get("HAWK_JOB_ID") or runs == "hawk":
+    if hawk_api_url:
         from ._runs import HawkLogin
 
-        login = HawkLogin(os.environ["HAWK_API_URL"])
-        body = await asyncio.to_thread(
-            get, f"{login.api_url.rstrip('/')}/usage/balance", await login.access_token()
-        )
-        if body.get("status") == "shared":
-            lines.append("Hawk: this user has no capped key; spending is not limited by a key")
-        else:
-            lines.append(f"Hawk key: ${float(body.get('remaining_usd') or 0):.2f} remaining")
-    if not os.environ.get("HAWK_JOB_ID") and (key := os.environ.get("OPENROUTER_API_KEY")):
-        data = (await asyncio.to_thread(get, f"{OPENROUTER}/key", key)).get("data") or {}
-        if data.get("limit") is None:
-            lines.append(f"OpenRouter key: no limit; ${float(data.get('usage') or 0):.2f} used")
-        else:
-            lines.append(
-                f"OpenRouter key: ${float(data.get('limit_remaining') or 0):.2f} of "
-                f"${float(data['limit']):.2f} remaining"
+        try:
+            login = HawkLogin(hawk_api_url)
+            body = await asyncio.to_thread(
+                get, f"{hawk_api_url.rstrip('/')}/usage/balance", await login.access_token()
             )
-    return lines or ["no model key this process can ask about"]
+            if body.get("status") == "shared":
+                lines.append("Hawk: this user has no capped key; spending is not limited by a key")
+            else:
+                lines.append(f"Hawk key: ${float(body.get('remaining_usd') or 0):.2f} remaining")
+        except Exception as ex:
+            lines.append(f"Hawk key: could not ask ({type(ex).__name__}: {ex})")
+    if openrouter:
+        try:
+            key = os.environ["OPENROUTER_API_KEY"]
+            data = (await asyncio.to_thread(get, f"{OPENROUTER}/key", key)).get("data") or {}
+            if data.get("limit") is None:
+                lines.append(f"OpenRouter key: no limit; ${float(data.get('usage') or 0):.2f} used")
+            else:
+                lines.append(
+                    f"OpenRouter key: ${float(data.get('limit_remaining') or 0):.2f} of "
+                    f"${float(data['limit']):.2f} remaining"
+                )
+        except Exception as ex:
+            lines.append(f"OpenRouter key: could not ask ({type(ex).__name__}: {ex})")
+    return lines or ["no model key declared to ask about"]
 
 
 @tool(name="budget")
-def budget(runs: str | None) -> Tool:
+def budget(hawk_api_url: str | None, openrouter: bool) -> Tool:
     async def execute() -> str:
         """What the investigation's model key has left: this agent and every job draw on it.
 
         When it runs out, model calls fail with the provider's error, yours and your
         jobs' alike. Publish what you have before that.
         """
-        return "\n".join(await key_balance(runs))
+        return "\n".join(await key_balance(hawk_api_url, openrouter))
 
     return execute
 
@@ -708,6 +715,49 @@ class Investigation:
         )
 
 
+# task argument names that choose where code runs or what it reads: a job's task
+# arguments may not set them. A benchmark that takes `sandbox="local"` would run the
+# evaluated model's commands on the machine running the job, outside any container.
+# whole words of a snake_case name: `profile` is not a file, `data_dir` is a dir
+PLACEMENT_ARG = re.compile(
+    r"(^|_)(sandbox|image|docker|compose|path|filepath|filename|file|dir|directory|workdir|root|url|host)s?($|_)",
+    re.IGNORECASE,
+)
+MODEL_ARG = re.compile(r"(^|_)(model|judge|grader)s?($|_)", re.IGNORECASE)
+
+
+def argument_problems(args: Any, allowed: list[str], where: str = "task_args") -> list[str]:
+    """What a job's task arguments may not contain, at any depth.
+
+    No argument that places code or names a file, and no model outside the
+    investigation's lists. A task builds its own models from names in its arguments,
+    so they are held to the same lists as the job's models, in Inspect's spelling.
+    """
+    problems: list[str] = []
+    if isinstance(args, dict):
+        for key, value in args.items():
+            here = f"{where}.{key}"
+            if PLACEMENT_ARG.search(str(key)):
+                problems.append(f"{here}: jobs may not set where code runs or what it reads")
+            elif MODEL_ARG.search(str(key)) and isinstance(value, str):
+                if value.removeprefix("openrouter/") not in allowed or "/" not in value:
+                    problems.append(
+                        f"{here}: {value!r} is not an allowed model; write one of "
+                        + ", ".join(f"openrouter/{m}" for m in allowed)
+                    )
+            else:
+                problems += argument_problems(value, allowed, here)
+    elif isinstance(args, list):
+        for index, value in enumerate(args):
+            problems += argument_problems(value, allowed, f"{where}[{index}]")
+    return problems
+
+
+def check_arguments(task_args: dict[str, Any], allowed: list[str]) -> None:
+    if problems := argument_problems(task_args, allowed):
+        raise ToolError("task_args refused:\n- " + "\n- ".join(problems))
+
+
 @tool
 def run_benchmark(inv: Investigation) -> Tool:
     async def execute(
@@ -727,13 +777,16 @@ def run_benchmark(inv: Investigation) -> Tool:
             sample_ids: The benchmark's sample ids to run; null runs every sample.
             epochs: Attempts per sample per model.
             task_args: The task's arguments, exactly as the benchmark takes them;
-                {} for its defaults.
+                {} for its defaults. A model named in one must be a judge, written
+                openrouter/<id>; arguments that set a sandbox, image, path or file
+                are refused.
             model_roles: Role name to model for the benchmark's own judges, from the
                 judge list; {} when it has none.
             note: Why you are running this.
         """
         inv.allow(models, inv.menu.subjects, "evaluated")
         inv.allow(list(model_roles.values()), inv.menu.judges, "judges")
+        check_arguments(task_args, inv.menu.judges)
         job = Job(
             label=label,
             task=inv.task,
@@ -772,13 +825,15 @@ def run_audit(inv: Investigation) -> Tool:
                 ran, or supplied log sources from the seed; [] for none.
             auditor_model: The auditor, an OpenRouter id from the auditor list.
             item_cost_limit: Dollars one audited item may spend.
-            task_args: The benchmark's arguments, exactly as the logs ran it.
+            task_args: The benchmark's arguments, exactly as the logs ran it, under
+                the same rules as run_benchmark's.
             judge: Role name to model for the benchmark's judge, from the judge list.
                 With logs, it must be the model the logs record; {} for none.
             note: Why you are running this.
         """
         inv.allow([auditor_model], inv.menu.auditors, "the auditor")
         inv.allow(list(judge.values()), inv.menu.judges, "judges")
+        check_arguments(task_args, inv.menu.judges)
         addresses = []
         for name in logs:
             known = [j for j in inv.record().jobs if j["label"] == name]
@@ -920,6 +975,8 @@ def investigate(
     paths: list[str] | None = None,
     output_dir: str | None = None,
     runs: str | None = None,
+    box: str | None = None,
+    hawk_api_url: str | None = None,
     token_limit: str | int | None = None,
     interactive: bool | None = None,
     extra_skills: list[str] | None = None,
@@ -936,9 +993,9 @@ def investigate(
 ) -> Task:
     """Investigate a benchmark's source and logs, and publish a GL LaTeX report.
 
-    Runs wherever Inspect runs it: on Hawk the agent's box is a Kubernetes pod, on a
-    laptop a Docker container. Every model call bills to the key the run is made on,
-    which is the budget: a capped OpenRouter key locally, the run's Hawk user's
+    Runs wherever Inspect runs it. The agent's box (`box`) and where its jobs run
+    (`runs`) are declared, never inferred. Every model call bills to the key it is
+    made on, which is the budget: a capped OpenRouter key locally, the Hawk user's
     assigned key on Hawk.
 
     Args:
@@ -958,6 +1015,9 @@ def investigate(
             task's own directory and the modules its package shares.
         output_dir: Where the host keeps the investigation's files.
         runs: Where the agent's jobs run: "hawk" or "local". None gives it no jobs.
+        box: The agent's own box: "docker" (default), or "k8s" for a pod on Hawk.
+        hawk_api_url: Hawk's API, for jobs and balances on Hawk. Defaults to
+            HAWK_API_URL, Hawk's own setting.
         token_limit: Optional Inspect token limit (e.g. "output:500k").
         interactive: Wait for the operator over ACP after publishing.
         extra_skills: Additional skill directories to load.
@@ -971,8 +1031,8 @@ def investigate(
         judge_models: OpenRouter ids the benchmark's own judges may be. Declare the
             judges the audited logs record; none by default.
         investigator_image: Published investigator image, including LaTeX, for Hawk.
-        artifact_dir: On Hawk, the job's S3 artifacts directory: the published report
-            is saved there under this sample.
+        artifact_dir: Where the published report is also saved, under this sample:
+            on Hawk, the job's S3 artifacts directory. None keeps it on the host only.
         instructions: Operator instructions and scope, separate from benchmark background.
         required_coverage: Fraction of the question population (0-1) the published
             coverage.json must assess for the run to count as complete.
@@ -990,6 +1050,8 @@ def investigate(
     paths = settings.get("paths", paths)
     output_dir = settings.get("output_dir", output_dir)
     runs = settings.get("runs", runs)
+    box = settings.get("box", box) or "docker"
+    hawk_api_url = settings.get("hawk_api_url", hawk_api_url) or os.environ.get("HAWK_API_URL")
     token_limit = settings.get("token_limit", token_limit)
     interactive = bool(settings.get("interactive", interactive))
     extra_skills = settings.get("extra_skills", extra_skills)
@@ -1008,13 +1070,14 @@ def investigate(
     instructions = settings.get("instructions", instructions)
     required_coverage = settings.get("required_coverage", required_coverage)
 
-    on_hawk = bool(os.environ.get("HAWK_JOB_ID"))
     if runs not in (None, "hawk", "local"):
         raise ValueError("runs must be 'hawk', 'local' or None")
+    if box not in ("docker", "k8s"):
+        raise ValueError("box must be 'docker' or 'k8s'")
+    if "hawk" in (runs, "k8s" if box == "k8s" else None) and not hawk_api_url:
+        raise ValueError("Hawk work needs hawk_api_url (or HAWK_API_URL)")
     if required_coverage is not None and not (0 < float(required_coverage) <= 1):
         raise ValueError("required_coverage must be a fraction in (0, 1]")
-    if on_hawk and not (artifact_dir or "").startswith("s3://"):
-        raise ValueError("on Hawk, artifact_dir must be the job's S3 artifacts directory")
     if not repo:
         raise ValueError("investigate needs a repo: the benchmark to audit, or a config naming one")
     skill_paths = [str(ASSETS / "skills" / name) for name in INVESTIGATION_SKILLS] + [
@@ -1033,9 +1096,7 @@ def investigate(
         target_task = target_task or _only_task(local_repo)
         paths = paths or paths_from_metadata(local_repo, target_task)
         paper = paper or paper_from_metadata(local_repo, target_task)
-    output_dir = output_dir or (
-        str(Path(tempfile.gettempdir()) / "inspect-audit") if on_hawk else "investigations"
-    )
+    output_dir = output_dir or "investigations"
     root = prepare_workspace(
         repo,
         revision,
@@ -1053,7 +1114,12 @@ def investigate(
         # 32KB default; everything else writes large results to files
         ToolDef(bash(timeout=300), max_output=128 * 1024).as_tool(),
         skill(skill_paths),
-        budget(runs),
+        # the agent's own calls bill to the Hawk user's key in a pod, to
+        # OPENROUTER_API_KEY in a local box; jobs to whichever their backend uses
+        budget(
+            hawk_api_url if "hawk" in (runs, "k8s" if box == "k8s" else None) else None,
+            openrouter=box == "docker" or runs == "local",
+        ),
         view_image(),
         check_report(str(root)),
         publish_report(str(root), required_coverage),
@@ -1086,9 +1152,7 @@ def investigate(
             supplied += [str(e["source"]) for e in seed["logs"] if not e.get("remote")]
         inv = Investigation(
             root=root,
-            runs=HawkRuns(os.environ.get("HAWK_API_URL", ""))
-            if runs == "hawk"
-            else LocalRuns(root / "runs"),
+            runs=HawkRuns(hawk_api_url or "") if runs == "hawk" else LocalRuns(root / "runs"),
             where=runs,
             task=target_task,
             task_package=task_package,
@@ -1110,7 +1174,9 @@ def investigate(
 
     from ._investigation_workspace import configure, stage_inputs
 
-    box = configure(root, investigator_image, artifact_dir or "") if on_hawk else docker_box(root)
+    sandbox = configure(root, investigator_image) if box == "k8s" else docker_box(root)
+    if artifact_dir:
+        (root / "artifacts.json").write_text(json.dumps({"artifact_dir": artifact_dir}))
 
     async def on_continue(state: AgentState) -> bool | str:
         return await _continue(state, interactive)
@@ -1136,7 +1202,7 @@ def investigate(
             truncation="auto",
             on_continue=on_continue,
         ),
-        sandbox=box,
+        sandbox=sandbox,
         # a crashed run resumes from its last checkpoint: the conversation, the box's
         # inputs and workspace, and the store's record of launched jobs
         checkpoint=CheckpointConfig(sandbox_paths={"default": ["/workspace", "/inputs"]}),
@@ -1148,5 +1214,6 @@ def investigate(
             "investigation_dir": str(root),
             "interactive": interactive,
             "runs": runs,
+            "box": box,
         },
     )

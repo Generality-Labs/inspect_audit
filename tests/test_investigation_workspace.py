@@ -85,7 +85,7 @@ def operation(fail: bool = False):
 
 
 def _remote_root(tmp_path, base="memory://audit-test/artifacts"):
-    workspace.configure(tmp_path, "image@sha256:abc", base)
+    workspace.configure(tmp_path, "image@sha256:abc")
     (tmp_path / "artifacts.json").write_text(
         json.dumps({"artifact_dir": base, "sample_key": "sample"})
     )
@@ -202,27 +202,29 @@ def test_an_upload_hawk_would_act_on_writes_nothing(tmp_path, monkeypatch):
     assert written == []  # checked before the first object, not after
 
 
-def test_on_hawk_the_box_is_a_pod_with_nothing_mounted(monkeypatch, tmp_path):
-    from inspect_audit import _investigate
-
-    monkeypatch.setenv("HAWK_JOB_ID", "test-investigation")
-    monkeypatch.setattr(_investigate.tempfile, "gettempdir", lambda: str(tmp_path))
-    with pytest.raises(ValueError, match="artifact_dir"):
-        investigate(repo="https://example.org/benchmark.git", revision="abc123")
+def test_a_k8s_box_is_a_pod_with_nothing_mounted(monkeypatch, tmp_path):
+    """The box is declared; nothing about where this process runs decides it."""
+    monkeypatch.setenv("HAWK_JOB_ID", "set-but-irrelevant")
+    assert investigate(repo="https://example.org/b.git", output_dir=str(tmp_path)).sandbox.type == (
+        "docker"
+    )
     task = investigate(
         repo="https://example.org/benchmark.git",
         revision="abc123",
+        output_dir=str(tmp_path),
+        box="k8s",
+        hawk_api_url="https://hawk.example",
         artifact_dir="s3://bucket/test-investigation/artifacts",
     )
-    assert Path(task.metadata["investigation_dir"]).parent == tmp_path / "inspect-audit"
     assert task.sandbox.type == "k8s"
     values = yaml.safe_load(Path(task.sandbox.config).read_text())
     assert "volumes" not in values["services"]["default"]
     assert values["automountServiceAccountToken"] is False
+    root = Path(task.metadata["investigation_dir"])
+    assert json.loads((root / "artifacts.json").read_text())["artifact_dir"].startswith("s3://")
 
 
-def test_off_hawk_the_box_is_a_container_with_nothing_mounted(monkeypatch, tmp_path):
-    monkeypatch.delenv("HAWK_JOB_ID", raising=False)
+def test_a_docker_box_is_a_container_with_nothing_mounted(tmp_path):
     task = investigate(repo="https://example.org/benchmark.git", output_dir=str(tmp_path))
     assert task.sandbox.type == "docker"
     compose = yaml.safe_load(Path(task.sandbox.config).read_text())

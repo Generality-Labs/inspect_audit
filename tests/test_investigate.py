@@ -811,7 +811,7 @@ def test_every_tool_schema_survives_a_strict_provider(tmp_path: Path) -> None:
         _investigate.run_benchmark(inv),
         _investigate.run_audit(inv),
         _investigate.jobs(inv),
-        _investigate.budget(None),
+        _investigate.budget(None, openrouter=False),
         view_image(),
         check_report("/tmp"),
         publish_report("/tmp"),

@@ -94,8 +94,6 @@ def test_a_child_job_runs_as_this_runs_user_with_its_current_credentials(
             # hawk >= 3.5 returns the API body rather than the bare id
             return {"eval_set_id": "child-job", "warnings": []}
 
-    monkeypatch.setenv("HAWK_JOB_ID", "parent-job")
-    monkeypatch.setenv("HAWK_RUNNER_REFRESH_TOKEN", "startup")
     monkeypatch.setattr(_hooks, "override_api_key", refresh)
     monkeypatch.setattr(_hooks, "get_all_hooks", lambda: [hook])
     monkeypatch.setattr(hawk.client, "HawkClient", Client)
@@ -254,3 +252,56 @@ def test_an_audit_reads_logs_by_job_label_or_supplied_source(
         asyncio.run(
             audit("a2", ["1"], ["gold-answer"], ["/etc/passwd"], "openai/auditor", 0.5, {}, {}, "")  # type: ignore[arg-type]
         )
+
+
+def test_a_local_job_sees_only_the_environment_it_needs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Benchmark code in a local job must not see the operator's other secrets."""
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "operator-secret")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-capped")
+    (tmp_path / "env.py").write_text(
+        TASK_FILE.replace(
+            "    return Task(",
+            "    import os, pathlib\n"
+            "    pathlib.Path(__file__).with_name('seen.txt').write_text(','.join(sorted(os.environ)))\n"
+            "    return Task(",
+        )
+    )
+    runs = LocalRuns(tmp_path / "runs", provider="mockllm")
+    job = Job(label="env", task=f"{tmp_path / 'env.py'}@tiny", package="", models=["model"])
+
+    async def run() -> str:
+        run_id = await runs.submit(job)
+        deadline = time.monotonic() + 120
+        while (status := await runs.status(run_id)) not in FINISHED:
+            assert time.monotonic() < deadline, await runs.runner_log(run_id)
+            await asyncio.sleep(1)
+        return status
+
+    assert asyncio.run(run()) == COMPLETE
+    seen = set((tmp_path / "seen.txt").read_text().split(","))
+    assert "OPENROUTER_API_KEY" in seen
+    assert "AWS_SECRET_ACCESS_KEY" not in seen
+
+
+def test_task_arguments_cannot_place_code_or_name_other_models() -> None:
+    allowed = ["openai/judge"]
+    assert _investigate.argument_problems({"scorer": "original", "profile": "x"}, allowed) == []
+    assert (
+        _investigate.argument_problems({"grader_model": "openrouter/openai/judge"}, allowed) == []
+    )
+    problems = _investigate.argument_problems(
+        {
+            "sandbox": "local",
+            "nested": {"data_dir": "/etc", "judge": "openai/gpt-6-astra"},
+            "items": [{"docker_image": "evil:latest"}],
+        },
+        allowed,
+    )
+    assert [p.split(":")[0] for p in problems] == [
+        "task_args.sandbox",
+        "task_args.nested.data_dir",
+        "task_args.nested.judge",
+        "task_args.items[0].docker_image",
+    ]

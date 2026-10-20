@@ -79,7 +79,7 @@ def hawk_config(job: Job) -> dict[str, Any]:
 class HawkLogin:
     """Hawk credentials for whoever this process runs as.
 
-    On a Hawk runner, the runner's own refresh hook. On a laptop, the operator's
+    Inside a Hawk runner, the runner's own refresh hook. Elsewhere, the operator's
     `hawk` login: only the `hawk` binary that wrote it can read it from the keychain
     without asking, so that binary is asked, past the venv's copy `uv run` puts
     first on PATH.
@@ -106,32 +106,32 @@ class HawkLogin:
             raise RuntimeError(f"hawk {' '.join(args)} failed: {result.stderr[-1500:]}")
         return str(result.stdout).strip()
 
+    @staticmethod
+    def _runner_hook() -> Any:
+        """Hawk's token refresh hook, when this process runs inside a Hawk runner."""
+        from inspect_ai.hooks._hooks import get_all_hooks
+
+        return next(
+            (h for h in get_all_hooks() if type(h).__module__ == "hawk.runner.refresh_token"),
+            None,
+        )
+
     async def access_token(self) -> str:
-        if os.environ.get("HAWK_JOB_ID"):
+        if self._runner_hook() is not None:
             from inspect_ai.hooks._hooks import override_api_key
 
             token = override_api_key("HAWK_ACCESS_TOKEN", "")
             if not token:
-                raise RuntimeError("Hawk runner's token refresh hook is not available")
+                raise RuntimeError("Hawk runner's token refresh hook gave no token")
             return token
         # fetched each time, not cached: the login refreshes it, a copy expires
         return await self._hawk("auth", "access-token")
 
     async def refresh_token(self) -> str:
         """The credential a child job's runner renews its access with: this user's."""
-        if os.environ.get("HAWK_JOB_ID"):
-            from inspect_ai.hooks._hooks import get_all_hooks
-
-            # the runner hook's current token, after a possible rotation; the
-            # environment holds only the credential supplied at startup
-            token = next(
-                (
-                    getattr(hook, "_current_refresh_token", None)
-                    for hook in get_all_hooks()
-                    if type(hook).__module__ == "hawk.runner.refresh_token"
-                ),
-                None,
-            ) or os.environ.get("HAWK_RUNNER_REFRESH_TOKEN")
+        # access first: refreshing it may rotate the hook's refresh token
+        if (hook := self._runner_hook()) is not None:
+            token = getattr(hook, "_current_refresh_token", None)
         else:
             token = await self._hawk("auth", "refresh-token")
         if not token:
@@ -302,11 +302,27 @@ class LocalRuns:
             await asyncio.sleep(0)
 
 
+# what a local job may see of this process's environment: enough to find Python,
+# Docker and the model key. Nothing else the operator has set reaches benchmark code.
+JOB_ENVIRONMENT = (
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "DOCKER_HOST",
+    "DOCKER_CONFIG",
+    "DOCKER_CONTEXT",
+    "OPENROUTER_API_KEY",
+)
+
+
 def _start(args: list[str], run_dir: Path) -> None:
     """Start a detached process group, its output and pid in the run's directory."""
+    env = {k: os.environ[k] for k in JOB_ENVIRONMENT if k in os.environ}
     with open(run_dir / "runner.log", "wb") as out:
         process = subprocess.Popen(
-            args, stdout=out, stderr=subprocess.STDOUT, start_new_session=True
+            args, stdout=out, stderr=subprocess.STDOUT, start_new_session=True, env=env
         )
     (run_dir / "pid").write_text(str(process.pid))
 

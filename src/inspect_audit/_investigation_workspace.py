@@ -46,8 +46,8 @@ def max_pull_bytes() -> int:
     return int(SandboxEnvironmentLimits.MAX_READ_FILE_SIZE * 0.9)
 
 
-def configure(root: Path, image: str, artifact_dir: str) -> tuple[str, str]:
-    (root / "artifacts.json").write_text(json.dumps({"artifact_dir": artifact_dir}))
+def configure(root: Path, image: str) -> tuple[str, str]:
+    """The investigator's box as a Kubernetes pod: no mounts, no service account."""
     values = {
         "services": {
             "default": {

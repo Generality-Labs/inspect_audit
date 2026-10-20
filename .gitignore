@@ -67,3 +67,4 @@ agent_artefacts/
 
 # pulled Hawk logs and bundles (scripts/hawk-artefacts.yaml -> inspect-audit-findings hawk-pull)
 artefacts/
+UPSTREAM.txt

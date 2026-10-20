@@ -12,7 +12,7 @@ metadata:
 
 # Is the recorded answer the answer to this question?
 
-`sample.json` is the item. When the item stores an answer, `target` holds it and
+`/audit/item.json` is the item. When the item stores an answer, `target` holds it and
 `metadata` may hold more of the gold. Some benchmarks store none: correctness is a
 predicate the grader computes over the submission — it executes the submitted
 program, runs the tests, checks the end state. There an empty `target` is not a missing
@@ -79,18 +79,13 @@ output/score does not describe every earlier rejection.
 ## Start with the logs, not the web
 
 Enumerate every distinct answer the field gave and how each was graded. The
-sample id is in `sample.json`.
-
-```python
-from inspect_ai.analysis import samples_df
-df = samples_df("/audit/logs")     # summary rows; inspect available columns
-```
+sample id is in `/audit/item.json`. `attempts()` lists the attempts and their scores; `read_attempt()` reads a transcript a window at a time, and `export_attempts()` writes them all to `/audit/attempts.jsonl` for pandas.
 
 Enumerate all epochs and read the actual submissions, not just the scorer's
 extracted answers. Reuse the saved attempt review table across skills. Account
-for unscored and unresolved cases; compute counts in code. `samples_df` defaults
-do not include full completions: inspect its columns and use Inspect's sample
-reading API for the submitted content.
+for unscored and unresolved cases; compute counts in code. The recorded scores
+carry the scorer's extracted answer, not the full submission: read the completion
+itself.
 
 Read sources verbatim with curl: never judge a source through anything that
 summarises it, because a summary normalises the exact detail that is usually the

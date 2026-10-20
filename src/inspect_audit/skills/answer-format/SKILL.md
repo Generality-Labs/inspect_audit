@@ -6,7 +6,7 @@ description: Establish whether the packaging of answers corrupted the measuremen
 metadata:
   grades: [PENALISED, AMBIGUOUS, SOUND, INCONCLUSIVE]
   unevidenced: [INCONCLUSIVE]
-  tools: [attempt]
+  tools: [grade]
   details:
     instances: every formatting casualty, as {address, submitted, expected,
       content_right}
@@ -22,7 +22,7 @@ submitted and what the parser accepts.
 ## First: what does the scorer accept?
 
 Read the scorer's parsing and comparison code before reading any transcript
-(`gold/grading.md` names the modules). Establish exactly what it extracts --
+(under `/audit/benchmark/`). Establish exactly what it extracts --
 key names, types, tolerances, normalisation -- and what the task prompt told
 agents about the required format. The gap between those two texts is where
 this defect lives.
@@ -41,7 +41,7 @@ correct final answer the extractor dropped, or credit for an answer the submissi
 never committed to.
 
 Save an attempt-level CSV or JSON table and print it in bounded chunks so the
-audit log retains it after sandbox cleanup. Include exact log/sample/epoch references,
+audit log retains it after sandbox cleanup. Include exact eval_id/epoch references,
 submission evidence, recorded extraction/score, your interpretation and review
 status. Classify justified credit/rejection, false credit/rejection, abstention,
 scoring failure, and unresolved cases. Compute counts from the saved table;

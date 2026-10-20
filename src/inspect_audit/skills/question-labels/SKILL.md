@@ -4,16 +4,16 @@ description: Record an explicit validity assessment for every question or graded
 metadata:
   grades: [NO_ISSUE_FOUND, DEFECT, UNRESOLVED]
   unevidenced: [UNRESOLVED]
-  tools: [attempt, grade]
+  tools: [grade]
   details:
-    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include each ID from /audit/assessment_ids.json exactly once. Preserve ids exactly. defect_types is a list of mechanism names, required and nonempty for DEFECT, empty otherwise. scoring_effect and next_check are optional strings.'
+    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include each ID from assessment_ids in /audit/item.json exactly once. Preserve ids exactly. defect_types is a list of mechanism names, required and nonempty for DEFECT, empty otherwise. scoring_effect and next_check are optional strings.'
 ---
 
 # Classify the question, not the model's answer
 
 Examine the question, acceptance rule, source, and available attempts. Audit the
 sample together so dependencies remain visible. The assessment units are listed
-in /audit/assessment_ids.json; their meaning comes from the operator notes and
+under `assessment_ids` in /audit/item.json; their meaning comes from the operator notes and
 benchmark evidence, not a built-in dataset convention.
 Consult the other selected skills to investigate task specification, grading and
 failure attribution. Reproduce consequential claims where the tools permit it.

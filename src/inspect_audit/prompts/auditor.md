@@ -66,7 +66,8 @@ You are investigating:
 
 {items}
 
-Invoke each skill and follow it. Other skills are available for working with the logs.
+Invoke each skill and follow it. `map-inspect-packages` points at Inspect's docs when you
+need to read its code; `audit-framework` defines the framework's judgments.
 Record each verdict as you settle it, not all at the end, with the evidence that earned
 it, and say what you actually think. `record_verdict` can replace an earlier verdict:
 save completed checks before starting another expensive probe, and update the record as

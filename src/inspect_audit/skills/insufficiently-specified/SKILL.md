@@ -24,8 +24,8 @@ following the question as written should not need to guess the author's conventi
 
 ## First: what is actually being asked?
 
-Read the question and the recorded gold (`sample.json`). State precisely what it asks
-for and what answer it treats as correct. Read `gold/grading.md` to see how narrowly
+Read the question and the recorded gold (`/audit/item.json`). State precisely what it asks
+for and what answer it treats as correct. Read the scorer under `/audit/benchmark/` to see how narrowly
 the answer is compared -- a tight scorer over a loose question is where this defect
 bites hardest.
 

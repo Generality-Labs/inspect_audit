@@ -20,7 +20,11 @@ SKILLS = Path(__file__).parent / "skills"
 
 # support skills help with the work rather than defining it; an auditor is never
 # asked to investigate one of these
-SUPPORT_SKILLS = ("reading-logs", "analyzing-logs", "map-inspect-packages", "audit-framework")
+SUPPORT_SKILLS = ("map-inspect-packages", "audit-framework")
+
+# v1's log skills teach reading .eval files in the box; v2 reads logs host-side, so
+# they are neither checks nor given to the auditor (deleted with v1)
+V1_ONLY_SKILLS = ("reading-logs", "analyzing-logs")
 
 
 class AuditItemSkill(BaseModel):
@@ -39,9 +43,8 @@ class AuditItemSkill(BaseModel):
 
 
 # tools a check's frontmatter may grant. `grade` is listed for legibility only:
-# it is granted whenever the benchmark has a grader. `attempt` is the retired v1
-# session builder, accepted (and granting nothing) until the skills drop it.
-_GRANTABLE_TOOLS = frozenset({"attempt", "grade", "reset"})
+# it is granted whenever the benchmark has a grader.
+_GRANTABLE_TOOLS = frozenset({"grade", "reset"})
 
 
 def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> AuditItemSkill:
@@ -125,7 +128,7 @@ def audit_items(items: list[str] | None = None) -> list[AuditItemSkill]:
     dirs = [
         path
         for path in sorted(SKILLS.iterdir())
-        if path.is_dir() and path.name not in SUPPORT_SKILLS
+        if path.is_dir() and path.name not in (*SUPPORT_SKILLS, *V1_ONLY_SKILLS)
     ]
     read = [
         _item_skill(s.name, s.description, s.metadata or {})

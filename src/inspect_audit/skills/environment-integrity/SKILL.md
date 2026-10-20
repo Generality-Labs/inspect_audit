@@ -38,8 +38,7 @@ record whether it fails there too. A failure that reproduces from a fresh
 container is the benchmark's; one that does not needs an explanation before it
 counts.
 
-Address transcripts using the log's exact filename as it appears in
-`/audit/logs`. When in doubt, record the instance -- flagged instances get
+Address transcripts as `<eval_id>/epoch-<n>/message-<m>`, with eval_id and epoch from `attempts()` and the message index from `read_attempt()`. When in doubt, record the instance -- flagged instances get
 validated downstream; silent misses do not.
 
 ## Grade

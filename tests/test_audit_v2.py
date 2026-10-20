@@ -216,3 +216,26 @@ def test_without_logs_the_judge_must_be_declared() -> None:
         judge_roles(None, None)
     assert judge_roles(None, {}) == {}
     assert judge_roles(None, {"grader": "openai/gpt-4.1"}) == {"grader": "openai/gpt-4.1"}
+
+
+def test_the_checks_and_prompt_name_only_what_the_v2_auditor_has() -> None:
+    """A skill pointing at a v1 path or tool sends a real auditor looking for nothing."""
+    from inspect_audit import prompts
+    from inspect_audit._verdicts import SKILLS, SUPPORT_SKILLS, audit_items
+
+    stale = [
+        "sample.json",
+        "/audit/logs",
+        "gold/grading.md",
+        "samples_df(",
+        "audit_probe",
+        "discrepancies.md",
+        "assessment_ids.json",
+        "`attempt`",
+        "benchmark_*",
+    ]
+    texts = {"prompts/auditor.md": prompts.AUDITOR}
+    for name in [c.name for c in audit_items()] + list(SUPPORT_SKILLS):
+        texts[name] = (SKILLS / name / "SKILL.md").read_text()
+    found = {name: [s for s in stale if s in text] for name, text in texts.items()}
+    assert not {k: v for k, v in found.items() if v}

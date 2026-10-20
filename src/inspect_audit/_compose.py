@@ -153,6 +153,22 @@ def audit_compose(
             "init": True,
             "network_mode": "none",
         }
+    # Docker puts a service that names no network on the project's `default`. Hawk
+    # refuses a sandbox where one service sets network_mode while another names no
+    # network (hawk/runner/run_eval_set.py _patch_network_mode), so theirs are put
+    # there by name: the same network on Docker, and on k8s they still reach each
+    # other. The auditor needs no network to them; it reaches their box by exec.
+    unnamed = [
+        service
+        for service in merged["services"].values()
+        if isinstance(service, dict)
+        and service.get("network_mode") is None
+        and not service.get("networks")
+    ]
+    if unnamed:
+        merged.setdefault("networks", {}).setdefault("default", {})
+        for service in unnamed:
+            service["networks"] = ["default"]
     merged["services"][AUDITOR] = auditor
     # the project is Inspect's to name
     merged.pop("name", None)

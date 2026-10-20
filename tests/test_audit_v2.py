@@ -131,12 +131,12 @@ def test_an_audit_runs_inside_the_benchmark(tmp_path: Path) -> None:
     script = [
         _call("benchmark_bash", command="cat /work/input.txt /work/setup_done"),
         _call("attempts"),
-        _call("grade", answer="42"),
+        _call("grade", answer="42", eval_id="", epoch=0),
         _call("benchmark_bash", command="rm -rf /work"),
-        _call("grade", answer="42"),
+        _call("grade", answer="42", eval_id="", epoch=0),
         _call("reset"),
-        _call("grade", answer="42"),
-        _call("grade", eval_id=eval_id, epoch=1),
+        _call("grade", answer="42", eval_id="", epoch=0),
+        _call("grade", answer="", eval_id=eval_id, epoch=1),
         _call("auditor_bash", command="cat /audit/item.json; ls /audit/benchmark"),
         _call(
             "record_verdict",
@@ -246,9 +246,9 @@ def test_an_audit_of_a_benchmark_without_a_box(graded_log: str, tmp_path: Path) 
 
     [recorded] = [read_eval_log(graded_log, header_only=True)]
     script = [
-        _call("grade", answer="ANSWER"),
-        _call("grade", answer="WRONG"),
-        _call("grade", eval_id=recorded.eval.eval_id, epoch=1),
+        _call("grade", answer="ANSWER", eval_id="", epoch=0),
+        _call("grade", answer="WRONG", eval_id="", epoch=0),
+        _call("grade", answer="", eval_id=recorded.eval.eval_id, epoch=1),
         _call(
             "record_verdict",
             item="gold-answer",
@@ -285,3 +285,33 @@ def test_an_audit_of_a_benchmark_without_a_box(graded_log: str, tmp_path: Path) 
     ]
     assert grades == ["C", "I", "I"]  # sample 2 was recorded WRONG
     assert sample.scores and sample.scores["gold-answer"].value == "CORRECT"
+
+
+def test_every_auditor_tool_schema_is_strict() -> None:
+    """OpenAI's strict function calling (Azure too) rejects a parameter not listed as required."""
+    from inspect_ai.solver import TaskState
+    from inspect_ai.tool import ToolDef
+
+    from inspect_audit._auditor import view_image
+    from inspect_audit._grade import grade_tool
+    from inspect_audit._logs import LogIndex, log_tools
+    from inspect_audit._reset import reset_tool
+    from inspect_audit._verdicts import audit_items, record_verdict, submit_audit
+
+    checks = audit_items()
+    state = TaskState(model="m", sample_id="a", epoch=1, input="q", messages=[])
+    tools = [
+        record_verdict(checks),
+        submit_audit(checks),
+        view_image(),
+        *log_tools(LogIndex(), "a"),
+        grade_tool(state, [], [], None),
+        reset_tool(Sample(input="q"), [], state, None),  # type: ignore[arg-type]
+    ]
+    loose = {}
+    for tool in tools:
+        params = ToolDef(tool).parameters
+        missing = set(params.properties) - set(params.required)
+        if missing:
+            loose[ToolDef(tool).name] = sorted(missing)
+    assert not loose

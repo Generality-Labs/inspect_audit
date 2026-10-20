@@ -46,7 +46,7 @@ def grade_tool(
 
     @tool
     def grade() -> Tool:
-        async def execute(answer: str = "", eval_id: str = "", epoch: int = 0) -> str:
+        async def execute(answer: str, eval_id: str, epoch: int) -> str:
             """Grade a submission with the benchmark's own grader, against its live box.
 
             With only `answer`: the benchmark's question, then `answer` as the final
@@ -57,9 +57,10 @@ def grade_tool(
             agent left it in.
 
             Args:
-                answer: The submission. For multiple-choice items, the letter(s).
-                eval_id: A recorded attempt's eval_id, from attempts().
-                epoch: That attempt's epoch.
+                answer: The submission. For multiple-choice items, the letter(s). With
+                    a recorded attempt, "" keeps its own completion.
+                eval_id: A recorded attempt's eval_id, from attempts(), or "" for none.
+                epoch: That attempt's epoch, or 0 for none.
             """
             if not scorers:
                 raise ToolError("This benchmark declares no scorer to grade with.")

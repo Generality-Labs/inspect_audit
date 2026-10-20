@@ -61,16 +61,16 @@ def check_same_items(index: LogIndex, samples: list[Sample]) -> None:
     from inspect_ai.log import read_eval_log_sample
 
     for sample in samples:
-        attempts = index.for_sample(str(sample.id))
-        if not attempts:
-            continue
-        first = attempts[0]
-        logged = read_eval_log_sample(first.log, id=first.sample_id, epoch=first.epoch).input
-        if logged != sample.input:
-            raise LogMismatchError(
-                f"sample {sample.id}: the installed benchmark's input differs from the input "
-                f"logged in {first.log}"
-            )
+        one_per_log = {a.log: a for a in index.for_sample(str(sample.id))}
+        for attempt in one_per_log.values():
+            logged = read_eval_log_sample(
+                attempt.log, id=attempt.sample_id, epoch=attempt.epoch, exclude_fields={"events"}
+            ).input
+            if logged != sample.input:
+                raise LogMismatchError(
+                    f"sample {sample.id}: the installed benchmark's input differs from the "
+                    f"input logged in {attempt.log}"
+                )
 
 
 def judge_roles(index: LogIndex | None, judge: dict[str, str] | None) -> dict[str, str]:
@@ -189,11 +189,9 @@ def audit_task(
     )
     roles = judge_roles(index, judge)
     if index is not None:
-        if positional and index.shuffled:
-            raise LogMismatchError(
-                "the benchmark's samples are numbered by position and the logged run shuffled "
-                "them, so a logged id need not be the same question"
-            )
+        # every log that attempted an audited sample must have given it this sample's
+        # input: positional ids under a shuffled run, a changed dataset or a different
+        # variant all fail here, item by item, rather than by a rule about the run
         check_same_items(index, selected)
 
     stage = Path(tempfile.mkdtemp(prefix="inspect_audit_"))

@@ -7,6 +7,7 @@ version -- a log of a different run is not evidence about this one.
 """
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
@@ -87,6 +88,25 @@ def _roles(header: EvalLog) -> dict[str, str]:
     return roles
 
 
+_COMMIT = re.compile(r"(?:^|[+.])g([0-9a-f]{7,40})(?:$|\.)")
+
+
+def same_build(logged: str, installed: str) -> bool:
+    """Whether two version strings name the same code.
+
+    Equal strings do. So do two git builds naming the same commit: setuptools-scm
+    writes the commit into the local version (`+g67a9ea533`), and the rest of the
+    string depends on which tags the checkout happened to fetch, not on the code.
+    """
+    if logged == installed:
+        return True
+    a, b = _COMMIT.search(logged), _COMMIT.search(installed)
+    if a is None or b is None:
+        return False
+    short = min(len(a.group(1)), len(b.group(1)))
+    return a.group(1)[:short] == b.group(1)[:short]
+
+
 def _check_header(
     path: str,
     header: EvalLog,
@@ -119,7 +139,7 @@ def _check_header(
         logged = spec.packages.get(package)
         if logged is None:
             raise LogMismatchError(f"{path} does not record which {package} version produced it")
-        if logged != installed:
+        if not same_build(logged, installed):
             raise LogMismatchError(
                 f"{path} was produced by {package} {logged}; {installed} is installed"
             )
@@ -225,14 +245,14 @@ def log_tools(index: LogIndex | None, sample_id: str) -> list[Tool]:
 
     @tool
     def read_attempt() -> Tool:
-        async def execute(eval_id: str, epoch: int, start: int = 0, count: int = 20) -> str:
+        async def execute(eval_id: str, epoch: int, start: int, count: int) -> str:
             """Read one recorded attempt's transcript, a window of messages at a time.
 
             Args:
                 eval_id: The attempt's eval_id, from attempts().
                 epoch: The attempt's epoch, from attempts().
-                start: Index of the first message to return.
-                count: How many messages to return.
+                start: Index of the first message to return (0 for the beginning).
+                count: How many messages to return (20 is a sensible window).
             """
             if index is None:
                 raise ToolError("No logs were declared for this audit.")

@@ -1032,13 +1032,23 @@ def validate_config(
     )
     for key, value, cap in (
         ("epochs", epochs, policy.max_epochs),
-        ("token_limit", parsed.token_limit, policy.max_token_limit),
         ("time_limit", parsed.time_limit, policy.max_time_limit),
     ):
         if value is None:
             problems.append(f"{key} is required by the investigation policy")
         elif not isinstance(value, int) or isinstance(value, bool) or value > cap:
             problems.append(f"{key} {value!r} must be an integer up to {cap}")
+    # jobs are capped in dollars (cost_limit, required below); a token limit counts cached
+    # reads, so it stops agents long before their budget. Optional, and capped if given.
+    token_limit = parsed.token_limit
+    if token_limit is not None and (
+        not isinstance(token_limit, int)
+        or isinstance(token_limit, bool)
+        or token_limit > policy.max_token_limit
+    ):
+        problems.append(
+            f"token_limit {token_limit!r} must be an integer up to {policy.max_token_limit}"
+        )
     if parsed.limit is not None and (
         not isinstance(parsed.limit, int)
         or isinstance(config.get("limit"), bool)

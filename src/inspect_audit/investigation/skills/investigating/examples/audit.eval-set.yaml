@@ -41,7 +41,6 @@ runner:
 limit: 1                                   # audited items; the size the reservation uses
 cost_limit: 2.00                           # dollars per audited item, enforced in the runner
 epochs: 1
-token_limit: 4000000
 time_limit: 7200
 max_connections: 5
 max_retries: 10

@@ -116,11 +116,10 @@ def audit_task(
     confidential: bool = False,
     notes: str | None = None,
     auditor_image: str | None = None,
+    cost_limit: float,
     message_limit: int | None = None,
-    token_limit: int | None = None,
     time_limit: int | None = None,
     working_limit: int | None = None,
-    cost_limit: float | None = None,
 ) -> Task:
     """Build the audit of a benchmark task.
 
@@ -145,11 +144,12 @@ def audit_task(
         confidential: The benchmark is unpublished: the auditor must not transmit it.
         notes: A free-form steer for the auditor.
         auditor_image: A published auditor image (required on k8s, which cannot build).
+        cost_limit: Dollars per audited sample, the auditor's and its `grade` judge calls
+            together. Required: the cap the audit is governed by. Inspect refuses to start
+            when any model in the run has no registered price.
         message_limit: The auditor's message limit (the benchmark's is not inherited).
-        token_limit: The auditor's token limit.
         time_limit: The auditor's time limit, seconds.
         working_limit: The auditor's working-time limit, seconds.
-        cost_limit: The auditor's cost limit, dollars.
     """
     if isinstance(task, Task):
         if task_args:
@@ -237,7 +237,7 @@ def audit_task(
         "continue_on_fail": None,
         "score_on_error": None,
         "message_limit": message_limit,
-        "token_limit": token_limit,
+        "token_limit": None,
         "turn_limit": None,
         "time_limit": time_limit,
         "working_limit": working_limit,

@@ -25,7 +25,6 @@ cost_limit: 0.50                # dollars per sample, enforced in the runner. Re
                                 # cost_limit x samples x models x epochs is what the job
                                 # holds against your allowance until you collect it
 epochs: 1
-token_limit: 2000000
 time_limit: 3600
 max_connections: 10
 max_retries: 10

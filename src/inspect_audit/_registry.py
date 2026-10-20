@@ -119,6 +119,7 @@ def audit_v2(
     task: str,
     samples: list[str] | str,
     checks: list[str],
+    cost_limit: float,
     task_args: dict[str, Any] | None = None,
     logs: list[str] | None = None,
     judge: dict[str, str] | None = None,
@@ -130,10 +131,8 @@ def audit_v2(
     notes: str | None = None,
     auditor_image: str | None = None,
     message_limit: int | None = None,
-    token_limit: int | None = None,
     time_limit: int | None = None,
     working_limit: int | None = None,
-    cost_limit: float | None = None,
 ) -> Task:
     """Audit a benchmark task from inside its own samples (see `audit_task` in `_task`).
 
@@ -157,7 +156,6 @@ def audit_v2(
         notes=notes,
         auditor_image=auditor_image,
         message_limit=message_limit,
-        token_limit=token_limit,
         time_limit=time_limit,
         working_limit=working_limit,
         cost_limit=cost_limit,

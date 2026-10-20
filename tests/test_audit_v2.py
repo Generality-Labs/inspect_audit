@@ -105,6 +105,14 @@ def test_a_scorer_that_judged_with_the_evaluated_model_is_refused() -> None:
 # -- one real audit inside the benchmark ----------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def priced_mockllm() -> None:
+    """The audit is capped in dollars and refuses an unpriced auditor; price the mock."""
+    from inspect_audit._prices import register_prices
+
+    register_prices({"mockllm/model": {"input": 1.0, "output": 1.0}})
+
+
 def _call(tool: str, **arguments: Any) -> ModelOutput:
     return ModelOutput.for_tool_call("mockllm/model", tool, arguments)
 
@@ -156,6 +164,7 @@ def test_an_audit_runs_inside_the_benchmark(tmp_path: Path) -> None:
         checks=["red-teaming"],
         logs=[recorded.location],
         message_limit=50,
+        cost_limit=1.0,
     )
     toy.SCORER_CALLS.clear()
     [log] = eval(
@@ -267,6 +276,7 @@ def test_an_audit_of_a_benchmark_without_a_box(graded_log: str, tmp_path: Path) 
         checks=["gold-answer"],
         logs=[graded_log],
         source=str(tmp_path),
+        cost_limit=1.0,
     )
     [log] = eval(
         audit,
@@ -315,3 +325,21 @@ def test_every_auditor_tool_schema_is_strict() -> None:
         if missing:
             loose[ToolDef(tool).name] = sorted(missing)
     assert not loose
+
+
+@pytest.mark.docker
+def test_an_unpriced_auditor_is_refused(graded_log: str, tmp_path: Path) -> None:
+    from inspect_ai.model import ModelInfo, set_model_info
+    from test_helpers.logs import fixture_task
+
+    set_model_info("mockllm/model", ModelInfo())  # no cost
+    audit = audit_task(
+        fixture_task("graded_task"),
+        samples=["2"],
+        checks=["gold-answer"],
+        logs=[graded_log],
+        source=str(tmp_path),
+        cost_limit=1.0,
+    )
+    with pytest.raises(Exception, match="cost_limit requires cost data"):
+        eval(audit, model="mockllm/model", log_dir=str(tmp_path / "a"), display="none")

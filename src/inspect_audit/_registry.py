@@ -2,7 +2,6 @@
 
 import asyncio
 import importlib.util
-import json
 import os
 import shutil
 import tempfile
@@ -28,15 +27,24 @@ def resolve_source(source: str | None) -> str | None:
 
 
 def log_files(logs: list[str]) -> list[str]:
-    """Each `logs` entry as files: a `.eval` path, or `hawk:<eval set id>` fetched whole."""
+    """Each `logs` entry as log files.
+
+    A `.eval`/`.json` file is itself; `hawk:<eval set id>` is fetched whole; any
+    other entry is a log directory, local or a URL Inspect reads (s3://, gs://),
+    listed with Inspect's own `list_eval_logs`. An entry with no logs is an error.
+    """
     files: list[str] = []
     for entry in logs:
-        if entry.startswith("hawk:"):
-            files += [i.name.removeprefix("file://") for i in list_eval_logs(fetch_logs(entry))]
-        elif entry.endswith((".eval", ".json")):
+        if entry.endswith((".eval", ".json")):
             files.append(entry)
-        else:
-            raise ValueError(f"logs entry {entry!r} must be a .eval file or hawk:<eval set id>")
+            continue
+        found = [
+            i.name.removeprefix("file://")
+            for i in list_eval_logs(fetch_logs(entry) if entry.startswith("hawk:") else entry)
+        ]
+        if not found:
+            raise ValueError(f"logs entry {entry!r} holds no eval logs")
+        files += found
     return files
 
 
@@ -120,13 +128,9 @@ def fetch_logs(logs: str | list[str]) -> str:
 def _hawk_fetch(eval_sets: str) -> str:
     """Download eval logs from the Hawk warehouse to a temporary directory.
 
-    Talks to the Hawk API directly with the runner's own credentials -- the hawk
-    CLI stores tokens in an OS keyring, which headless runner pods do not have.
-    Not `_runs.HawkLogin`: task construction may run where no hook or login exists
-    yet, and the HAWK_TOKEN_REFRESH_* variables are there either way.
-    Requires HAWK_API_URL, plus either HAWK_ACCESS_TOKEN or the runner's token
-    refresh environment (HAWK_TOKEN_REFRESH_URL, HAWK_TOKEN_REFRESH_CLIENT_ID,
-    HAWK_REFRESH_TOKEN).
+    Hawk's API is HAWK_API_URL; the token is HAWK_ACCESS_TOKEN when set, else this
+    process's own Hawk credentials (`_runs.HawkLogin`): the runner's hook, which a
+    Hawk runner installs before it loads tasks, or the operator's `hawk` login.
     """
     import concurrent.futures
 
@@ -136,8 +140,15 @@ def _hawk_fetch(eval_sets: str) -> str:
     fetched = Path(tempfile.mkdtemp(prefix="hawk_logs_"))
     sets = eval_sets.split(",")
 
+    api = os.environ.get("HAWK_API_URL")
+    if not api:
+        raise ValueError("fetching hawk: logs needs HAWK_API_URL, Hawk's API address")
+
     async def fetch() -> None:
-        async with HawkClient(token=_hawk_token(), api_url=os.environ["HAWK_API_URL"]) as client:
+        from ._runs import HawkLogin
+
+        token = os.environ.get("HAWK_ACCESS_TOKEN") or await HawkLogin(api).access_token()
+        async with HawkClient(token=token, api_url=api) as client:
             for address in sets:
                 eval_set, _, selected_file = address.partition("/")
                 files = await client.get_log_files(eval_set)
@@ -160,34 +171,3 @@ def _hawk_fetch(eval_sets: str) -> str:
     with concurrent.futures.ThreadPoolExecutor(1) as pool:
         pool.submit(asyncio.run, fetch()).result()
     return str(fetched)
-
-
-def _hawk_token() -> str:
-    # a fresh token via the runner's refresh credentials, else the static one
-    refresh_url = os.environ.get("HAWK_TOKEN_REFRESH_URL")
-    refresh_token = os.environ.get("HAWK_REFRESH_TOKEN")
-    client_id = os.environ.get("HAWK_TOKEN_REFRESH_CLIENT_ID")
-    if refresh_url and refresh_token and client_id:
-        import urllib.parse
-        import urllib.request
-
-        body = urllib.parse.urlencode(
-            {
-                "grant_type": "refresh_token",
-                "client_id": client_id,
-                "refresh_token": refresh_token,
-            }
-        ).encode()
-        req = urllib.request.Request(
-            refresh_url,
-            data=body,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return str(json.load(r)["access_token"])
-    token = os.environ.get("HAWK_ACCESS_TOKEN")
-    if not token:
-        raise ValueError(
-            "Fetching hawk: logs needs HAWK_ACCESS_TOKEN or the runner's token refresh environment."
-        )
-    return token

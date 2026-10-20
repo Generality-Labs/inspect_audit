@@ -105,6 +105,8 @@ def test_a_child_job_runs_as_this_runs_user_with_its_current_credentials(
     assert asyncio.run(HawkRuns("https://hawk.example").submit(job)) == "child-job"
     assert received["token"] == "current-access"
     assert received["refresh_token"] == "rotated"
+    # the child's own code may read Hawk; Hawk does not tell a runner its API
+    assert received["config"].runner.environment == {"HAWK_API_URL": "https://hawk.example"}
     assert "secrets" not in received, "no provider key travels with a child job"
 
 
@@ -387,3 +389,121 @@ def test_a_dataset_without_ids_is_selected_by_position(tmp_path: Path) -> None:
 
     [log] = [read_eval_log(str(p)) for p in asyncio.run(run())]
     assert [s.input for s in log.samples or []] == ["hello 2", "hello 3"]
+
+
+def test_a_local_job_receives_string_arguments_exactly(tmp_path: Path) -> None:
+    """Inspect parses each -T value as YAML and splits on commas; Hawk passes JSON.
+    The two backends must give the task the same arguments."""
+    (tmp_path / "tiny.py").write_text(TASK_FILE)
+    runs = LocalRuns(tmp_path / "runs", provider="mockllm")
+    job = Job(
+        label="args",
+        task=f"{tmp_path / 'tiny.py'}@tiny",
+        package="",
+        models=["model"],
+        task_args={"greeting": "a, yes"},
+        sample_ids=["1"],
+    )
+
+    async def run() -> list[Path]:
+        run_id = await runs.submit(job)
+        deadline = time.monotonic() + 120
+        while await runs.status(run_id) not in FINISHED:
+            assert time.monotonic() < deadline, await runs.runner_log(run_id)
+            await asyncio.sleep(1)
+        return await runs.logs(run_id, tmp_path / "out")
+
+    from inspect_ai.log import read_eval_log
+
+    [log] = [read_eval_log(str(p)) for p in asyncio.run(run())]
+    assert log.eval.task_args == {"greeting": "a, yes"}
+
+
+def test_hawk_logs_are_fetched_with_the_runners_own_credentials(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A child audit fetching hawk: logs on a runner uses Hawk's real hook."""
+    import hawk.cli.download
+    import hawk.client
+    from hawk.runner import refresh_token as hawk_hook
+    from inspect_ai.hooks import _hooks
+
+    from inspect_audit._registry import fetch_logs
+
+    monkeypatch.setattr(
+        hawk_hook,
+        "_do_token_refresh_with_recovery",
+        lambda token, url, client: (
+            hawk_hook._TokenRefreshResponse(access_token="runner-access", expires_in=3600),  # pyright: ignore[reportPrivateUsage]
+            token,
+        ),
+    )
+    monkeypatch.setenv("AI_GATEWAY_BASE_URL", "https://middleman.example")
+    monkeypatch.setenv("BASE_API_KEY", "startup-jwt")
+    monkeypatch.setenv("HAWK_API_URL", "https://hawk.example")
+    monkeypatch.delenv("HAWK_ACCESS_TOKEN", raising=False)
+    hook = hawk_hook.refresh_token_hook("https://idp", "client", "rt", validate=False)()
+    monkeypatch.setattr(_hooks, "get_all_hooks", lambda: [hook])
+    used: list[str] = []
+
+    class Client:
+        def __init__(self, token: str, api_url: str) -> None:
+            used.append(token)
+
+        async def __aenter__(self) -> "Client":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get_log_files(self, eval_set_id: str) -> list[dict[str, str]]:
+            return [{"name": f"{eval_set_id}/a.eval"}]
+
+        async def get_download_urls(self, names: list[str]) -> Any:
+            yield "https://download/a", "a.eval"
+
+    async def download_file(url: str, dest: Path) -> None:
+        dest.write_bytes(b"log")
+
+    monkeypatch.setattr(hawk.client, "HawkClient", Client)
+    monkeypatch.setattr(hawk.cli.download, "download_file", download_file)
+    assert (Path(fetch_logs("hawk:run")) / "a.eval").read_bytes() == b"log"
+    assert used == ["runner-access"]
+
+
+def test_an_audit_reads_a_log_directory(tmp_path: Path) -> None:
+    """A local job's address is its log directory; operator sources may be URLs."""
+    from test_helpers.logs import run_fixture_eval
+
+    from inspect_audit._registry import log_files
+
+    log = Path(run_fixture_eval(str(tmp_path / "logs")))
+    assert log_files([str(log.parent)]) == [str(log)]
+    with pytest.raises(ValueError, match="holds no eval logs"):
+        log_files([str(tmp_path / "empty")])
+
+
+def test_a_balance_without_a_number_is_unknown_not_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """$0.00 would tell the agent to stop; an answer it cannot read must say so."""
+    import json as jsonlib
+    import urllib.request
+
+    class Response:
+        def __init__(self, body: dict[str, Any]) -> None:
+            self.body = jsonlib.dumps(body).encode()
+
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            pass
+
+        def read(self, *args: Any) -> bytes:
+            return self.body
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda request, timeout=None: Response({"data": {"limit": 5}})
+    )
+    [line] = asyncio.run(_investigate.key_balance(None, openrouter=True))
+    assert "unknown" in line and "$0.00" not in line

@@ -9,6 +9,7 @@ environment and so its key. Both hand back finished logs as local files.
 """
 
 import asyncio
+import json
 import os
 import shutil
 import signal
@@ -26,6 +27,8 @@ RUNNING = "running"
 COMPLETE = "complete"
 FAILED = "failed"
 STOPPED = "stopped"
+# Hawk's own verdict that a job has stopped making progress: worth a person's look
+STUCK = "stuck"
 FINISHED = frozenset({COMPLETE, FAILED, STOPPED})
 
 
@@ -164,7 +167,11 @@ class HawkRuns:
     async def submit(self, job: Job) -> str:
         from hawk.core.types import EvalSetConfig
 
-        config = EvalSetConfig.model_validate(hawk_config(job))
+        settings = hawk_config(job)
+        # the job's own code may read Hawk (an audit fetching hawk: logs); Hawk does
+        # not tell a runner where its API is
+        settings["runner"] = {"environment": {"HAWK_API_URL": self.login.api_url}}
+        config = EvalSetConfig.model_validate(settings)
         # the access token first: refreshing it may rotate the refresh token
         token = await self.login.access_token()
         refresh_token = await self.login.refresh_token()
@@ -187,6 +194,8 @@ class HawkRuns:
             return COMPLETE
         if status in ("failed", "deleted"):
             return FAILED
+        if status == "stuck":
+            return STUCK
         return RUNNING
 
     async def logs(self, run_id: str, out_dir: Path) -> list[Path]:
@@ -254,8 +263,11 @@ class LocalRuns:
             "--display",
             "plain",
         ]
-        for key, value in job.task_args.items():
-            args += ["-T", f"{key}={_cli_value(value)}"]
+        if job.task_args:
+            # a file, not -T: inspect parses each -T value as YAML and splits commas,
+            # so "a,b" or "yes" would not reach the task as Hawk passes them
+            (run_dir / "task_args.json").write_text(json.dumps(job.task_args))
+            args += ["--task-config", str(run_dir / "task_args.json")]
         for role, model in job.model_roles.items():
             args += ["--model-role", f"{role}={self.provider}/{model}"]
         if job.sample_ids is not None:
@@ -334,12 +346,3 @@ def _start(args: list[str], run_dir: Path) -> None:
             args, stdout=out, stderr=subprocess.STDOUT, start_new_session=True, env=env
         )
     (run_dir / "pid").write_text(str(process.pid))
-
-
-def _cli_value(value: Any) -> str:
-    """A task argument as `-T` reads it: YAML, so lists and mappings survive."""
-    import yaml
-
-    if isinstance(value, str):
-        return value
-    return yaml.safe_dump(value, default_flow_style=True).strip()

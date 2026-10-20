@@ -53,7 +53,7 @@ from ._report import (
 from ._report import (
     validate_findings as validate_findings,
 )
-from ._runs import FINISHED, HawkRuns, Job, LocalRuns, Runs
+from ._runs import FINISHED, STUCK, HawkRuns, Job, LocalRuns, Runs
 from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS
 
 logger = getLogger(__name__)
@@ -547,10 +547,13 @@ async def key_balance(hawk_api_url: str | None, openrouter: bool) -> list[str]:
             body = await asyncio.to_thread(
                 get, f"{hawk_api_url.rstrip('/')}/usage/balance", await login.access_token()
             )
+            remaining = body.get("remaining_usd")
             if body.get("status") == "shared":
                 lines.append("Hawk: this user has no capped key; spending is not limited by a key")
+            elif isinstance(remaining, (int, float)):
+                lines.append(f"Hawk key: ${float(remaining):.2f} remaining")
             else:
-                lines.append(f"Hawk key: ${float(body.get('remaining_usd') or 0):.2f} remaining")
+                lines.append(f"Hawk key: remaining unknown (Hawk answered {body})")
         except Exception as ex:
             lines.append(f"Hawk key: could not ask ({type(ex).__name__}: {ex})")
     if openrouter:
@@ -559,11 +562,13 @@ async def key_balance(hawk_api_url: str | None, openrouter: bool) -> list[str]:
             data = (await asyncio.to_thread(get, f"{OPENROUTER}/key", key)).get("data") or {}
             if data.get("limit") is None:
                 lines.append(f"OpenRouter key: no limit; ${float(data.get('usage') or 0):.2f} used")
-            else:
+            elif isinstance(data.get("limit_remaining"), (int, float)):
                 lines.append(
-                    f"OpenRouter key: ${float(data.get('limit_remaining') or 0):.2f} of "
+                    f"OpenRouter key: ${float(data['limit_remaining']):.2f} of "
                     f"${float(data['limit']):.2f} remaining"
                 )
+            else:
+                lines.append(f"OpenRouter key: remaining unknown (OpenRouter answered {data})")
         except Exception as ex:
             lines.append(f"OpenRouter key: could not ask ({type(ex).__name__}: {ex})")
     return lines or ["no model key declared to ask about"]
@@ -857,7 +862,7 @@ def jobs(inv: Investigation) -> Tool:
 
         Args:
             action: "list" every job; "status" of one; "wait" until one finishes
-                (spends no tokens); "collect" a finished job's logs into
+                or Hawk reports it stuck (spends no tokens); "collect" a finished job's logs into
                 /inputs/jobs/<label>/; "log" the tail of its runner's own log, where
                 install failures and crashes show; "stop" it.
             label: Which job, for every action but "list".
@@ -881,7 +886,7 @@ def jobs(inv: Investigation) -> Tool:
             return f"{label}: {await inv.runs.status(run_id)}"
         if action == "wait":
             deadline = asyncio.get_running_loop().time() + 60 * (wait_minutes or 20)
-            while (status := await inv.runs.status(run_id)) not in FINISHED:
+            while (status := await inv.runs.status(run_id)) not in (*FINISHED, STUCK):
                 if asyncio.get_running_loop().time() > deadline:
                     break
                 await asyncio.sleep(30)
@@ -890,7 +895,10 @@ def jobs(inv: Investigation) -> Tool:
             return await inv.runs.runner_log(run_id)
         if action == "stop":
             await inv.runs.stop(run_id)
-            return f"stop requested for {label}"
+            return (
+                f"stop requested for {label}: samples already finished are scored, so it "
+                "ends complete with fewer samples than asked for"
+            )
         if action == "collect":
             from ._investigation_workspace import copy_into_box
 
@@ -1131,7 +1139,10 @@ def investigate(
             supplied += [str(e["source"]) for e in seed["logs"] if not e.get("remote")]
         inv = Investigation(
             root=root,
-            runs=HawkRuns(hawk_api_url or "") if runs == "hawk" else LocalRuns(root / "runs"),
+            # local runs outside the per-construction folder: a resumed run must find them
+            runs=HawkRuns(hawk_api_url or "")
+            if runs == "hawk"
+            else LocalRuns(Path(output_dir).expanduser().resolve() / "runs"),
             where=runs,
             task=target_task,
             task_package=task_package,

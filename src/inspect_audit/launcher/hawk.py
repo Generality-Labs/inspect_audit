@@ -8,51 +8,25 @@ user's own tokens, so it, and everything it launches, runs and bills as that use
 """
 
 import json
-import os
 import urllib.parse
 import urllib.request
-from pathlib import Path
 from typing import Any
 
 SECRET_NAME = "INVESTIGATOR_OPENROUTER_KEY"
 
 
-def _cli_settings() -> dict[str, str]:
-    """`~/.config/hawk-cli/env`, as the hawk CLI reads it, overridden by the environment."""
-    settings: dict[str, str] = {}
-    path = Path.home() / ".config" / "hawk-cli" / "env"
-    if path.is_file():
-        for line in path.read_text().splitlines():
-            key, sep, value = line.partition("=")
-            if sep and key.strip() and not key.startswith("#"):
-                settings[key.strip()] = value.strip()
-    return {**settings, **{k: v for k, v in os.environ.items() if k.startswith("HAWK_")}}
-
-
-def server_config(api_url: str) -> dict[str, Any]:
-    """The cached server config the hawk CLI saved for exactly this API's host.
-
-    Matched by host: a machine that has used two Hawk deployments holds two configs,
-    with different token endpoints, and the wrong one would log the user in elsewhere.
-    """
-    host = urllib.parse.urlparse(api_url).netloc
-    cache = Path.home() / ".config" / "hawk-cli" / "server-config-cache"
-    matches = sorted(cache.glob(f"{host}-*.json")) if cache.is_dir() else []
-    if len(matches) != 1:
-        raise RuntimeError(
-            f"expected one cached hawk server config for {host}, found {len(matches)}: "
-            "run `hawk login` against it once"
-        )
-    return dict(json.loads(matches[0].read_text()))
-
-
 class HawkDelivery:
-    def __init__(self, api_url: str | None = None, middleman_url: str | None = None) -> None:
-        settings = _cli_settings()
-        self.api_url = (api_url or settings.get("HAWK_API_URL") or "").rstrip("/")
-        self.middleman_url = (middleman_url or settings.get("HAWK_MIDDLEMAN_URL") or "").rstrip("/")
-        if not self.api_url or not self.middleman_url:
-            raise RuntimeError("HAWK_API_URL and HAWK_MIDDLEMAN_URL are needed to launch on Hawk")
+    def __init__(self) -> None:
+        # the hawk CLI's own settings: environment, ~/.config/hawk-cli/env, then the
+        # API's /auth/config for whatever is not set locally (middleman's URL)
+        from hawk.cli.config import discover_server_config, get_config
+
+        config = get_config()
+        self.api_url = config.require_api_url().rstrip("/")
+        if not config.middleman_url:
+            raise RuntimeError("Hawk did not say where middleman is: set HAWK_MIDDLEMAN_URL")
+        # cached per API, so a second deployment's identity provider is never used here
+        self.server = discover_server_config(self.api_url)
 
     async def operator_token(self) -> str:
         """The operator's own access token: an admin, needed to install the key."""
@@ -60,32 +34,24 @@ class HawkDelivery:
 
         return await HawkLogin(self.api_url).access_token()
 
-    def install(self, operator_token: str, key: str, secret_name: str = SECRET_NAME) -> None:
+    async def install(self, operator_token: str, key: str, secret_name: str = SECRET_NAME) -> None:
         """Make `key` the investigator user's provider key: middleman's admin secret store."""
-        request = urllib.request.Request(
-            f"{self.middleman_url}/admin/secrets/provider-keys/{secret_name}",
-            data=json.dumps({"value": key}).encode(),
-            headers={
-                "Authorization": f"Bearer {operator_token}",
-                "Content-Type": "application/json",
-            },
-            method="PUT",
-        )
-        with urllib.request.urlopen(request, timeout=60):
-            pass
+        from hawk.cli import middleman
+
+        path = f"/admin/secrets/provider-keys/{secret_name}"
+        await middleman.request("put", path, operator_token, data={"value": key})
 
     def investigator_access_token(self, refresh_token: str) -> str:
         """Exchange the investigator user's refresh token at Hawk's identity provider."""
-        config = server_config(self.api_url)
         body = urllib.parse.urlencode(
             {
                 "grant_type": "refresh_token",
-                "client_id": config["client_id"],
+                "client_id": self.server.client_id,
                 "refresh_token": refresh_token,
             }
         ).encode()
         request = urllib.request.Request(
-            config["token_endpoint"],
+            self.server.token_endpoint,
             data=body,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
@@ -99,12 +65,10 @@ class HawkDelivery:
 
         token = self.investigator_access_token(refresh_token)
         async with HawkClient(token=token, api_url=self.api_url) as client:
-            created: Any = await client.create_eval_set(
+            created = await client.create_eval_set(
                 EvalSetConfig.model_validate(config), refresh_token=refresh_token
             )
-        if isinstance(created, dict):
-            return str(created["eval_set_id"])
-        return str(getattr(created, "eval_set_id", created))
+        return created["eval_set_id"]
 
     async def running(self, eval_set_id: str, operator_token: str) -> bool:
         """Whether Hawk still runs this investigation: unknown to Hawk counts as not."""

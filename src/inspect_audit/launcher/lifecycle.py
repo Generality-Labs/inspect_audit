@@ -50,7 +50,7 @@ class Keys(Protocol):
 
 class Delivery(Protocol):
     async def operator_token(self) -> str: ...
-    def install(self, operator_token: str, key: str) -> None: ...
+    async def install(self, operator_token: str, key: str) -> None: ...
     async def submit(self, config: dict[str, Any], refresh_token: str) -> str: ...
     async def running(self, eval_set_id: str, operator_token: str) -> bool: ...
 
@@ -105,7 +105,7 @@ class Launcher:
             record.key_hash, key = self.keys.create(record.id, cap_usd)
             record.stage = "minted"
             self.records.save(record)
-            self.delivery.install(await self.delivery.operator_token(), key)
+            await self.delivery.install(await self.delivery.operator_token(), key)
             del key
             record.stage = "installed"
             self.records.save(record)

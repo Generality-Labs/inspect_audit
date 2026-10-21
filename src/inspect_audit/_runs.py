@@ -208,14 +208,11 @@ class HawkRuns:
             if restricted:
                 # No fallback: old clients/deployments must refuse this mode.
                 options: dict[str, Any] = {"credential_mode": "restricted"}
-                created: Any = await client.create_eval_set(config, **options)
+                created = await client.create_eval_set(config, **options)
             else:
                 refresh_token = await self.login.refresh_token()
                 created = await client.create_eval_set(config, refresh_token=refresh_token)
-        # a newer server's client may return the API body rather than the id
-        if isinstance(created, dict):
-            return str(created["eval_set_id"])
-        return str(getattr(created, "eval_set_id", created))
+        return created["eval_set_id"]
 
     async def status(self, run_id: str) -> str:
         async with self._client() as client:

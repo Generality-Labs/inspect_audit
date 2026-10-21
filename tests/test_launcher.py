@@ -1,7 +1,6 @@
 """The launcher: a capped key per investigation, revoked in every case."""
 
 import asyncio
-import json
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +47,7 @@ class FakeHawk:
     async def operator_token(self) -> str:
         return "operator-admin-token"
 
-    def install(self, operator_token: str, key: str) -> None:
+    async def install(self, operator_token: str, key: str) -> None:
         if self.fail_at == "install":
             raise RuntimeError("middleman refused")
         self.installed.append(key)
@@ -167,19 +166,3 @@ def test_secrets_come_from_a_command_else_a_warned_environment_variable(
     monkeypatch.setenv("INSPECT_AUDIT_MANAGEMENT_KEY_COMMAND", "false")
     with pytest.raises(secrets.SecretUnavailableError, match="failed"):
         secrets.management_key()
-
-
-def test_the_cached_hawk_config_is_the_one_for_this_deployment(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Two deployments' configs side by side: the token endpoint must be this one's."""
-    from inspect_audit.launcher import hawk
-
-    cache = tmp_path / ".config" / "hawk-cli" / "server-config-cache"
-    cache.mkdir(parents=True)
-    (cache / "api.ours.example-111.json").write_text(json.dumps({"token_endpoint": "ours"}))
-    (cache / "api.theirs.example-222.json").write_text(json.dumps({"token_endpoint": "theirs"}))
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    assert hawk.server_config("https://api.ours.example")["token_endpoint"] == "ours"
-    with pytest.raises(RuntimeError, match="found 0"):
-        hawk.server_config("https://api.elsewhere.example")

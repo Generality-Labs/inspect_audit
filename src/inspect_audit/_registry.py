@@ -11,6 +11,7 @@ from typing import Any
 
 from inspect_ai import Task, task
 from inspect_ai.log import list_eval_logs
+from inspect_ai.tool import WebSearchProviders
 
 from ._investigate import investigate as investigate
 from ._prices import register_prices
@@ -64,6 +65,7 @@ def audit(
     redact: list[str] | None = None,
     confidential: bool = False,
     notes: str | None = None,
+    search: WebSearchProviders | None = None,
     auditor_image: str | None = None,
     message_limit: int | None = None,
     time_limit: int | None = None,
@@ -94,6 +96,7 @@ def audit(
         redact=redact or (),
         confidential=confidential,
         notes=notes,
+        search=search,
         auditor_image=auditor_image,
         cost_limit=cost_limit,
         message_limit=message_limit,

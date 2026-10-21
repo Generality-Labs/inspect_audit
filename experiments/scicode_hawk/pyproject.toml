@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ia-scicode-pilot"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = ["inspect-audit", "inspect-evals"]
+
+[project.entry-points.inspect_ai]
+ia_scicode_pilot = "ia_scicode_pilot.task"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ia_scicode_pilot"]

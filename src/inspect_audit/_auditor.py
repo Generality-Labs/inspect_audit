@@ -16,7 +16,7 @@ from inspect_ai.dataset import Sample
 from inspect_ai.model import ChatMessage, ChatMessageUser, ContentImage
 from inspect_ai.scorer import Scorer
 from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.tool import Tool, ToolDef, bash, skill
+from inspect_ai.tool import Tool, ToolDef, WebSearchProviders, bash, skill, web_search
 from inspect_ai.util import sample_limits, sandbox, store_as
 
 from . import prompts
@@ -121,6 +121,7 @@ def auditor(
     redact: Sequence[str] = (),
     confidential: bool = False,
     notes: str | None = None,
+    search: WebSearchProviders | None = None,
 ) -> Solver:
     """Audit the sample this solver runs in, in place of the benchmark's solver."""
     granted = {name for check in checks for name in check.tools}
@@ -154,6 +155,8 @@ def auditor(
             view_image(AUDITOR),
             *log_tools(index, sample_id),
         ]
+        if search is not None:
+            tools.append(web_search(providers=search))
         if their_scorers:
             tools.append(grade_tool(state, their_messages, their_scorers, index))
         if benchmark_box:

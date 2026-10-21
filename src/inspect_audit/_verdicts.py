@@ -217,7 +217,7 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
         """Record your verdict on one audit item.
 
         Args:
-            item: The audit item this verdict is for.
+            item: The check name, such as gold-answer, not the sample ID.
             grade: Your grade for this item.
             explanation: Why this grade: the reasoning from the evidence to the grade,
                 in a few sentences. An unresolved grade says what stopped you.
@@ -322,6 +322,11 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
 
     recording.__doc__ = execute.__doc__
     definition = ToolDef(recording, name="record_verdict")
+    definition.parameters.properties["item"] = ToolParam(
+        type="string",
+        enum=list(lookup),
+        description="The check name, not the sample ID.",
+    )
     fields: dict[str, list[str]] = {}
     for item in items:
         for key, description in item.details.items():

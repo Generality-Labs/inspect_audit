@@ -73,6 +73,12 @@ You are investigating:
 
 Invoke each skill and follow it. `map-inspect-packages` points at Inspect's docs when you
 need to read its code; `audit-framework` defines the framework's judgments.
+When `web_search` is available, use it to find sources, then retrieve the source text.
+Check that a fetched page contains the requested content: HTTP 200 can be a consent
+page or CAPTCHA. If access is blocked, try a different source or retrieval method;
+repeating the same blocked request is not an independent check. Record the failed
+access and the claim it left unresolved. Use an identifying user-agent for Wikimedia
+requests, as its robot policy requires.
 Record each verdict as you settle it, not all at the end, with the evidence that earned
 it, and say what you actually think. `record_verdict` can replace an earlier verdict:
 save completed checks before starting another expensive probe, and update the record as

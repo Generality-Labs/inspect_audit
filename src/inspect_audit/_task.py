@@ -18,6 +18,7 @@ from inspect_ai.dataset import Sample
 from inspect_ai.model import GenerateConfig
 from inspect_ai.scorer import Scorer
 from inspect_ai.solver import Solver
+from inspect_ai.tool import WebSearchProviders
 from inspect_ai.util import registry_create, registry_info
 
 from ._auditor import auditor
@@ -136,6 +137,7 @@ def audit_task(
     redact: Sequence[str] = (),
     confidential: bool = False,
     notes: str | None = None,
+    search: WebSearchProviders | None = None,
     auditor_image: str | None = None,
     cost_limit: float | None = None,
     message_limit: int | None = None,
@@ -164,6 +166,9 @@ def audit_task(
         redact: Metadata keys withheld from the staged item.
         confidential: The benchmark is unpublished: the auditor must not transmit it.
         notes: A free-form steer for the auditor.
+        search: Inspect web_search provider configuration, e.g. {"tavily": True}.
+            External providers work across auditor models and need their API key
+            in the Inspect runner environment. Omitted means no search tool.
         auditor_image: A published auditor image (required on k8s, which cannot build).
         cost_limit: Dollars per audited sample, the auditor's and its `grade` judge calls
             together. The audit is governed by a dollar cap: this one, or the eval's own
@@ -232,6 +237,7 @@ def audit_task(
         redact=redact,
         confidential=confidential,
         notes=notes,
+        search=search,
     )
 
     # every setting of theirs that would govern the auditor is replaced, not inherited

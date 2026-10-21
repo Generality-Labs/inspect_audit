@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ia-functionality"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = ["inspect-audit", "inspect-evals"]
+
+[project.entry-points.inspect_ai]
+ia_functionality = "ia_functionality.task"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ia_functionality"]

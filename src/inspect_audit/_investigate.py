@@ -633,7 +633,7 @@ def openrouter_prices(models: list[str]) -> dict[str, dict[str, float]]:
         listing = {str(m["id"]): m.get("pricing") or {} for m in json.load(response)["data"]}
     prices: dict[str, dict[str, float]] = {}
     for model in models:
-        pricing = listing.get(model)
+        pricing = listing.get(model.removeprefix("openrouter/"))
         if pricing is None:
             raise ValueError(f"OpenRouter does not list {model!r}")
         price = {

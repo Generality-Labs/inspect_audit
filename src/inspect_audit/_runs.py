@@ -9,6 +9,7 @@ environment and so its key. Both hand back finished logs as local files.
 """
 
 import asyncio
+import contextlib
 import inspect
 import json
 import os
@@ -259,7 +260,13 @@ class HawkRuns:
 
 
 class LocalRuns:
-    """Jobs as detached `inspect eval-set` processes, logs under `root/<id>/`.
+    """Jobs as Inspect's own detached eval sets: `inspect eval-set --detach`.
+
+    Inspect starts the run in its own session, prints a launch record (process id,
+    log folder, output file) once the run is live, and ends the output file with a
+    `done` record carrying overall success. The record is kept in the run's folder;
+    status is that `done` record, or the process being gone without one. Logs live
+    under `root/<id>/logs`.
 
     Models are OpenRouter ids, run through Inspect's `openrouter` provider on this
     process's OPENROUTER_API_KEY; `provider` exists so tests can run `mockllm`.
@@ -275,6 +282,12 @@ class LocalRuns:
         if path.parent != self.root.resolve() or not path.is_dir():
             raise ValueError(f"no local run {run_id!r}")
         return path
+
+    def _launch(self, run_id: str) -> dict[str, Any]:
+        return dict(json.loads((self._dir(run_id) / "launch.json").read_text()))
+
+    def address(self, run_id: str) -> str:
+        return str(self._dir(run_id) / "logs")
 
     async def submit(self, job: Job) -> str:
         run_dir = Path(tempfile.mkdtemp(prefix=f"{job.label}-", dir=self.root))
@@ -292,8 +305,7 @@ class LocalRuns:
             str(job.epochs),
             "--retry-attempts",
             "0",
-            "--display",
-            "plain",
+            "--detach",
         ]
         if job.task_args:
             # a file, not -T: inspect parses each -T value as YAML and splits commas,
@@ -306,57 +318,51 @@ class LocalRuns:
             args += ["--sample-id", ",".join(job.sample_ids)]
         if job.sample_range is not None:
             args += ["--limit", f"{job.sample_range[0]}-{job.sample_range[1]}"]
-        await asyncio.to_thread(_start, args, run_dir)
+        launched = await asyncio.to_thread(_detach, args)
+        (run_dir / "launch.json").write_text(json.dumps(launched))
         return run_dir.name
 
-    def _alive(self, run_dir: Path) -> bool:
-        try:
-            pid = int((run_dir / "pid").read_text())
-            os.kill(pid, 0)
-        except (OSError, ValueError):
-            return False
-        # a finished child is a zombie until reaped; it no longer runs
-        try:
-            done, _ = os.waitpid(pid, os.WNOHANG)
-        except ChildProcessError:  # not our child (another process started it)
-            return True
-        return done == 0
+    def _done(self, run_id: str) -> dict[str, Any] | None:
+        """Inspect's `done` record from the run's output file, once it has finished."""
+        output = Path(self._launch(run_id).get("output_file") or "")
+        if not output.is_file():
+            return None
+        for line in reversed(output.read_text(errors="replace").splitlines()):
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict) and record.get("event") == "done":
+                return record
+        return None
 
     async def status(self, run_id: str) -> str:
-        from inspect_ai.log import list_eval_logs, read_eval_log
-
-        run_dir = self._dir(run_id)
-        if (run_dir / "stopped").exists():
+        if (self._dir(run_id) / "stopped").exists():
             return STOPPED
-        if self._alive(run_dir):
-            return RUNNING
-        logs = list_eval_logs(str(run_dir / "logs"))
-        if logs and all(
-            read_eval_log(log.name, header_only=True).status == "success" for log in logs
-        ):
-            return COMPLETE
-        return FAILED
+        done = self._done(run_id)
+        if done is not None:
+            return COMPLETE if done.get("success") else FAILED
+        try:
+            os.kill(int(self._launch(run_id)["pid"]), 0)
+        except (OSError, KeyError, TypeError, ValueError):
+            return FAILED  # gone without a done record: it died mid-flight
+        return RUNNING
 
     async def logs(self, run_id: str, out_dir: Path) -> list[Path]:
-        run_dir = self._dir(run_id)
-        return sorted((run_dir / "logs").glob("*.eval"))
+        return sorted((self._dir(run_id) / "logs").glob("*.eval"))
 
     async def runner_log(self, run_id: str) -> str:
-        path = self._dir(run_id) / "runner.log"
-        lines = path.read_text(errors="replace").splitlines() if path.exists() else []
+        output = Path(self._launch(run_id).get("output_file") or "")
+        lines = output.read_text(errors="replace").splitlines() if output.is_file() else []
         return "\n".join(lines[-120:]) or "(no runner log yet)"
 
     async def stop(self, run_id: str) -> None:
-        run_dir = self._dir(run_id)
-        (run_dir / "stopped").write_text("")
-        if self._alive(run_dir):
-            # the whole process group: `inspect eval-set` and anything it started
-            os.killpg(int((run_dir / "pid").read_text()), signal.SIGTERM)
-            await asyncio.sleep(0)
+        (self._dir(run_id) / "stopped").write_text("")
+        with contextlib.suppress(OSError, KeyError, TypeError, ValueError):
+            # Inspect's detached run is its own session; interrupting it finalises its logs
+            os.kill(int(self._launch(run_id)["pid"]), signal.SIGINT)
 
 
-# what a local job may see of this process's environment: enough to find Python,
-# Docker and the model key. Nothing else the operator has set reaches benchmark code.
 JOB_ENVIRONMENT = (
     "PATH",
     "HOME",
@@ -370,11 +376,20 @@ JOB_ENVIRONMENT = (
 )
 
 
-def _start(args: list[str], run_dir: Path) -> None:
-    """Start a detached process group, its output and pid in the run's directory."""
+def _detach(args: list[str]) -> dict[str, Any]:
+    """Run `inspect ... --detach` and return its launch record.
+
+    The launcher returns once the run is live (or fails pre-flight, non-zero), so
+    this is the whole handoff. The child sees only JOB_ENVIRONMENT.
+    """
     env = {k: os.environ[k] for k in JOB_ENVIRONMENT if k in os.environ}
-    with open(run_dir / "runner.log", "wb") as out:
-        process = subprocess.Popen(
-            args, stdout=out, stderr=subprocess.STDOUT, start_new_session=True, env=env
-        )
-    (run_dir / "pid").write_text(str(process.pid))
+    result = subprocess.run(args, capture_output=True, text=True, env=env, timeout=600, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"inspect eval-set did not start: {result.stderr[-1500:]}")
+    records = [
+        json.loads(line) for line in result.stdout.splitlines() if line.strip().startswith("{")
+    ]
+    launch = next((r for r in records if r.get("event") in ("launch", "done")), None)
+    if launch is None:
+        raise RuntimeError(f"inspect eval-set printed no launch record: {result.stdout[-500:]}")
+    return launch

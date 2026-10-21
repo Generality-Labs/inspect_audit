@@ -4,6 +4,7 @@ import importlib
 import json
 import os
 import random
+from typing import Any
 
 from inspect_ai import Task, task
 
@@ -22,8 +23,9 @@ def investigation(
     audit_package: str,
     model: str = "openai/gpt-6-luna",
     audit_sample_cost: float = 0.20,
+    spec: dict[str, Any] | None = None,
 ) -> Task:
-    """Run the investigator and one two-sample audit on Hawk."""
+    """Run the investigator and one small audit on Hawk, with declared inputs."""
     specifications = {
         "scicode": {
             "provide_scientific_background": False,
@@ -57,23 +59,40 @@ def investigation(
             "semantic_judge": f"openrouter/{model}",
         },
     }
-    args = specifications[benchmark]
-    source = f"inspect_evals.{benchmark}.{benchmark}"
-    benchmark_task = getattr(importlib.import_module(source), benchmark)(**args)
-    ids = [str(s.id if s.id is not None else i + 1) for i, s in enumerate(benchmark_task.dataset)]
-    samples = random.Random(20261021).sample(ids, 2)
-    logs = ["hawk:scicode-provider-default-pgcjfyx2vbyas1w5"] if benchmark == "scicode" else []
-    judges = {"grader": model} if benchmark == "simpleqa" else {}
+    if spec is None:
+        args = specifications[benchmark]
+        source = f"inspect_evals.{benchmark}.{benchmark}"
+        benchmark_task = getattr(importlib.import_module(source), benchmark)(**args)
+        ids = [
+            str(s.id if s.id is not None else i + 1) for i, s in enumerate(benchmark_task.dataset)
+        ]
+        samples = random.Random(20261021).sample(ids, 2)
+        logs = ["hawk:scicode-provider-default-pgcjfyx2vbyas1w5"] if benchmark == "scicode" else []
+        judges = {"grader": model} if benchmark == "simpleqa" else {}
+        spec = {
+            "repo": REPO,
+            "revision": REVISION,
+            "task": f"inspect_evals/{benchmark}",
+            "source": source,
+            "paths": [f"src/inspect_evals/{benchmark}"],
+            "package": f"inspect-evals[scicode] @ git+{REPO}@{REVISION}",
+            "task_args": args,
+            "samples": samples,
+            "logs": logs,
+            "judges": judges,
+        }
+    args, source, samples = spec["task_args"], spec["source"], spec["samples"]
+    logs, judges = spec["logs"], spec["judges"]
     register_prices(openrouter_prices([model]))
     return investigate(
-        repo=REPO,
-        revision=REVISION,
-        target_task=f"inspect_evals/{benchmark}",
+        repo=spec["repo"],
+        revision=spec["revision"],
+        target_task=spec["task"],
         source=source,
-        paths=[f"src/inspect_evals/{benchmark}"],
+        paths=spec["paths"],
         logs=logs,
         task_args=args,
-        task_package=f"inspect-evals[scicode,agentharm] @ git+{REPO}@{REVISION}",
+        task_package=spec["package"],
         audit_package=audit_package,
         box="k8s",
         runs="hawk",
@@ -95,11 +114,12 @@ def investigation(
             f"with both gold-answer and question-labels, {model} as auditor, and a ${audit_sample_cost:.2f} "
             f"per-sample limit. source={source}; task_args={json.dumps(args)}; "
             f"judge={json.dumps(judges)}. Use all supplied logs, or [] if none supplied. "
-            "The whole declared dataset is available; detailed audit covers only these "
-            "two samples. Do not launch benchmark jobs or repeat audits. Do not fetch "
+            "The whole declared dataset is available; detailed audit covers only the "
+            "listed samples. Do not launch benchmark jobs or repeat audits. Do not fetch "
             "external audits or correction labels. Wait for the child, collect it, "
-            "and inspect both samples' verdicts. These are seeded random samples, "
-            "not purposively selected. Independently countercheck material findings "
+            "and inspect every selected sample's verdicts. "
+            f"Selection method: {spec.get('selection', 'seeded random samples')}. "
+            "Independently countercheck material findings "
             "against the original assertion and probe before agreeing. Record "
             "investigator reviews distinguishing reproduced evidence from read evidence, and "
             "supported findings. Copy /workspace/register.json to "
@@ -109,5 +129,11 @@ def investigation(
             "report sources, state the blocker, and finish; do not spend the budget "
             "repeating the same failed validation. Prioritise completing the end-to-end "
             "path and describing what broke over exhaustive scientific analysis."
+            " Verify whether the auditor actually called grade and read the supplied "
+            "attempts; distinguish a successful grading call from an attempt that errored. "
+            "Record evidence for each stage: source/data loading, attempt transcript "
+            "access, grading, verdict recording, register collection, review and publication. "
+            "An unsupported environment is a functionality blocker to preserve, not "
+            "a reason to silently substitute another benchmark or discard the run."
         ),
     )

@@ -23,14 +23,19 @@ The audit is the benchmark's own Inspect task with the auditor in place of its s
 
 One Inspect task: a react agent in its own box, launching benchmark and audit jobs. It runs wherever Inspect runs it (a Docker container locally, a pod on Hawk); only its jobs' backend differs.
 
-| Module                        | Owns                                                                                         |
-| ----------------------------- | -------------------------------------------------------------------------------------------- |
-| `_investigate.py`             | `investigate`: declared inputs staged on the host, the job tools, the budget tool, the task  |
-| `_runs.py`                    | a `Job` and where it runs: Hawk through `HawkClient`, or a detached local `inspect eval-set` |
-| `_investigation_workspace.py` | staging inputs into the box, reading the report back out, publishing to Hawk's artifacts     |
-| `_report.py`                  | findings, publication, the store's record of launched jobs, the outcome scorer               |
+| Module                        | Owns                                                                                          |
+| ----------------------------- | --------------------------------------------------------------------------------------------- |
+| `_investigate.py`             | `investigate`: declared inputs staged on the host, the job tools, the budget tool, the task   |
+| `_runs.py`                    | a `Job` and where it runs: Hawk through `HawkClient`, or a detached local `inspect eval-set`  |
+| `_policy.py`                  | frozen launch configuration, checkpoint identity and `InvestigationAuthorizer` for child jobs |
+| `_investigation_workspace.py` | staging inputs into the box, reading the report back out, publishing to Hawk's artifacts      |
+| `_report.py`                  | findings, publication, the store's record of launched jobs, the outcome scorer                |
 
 Budget is the model key every call bills to (a capped OpenRouter key locally, the run's Hawk user's assigned key on Hawk); nothing here prices or reserves. Resume is Inspect's checkpointing of `/workspace`, `/inputs` and the store.
+
+Launch configuration is resolved once into an immutable `LaunchPolicy`. Its snapshot and SHA-256 are saved in Inspect's sample store; resume must match the original policy and investigator model. `/inputs/policy.json` is a readable copy, never authority. Child submissions pass through `InvestigationAuthorizer` and record the policy digest. The launch policy permits per-sample audit cost and concurrency limits; it does not implement a shared dollar ledger. Unsupported policy fields are refused.
+
+Structured YAML accepts `benchmark`, `audit`, `policy` and `execution` sections (see `examples/investigation-policy.yaml`). Restricted Hawk children require the new restricted-credentials/transcript-input API; they never receive a user refresh token. Submission authority currently remains in the investigator's host process. A separate trusted launcher and moving benchmark enumeration out of that process remain work; the policy object alone is not a process-isolation boundary.
 
 ## Load-bearing rules
 

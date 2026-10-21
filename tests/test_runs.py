@@ -208,6 +208,7 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
             "run_id": "run-1",
             "address": "hawk:run-1",
             "note": "why",
+            "policy_sha256": inv.authorizer.policy.digest,
         }
     ]
     from inspect_ai.tool import ToolError

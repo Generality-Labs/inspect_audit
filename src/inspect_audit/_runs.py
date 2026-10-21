@@ -9,6 +9,7 @@ environment and so its key. Both hand back finished logs as local files.
 """
 
 import asyncio
+import inspect
 import json
 import os
 import shutil
@@ -20,7 +21,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 # a job's lifecycle as both backends report it
 RUNNING = "running"
@@ -60,7 +61,7 @@ class Runs(Protocol):
     async def stop(self, run_id: str) -> None: ...
 
 
-def hawk_config(job: Job) -> dict[str, Any]:
+def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
     """The eval-set config Hawk runs for a job. Models route through Hawk's proxy."""
     package_name, _, task_name = job.task.partition("/")
 
@@ -71,7 +72,7 @@ def hawk_config(job: Job) -> dict[str, Any]:
     if job.sample_ids is not None:
         item["sample_ids"] = job.sample_ids
     limit = [job.sample_range[0] - 1, job.sample_range[1]] if job.sample_range else None
-    return {
+    config: dict[str, Any] = {
         "name": job.label,
         "limit": limit,
         "packages": [job.package, *job.extra_packages],
@@ -82,6 +83,22 @@ def hawk_config(job: Job) -> dict[str, Any]:
         # a failed child is reported, not retried behind the investigator's back
         "retry_attempts": 0,
     }
+    if restricted:
+        # Judges selected through task arguments are outside the eval model grid.
+        judges = (job.task_args.get("judge") or {}) if job.task == "inspect_audit/audit" else {}
+        if judges:
+            config["additional_models"] = [
+                group(str(m).removeprefix("openrouter/")) for m in dict.fromkeys(judges.values())
+            ]
+        sources = (job.task_args.get("logs") or []) if job.task == "inspect_audit/audit" else []
+        if any(not str(source).startswith("hawk:") for source in sources):
+            raise ValueError("restricted audit jobs require Hawk transcript sources")
+        ids = list(dict.fromkeys(s.removeprefix("hawk:") for s in sources))
+        if any(not sid or "," in sid for sid in ids):
+            raise ValueError("declare each Hawk transcript source as a separate hawk:<id>")
+        if ids:
+            config["transcripts"] = {"sources": [{"eval_set_id": sid} for sid in ids]}
+    return config
 
 
 class HawkLogin:
@@ -152,8 +169,11 @@ class HawkLogin:
 class HawkRuns:
     """Jobs on Hawk, through `hawk.client.HawkClient`."""
 
-    def __init__(self, api_url: str) -> None:
+    def __init__(
+        self, api_url: str, *, credential_mode: Literal["restricted", "user"] = "user"
+    ) -> None:
         self.login = HawkLogin(api_url)
+        self.credential_mode = credential_mode
 
     @asynccontextmanager
     async def _client(self) -> AsyncGenerator[Any]:
@@ -165,20 +185,32 @@ class HawkRuns:
             yield client
 
     async def submit(self, job: Job) -> str:
+        from hawk.client import HawkClient
         from hawk.core.types import EvalSetConfig
 
-        settings = hawk_config(job)
+        restricted = self.credential_mode == "restricted"
+        if restricted and (
+            "credential_mode" not in inspect.signature(HawkClient.create_eval_set).parameters
+            or not {"transcripts", "additional_models"}.issubset(EvalSetConfig.model_fields)
+        ):
+            raise RuntimeError(
+                "restricted jobs need a Hawk client with restricted-credential and transcript-input support"
+            )
+        settings = hawk_config(job, restricted=restricted)
         # the job's own code may read Hawk (an audit fetching hawk: logs); Hawk does
         # not tell a runner where its API is
         settings["runner"] = {"environment": {"HAWK_API_URL": self.login.api_url}}
         config = EvalSetConfig.model_validate(settings)
         # the access token first: refreshing it may rotate the refresh token
         token = await self.login.access_token()
-        refresh_token = await self.login.refresh_token()
-        from hawk.client import HawkClient
-
         async with HawkClient(token=token, api_url=self.login.api_url) as client:
-            created: Any = await client.create_eval_set(config, refresh_token=refresh_token)
+            if restricted:
+                # No fallback: old clients/deployments must refuse this mode.
+                options: dict[str, Any] = {"credential_mode": "restricted"}
+                created: Any = await client.create_eval_set(config, **options)
+            else:
+                refresh_token = await self.login.refresh_token()
+                created = await client.create_eval_set(config, refresh_token=refresh_token)
         # a newer server's client may return the API body rather than the id
         if isinstance(created, dict):
             return str(created["eval_set_id"])

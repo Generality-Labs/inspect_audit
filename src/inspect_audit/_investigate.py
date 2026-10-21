@@ -17,11 +17,11 @@ import shutil
 import subprocess
 import tarfile
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.metadata import version
 from logging import getLogger
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 import yaml
@@ -30,11 +30,27 @@ from inspect_ai.agent import AgentState, react
 from inspect_ai.dataset import Sample
 from inspect_ai.log import list_eval_logs, read_eval_log_sample_summaries
 from inspect_ai.model import CompactionSummary, GenerateConfig
+from inspect_ai.solver import TaskState
 from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
 from inspect_ai.util import CheckpointConfig, store_as
 
 from . import prompts
 from ._image import view_image
+from ._policy import (
+    AuditScope,
+    Benchmark,
+    Execution,
+    InvestigationAuthorizer,
+    LaunchPolicy,
+    Models,
+    Permissions,
+    PolicyStore,
+    argument_problems,
+    bind_policy,
+    canonical,
+    ensure_model,
+    ensure_policy,
+)
 from ._prices import valid_price
 from ._report import (
     InvestigationRecord,
@@ -233,6 +249,26 @@ def _investigation_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
     loaded = yaml.safe_load(path.read_text()) or {}
     if not isinstance(loaded, dict):
         raise ValueError(f"{config} must be a mapping of task settings")
+    # Structured launch sections resolve once, before the immutable policy is made.
+    sections = {
+        "benchmark": (Benchmark, {"task": "target_task", "package": "task_package"}),
+        "audit": (AuditScope, {"samples": "audit_samples", "checks": "checks"}),
+        "execution": (Execution, {"backend": "runs"}),
+    }
+    for section, (model, names) in sections.items():
+        if section not in loaded:
+            continue
+        values = model.model_validate(loaded.pop(section)).model_dump(
+            mode="json", exclude_unset=True
+        )
+        # Execution's default is part of the declaration, not a server-side fallback.
+        if section == "execution":
+            values.setdefault("credential_mode", "restricted")
+        for key, value in values.items():
+            target = names.get(key, key)
+            if target in loaded:
+                raise ValueError(f"{config} declares {target} both directly and under {section}")
+            loaded[target] = value
     signature = inspect_module.signature(investigate)
     unknown = set(loaded) - set(signature.parameters) - {"config"}
     if unknown:
@@ -631,6 +667,29 @@ class Investigation:
     auditor_image: str
     menu: ModelMenu
     supplied: list[str]  # log sources the operator gave, as addresses a job can read
+    authorizer: InvestigationAuthorizer | None = None
+    launch_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.authorizer is None:
+            from ._verdicts import audit_items
+
+            self.authorizer = InvestigationAuthorizer(
+                LaunchPolicy(
+                    task=self.task,
+                    task_package=self.task_package,
+                    audit_package=self.audit_package,
+                    auditor_image=self.auditor_image,
+                    models=Models(
+                        auditors=tuple(self.menu.auditors),
+                        subjects=tuple(self.menu.subjects),
+                        judges=tuple(self.menu.judges),
+                    ),
+                    checks=tuple(s.name for s in audit_items()),
+                    supplied_logs=tuple(self.supplied),
+                    configuration_json="{}",
+                )
+            )
 
     def record(self) -> InvestigationRecord:
         return store_as(InvestigationRecord)
@@ -641,17 +700,33 @@ class Investigation:
             raise ToolError(f"no job {label!r}; jobs(action='list') shows them")
         return found[0]
 
-    def allow(self, models: list[str], allowed: list[str], part: str) -> None:
-        refused = [m for m in models if m not in allowed]
-        if refused:
-            raise ToolError(
-                f"{', '.join(refused)} may not be {part}; allowed: {', '.join(allowed) or 'none'}"
-            )
-
     async def launch(self, job: Job, kind: str, note: str) -> str:
+        async with self.launch_lock:
+            return await self._launch(job, kind, note)
+
+    async def _launch(self, job: Job, kind: str, note: str) -> str:
+        if self.authorizer is None:
+            raise RuntimeError("investigation has no launch authorizer")
+        policy = self.authorizer.policy
+        approved = self.authorizer.authorise(
+            job, kind, {str(j["address"]) for j in self.record().jobs}
+        )
+        # This object is made at launch; sandbox policy files are never read here.
+        if policy.configuration_json != "{}":
+            ensure_policy(policy, store_as(PolicyStore), require_existing=True)
         if any(j["label"] == job.label for j in self.record().jobs):
             raise ToolError(f"a job labelled {job.label!r} exists; choose another label")
-        run_id = await self.runs.submit(job)
+        cap = policy.limits.max_concurrent_jobs
+        if cap is not None:
+            active = sum(
+                [
+                    await self.runs.status(str(j["run_id"])) not in FINISHED
+                    for j in self.record().jobs
+                ]
+            )
+            if active >= cap:
+                raise ToolError(f"the policy permits at most {cap} concurrent jobs")
+        run_id = await self.runs.submit(approved)
         address = (
             f"hawk:{run_id}" if self.where == "hawk" else str(Path(self.runs.root, run_id, "logs"))  # type: ignore[attr-defined]
         )
@@ -659,51 +734,20 @@ class Investigation:
         record = self.record()
         record.jobs = [
             *record.jobs,
-            {"label": job.label, "kind": kind, "run_id": run_id, "address": address, "note": note},
+            {
+                "label": job.label,
+                "kind": kind,
+                "run_id": run_id,
+                "address": address,
+                "note": note,
+                "policy_sha256": policy.digest,
+            },
         ]
         return (
             f"Launched {kind} job {job.label!r} ({address}). jobs(action='wait', "
             f"label='{job.label}') blocks until it finishes; jobs(action='collect', ...) "
             f"then brings its logs to /inputs/jobs/{job.label}/."
         )
-
-
-# task argument names that choose where code runs or what it reads: a job's task
-# arguments may not set them. A benchmark that takes `sandbox="local"` would run the
-# evaluated model's commands on the machine running the job, outside any container.
-# whole words of a snake_case name: `profile` is not a file, `data_dir` is a dir
-PLACEMENT_ARG = re.compile(
-    r"(^|_)(sandbox|image|docker|compose|path|filepath|filename|file|dir|directory|workdir|root|url|host)s?($|_)",
-    re.IGNORECASE,
-)
-MODEL_ARG = re.compile(r"(^|_)(model|judge|grader)s?($|_)", re.IGNORECASE)
-
-
-def argument_problems(args: Any, allowed: list[str], where: str = "task_args") -> list[str]:
-    """What a job's task arguments may not contain, at any depth.
-
-    No argument that places code or names a file, and no model outside the
-    investigation's lists. A task builds its own models from names in its arguments,
-    so they are held to the same lists as the job's models, in Inspect's spelling.
-    """
-    problems: list[str] = []
-    if isinstance(args, dict):
-        for key, value in args.items():
-            here = f"{where}.{key}"
-            if PLACEMENT_ARG.search(str(key)):
-                problems.append(f"{here}: jobs may not set where code runs or what it reads")
-            elif MODEL_ARG.search(str(key)) and isinstance(value, str):
-                if value.removeprefix("openrouter/") not in allowed or "/" not in value:
-                    problems.append(
-                        f"{here}: {value!r} is not an allowed model; write one of "
-                        + ", ".join(f"openrouter/{m}" for m in allowed)
-                    )
-            else:
-                problems += argument_problems(value, allowed, here)
-    elif isinstance(args, list):
-        for index, value in enumerate(args):
-            problems += argument_problems(value, allowed, f"{where}[{index}]")
-    return problems
 
 
 def json_object(text: str, name: str) -> dict[str, Any]:
@@ -762,9 +806,6 @@ def run_benchmark(inv: Investigation) -> Tool:
             len(sample_range) == 2 and 1 <= sample_range[0] <= sample_range[1]
         ):
             raise ToolError("sample_range is [first, last], counting from 1, first <= last")
-        inv.allow(models, inv.menu.subjects, "evaluated")
-        inv.allow(list(roles.values()), inv.menu.judges, "judges")
-        check_arguments(args, inv.menu.judges)
         job = Job(
             label=label,
             task=inv.task,
@@ -818,9 +859,6 @@ def run_audit(inv: Investigation) -> Tool:
         judges = {str(k): str(v) for k, v in json_object(judge, "judge").items()}
         if not re.fullmatch(r"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*", source):
             raise ToolError(f"source must be a module name like pkg.mod.task, not {source!r}")
-        inv.allow([auditor_model], inv.menu.auditors, "the auditor")
-        inv.allow(list(judges.values()), inv.menu.judges, "judges")
-        check_arguments(args, inv.menu.judges)
         addresses = []
         for name in logs:
             known = [j for j in inv.record().jobs if j["label"] == name]
@@ -934,7 +972,7 @@ def jobs(inv: Investigation) -> Tool:
 
 
 @tool
-def start_register(task: str | None) -> Tool:
+def start_register(task: str | None, policy: LaunchPolicy | None = None) -> Tool:
     async def execute(task_args: str, checks: list[str]) -> str:
         """Start the register: every item of the benchmark, against the checks you will run.
 
@@ -958,6 +996,10 @@ def start_register(task: str | None) -> Tool:
         if started(load()):
             raise ToolError("the register is already started; it keeps one population")
         args = json_object(task_args, "task_args")
+        if policy is not None:
+            ensure_policy(policy, store_as(PolicyStore), require_existing=True)
+            if canonical(args) != policy.task_args_json or set(checks) - set(policy.checks):
+                raise ToolError("register arguments and checks must match the launch policy")
         try:
             skills = audit_items(checks)
         except ValueError as ex:
@@ -970,6 +1012,11 @@ def start_register(task: str | None) -> Tool:
                 "The benchmark's package must be installed beside inspect_audit."
             ) from ex
         dataset, positional = numbered(their)
+        if policy is not None and policy.samples is not None:
+            known = {str(s.id) for s in dataset}
+            if set(policy.samples) - known:
+                raise ToolError("launch policy selects sample IDs absent from the benchmark")
+            dataset = [s for s in dataset if str(s.id) in policy.samples]
         register = Register(
             subject={
                 "task": task,
@@ -1195,6 +1242,12 @@ def investigate(
     artifact_dir: str | None = None,
     instructions: str | None = None,
     required_coverage: float | None = None,
+    policy: dict[str, Any] | None = None,
+    task_args: dict[str, Any] | None = None,
+    audit_samples: list[str] | str | None = None,
+    checks: list[str] | None = None,
+    source: str | None = None,
+    credential_mode: str | None = None,
 ) -> Task:
     """Investigate a benchmark's source and logs, and publish a GL LaTeX report.
 
@@ -1242,6 +1295,15 @@ def investigate(
         instructions: Operator instructions and scope, separate from benchmark background.
         required_coverage: Fraction of the question population (0-1) the published
             coverage.json must assess for the run to count as complete.
+        policy: Frozen model permissions, declared log inputs and job limits.
+            YAML also accepts benchmark, audit and execution sections. Permission
+            changes on resume are refused; start a new investigation instead.
+        task_args: Fixed benchmark arguments for every child job and the register.
+        audit_samples: Permitted sample IDs, or "all". Subset requests are allowed.
+        checks: Permitted audit checks; defaults to the package's available checks.
+        source: Optional fixed benchmark source module for audit jobs.
+        credential_mode: "restricted" or "user" for Hawk children. Structured
+            execution configuration defaults to restricted; legacy calls use user.
     """
     # the file is read before anything else is decided: an argument is "given" only
     # when it is not None, so a value equal to a default is still an override
@@ -1275,6 +1337,42 @@ def investigate(
     artifact_dir = settings.get("artifact_dir", artifact_dir)
     instructions = settings.get("instructions", instructions)
     required_coverage = settings.get("required_coverage", required_coverage)
+    policy = settings.get("policy", policy)
+    permissions = Permissions.model_validate(policy or {})
+    task_args = json.loads(canonical(settings.get("task_args", task_args) or {}))
+    audit_samples = settings.get("audit_samples", audit_samples)
+    checks = settings.get("checks", checks)
+    source = settings.get("source", source)
+    credential_mode = settings.get("credential_mode", credential_mode) or "user"
+    if policy is not None:
+        if any(v is not None for v in (auditor_models, subject_models, judge_models)) or any(
+            key in settings for key in ("auditor_models", "subject_models", "judge_models")
+        ):
+            raise ValueError(
+                "declare models under policy.models or legacy model arguments, not both"
+            )
+        menu = ModelMenu(
+            auditors=list(permissions.models.auditors),
+            subjects=list(permissions.models.subjects),
+            judges=list(permissions.models.judges),
+        )
+        declared_logs = list(permissions.inputs.logs)
+        if logs is not None and logs != declared_logs:
+            raise ValueError("logs and policy.inputs.logs disagree")
+        logs = declared_logs
+    if credential_mode not in ("restricted", "user"):
+        raise ValueError("credential_mode must be 'restricted' or 'user'")
+    if credential_mode == "restricted" and runs != "hawk":
+        raise ValueError("restricted credentials require runs='hawk'")
+    if isinstance(audit_samples, str) and audit_samples != "all":
+        raise ValueError("audit_samples must be a list of IDs or 'all'")
+    if audit_samples is not None and not isinstance(audit_samples, (str, list)):
+        raise ValueError("audit_samples must be a list of IDs or 'all'")
+    from ._verdicts import audit_items
+
+    permitted_checks = tuple(s.name for s in audit_items(checks))
+    if not permitted_checks:
+        raise ValueError("an investigation needs at least one permitted check")
 
     if runs not in (None, "hawk", "local"):
         raise ValueError("runs must be 'hawk', 'local' or None")
@@ -1316,6 +1414,57 @@ def investigate(
         output_dir,
     )
 
+    seed_path = root / "inputs" / "seed.json"
+    seed = json.loads(seed_path.read_text())
+    if runs:
+        if not target_task:
+            raise ValueError("jobs run the audited task: name it with target_task")
+        task_package = task_package or (
+            git_package_spec(local_repo, revision)
+            if local_repo.is_dir()
+            else f"git+{repo.removesuffix('.git')}@{revision}"
+            if revision
+            else None
+        )
+        audit_package = audit_package or own_package_spec()
+        if not task_package or not audit_package:
+            raise ValueError("declare task_package and audit_package for child jobs")
+    supplied = [str(e["remote"]) for e in seed["logs"] if e.get("remote")]
+    if runs == "local":
+        supplied += [str(e["source"]) for e in seed["logs"] if not e.get("remote")]
+    # Keep a value snapshot, never a reference to the caller's configuration dict.
+    resolved = locals().copy()
+    configuration = {
+        key: resolved[key]
+        for key in inspect_module.signature(investigate).parameters
+        if key != "config"
+    }
+    configuration["resolved_source"] = {key: seed.get(key) for key in ("repo", "revision", "paths")}
+    launch_policy = LaunchPolicy(
+        task=target_task,
+        task_package=task_package,
+        audit_package=audit_package,
+        auditor_image=auditor_image,
+        models=Models(
+            investigator=permissions.models.investigator,
+            auditors=tuple(menu.auditors),
+            subjects=tuple(menu.subjects),
+            judges=tuple(menu.judges),
+        ),
+        samples=tuple(audit_samples) if isinstance(audit_samples, list) else None,
+        checks=permitted_checks,
+        task_args_json=canonical(task_args),
+        source=source,
+        supplied_logs=tuple(sorted(set(supplied))),
+        limits=permissions.limits,
+        credential_mode="restricted" if credential_mode == "restricted" else "user",
+        configuration_json=canonical(configuration),
+    )
+    snapshot = canonical(launch_policy.model_dump(mode="json"))
+    (root / "policy.json").write_text(snapshot)
+    (root / "inputs" / "policy.json").write_text(snapshot)
+    seed["policy"] = {"path": "/inputs/policy.json", "sha256": launch_policy.digest}
+
     tools: list[Tool] = [
         # a shell dump is the one place the agent routinely wants more than the
         # 32KB default; everything else writes large results to files
@@ -1331,41 +1480,21 @@ def investigate(
         check_report(str(root)),
         publish_report(str(root), required_coverage),
         report_blocker(),
-        start_register(target_task),
+        start_register(target_task, launch_policy),
         register_view(),
         review(),
         finding(),
         rate(),
     ]
-    seed_path = root / "inputs" / "seed.json"
-    seed = json.loads(seed_path.read_text())
     if required_coverage is not None:
         seed["required_coverage"] = float(required_coverage)
     if runs:
-        if not target_task:
-            raise ValueError("jobs run the audited task: name it with target_task")
-        # a job installs the benchmark from git: a local checkout supplies its own
-        # origin and commit, and a repository given as a URL is already that answer
-        task_package = task_package or (
-            git_package_spec(local_repo, revision)
-            if local_repo.is_dir()
-            else f"git+{repo.removesuffix('.git')}@{revision}"
-            if revision
-            else None
-        )
-        audit_package = audit_package or own_package_spec()
-        if not task_package or not audit_package:
-            raise ValueError(
-                "jobs install the benchmark and inspect_audit from pip specs, and this "
-                "process cannot say what they are: pass task_package and audit_package"
-            )
-        supplied = [str(e["remote"]) for e in seed["logs"] if e.get("remote")]
-        if runs == "local":
-            supplied += [str(e["source"]) for e in seed["logs"] if not e.get("remote")]
+        if task_package is None or audit_package is None or target_task is None:
+            raise RuntimeError("child-job packages and task were not resolved")
         inv = Investigation(
             root=root,
             # local runs outside the per-construction folder: a resumed run must find them
-            runs=HawkRuns(hawk_api_url or "")
+            runs=HawkRuns(hawk_api_url or "", credential_mode=launch_policy.credential_mode)
             if runs == "hawk"
             else LocalRuns(Path(output_dir).expanduser().resolve() / "runs"),
             where=runs,
@@ -1375,6 +1504,7 @@ def investigate(
             auditor_image=auditor_image,
             menu=menu,
             supplied=sorted(set(supplied)),
+            authorizer=InvestigationAuthorizer(launch_policy),
         )
         tools += [run_benchmark(inv), run_audit(inv), jobs(inv)]
         seed["jobs"] = {
@@ -1399,10 +1529,18 @@ def investigate(
         )
 
     async def on_continue(state: AgentState) -> bool | str:
+        ensure_policy(launch_policy, store_as(PolicyStore), require_existing=True)
         return await _continue(state, interactive)
 
+    async def on_resume(
+        state: TaskState, attempt: Literal["initial", "resume", "resume_for_scoring"]
+    ) -> None:
+        ensure_policy(launch_policy, state.store_as(PolicyStore), require_existing=True)
+        ensure_model(launch_policy, state.store_as(PolicyStore), str(state.model))
+
     return Task(
-        setup=[stage_inputs(root)],
+        setup=[bind_policy(launch_policy), stage_inputs(root)],
+        on_resume=on_resume,
         dataset=[
             Sample(
                 id="investigation",
@@ -1441,5 +1579,6 @@ def investigate(
             "interactive": interactive,
             "runs": runs,
             "box": box,
+            "policy_sha256": launch_policy.digest,
         },
     )

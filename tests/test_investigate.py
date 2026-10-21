@@ -843,7 +843,7 @@ def test_every_tool_schema_survives_a_strict_provider(tmp_path: Path) -> None:
 
 def test_jobs_refuse_to_guess_a_package_they_cannot_derive(tmp_path: Path) -> None:
     repo = git_repo(tmp_path / "repo")  # no origin remote
-    with pytest.raises(ValueError, match="cannot say what they are"):
+    with pytest.raises(ValueError, match="declare task_package and audit_package"):
         investigate(
             str(repo),
             output_dir=str(tmp_path / "runs"),

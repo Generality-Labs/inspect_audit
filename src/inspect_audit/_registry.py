@@ -1,6 +1,7 @@
 """The package's Inspect tasks, `audit` and `investigate`, and log fetching."""
 
 import asyncio
+import importlib
 import importlib.util
 import os
 import shutil
@@ -121,6 +122,15 @@ def fetch_logs(logs: str | list[str]) -> str:
                 shutil.copyfile(source_path, combined / f"{index}_{source_path.name}")
         return str(combined)
     if logs.startswith("hawk:"):
+        if os.environ.get("HAWK_RUNNER_RESTRICTED_KEY_FILE"):
+            runtime = importlib.import_module("hawk.runtime")
+            declared = {
+                source.eval_set_id: source.location for source in runtime.transcript_sources()
+            }
+            source_id = logs.removeprefix("hawk:")
+            if source_id not in declared:
+                raise ValueError(f"Hawk input {source_id!r} was not declared for this execution")
+            return declared[source_id]
         return _hawk_fetch(logs.removeprefix("hawk:"))
     return logs
 

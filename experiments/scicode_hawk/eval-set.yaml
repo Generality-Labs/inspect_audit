@@ -11,7 +11,7 @@ tasks:
   items:
   - name: investigation
     args:
-      audit_package: git+https://github.com/Generality-Labs/inspect_audit@074e74bd4521900f1849b14bdd7da907f2deb6b9
+      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@074e74bd4521900f1849b14bdd7da907f2deb6b9
 models:
 - package: openai
   name: openrouter

@@ -1,0 +1,44 @@
+name: ia-functionality-five-20261021
+packages:
+- inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
+- inspect-evals[scicode,agentharm] @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
+tasks:
+- package: git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d#subdirectory=experiments/functionality_hawk
+  name: ia_functionality
+  items:
+  - name: investigation
+    args:
+      benchmark: scicode
+      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
+  - name: investigation
+    args:
+      benchmark: simpleqa
+      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
+  - name: investigation
+    args:
+      benchmark: gsm8k
+      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
+  - name: investigation
+    args:
+      benchmark: bbh
+      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
+  - name: investigation
+    args:
+      benchmark: agentharm
+      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
+models:
+- package: openai
+  name: openrouter
+  items:
+  - name: openai/gpt-6-luna
+    args:
+      config:
+        reasoning_effort: low
+max_retries: 2
+cost_limit: 1.0
+time_limit: 2700
+epochs: 1
+retry_attempts: 0
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

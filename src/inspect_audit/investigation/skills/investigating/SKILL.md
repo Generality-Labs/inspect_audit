@@ -36,6 +36,13 @@ Inaccessible reasoning and inaccessible log sources are missing coverage.
 
 ## Prioritise and check
 
+Before agreeing with a material auditor finding, read the exact source assertion and
+the probe input/output it rests on. Run the cheapest independent countercheck against
+the original code; copying an auditor's explanation into review is not verification.
+Record what you checked, and distinguish reproduced claims from claims merely read.
+For clean multi-step samples, check which subproblems were actually examined. Preserve
+the operator's sample-selection method; a seeded random sample is not purposive.
+
 For each lead, state the suspected mechanism, what it would change about interpreting
 the score, the strongest alternative explanation and the cheapest check that could
 refute it. Prefer existing evidence and deterministic calculations before new runs.

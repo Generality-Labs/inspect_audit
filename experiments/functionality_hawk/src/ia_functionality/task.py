@@ -7,18 +7,22 @@ import random
 
 from inspect_ai import Task, task
 
-from inspect_audit._investigate import investigate
+from inspect_audit._investigate import investigate, openrouter_prices
 from inspect_audit._prices import register_prices
 
 REPO = "https://github.com/xantheocracy/inspect_evals"
 REVISION = "369d6ae1de4a7870b4c4119d12bd49a6e484ed64"
-LUNA = "openai/gpt-6-luna"
 AUDITOR_IMAGE = "ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa"
 INVESTIGATOR_IMAGE = "ghcr.io/generality-labs/inspect-audit-auditor@sha256:d21b285bc4ce2f2d34084c2ae382ab5a6996704dbb8d58d1199a1d1925fa71fa"
 
 
 @task
-def investigation(benchmark: str, audit_package: str) -> Task:
+def investigation(
+    benchmark: str,
+    audit_package: str,
+    model: str = "openai/gpt-6-luna",
+    audit_sample_cost: float = 0.20,
+) -> Task:
     """Run the investigator and one two-sample audit on Hawk."""
     specifications = {
         "scicode": {
@@ -49,8 +53,8 @@ def investigation(benchmark: str, audit_package: str) -> Task:
                 "61-2",
                 "66-2",
             ],
-            "refusal_judge": f"openrouter/{LUNA}",
-            "semantic_judge": f"openrouter/{LUNA}",
+            "refusal_judge": f"openrouter/{model}",
+            "semantic_judge": f"openrouter/{model}",
         },
     }
     args = specifications[benchmark]
@@ -59,16 +63,8 @@ def investigation(benchmark: str, audit_package: str) -> Task:
     ids = [str(s.id if s.id is not None else i + 1) for i, s in enumerate(benchmark_task.dataset)]
     samples = random.Random(20261021).sample(ids, 2)
     logs = ["hawk:scicode-provider-default-pgcjfyx2vbyas1w5"] if benchmark == "scicode" else []
-    judges = {"grader": LUNA} if benchmark == "simpleqa" else {}
-    register_prices(
-        {
-            f"openrouter/{LUNA}": {
-                "input": 0.10,
-                "output": 0.50,
-                "input_cache_read": 0.01,
-            }
-        }
-    )
+    judges = {"grader": model} if benchmark == "simpleqa" else {}
+    register_prices(openrouter_prices([model]))
     return investigate(
         repo=REPO,
         revision=REVISION,
@@ -89,20 +85,23 @@ def investigation(benchmark: str, audit_package: str) -> Task:
         audit_samples=samples,
         checks=["gold-answer", "question-labels"],
         policy={
-            "models": {"investigator": [LUNA], "auditors": [LUNA], "judges": [LUNA]},
+            "models": {"investigator": [model], "auditors": [model], "judges": [model]},
             "inputs": {"logs": logs},
-            "limits": {"audit_sample_cost_usd": 0.20},
+            "limits": {"audit_sample_cost_usd": audit_sample_cost},
         },
         instructions=(
             f"Functionality smoke run of {benchmark}, not an accuracy evaluation. "
             f"Start the register. Launch exactly one audit job for sample IDs {samples}, "
-            "with both gold-answer and question-labels, Luna as auditor, and a $0.20 "
+            f"with both gold-answer and question-labels, {model} as auditor, and a ${audit_sample_cost:.2f} "
             f"per-sample limit. source={source}; task_args={json.dumps(args)}; "
             f"judge={json.dumps(judges)}. Use all supplied logs, or [] if none supplied. "
             "The whole declared dataset is available; detailed audit covers only these "
             "two samples. Do not launch benchmark jobs or repeat audits. Do not fetch "
             "external audits or correction labels. Wait for the child, collect it, "
-            "and inspect both samples' verdicts. Record investigator reviews and "
+            "and inspect both samples' verdicts. These are seeded random samples, "
+            "not purposively selected. Independently countercheck material findings "
+            "against the original assertion and probe before agreeing. Record "
+            "investigator reviews distinguishing reproduced evidence from read evidence, and "
             "supported findings. Copy /workspace/register.json to "
             "/workspace/report/evidence/register.json. Try to publish a concise report. "
             "Record concrete tool, grading, collection and publication failures with "

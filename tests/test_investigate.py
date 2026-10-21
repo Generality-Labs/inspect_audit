@@ -4,7 +4,6 @@ import asyncio
 import json
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -1017,7 +1016,12 @@ def _auditor_tools() -> list[Any]:
         submit_audit(checks),
         view_image("auditor"),
         *log_tools(None, "1"),
-        grade_tool(SimpleNamespace(sample_id="1"), [], [], None),  # type: ignore[arg-type]
+        grade_tool(
+            TaskState(model="mockllm/model", sample_id="1", epoch=1, input="q", messages=[]),
+            [],
+            [],
+            None,
+        ),
         reset_tool(None, [], None, None),  # type: ignore[arg-type]
     ]
 

@@ -8,15 +8,15 @@ run (its own scorers report verdicts).
 """
 
 import json
-from copy import copy
+from copy import deepcopy
 from typing import Any
 
 from inspect_ai.log import read_eval_log_sample
-from inspect_ai.model import ChatMessage, ChatMessageAssistant, ModelOutput
-from inspect_ai.scorer import Scorer
+from inspect_ai.model import ChatMessage, ChatMessageAssistant, ModelName, ModelOutput
+from inspect_ai.scorer import Scorer, Target
 from inspect_ai.solver import TaskState
 from inspect_ai.tool import Tool, ToolError, tool
-from inspect_ai.util import LimitExceededError
+from inspect_ai.util import LimitExceededError, subtask
 
 from ._logs import LogIndex
 
@@ -43,6 +43,8 @@ def grade_tool(
 ) -> Tool:
     """`grade` bound to one audited sample."""
     sample_id = str(state.sample_id)
+    initial_store = deepcopy(dict(state.store.items()))
+    initial_metadata = deepcopy(state.metadata)
 
     @tool
     def grade() -> Tool:
@@ -51,8 +53,10 @@ def grade_tool(
 
             With only `answer`: the benchmark's question, then `answer` as the final
             reply. With `eval_id` and `epoch`: a recorded attempt's transcript and
-            completion as they were logged -- and if you also pass `answer`, that
-            replaces the recorded completion. The box is graded as it stands now:
+            completion, metadata and solver store as logged. An authored replacement
+            replaces the final assistant reply and uses the initial solver store,
+            so cached answers from the recorded solver cannot override your edit.
+            The box is graded as it stands now:
             a fresh start unless you have changed it, never the state a recorded
             agent left it in.
 
@@ -64,39 +68,67 @@ def grade_tool(
             """
             if not scorers:
                 raise ToolError("This benchmark declares no scorer to grade with.")
+            recorded = None
+            model = state.model
             if eval_id:
                 if index is None:
                     raise ToolError("No logs were declared for this audit.")
                 found = index.find(sample_id, eval_id, epoch)
+                model = ModelName(found.model)
                 recorded = read_eval_log_sample(
                     found.log, id=found.sample_id, epoch=epoch, resolve_attachments=True
                 )
-                messages = list(recorded.messages)
+                messages = deepcopy(recorded.messages)
                 output = recorded.output
                 provenance = "recorded"
                 if answer:
-                    messages.append(ChatMessageAssistant(content=answer))
+                    final = next(
+                        (
+                            i
+                            for i in range(len(messages) - 1, -1, -1)
+                            if messages[i].role == "assistant"
+                        ),
+                        None,
+                    )
+                    if final is None:
+                        raise ToolError("The recorded attempt has no assistant reply to replace.")
+                    messages[final] = ChatMessageAssistant(content=answer)
                     output = ModelOutput.from_content(model=AUTHORED, content=answer)
                     provenance = "recorded transcript, authored answer"
             else:
-                messages = [*their_messages, ChatMessageAssistant(content=answer)]
+                messages = [*deepcopy(their_messages), ChatMessageAssistant(content=answer)]
                 output = ModelOutput.from_content(model=AUTHORED, content=answer)
                 provenance = "authored"
 
-            graded = copy(state)
-            graded.messages = messages
-            graded.output = output
-            marks: list[bool | None] = []
-            if state.choices:
-                marks = [choice.correct for choice in state.choices]
-                chosen = _letters(output.completion, len(state.choices))
-                for i in range(len(state.choices)):
+            graded = TaskState(
+                model=model,
+                sample_id=recorded.id if recorded is not None else state.sample_id,
+                epoch=recorded.epoch if recorded is not None else state.epoch,
+                input=deepcopy(recorded.input if recorded is not None else state.input),
+                messages=messages,
+                target=Target(recorded.target) if recorded is not None else deepcopy(state.target),
+                choices=(
+                    recorded.choices if recorded is not None else [c.value for c in state.choices]
+                ),
+                output=deepcopy(output),
+                completed=True,
+                metadata=deepcopy(recorded.metadata if recorded is not None else initial_metadata),
+                store=deepcopy(
+                    recorded.store if recorded is not None and not answer else initial_store
+                ),
+                scores={},
+                sample_uuid=recorded.uuid if recorded is not None else None,
+            )
+            if graded.choices:
+                chosen = _letters(output.completion, len(graded.choices))
+                for i in range(len(graded.choices)):
                     graded.choices.mark_choice(i, i in chosen)
 
-            results: list[dict[str, Any]] = []
-            try:
+            @subtask("grade", store=graded.store, input={"eval_id": eval_id, "epoch": epoch})
+            async def score_submission() -> list[dict[str, Any]]:
+                results: list[dict[str, Any]] = []
                 for scorer in scorers:
-                    score = await scorer(graded, state.target)
+                    score = await scorer(graded, graded.target)
                     if score is not None:
                         results.append(
                             {
@@ -105,19 +137,27 @@ def grade_tool(
                                 "explanation": score.explanation,
                             }
                         )
+                return results
+
+            try:
+                results = await score_submission()
             except LimitExceededError:
                 raise
             except Exception as ex:
                 cause: BaseException = ex
                 while cause.__cause__ is not None:
                     cause = cause.__cause__
+                traceback = cause.__traceback__
+                while traceback is not None and traceback.tb_next is not None:
+                    traceback = traceback.tb_next
+                location = (
+                    f" at {traceback.tb_frame.f_code.co_filename}:{traceback.tb_lineno}"
+                    if traceback is not None
+                    else ""
+                )
                 raise ToolError(
-                    f"the benchmark's grader failed to run: {type(cause).__name__}: {cause}"
+                    f"the benchmark's grader failed to run: {type(cause).__name__}: {cause}{location}"
                 ) from ex
-            finally:
-                # graded shares the live state's choices: put the marks back
-                for choice, mark in zip(state.choices, marks, strict=False):
-                    choice.correct = mark
             return json.dumps({"scores": results, "graded": provenance}, default=str)
 
         return execute

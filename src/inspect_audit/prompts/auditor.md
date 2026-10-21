@@ -47,6 +47,13 @@ Evidence must be locatable: eval_id + epoch + message index or quoted segment; c
 path + symbol/lines; or the command and its saved output. Keep historical outcomes
 separate from new probes using the current grader.
 
+An audit-tool or provider failure is missing evidence about the benchmark, not an
+item defect by itself. Record it in environment_issues and leave the affected check
+unresolved unless separate evidence establishes a benchmark defect. For multi-step
+samples, account for every subproblem before recording a sample-wide clean verdict.
+In record_verdict, details is a JSON object encoded as a string, not prose. For example,
+gold-answer uses `{{"independent": true}}`; put narrative in explanation and remarks.
+
 A grade is only as strong as the least real thing it leaned on. `grade` reports how
 the graded transcript was made: `recorded` (a logged attempt as it was), `authored`
 (your answer after the benchmark's question), or a recorded transcript with your

@@ -24,6 +24,9 @@ question in its definition: a related observation is not a substitute. Explain r
 through the framework's extent and consequence criteria. Overall grade, dimension
 severity, defect prevalence and demonstrated score changes are distinct judgments.
 The generated summary/check macros use these records; edit the records, not assessments.tex.
+The file starts with every required row already present as Not assessed. Update those
+rows in place. Preserve the exact overview commands in Findings.tex, for example
+`\dimensionoverview{construct}{\summaryA}{\checksA}`; write prose after the command.
 
 After the overview and check table, use the template's observedevidence and
 concernevidence environments for substantive concerns. Explain what happened, how it
@@ -45,6 +48,8 @@ Use export_coverage from /inputs/coverage.py for coverage.json. Keep complete pe
 labels and explanations as linked supporting data. State the counted unit, denominator,
 selection method, overlapping categories and demonstrated versus inferred effects where
 numbers appear. A defective question is not automatically a misgraded submission.
+Generate coverage.json before adding checked_ids and affected_ids to assessment rows.
+Supply both lists together (affected_ids may be empty), or leave both null.
 
 Decide which findings benefit from visual explanation. Put diagrams and graphs inside
 the relevant dimensions using boxfigure, with a takeaway caption, labelled axes, units,
@@ -61,6 +66,10 @@ redaction. If redaction is required, preserve an informative explanation and evi
 locator; do not replace every question's explanation with a generic placeholder.
 Keep methodological details and costs in supporting artifacts, with brief relevant
 limitations next to the claims they qualify. Never invent names, approvals or an overall grade.
+In findings.json, cite report files relative to the report directory: use
+`evidence/register.json`, not `/workspace/report/evidence/register.json`. Collected
+inputs can use their absolute `/inputs/...` paths. Each supported or qualified finding
+needs `\label{finding:ID}` inside the dimension named by its section field.
 
 ## Publication
 

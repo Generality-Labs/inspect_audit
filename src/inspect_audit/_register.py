@@ -169,8 +169,10 @@ def select(
         top = standing(takes)
         if skill and top and top.label in skill.unresolved:
             found.add("unresolved")
-        reviewed = any(t.by == "investigator" for t in takes)
-        if skill and not reviewed and any(t.label in skill.flags for t in takes):
+        last_review = max(
+            (i for i, take in enumerate(takes) if take.by == "investigator"), default=-1
+        )
+        if skill and any(t.label in skill.flags for t in takes[last_review + 1 :]):
             found.add("flagged")
         if len({t.label for t in takes}) > 1:
             found.add("disputed")

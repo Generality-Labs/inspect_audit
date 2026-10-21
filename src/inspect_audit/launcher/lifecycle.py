@@ -10,6 +10,7 @@ installed until the next investigation replaces it.
 """
 
 import json
+import math
 import secrets as random
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
@@ -39,6 +40,7 @@ class Record:
     created: str = field(default_factory=now)
     finished: str | None = None
     note: str = ""
+    eval_set_id: str | None = None
 
 
 class Keys(Protocol):
@@ -93,8 +95,8 @@ class Launcher:
 
     async def start(self, config: dict[str, Any], cap_usd: float, label: str) -> Record:
         """Mint, install, submit. Any failure after minting revokes the key at once."""
-        if cap_usd <= 0:
-            raise ValueError("the cap is a positive number of dollars")
+        if not math.isfinite(cap_usd) or cap_usd <= 0:
+            raise ValueError("the cap is a finite positive number of dollars")
         await self.reap()
         # one investigator user holds one key: a second investigation would share it
         if busy := self.active():
@@ -112,6 +114,7 @@ class Launcher:
             submitted = await self.delivery.submit(
                 {**config, "eval_set_id": record.id}, self.refresh_token()
             )
+            record.eval_set_id = submitted
             if submitted != record.id:
                 record.note = f"Hawk named it {submitted}"
             record.stage = "running"
@@ -134,10 +137,13 @@ class Launcher:
         """Record the key's spend and disable it. Safe to repeat, and after a crash."""
         record = self.records.load(investigation)
         if record.key_hash:
-            state = self.keys.get(record.key_hash)
+            state: KeyState | None = None
+            try:
+                state = self.keys.get(record.key_hash)
+            finally:
+                if state is None or not state.disabled:
+                    self.keys.disable(record.key_hash)
             record.usage_usd = state.usage
-            if not state.disabled:
-                self.keys.disable(record.key_hash)
         else:
             # a crash between asking OpenRouter for a key and writing its hash down
             for state in self.keys.list(record.id):
@@ -164,7 +170,9 @@ class Launcher:
         live: set[str] = set()
         for record in self.active():
             submitted = record.stage == "running"
-            if submitted and await self.delivery.running(record.id, await operator()):
+            if submitted and await self.delivery.running(
+                record.eval_set_id or record.id, await operator()
+            ):
                 live.add(record.id)
                 continue
             # never submitted: its start either failed (and finished it) or died midway

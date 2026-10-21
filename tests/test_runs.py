@@ -175,6 +175,9 @@ def _investigation(tmp_path: Path, runs: Any) -> _investigate.Investigation:
 
 
 class FakeRuns:
+    def address(self, run_id: str) -> str:
+        return f"hawk:{run_id}"
+
     def __init__(self) -> None:
         self.submitted: list[Job] = []
 

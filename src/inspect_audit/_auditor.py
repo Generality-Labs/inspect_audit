@@ -8,9 +8,10 @@ recorded attempts at this item -- and runs a react agent with the checks in scop
 import base64
 import json
 from collections.abc import Sequence
+from copy import copy
 from typing import Any
 
-from inspect_ai.agent import AgentState, AgentSubmit, react
+from inspect_ai.agent import AgentSubmit, as_solver, react
 from inspect_ai.dataset import Sample
 from inspect_ai.model import ChatMessage, ChatMessageUser, ContentImage
 from inspect_ai.scorer import Scorer
@@ -165,7 +166,7 @@ def auditor(
                 )
             )
             if "reset" in granted:
-                tools.append(reset_tool(their_sample, their_setup, state, generate))
+                tools.append(reset_tool(their_sample, their_setup, copy(state), generate))
 
         agent = react(
             name="auditor",
@@ -175,9 +176,7 @@ def auditor(
             submit=AgentSubmit(tool=submit_audit(checks), name="submit", keep_in_messages=True),
         )
         prompt = ITEM_PROMPT if benchmark_box else ITEM_PROMPT + NO_BOX
-        result = await agent(AgentState(messages=[ChatMessageUser(content=prompt)]))
-        state.messages = result.messages
-        state.output = result.output
-        return state
+        state.messages = [ChatMessageUser(content=prompt)]
+        return await as_solver(agent)(state, generate)
 
     return solve

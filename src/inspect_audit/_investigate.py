@@ -724,9 +724,7 @@ class Investigation:
             if active >= cap:
                 raise ToolError(f"the policy permits at most {cap} concurrent jobs")
         run_id = await self.runs.submit(approved)
-        address = (
-            f"hawk:{run_id}" if self.where == "hawk" else str(Path(self.runs.root, run_id, "logs"))  # type: ignore[attr-defined]
-        )
+        address = self.runs.address(run_id)
         # assigned back, not appended in place: the store records an assignment
         record = self.record()
         record.jobs = [
@@ -938,8 +936,8 @@ def jobs(inv: Investigation) -> Tool:
         if action == "stop":
             await inv.runs.stop(run_id)
             return (
-                f"stop requested for {label}: samples already finished are scored, so it "
-                "ends complete with fewer samples than asked for"
+                f"stop requested for {label}; wait for it to finish before collecting. "
+                "Completed samples remain in its logs."
             )
         if action == "collect":
             from ._investigation_workspace import copy_into_box

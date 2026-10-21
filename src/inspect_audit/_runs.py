@@ -9,12 +9,10 @@ environment and so its key. Both hand back finished logs as local files.
 """
 
 import asyncio
-import contextlib
 import inspect
 import json
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -56,6 +54,7 @@ class Runs(Protocol):
     """A place jobs run. Ids are the backend's own."""
 
     async def submit(self, job: Job) -> str: ...
+    def address(self, run_id: str) -> str: ...
     async def status(self, run_id: str) -> str: ...
     async def logs(self, run_id: str, out_dir: Path) -> list[Path]: ...
     async def runner_log(self, run_id: str) -> str: ...
@@ -223,6 +222,9 @@ class HawkRuns:
                 created = await client.create_eval_set(config, refresh_token=refresh_token)
         return created["eval_set_id"]
 
+    def address(self, run_id: str) -> str:
+        return f"hawk:{run_id}"
+
     async def status(self, run_id: str) -> str:
         async with self._client() as client:
             found = await client.get_job_status(run_id)
@@ -343,10 +345,10 @@ class LocalRuns:
         return None
 
     async def status(self, run_id: str) -> str:
-        if (self._dir(run_id) / "stopped").exists():
-            return STOPPED
         done = self._done(run_id)
         if done is not None:
+            if (self._dir(run_id) / "stopped").exists():
+                return STOPPED
             return COMPLETE if done.get("success") else FAILED
         try:
             os.kill(int(self._launch(run_id)["pid"]), 0)
@@ -363,10 +365,33 @@ class LocalRuns:
         return "\n".join(lines[-120:]) or "(no runner log yet)"
 
     async def stop(self, run_id: str) -> None:
+        from inspect_ai.util import subprocess as run
+
+        if await self.status(run_id) in FINISHED:
+            return
+        launch = self._launch(run_id)
+        command = [sys.executable, "-m", "inspect_ai", "ctl", "task"]
+        listed = await run([*command, "list", "--json"], timeout=60)
+        if not listed.success:
+            raise RuntimeError(f"could not list Inspect tasks: {listed.stderr[-1500:]}")
+        tasks = [
+            task
+            for task in json.loads(listed.stdout)["tasks"]
+            if task["pid"] == launch["pid"]
+            and Path(task["log_location"].removeprefix("file://")).resolve().parent
+            == (self._dir(run_id) / "logs").resolve()
+            and task.get("completed_at") is None
+        ]
+        if not tasks:
+            if await self.status(run_id) in FINISHED:
+                return
+            raise RuntimeError(f"no live Inspect tasks found for local run {run_id!r}")
+        for task in tasks:
+            cancelled = await run([*command, "cancel", task["task_id"], "--json"], timeout=60)
+            if not cancelled.success:
+                raise RuntimeError(f"could not cancel Inspect task: {cancelled.stderr[-1500:]}")
+        # A request is not completion: status waits for Inspect's done record.
         (self._dir(run_id) / "stopped").write_text("")
-        with contextlib.suppress(OSError, KeyError, TypeError, ValueError):
-            # Inspect's detached run is its own session; interrupting it finalises its logs
-            os.kill(int(self._launch(run_id)["pid"]), signal.SIGINT)
 
 
 JOB_ENVIRONMENT = (

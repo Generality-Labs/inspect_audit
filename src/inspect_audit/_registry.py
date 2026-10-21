@@ -156,11 +156,12 @@ def _declared_transcripts() -> dict[str, str] | None:
     try:
         from hawk.runtime import transcript_sources  # pyright: ignore[reportMissingImports]
     except ImportError:
+        if "HAWK_TRANSCRIPT_SOURCES" in os.environ:
+            raise
         return None  # a Hawk without declared inputs
-    try:
-        return {s.eval_set_id: s.location for s in transcript_sources()}  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-    except RuntimeError:
-        return None  # not inside a Hawk run that declared any
+    if "HAWK_TRANSCRIPT_SOURCES" not in os.environ:
+        return None
+    return {s.eval_set_id: s.location for s in transcript_sources()}  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
 
 def _hawk_fetch(eval_sets: str) -> str:

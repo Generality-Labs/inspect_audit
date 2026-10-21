@@ -18,7 +18,6 @@ models:
         reasoning_effort: low
 model_roles:
   grader: *id001
-max_samples: 8
 max_connections: 8
 max_retries: 2
 cost_limit: 0.1

@@ -167,6 +167,16 @@ class HawkLogin:
         return token
 
 
+def hawk_supports_restricted() -> bool:
+    from hawk.client import HawkClient
+    from hawk.core.types import EvalSetConfig
+
+    return "credential_mode" in inspect.signature(HawkClient.create_eval_set).parameters and {
+        "transcripts",
+        "additional_models",
+    }.issubset(EvalSetConfig.model_fields)
+
+
 class HawkRuns:
     """Jobs on Hawk, through `hawk.client.HawkClient`."""
 
@@ -175,6 +185,12 @@ class HawkRuns:
     ) -> None:
         self.login = HawkLogin(api_url)
         self.credential_mode = credential_mode
+        if credential_mode == "restricted" and not hawk_supports_restricted():
+            # refused now, not at the first child job an hour into an investigation
+            raise RuntimeError(
+                "restricted credentials need Hawk 4 (restricted children, declared "
+                "transcripts); this Hawk client predates them: declare credential_mode: user"
+            )
 
     @asynccontextmanager
     async def _client(self) -> AsyncGenerator[Any]:
@@ -190,13 +206,6 @@ class HawkRuns:
         from hawk.core.types import EvalSetConfig
 
         restricted = self.credential_mode == "restricted"
-        if restricted and (
-            "credential_mode" not in inspect.signature(HawkClient.create_eval_set).parameters
-            or not {"transcripts", "additional_models"}.issubset(EvalSetConfig.model_fields)
-        ):
-            raise RuntimeError(
-                "restricted jobs need a Hawk client with restricted-credential and transcript-input support"
-            )
         settings = hawk_config(job, restricted=restricted)
         # the job's own code may read Hawk (an audit fetching hawk: logs); Hawk does
         # not tell a runner where its API is

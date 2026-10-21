@@ -261,9 +261,6 @@ def _investigation_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
         values = model.model_validate(loaded.pop(section)).model_dump(
             mode="json", exclude_unset=True
         )
-        # Execution's default is part of the declaration, not a server-side fallback.
-        if section == "execution":
-            values.setdefault("credential_mode", "restricted")
         for key, value in values.items():
             target = names.get(key, key)
             if target in loaded:

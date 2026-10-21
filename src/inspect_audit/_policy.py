@@ -63,7 +63,16 @@ class AuditScope(FrozenModel):
 
 class Execution(FrozenModel):
     backend: Literal["hawk", "local"]
-    credential_mode: Literal["restricted", "user"] = "restricted"
+    credential_mode: Literal["restricted", "user"]
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_credentials(cls, data: Any) -> Any:
+        # restricted on Hawk, the operator's own on a laptop: declared, not inferred later
+        if isinstance(data, dict) and "credential_mode" not in data:
+            backend = data.get("backend")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+            return {**data, "credential_mode": "restricted" if backend == "hawk" else "user"}
+        return data  # pyright: ignore[reportUnknownVariableType]
 
     @model_validator(mode="after")
     def local_credentials(self) -> "Execution":
@@ -189,6 +198,9 @@ class InvestigationAuthorizer:
 
     def authorise(self, job: Job, kind: str, known_logs: set[str]) -> Job:
         p = self.policy
+        # a run folder's and a Hawk eval set's name: no paths, nothing Hawk would refuse
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}", job.label):
+            raise ToolError("a label is letters, digits, - and _, at most 48 characters")
         if kind not in ("audit", "benchmark"):
             raise ToolError(f"unknown job kind: {kind}")
         expected_task = "inspect_audit/audit" if kind == "audit" else p.task

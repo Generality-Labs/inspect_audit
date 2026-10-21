@@ -967,6 +967,11 @@ def test_every_agent_tool_schema_meets_openais_strict_rules(tmp_path: Path) -> N
         check_report("/tmp"),
         publish_report("/tmp"),
         report_blocker(),
+        _investigate.start_register("b/t"),
+        _investigate.register_view(),
+        _investigate.review(),
+        _investigate.finding(),
+        _investigate.rate(),
         *_auditor_tools(),
     ]
 

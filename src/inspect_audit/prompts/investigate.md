@@ -28,6 +28,13 @@ Use Inspect's log, scoring and execution APIs instead of recreating them. Read t
 relevant log skill or supplied API docs before an unfamiliar operation. Other skills
 are references to load when needed, not a reading list to complete upfront.
 
+Keep your results in the register, the investigation's one machine-readable record:
+start_register lays out every benchmark item against the checks you will run; collected
+audits add the auditors' verdicts; review, finding and rate add yours. register() shows
+what is flagged, unresolved, missing or disputed. Takes are only added, never edited, so
+a disagreement stays visible. /workspace/register.json mirrors it for scripting; build
+reports from it as a separate step.
+
 If jobs are configured, read running-jobs before launching one. The seed lists the
 models each part may use. Every call you and your jobs make draws on one model key;
 budget() says what it has left. Preserve time and money for publication. Infrastructure failures

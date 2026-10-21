@@ -15,6 +15,14 @@ Name a benchmark's judges explicitly with `model_roles`, and any judge the task
 builds from its own arguments in `task_args`. An audit's judge is the one its logs
 record: bind that model under the same role, or the audit refuses.
 
+## The register
+
+Start the register before collecting any audit: start_register(task_args, checks) with
+the arguments and checks your audits use. Each collected audit then adds its verdicts as
+auditor takes, with the job, eval and epoch they came from. Work the flagged cells with
+register(view="flagged"), and record your own take with review: agreeing marks a cell
+reviewed, disagreeing leaves both takes on the record. Empty cells are work not done.
+
 ## Sources
 
 An audit's `logs` are labels of benchmark jobs you ran, or supplied sources from the

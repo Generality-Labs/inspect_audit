@@ -106,6 +106,22 @@ def judge_roles(index: LogIndex | None, judge: dict[str, str] | None) -> dict[st
     return roles
 
 
+def numbered(task: Task) -> tuple[list[Sample], bool]:
+    """A task's samples with the ids an eval gives them, and whether those are positions.
+
+    Samples without ids get Inspect's own rule, position + 1 over the whole dataset
+    before any selection, exactly as an eval would number them.
+    """
+    dataset = list(task.dataset)
+    missing = [s for s in dataset if s.id is None]
+    positional = bool(missing)
+    if positional and len(missing) != len(dataset):
+        raise UnsupportedBenchmarkError("some of the benchmark's samples have ids and some do not")
+    if positional:
+        dataset = [s.model_copy(update={"id": i + 1}) for i, s in enumerate(dataset)]
+    return dataset, positional
+
+
 def audit_task(
     task: str | Task,
     *,
@@ -167,15 +183,7 @@ def audit_task(
         package = name.split("/")[0] if "/" in name else None
     scoped = audit_items(list(checks))
 
-    # their samples, as declared. Samples without ids get Inspect's own rule, position + 1
-    # over the whole dataset before any selection, exactly as an eval would number them
-    dataset = list(their.dataset)
-    missing = [s for s in dataset if s.id is None]
-    positional = bool(missing)
-    if positional and len(missing) != len(dataset):
-        raise UnsupportedBenchmarkError("some of the benchmark's samples have ids and some do not")
-    if positional:
-        dataset = [s.model_copy(update={"id": i + 1}) for i, s in enumerate(dataset)]
+    dataset, _ = numbered(their)
     by_id: dict[str, Sample] = {str(s.id): s for s in dataset}
     if samples == "all":
         chosen = list(by_id)

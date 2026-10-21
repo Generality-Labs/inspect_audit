@@ -54,7 +54,7 @@ from ._report import (
     validate_findings as validate_findings,
 )
 from ._runs import FINISHED, STUCK, HawkRuns, Job, LocalRuns, Runs
-from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS
+from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS, Evidence
 
 logger = getLogger(__name__)
 
@@ -924,12 +924,225 @@ def jobs(inv: Investigation) -> Tool:
             record.jobs = [
                 {**j, "collected": True} if j["label"] == label else j for j in record.jobs
             ]
-            return f"{label}: {status}; collected to /inputs/jobs/{label}/\n" + "\n".join(
-                _log_line(f) for f in files
-            )
+            lines = [_log_line(f) for f in files]
+            if job["kind"] == "audit":
+                lines.append(await _import_audits(files, job["address"]))
+            return f"{label}: {status}; collected to /inputs/jobs/{label}/\n" + "\n".join(lines)
         raise ToolError("action must be list, status, wait, collect, log or stop")
 
     return execute
+
+
+@tool
+def start_register(task: str | None) -> Tool:
+    async def execute(task_args: str, checks: list[str]) -> str:
+        """Start the register: every item of the benchmark, against the checks you will run.
+
+        Lays out the population: the benchmark's own items, numbered as an eval numbers
+        them, each with an empty cell per check. A cell fills as audit jobs are
+        collected and as you review; an empty one is work not yet done. Start it once,
+        before collecting audits, with the task arguments your audits will use.
+
+        Args:
+            task_args: The benchmark's arguments as a JSON object, as the audits run it.
+            checks: The audit checks to track, e.g. ["gold-answer", "answer-format"].
+        """
+        from inspect_ai.util import registry_create
+
+        from ._register import Register, load, save, started
+        from ._task import numbered
+        from ._verdicts import audit_items
+
+        if not task:
+            raise ToolError("the register needs the audited task: the operator sets target_task")
+        if started(load()):
+            raise ToolError("the register is already started; it keeps one population")
+        args = json_object(task_args, "task_args")
+        try:
+            skills = audit_items(checks)
+        except ValueError as ex:
+            raise ToolError(str(ex)) from ex
+        try:
+            their = registry_create("task", task, **args)
+        except Exception as ex:
+            raise ToolError(
+                f"cannot load {task} here to read its dataset ({type(ex).__name__}: {ex}). "
+                "The benchmark's package must be installed beside inspect_audit."
+            ) from ex
+        dataset, positional = numbered(their)
+        register = Register(
+            subject={
+                "task": task,
+                "task_args": args,
+                "dataset": getattr(their.dataset, "name", None),
+                "ids": "positional" if positional else "declared",
+            },
+            checks=[s.name for s in skills],
+            samples={str(s.id): {c.name: [] for c in skills} for s in dataset},
+        )
+        await save(register)
+        return (
+            f"register started: {len(dataset)} items x {len(skills)} checks, at "
+            "/workspace/register.json. register(view='summary') shows progress."
+        )
+
+    return execute
+
+
+@tool(name="register")
+def register_view() -> Tool:
+    async def execute(view: str, check: str | None) -> str:
+        """What the register holds, by state: the cells to work through next.
+
+        Args:
+            view: "summary" (counts per check), "flagged" (an auditor flagged a
+                problem you have not reviewed), "unresolved" (the standing take is
+                unresolved), "missing" (no take yet) or "disputed" (takes disagree).
+            check: Only this check; null for all.
+        """
+        from ._register import load, select, started
+        from ._verdicts import audit_items
+
+        current = load()
+        if not started(current):
+            raise ToolError("no register yet: start_register first")
+        if view not in ("summary", "flagged", "unresolved", "missing", "disputed"):
+            raise ToolError("view is summary, flagged, unresolved, missing or disputed")
+        skills = {s.name: s for s in audit_items(current.checks)}
+        rows = select(current, view, skills, check)  # type: ignore[arg-type]
+        text = json.dumps(rows, indent=1)
+        if len(text) > 12_000:
+            text = text[:12_000] + "\n... (read /workspace/register.json for the rest)"
+        return text
+
+    return execute
+
+
+@tool
+def review() -> Tool:
+    async def execute(
+        sample: str, check: str, label: str, explanation: str, evidence: list[Evidence]
+    ) -> str:
+        """Record your own take on one item's check, beside the auditors'.
+
+        Your take stands over theirs; theirs stay on the record, so a disagreement
+        remains visible. Agreeing is a take too: it marks the cell reviewed.
+
+        Args:
+            sample: The item's id in the register.
+            check: The check, e.g. "gold-answer".
+            label: Your grade, one of the check's own grades.
+            explanation: Why, from the evidence.
+            evidence: Observations with their sources.
+        """
+        from ._register import Take, load, save, started
+        from ._verdicts import audit_items
+
+        current = load()
+        if not started(current):
+            raise ToolError("no register yet: start_register first")
+        if sample not in current.samples or check not in current.checks:
+            raise ToolError(f"no cell {sample}/{check} in the register")
+        [skill] = audit_items([check])
+        if label not in skill.grades:
+            raise ToolError(f"{check} grades are {', '.join(skill.grades)}")
+        if not explanation.strip() or not evidence:
+            raise ToolError("a take needs an explanation and at least one piece of evidence")
+        current.samples[sample][check].append(
+            Take(by="investigator", label=label, explanation=explanation, evidence=evidence)
+        )
+        await save(current)
+        return f"recorded investigator:{label} on {sample}/{check}"
+
+    return execute
+
+
+@tool
+def finding() -> Tool:
+    async def execute(
+        claim: str, explanation: str, samples: list[str], evidence: list[Evidence]
+    ) -> str:
+        """Record a finding broader than one item: a pattern, a mechanism, a population fact.
+
+        Args:
+            claim: What you conclude, in one sentence.
+            explanation: Why, from the evidence.
+            samples: The items it rests on, by register id; [] if none.
+            evidence: Observations with their sources.
+        """
+        from ._register import Claim, load, save, started
+
+        current = load()
+        if not started(current):
+            raise ToolError("no register yet: start_register first")
+        if unknown := [s for s in samples if s not in current.samples]:
+            raise ToolError(f"not in the register: {', '.join(unknown)}")
+        if not claim.strip() or not explanation.strip() or not evidence:
+            raise ToolError("a finding needs a claim, an explanation and evidence")
+        current.findings.append(
+            Claim(claim=claim, explanation=explanation, samples=samples, evidence=evidence)
+        )
+        await save(current)
+        return f"finding {len(current.findings)} recorded"
+
+    return execute
+
+
+@tool
+def rate() -> Tool:
+    async def execute(
+        dimension: str, label: str, explanation: str, evidence: list[Evidence]
+    ) -> str:
+        """Record your judgment on one dimension of the benchmark.
+
+        Args:
+            dimension: The dimension, by the name your report framework uses.
+            label: None, Minor, Major, Critical, Not assessed or Not applicable.
+            explanation: Why, citing the findings and items it rests on.
+            evidence: Observations with their sources; may cite register items.
+        """
+        from ._register import RATINGS, Take, load, save, started
+
+        current = load()
+        if not started(current):
+            raise ToolError("no register yet: start_register first")
+        if label not in RATINGS:
+            raise ToolError(f"label is one of {', '.join(RATINGS)}")
+        if not explanation.strip():
+            raise ToolError("a rating needs an explanation")
+        current.ratings.setdefault(dimension, []).append(
+            Take(by="investigator", label=label, explanation=explanation, evidence=evidence)
+        )
+        await save(current)
+        return f"rated {dimension}: {label}"
+
+    return execute
+
+
+async def _import_audits(files: list[Path], address: str) -> str:
+    """An audit job's verdicts into the register, if one is started."""
+    from inspect_ai.log import read_eval_log
+
+    from ._register import import_audit_log, load, save, started
+    from ._verdicts import audit_items
+
+    current = load()
+    if not started(current):
+        return (
+            "  (no register started: these verdicts are not in it; "
+            "start_register, then collect again)"
+        )
+    skills = {s.name: s for s in audit_items()}
+    flags = {g for s in skills.values() for g in s.flags}
+    added: list[str] = []
+    try:
+        for file in files:
+            added += import_audit_log(current, read_eval_log(str(file)), address, skills)
+    except ValueError as ex:
+        raise ToolError(f"cannot add this audit to the register: {ex}") from ex
+    await save(current)
+    flagged = sum(1 for a in added if a.split("=")[-1] in flags)
+    return f"  register: {len(added)} auditor take(s) added, {flagged} flagged"
 
 
 def _log_line(path: Path) -> str:
@@ -1118,6 +1331,11 @@ def investigate(
         check_report(str(root)),
         publish_report(str(root), required_coverage),
         report_blocker(),
+        start_register(target_task),
+        register_view(),
+        review(),
+        finding(),
+        rate(),
     ]
     seed_path = root / "inputs" / "seed.json"
     seed = json.loads(seed_path.read_text())

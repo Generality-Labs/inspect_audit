@@ -186,14 +186,10 @@ async def push_assessments(root: Path) -> None:
 
 def _destination(root: Path, name: str) -> str:
     settings = json.loads((root / "artifacts.json").read_text())
-    # keyed by sample and epoch, not by uuid: Inspect gives a resumed sample a new
-    # uuid, and a resume must find (and add to) what the interrupted run saved
-    key = settings["sample_key"]
+    # Hawk's viewer shows a sample's artifacts from artifacts/<sample uuid>/
+    # (hawk/api/sample_content_router.py); a resumed attempt publishes under its own
+    key = settings["sample_uuid"]
     return f"{settings['artifact_dir'].rstrip('/')}/{key}/{name}"
-
-
-def sample_key(state: TaskState) -> str:
-    return f"{state.sample_id}-epoch{state.epoch}"
 
 
 def hawk_would_process(key: str) -> str | None:
@@ -285,8 +281,7 @@ def stage_inputs(root: Path) -> Solver:
         settings_path = root / "artifacts.json"
         if settings_path.exists():
             settings = json.loads(settings_path.read_text())
-            # keyed by sample and epoch: a resumed sample gets a new uuid
-            settings["sample_key"] = sample_key(state)
+            settings["sample_uuid"] = state.uuid
             settings_path.write_text(json.dumps(settings))
         marker = await sandbox().exec(["test", "-e", "/workspace/.staged"])
         if marker.success:

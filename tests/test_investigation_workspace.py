@@ -87,7 +87,7 @@ def operation(fail: bool = False):
 def _remote_root(tmp_path, base="memory://audit-test/artifacts"):
     workspace.configure(tmp_path, "image@sha256:abc")
     (tmp_path / "artifacts.json").write_text(
-        json.dumps({"artifact_dir": base, "sample_key": "sample"})
+        json.dumps({"artifact_dir": base, "sample_uuid": "sample"})
     )
     return tmp_path
 
@@ -231,13 +231,15 @@ def test_a_docker_box_is_a_container_with_nothing_mounted(tmp_path):
     assert "volumes" not in compose["services"]["default"]
 
 
-def test_the_artifact_destination_is_keyed_by_sample_and_epoch(tmp_path):
-    """Inspect gives a resumed sample a new uuid; its saved artifacts must not move."""
+def test_artifacts_land_where_hawks_viewer_looks_for_the_sample(tmp_path):
+    """Hawk serves a sample's artifacts from artifacts/<sample uuid>/."""
     root = _remote_root(tmp_path)
     settings = json.loads((root / "artifacts.json").read_text())
-    settings["sample_key"] = "investigation-epoch1"
+    settings["sample_uuid"] = "9uE3myJMUv4H9bs2Rw4nVj"
     (root / "artifacts.json").write_text(json.dumps(settings))
-    assert workspace._destination(root, "published").endswith("/investigation-epoch1/published")
+    assert workspace._destination(root, "published").endswith(
+        "/artifacts/9uE3myJMUv4H9bs2Rw4nVj/published"
+    )
 
 
 def test_cited_evidence_only_in_the_box_is_recovered_before_validation(monkeypatch, tmp_path):

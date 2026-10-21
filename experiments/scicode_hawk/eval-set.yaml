@@ -1,0 +1,31 @@
+name: ia-scicode-investigator-pilot-20261021
+packages:
+- git+https://github.com/Generality-Labs/inspect_audit@4fe625cb0e5f7d311369ef2a5191470ab0a419a4
+- inspect-evals[scicode] @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
+- aiofiles
+- hawk[cli]>=3.4,<4
+- inspect-k8s-sandbox>=0.13
+tasks:
+- package: git+https://github.com/Generality-Labs/inspect_audit@4fe625cb0e5f7d311369ef2a5191470ab0a419a4#subdirectory=experiments/scicode_hawk
+  name: ia_scicode_pilot
+  items:
+  - name: investigation
+    args:
+      audit_package: git+https://github.com/Generality-Labs/inspect_audit@4fe625cb0e5f7d311369ef2a5191470ab0a419a4
+models:
+- package: openai
+  name: openrouter
+  items:
+  - name: openai/gpt-6-luna
+    args:
+      config:
+        reasoning_effort: low
+max_connections: 8
+max_retries: 2
+cost_limit: 3.0
+time_limit: 2700
+epochs: 1
+retry_attempts: 0
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

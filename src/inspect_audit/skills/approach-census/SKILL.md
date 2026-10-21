@@ -6,6 +6,8 @@ description: Map how the field approached the item -- the routes attempts took,
   to look; it judges behaviour, not success.
 metadata:
   grades: [CONVERGENT, DIVERGENT, STALLED]
+  flags: []
+  unresolved: []
   details:
     routes: the distinct routes the field took, each as {route, share, scored} --
       route is what the attempt spent its moves on, share is roughly how much of the

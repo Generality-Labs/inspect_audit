@@ -75,6 +75,7 @@ def test_recorded_question_verdicts_round_trip_into_coverage(tmp_path, units):
             args = {
                 "item": "question-labels",
                 "grade": "NO_ISSUE_FOUND",
+                "explanation": "each question was checked against its source",
                 "approaches": "reviewed",
                 "tried": "checked",
                 "remarks": "",

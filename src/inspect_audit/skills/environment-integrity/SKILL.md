@@ -6,6 +6,8 @@ description: Establish whether the environment failed the agents -- tools,
   where possible.
 metadata:
   grades: [BROKEN, FLAKY, SOUND]
+  flags: [BROKEN, FLAKY]
+  unresolved: []
   details:
     instances: every environment-caused failure, as {address, tool, error, cause}
     examined: the transcript addresses you examined, one per attempt

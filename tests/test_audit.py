@@ -156,6 +156,7 @@ def test_an_audit_runs_inside_the_benchmark(tmp_path: Path) -> None:
         _call(
             "record_verdict",
             item="red-teaming",
+            explanation="every wrong answer the grader saw was graded wrong",
             evidence=[{"observed": "wrong answers graded I", "source": "grade"}],
             approaches="one",
             tried="wrong answers",
@@ -268,6 +269,7 @@ def test_an_audit_of_a_benchmark_without_a_box(graded_log: str, tmp_path: Path) 
         _call(
             "record_verdict",
             item="gold-answer",
+            explanation="the grader credits the stored answer and nothing else",
             evidence=[{"observed": "the grader credits ANSWER", "source": "grade"}],
             approaches="one",
             tried="graded both",

@@ -4,7 +4,8 @@ description: Judge whether a benchmark item's recorded answer is the answer to
   the question it asks, and whether it is the only one.
 metadata:
   grades: [CORRECT, INCORRECT, ALTERNATIVES, UNVERIFIABLE]
-  unevidenced: [UNVERIFIABLE]
+  flags: [INCORRECT, ALTERNATIVES]
+  unresolved: [UNVERIFIABLE]
   details:
     independent: whether any source you cite is independent of the item's own
       cited sources (true/false)

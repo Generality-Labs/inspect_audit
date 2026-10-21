@@ -5,7 +5,8 @@ description: Establish whether the packaging of answers corrupted the measuremen
   to follow. Investigate the scorer's parsing before judging any attempt.
 metadata:
   grades: [PENALISED, AMBIGUOUS, SOUND, INCONCLUSIVE]
-  unevidenced: [INCONCLUSIVE]
+  flags: [PENALISED, AMBIGUOUS]
+  unresolved: [INCONCLUSIVE]
   tools: [grade]
   details:
     instances: every formatting casualty, as {address, submitted, expected,

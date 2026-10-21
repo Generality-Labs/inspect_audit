@@ -3,7 +3,8 @@ name: question-labels
 description: Record an explicit validity assessment for every question or graded subproblem, with completed checks and evidence. This is not the evaluated model's pass/fail score.
 metadata:
   grades: [NO_ISSUE_FOUND, DEFECT, UNRESOLVED]
-  unevidenced: [UNRESOLVED]
+  flags: [DEFECT]
+  unresolved: [UNRESOLVED]
   tools: [grade]
   details:
     question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include each ID from assessment_ids in /audit/item.json exactly once. Preserve ids exactly. defect_types is a list of mechanism names, required and nonempty for DEFECT, empty otherwise. scoring_effect and next_check are optional strings.'

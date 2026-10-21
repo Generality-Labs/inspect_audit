@@ -6,7 +6,8 @@ description: Establish whether a recorded answer was produced from memory -- rec
   it arose.
 metadata:
   grades: [MEMORISED, SUSPECT, CLEAN, UNVERIFIABLE]
-  unevidenced: [UNVERIFIABLE]
+  flags: [MEMORISED, SUSPECT]
+  unresolved: [UNVERIFIABLE]
   details:
     instances: every attempt where the answer arrived without the work, as a list of
       {address, observed, reads_as} -- address locates the turn, observed is a verbatim

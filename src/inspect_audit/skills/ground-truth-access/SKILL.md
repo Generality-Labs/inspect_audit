@@ -6,6 +6,8 @@ description: Establish whether agents had access to information they were not
   the grade; an accessible answer no one read is still a broken environment.
 metadata:
   grades: [USED, ACCESSIBLE, PROTECTED]
+  flags: [USED, ACCESSIBLE]
+  unresolved: []
   details:
     environment: every place ground truth lives in the benchmark environment, as a
       list of {path, repro, observed} -- repro is the command that reveals it

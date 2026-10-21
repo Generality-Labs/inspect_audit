@@ -7,7 +7,8 @@ description: For the attempts that failed, establish why -- a genuine capability
   simply cannot do this.
 metadata:
   grades: [CAPABILITY, ARTEFACT, MIXED, UNCLEAR]
-  unevidenced: [UNCLEAR]
+  flags: [ARTEFACT, MIXED]
+  unresolved: [UNCLEAR]
   details:
     attributions: each distinct cause of failure, as {route, why, owner} -- why the
       attempts on that route failed, and owner is the audit item that owns it if an

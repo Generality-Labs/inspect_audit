@@ -5,7 +5,8 @@ description: Record what you noticed that none of the other audit items would ha
   one is for the defect nobody wrote an item for yet.
 metadata:
   grades: [FOUND, NONE]
-  unevidenced: [NONE]
+  flags: [FOUND]
+  unresolved: []
   details:
     findings: every observation, as a list of {observed, source, why_it_matters,
       scope} -- scope is `item` when it is a fact about this item alone, or

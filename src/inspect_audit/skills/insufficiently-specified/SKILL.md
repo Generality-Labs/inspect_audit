@@ -6,7 +6,8 @@ description: Establish whether the question pins down a unique answer. When a qu
   grades the guess of a convention, not the work.
 metadata:
   grades: [UNDERSPECIFIED, BORDERLINE, SPECIFIED, UNVERIFIABLE]
-  unevidenced: [UNVERIFIABLE]
+  flags: [UNDERSPECIFIED, BORDERLINE]
+  unresolved: [UNVERIFIABLE]
   details:
     freedoms: the choices the question leaves open that change the answer, each as
       {choice, answer_it_yields} -- a decision and the value a defensible analysis

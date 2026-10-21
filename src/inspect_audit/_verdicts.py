@@ -33,7 +33,11 @@ class AuditItemSkill(BaseModel):
     name: str
     description: str
     grades: list[str]
-    unevidenced: list[str] = Field(default_factory=list)
+    flags: list[str] = Field(default_factory=list)
+    """Grades that mark a problem for the investigator to review."""
+    unresolved: list[str] = Field(default_factory=list)
+    """Grades that mean the check could not be settled. A descriptive check declares
+    neither: its grades describe, they do not judge."""
     details: dict[str, str] = Field(default_factory=dict)
     """Detail fields this item requires with a verdict, as name -> description."""
     tools: list[str] = Field(default_factory=list)
@@ -71,12 +75,15 @@ def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> AuditI
             f"audit skill {name!r} declares no grades: its frontmatter needs "
             "`metadata.grades`, the exhaustive list of verdicts it can produce"
         )
-    unevidenced = str_list("unevidenced")
-    if rogue := set(unevidenced) - set(grades):
-        raise ValueError(
-            f"audit skill {name!r}: `unevidenced` names grades it does not "
-            f"declare: {', '.join(sorted(rogue))}"
-        )
+    flags, unresolved = str_list("flags"), str_list("unresolved")
+    for key, named in (("flags", flags), ("unresolved", unresolved)):
+        if rogue := set(named) - set(grades):
+            raise ValueError(
+                f"audit skill {name!r}: `{key}` names grades it does not "
+                f"declare: {', '.join(sorted(rogue))}"
+            )
+    if both := set(flags) & set(unresolved):
+        raise ValueError(f"audit skill {name!r}: {', '.join(sorted(both))} both flag and unresolve")
     tools = str_list("tools")
     if unknown := set(tools) - _GRANTABLE_TOOLS:
         raise ValueError(
@@ -94,7 +101,8 @@ def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> AuditI
         name=name,
         description=description,
         grades=grades,
-        unevidenced=unevidenced,
+        flags=flags,
+        unresolved=unresolved,
         details={str(k): str(v) for k, v in declared.items()},
         tools=tools,
     )
@@ -157,6 +165,7 @@ class Verdict(BaseModel):
     """An auditor's verdict on one audit item."""
 
     grade: str
+    explanation: str = ""
     approaches: str | None = None
     evidence: list[Evidence] = Field(default_factory=list)
     details: dict[str, JsonValue] = Field(default_factory=dict)
@@ -197,24 +206,27 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
 
     async def execute(
         item: str,
+        grade: str,
+        explanation: str,
         evidence: list[Evidence],
         approaches: str,
         tried: str,
         remarks: str,
-        grade: str,
         details: str,
     ) -> str:
         """Record your verdict on one audit item.
 
         Args:
             item: The audit item this verdict is for.
+            grade: Your grade for this item.
+            explanation: Why this grade: the reasoning from the evidence to the grade,
+                in a few sentences. An unresolved grade says what stopped you.
             evidence: Verbatim observations establishing the grade, each with its
                 source. Record what you observed; do not summarise what you concluded.
             approaches: One sentence per attempt: how it approached the task, and
                 whether that path was the intended one.
             tried: What you did to try to break the item, including what failed.
             remarks: What you actually think, including anything you were not asked about.
-            grade: Your grade for this item.
             details: JSON-encoded object containing the required fields listed for
                 this item. Use "{}" when no fields are required.
         """
@@ -236,7 +248,13 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
             raise ToolError(_details_help(skill, details))
         if grade not in skill.grades:
             raise ToolError(f"Grade for {item} must be one of {', '.join(skill.grades)}.")
-        if not evidence and grade not in skill.unevidenced:
+        if not explanation.strip():
+            raise ToolError(
+                "Every verdict needs an explanation: why the evidence gives this grade."
+            )
+        if not evidence:
+            # an unresolved grade too: what was tried, observed and where, so a
+            # reviewer can see the attempt and pick it up
             raise ToolError(f"A grade of {grade} needs at least one observation with its source.")
         for entry in evidence:
             if not entry.observed.strip() or not entry.source.strip():
@@ -274,6 +292,7 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
             **recorded.verdicts,
             item: Verdict(
                 grade=grade,
+                explanation=explanation,
                 approaches=approaches,
                 evidence=evidence,
                 details=recorded_details,
@@ -285,15 +304,18 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
 
     async def recording(
         item: str,
+        grade: str,
+        explanation: str,
         evidence: list[Evidence],
         approaches: str,
         tried: str,
         remarks: str,
-        grade: str,
         details: str,
     ) -> str:
         try:
-            return await execute(item, evidence, approaches, tried, remarks, grade, details)
+            return await execute(
+                item, grade, explanation, evidence, approaches, tried, remarks, details
+            )
         except ToolError as ex:
             store_as(Verdicts).rejected.setdefault(item, []).append(str(ex))
             raise
@@ -398,9 +420,10 @@ def item_scorer(item: AuditItemSkill) -> Scorer:
             return Score(
                 value=verdict.grade,
                 answer=verdict.grade,
-                explanation="\n\n".join(f"{e.observed}\n  -- {e.source}" for e in verdict.evidence)
-                or None,
+                explanation=verdict.explanation or None,
                 metadata={
+                    "flagged": verdict.grade in item.flags,
+                    "unresolved": verdict.grade in item.unresolved,
                     "evidence": [e.model_dump() for e in verdict.evidence],
                     "approaches": verdict.approaches,
                     **verdict.details,

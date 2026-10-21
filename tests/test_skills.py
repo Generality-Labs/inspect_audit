@@ -106,8 +106,10 @@ def test_malformed_frontmatter_fails_at_load(tmp_path: Path, monkeypatch) -> Non
         "scalar-grades": "metadata:\n  grades: SOUND\n",
         "int-grades": "metadata:\n  grades: [1, 2]\n",
         "typo-key": "metadata:\n  grade: [A, B]\n",
-        "rogue-unevidenced": "metadata:\n  grades: [A]\n  unevidenced: [B]\n",
-        "scalar-unevidenced": "metadata:\n  grades: [A]\n  unevidenced: B\n",
+        "rogue-flags": "metadata:\n  grades: [A]\n  flags: [B]\n",
+        "scalar-flags": "metadata:\n  grades: [A]\n  flags: A\n",
+        "rogue-unresolved": "metadata:\n  grades: [A]\n  unresolved: [B]\n",
+        "flag-and-unresolved": "metadata:\n  grades: [A]\n  flags: [A]\n  unresolved: [A]\n",
         "unknown-tool": "metadata:\n  grades: [A]\n  tools: [attempts]\n",
         "scalar-tools": "metadata:\n  grades: [A]\n  tools: reset\n",
         "list-details": "metadata:\n  grades: [A]\n  details: [x, y]\n",
@@ -124,9 +126,11 @@ def test_malformed_frontmatter_fails_at_load(tmp_path: Path, monkeypatch) -> Non
 
 
 def test_verdicts_are_validated_and_scored_per_item(monkeypatch) -> None:
-    """record_verdict enforces the item's grades; each item scores independently."""
+    """record_verdict enforces the item's grades, an explanation and evidence for every
+    grade, unresolved ones included; each item scores independently."""
     import asyncio
 
+    import pytest
     from inspect_ai.tool import ToolError
     from inspect_ai.util._store import Store, init_subtask_store
 
@@ -141,58 +145,35 @@ def test_verdicts_are_validated_and_scored_per_item(monkeypatch) -> None:
     item = AuditItemSkill(
         name="gold-answer",
         description="test",
-        grades=["CORRECT", "INCORRECT"],
-        unevidenced=["INCORRECT"],
+        grades=["CORRECT", "INCORRECT", "UNVERIFIABLE"],
+        flags=["INCORRECT"],
+        unresolved=["UNVERIFIABLE"],
     )
     init_subtask_store(Store())
     record = record_verdict([item])
     submit = submit_audit([item])
     quote = [Evidence(observed="q", source="s")]
+    base = {"item": "gold-answer", "approaches": "", "tried": "", "remarks": "", "details": {}}
 
     async def run() -> None:
-        # wrong grade rejected, missing evidence rejected, submit gated on coverage
-        import pytest
-
         with pytest.raises(ToolError, match="must be one of"):
-            await record(
-                item="gold-answer",
-                evidence=quote,
-                approaches="",
-                tried="",
-                remarks="",
-                grade="MAYBE",
-                details={},
-            )
+            await record(**base, grade="MAYBE", explanation="x", evidence=quote)
+        with pytest.raises(ToolError, match="explanation"):
+            await record(**base, grade="CORRECT", explanation=" ", evidence=quote)
+        # unresolved is no exemption: what was tried and seen, with its source
         with pytest.raises(ToolError, match="at least one"):
-            await record(
-                item="gold-answer",
-                evidence=[],
-                approaches="",
-                tried="",
-                remarks="",
-                grade="CORRECT",
-                details={},
-            )
+            await record(**base, grade="UNVERIFIABLE", explanation="could not tell", evidence=[])
         with pytest.raises(ToolError, match="No verdict recorded"):
             await submit(environment_issues=[], unresolved=[], improvements=[])
-
-        # an unevidenced grade may go without evidence; submit then passes
-        await record(
-            item="gold-answer",
-            evidence=[],
-            approaches="",
-            tried="looked",
-            remarks="",
-            grade="INCORRECT",
-            details={},
-        )
+        await record(**base, grade="INCORRECT", explanation="the source says 9", evidence=quote)
         await submit(environment_issues=[], unresolved=[], improvements=[])
 
     asyncio.run(run())
 
     from inspect_ai.util import store_as
 
-    assert store_as(Verdicts).verdicts["gold-answer"].grade == "INCORRECT"
+    verdict = store_as(Verdicts).verdicts["gold-answer"]
+    assert (verdict.grade, verdict.explanation) == ("INCORRECT", "the source says 9")
 
 
 def test_the_confidential_section_is_off_by_default_and_names_the_boundary() -> None:
@@ -218,17 +199,15 @@ def test_the_confidential_section_is_off_by_default_and_names_the_boundary() -> 
     assert "grade on what you could establish" in on
 
 
-def test_other_findings_is_evidenced_but_lets_a_clean_item_say_nothing() -> None:
-    """The residue item must not become a place to file impressions.
-
-    FOUND needs a source like every other grade; NONE is the one verdict that does
-    not, because "I looked and there was nothing" cannot cite an observation.
-    """
+def test_other_findings_flags_only_what_it_found() -> None:
+    """The residue item must not become a place to file impressions: FOUND is the flag,
+    and NONE still says, with sources, what was looked at."""
     skill = next(s for s in load() if s.name == "other-findings")
     meta = skill.metadata or {}
 
     assert meta["grades"] == ["FOUND", "NONE"]
-    assert meta["unevidenced"] == ["NONE"]
+    assert meta["flags"] == ["FOUND"]
+    assert "unevidenced" not in meta
     # scope separates a one-item quirk from a mechanism that recurs across the bank
     assert "scope" in meta["details"]["findings"]
 
@@ -272,6 +251,7 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
             "tried": "read",
             "remarks": "",
             "grade": "SOUND",
+            "explanation": "the format the grader expects is the one the question asks for",
         }
         with pytest.raises(ToolError, match="examined"):
             await record(**args, details={})

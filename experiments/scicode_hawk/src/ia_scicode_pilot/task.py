@@ -67,7 +67,7 @@ def investigation(audit_package: str) -> Task:
         policy={
             "models": {"investigator": [LUNA], "auditors": [LUNA]},
             "inputs": {"logs": LOGS},
-            "limits": {"audit_sample_cost_usd": 0.20, "max_concurrent_jobs": 2},
+            "limits": {"audit_sample_cost_usd": 0.20},
         },
         instructions=(
             "This is a full-investigator pilot of SciCode. The whole benchmark and four "

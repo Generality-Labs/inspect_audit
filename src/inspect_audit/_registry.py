@@ -122,17 +122,45 @@ def fetch_logs(logs: str | list[str]) -> str:
                 shutil.copyfile(source_path, combined / f"{index}_{source_path.name}")
         return str(combined)
     if logs.startswith("hawk:"):
-        if os.environ.get("HAWK_RUNNER_RESTRICTED_KEY_FILE"):
-            runtime = importlib.import_module("hawk.runtime")
-            declared = {
-                source.eval_set_id: source.location for source in runtime.transcript_sources()
-            }
+        declared = _declared_transcripts()
+        if declared is not None:
             source_id = logs.removeprefix("hawk:")
             if source_id not in declared:
                 raise ValueError(f"Hawk input {source_id!r} was not declared for this execution")
             return declared[source_id]
         return _hawk_fetch(logs.removeprefix("hawk:"))
+    if logs.startswith(("s3://", "gs://", "http://", "https://")):
+        return _download(logs)
     return logs
+
+
+def _download(url: str) -> str:
+    """A remote log file or folder, copied to a temporary directory.
+
+    With fsspec, the filesystem layer Inspect reads these URLs through.
+    """
+    import fsspec  # pyright: ignore[reportMissingTypeStubs]
+
+    fetched = Path(tempfile.mkdtemp(prefix="remote_logs_"))
+    names = [url] if url.endswith((".eval", ".json")) else [i.name for i in list_eval_logs(url)]
+    if not names:
+        raise ValueError(f"No Inspect logs found: {url}")
+    for name in names:
+        with fsspec.open(name, "rb") as remote:  # pyright: ignore[reportUnknownMemberType]
+            (fetched / Path(name).name).write_bytes(remote.read())  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue,reportUnknownArgumentType]
+    return str(fetched / Path(url).name) if len(names) == 1 and names[0] == url else str(fetched)
+
+
+def _declared_transcripts() -> dict[str, str] | None:
+    """The eval sets Hawk resolved for this run (Hawk 4 `transcripts`), else None."""
+    try:
+        from hawk.runtime import transcript_sources  # pyright: ignore[reportMissingImports]
+    except ImportError:
+        return None  # a Hawk without declared inputs
+    try:
+        return {s.eval_set_id: s.location for s in transcript_sources()}  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+    except RuntimeError:
+        return None  # not inside a Hawk run that declared any
 
 
 def _hawk_fetch(eval_sets: str) -> str:

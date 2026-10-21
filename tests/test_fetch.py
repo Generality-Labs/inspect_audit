@@ -28,9 +28,25 @@ def _serve(monkeypatch, pages: dict[str, bytes]) -> None:
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
 
 
-def test_paths_and_native_urls_pass_through() -> None:
+def test_paths_pass_through() -> None:
     assert fetch_logs("logs/") == "logs/"
-    assert fetch_logs("s3://bucket/prefix") == "s3://bucket/prefix"
+
+
+def test_a_log_url_is_downloaded_to_a_local_file(tmp_path: Path) -> None:
+    """Staging reads local paths: a URL left as-is reads as `s3:/...`, which does not exist."""
+    import functools
+    import http.server
+    import threading
+
+    (tmp_path / "run.eval").write_bytes(b"log bytes")
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(tmp_path))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        local = Path(fetch_logs(f"http://127.0.0.1:{server.server_port}/run.eval"))
+    finally:
+        server.shutdown()
+    assert local.is_file() and local.read_bytes() == b"log bytes"
 
 
 def test_exact_hawk_files_exclude_partial_runs(monkeypatch):

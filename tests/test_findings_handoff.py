@@ -370,3 +370,98 @@ def test_ratings_require_explanations_and_primary_observations(change) -> None:
     data["investigator"]["ratings"] = {"grading": rating}
     with pytest.raises(ValueError):
         validate_draft(data, register)
+
+
+@pytest.mark.parametrize("grade", ["CORRECT", "INCORRECT", "UNVERIFIABLE", "NO_VERDICT", None])
+@pytest.mark.parametrize("review_grade", [None, "CORRECT", "UNVERIFIABLE"])
+@pytest.mark.parametrize("coverage_requirement", [None, 0.5, 1.0])
+def test_progress_and_publication_agree_on_outstanding_work(
+    tmp_path: Path, grade: str | None, review_grade: str | None, coverage_requirement: float | None
+) -> None:
+    """Exercise the actual publication tool, including missing and overridden worker results."""
+    from inspect_audit._findings import Review, encoded, sha256
+    from inspect_audit._publishing import publish_document
+    from inspect_audit._register import apply_reviews, select
+    from inspect_audit._report import InvestigationState
+    from inspect_audit._verdicts import audit_items
+
+    init_subtask_store(Store())
+    takes = (
+        [Take(by="auditor", label=grade, explanation="Observed in the worker log")]
+        if grade is not None
+        else []
+    )
+    register = Register(checks=["gold-answer"], samples={"a": {"gold-answer": takes}})
+    draft = Findings(auditors=auditor_results(register))
+    if review_grade is not None:
+        draft.investigator.reviews = [
+            Review(
+                sample_id="a",
+                check="gold-answer",
+                label=review_grade,
+                explanation="Checked the reference",
+                evidence=[Evidence(observed="reference", source="source.py")],
+            )
+        ]
+    checks = {s.name: s for s in audit_items(register.checks)}
+    original = register.model_dump()
+    reviewed = register.model_copy(deep=True)
+    apply_reviews(reviewed, draft.investigator.reviews, checks)
+    top = review_grade or grade
+    expected_incomplete = top in (None, "UNVERIFIABLE", "NO_VERDICT")
+    rows = select(reviewed, "missing", checks, None) or select(reviewed, "unresolved", checks, None)
+    assert bool(rows) == expected_incomplete
+    assert register.model_dump() == original
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    content = encoded(draft.model_dump(mode="json"))
+    manifest = {"files": {"findings.json": {"sha256": sha256(content), "bytes": len(content)}}}
+    if coverage_requirement is not None:
+        # A submitted analysis artifact establishes 75% coverage, independently
+        # of the standing worker/review verdict on this sample/check.
+        coverage = encoded({"denominator": 4, "counts": {"NOT_ASSESSED": 1}})
+        (bundle / "coverage.json").write_bytes(coverage)
+        manifest["files"]["coverage.json"] = {"sha256": sha256(coverage), "bytes": len(coverage)}
+        manifest["artifacts"] = {"/workspace/analysis/coverage.json": "coverage.json"}
+        manifest["required_coverage"] = coverage_requirement
+    (bundle / "findings.json").write_bytes(content)
+    (bundle / "manifest.json").write_bytes(encoded(manifest))
+    saved = store_as(FindingsState)
+    saved.phase = "publishing"
+    saved.findings = draft.model_dump(mode="json")
+    saved.manifest = manifest
+    saved.destination = str(bundle)
+
+    async def build(root: Path, frozen: Path) -> Path:
+        assert frozen == bundle
+        output = root / "output"
+        output.mkdir()
+        (output / "report.md").write_text("Report from frozen findings")
+        return output
+
+    asyncio.run(publish_document(tmp_path, Publisher(skills=[], build=build))())
+    assert store_as(InvestigationState).outcome == (
+        "published_incomplete"
+        if expected_incomplete or (coverage_requirement is not None and coverage_requirement > 0.75)
+        else "published_complete"
+    )
+    assert (bundle / "findings.json").read_bytes() == content
+
+
+def test_whitespace_only_review_explanation_cannot_be_submitted() -> None:
+    register = Register(checks=["gold-answer"], samples={"a": {"gold-answer": []}})
+    draft = Findings(auditors=auditor_results(register))
+    data = draft.model_dump(mode="json")
+    data["investigator"]["summary"] = "Reference checked"
+    data["investigator"]["reviews"] = [
+        {
+            "sample_id": "a",
+            "check": "gold-answer",
+            "label": "CORRECT",
+            "explanation": " ",
+            "evidence": [{"observed": "reference", "source": "source.py"}],
+        }
+    ]
+    with pytest.raises(ValueError, match="Reviews need an explanation"):
+        validate_draft(data, register)

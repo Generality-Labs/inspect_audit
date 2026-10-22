@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/Generality-Labs/audit_reports",
+  "revision": "ad7de89658b6794112c2f65847991c7ed41d9e30",
+  "files": {
+    "auditframework.sty": {
+      "source": "template/auditframework.sty",
+      "sha256": "24e4c39156d9c578f8aa6dd5635d62f879b59736174621a4b82d913d8b1b4748"
+    },
+    "ScoringCriteria.tex": {
+      "source": "template/sections/ScoringCriteria.tex",
+      "sha256": "d40ce921bdaf50af495471d5d2278b1737cc7779a00add9990f7dbeb244a45fd"
+    },
+    "Framework.tex": {
+      "source": "template/legacy/Framework.tex",
+      "sha256": "4853a1d248c4a342ac2ab3cc796e91d5ecdd03d0fcb77a940faa2aca73244be1"
+    }
+  },
+  "local_changes": []
+}

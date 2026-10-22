@@ -52,8 +52,8 @@ A missing credential, malformed request or broken audit image is an audit limita
 Record what it prevented, repair once if feasible, and avoid retry loops. Attribute a
 failure to the benchmark only after ruling out our configuration and reconstruction.
 
-Allocate the available budget yourself, including writing the report. You can run
-further experiments while writing if they are useful; there is no fixed reporting reserve.
+Allocate the available budget yourself, including subsequent publication. Run useful
+experiments before submitting findings; there is no fixed reporting reserve.
 
 Before submit_findings, finish or stop every job and collect its logs. Job tools
 disappear after submission; publishing uses only existing evidence and calculations.

@@ -13,6 +13,7 @@ from inspect_ai.dataset import Sample
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
 from inspect_ai.util import CheckpointConfig, store_as
+from pydantic import TypeAdapter
 
 from ._findings import FindingsState, encoded, read_bundle, restore_bundle
 from ._image import view_image
@@ -82,22 +83,19 @@ def publish_document(root: Path, publisher: Publisher) -> Tool:
         state = store_as(InvestigationState)
         state.published = location
         # Submission preserves missing work explicitly. A report does not turn it into coverage.
-        findings = store_as(FindingsState).findings
-        checks = findings.get("auditors", {}).get("checks", {})
-        reviews = {
-            (r["sample_id"], r["check"]): r
-            for r in findings.get("investigator", {}).get("reviews", [])
-        }
-        unresolved = []
-        for sample_id, rows in findings.get("auditors", {}).get("samples", {}).items():
-            for check, takes in rows.items():
-                latest = reviews.get((sample_id, check)) or (takes[-1] if takes else {})
-                definition = checks.get(check, {})
-                label = latest.get("label")
-                if label not in definition.get("grades", []) or label in definition.get(
-                    "unresolved", []
-                ):
-                    unresolved.append(f"{sample_id}/{check}")
+        from ._findings import Findings
+        from ._register import Register, apply_reviews, select
+        from ._verdicts import AuditItemSkill
+
+        findings = Findings.model_validate(store_as(FindingsState).findings)
+        checks = TypeAdapter(dict[str, AuditItemSkill]).validate_python(findings.auditors["checks"])
+        register = Register.model_validate(
+            {"checks": list(checks), "samples": findings.auditors["samples"]}
+        )
+        apply_reviews(register, findings.investigator.reviews, checks)
+        unresolved = select(register, "missing", checks, None) or select(
+            register, "unresolved", checks, None
+        )
         state.outcome = "published_incomplete" if unresolved else "published_complete"
         state.outcome_reasons = (
             ["Some planned sample/check cells are missing or unresolved"]
@@ -201,7 +199,6 @@ def publish(
             saved.findings = findings.model_dump(mode="json")
             saved.manifest = manifest
             saved.phase = "publishing"
-            saved.enabled = True
             return state
 
         return solve

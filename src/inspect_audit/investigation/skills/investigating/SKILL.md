@@ -97,7 +97,9 @@ findings schema defines the handoff; publication is a subsequent phase.
 ## Comprehensive assessment
 
 Use the framework's dimensions and checks as an investigation plan, not headings to
-fill after item audits. Maintain /workspace/analysis/assessments.json as work progresses. For each
+fill after item audits. Maintain investigator.ratings in /workspace/findings.json as work
+progresses, keyed by framework dimension or check ID. Each rating needs a label, an
+explanation and supporting evidence. For each
 outstanding check choose an informative next step or record a concrete scope/access
 blocker. Specialist review can strengthen analysis; its absence is not a reason to skip
 an assessment that source, papers, datasets and logs can support.

@@ -32,7 +32,7 @@ model_prices:
     output: 3.0
 ```
 
-Inspect sample cost limits are additional controls, not one allowance shared across independent jobs. The investigator decides how to allocate its available budget, including reporting. The same investigator retains its context and may run further experiments while writing. There is no fixed reporting reserve or automatic key minting requirement.
+Inspect sample cost limits are additional controls, not one allowance shared across independent jobs. The investigator decides how to allocate its available budget, including reporting. The same investigator retains its context during publication. Experiments finish before findings are submitted. There is no fixed reporting reserve or automatic key minting requirement.
 
 ## Hawk installations
 

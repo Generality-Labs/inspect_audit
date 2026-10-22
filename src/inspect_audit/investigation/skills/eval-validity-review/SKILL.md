@@ -36,7 +36,7 @@ source you are auditing is the read-only snapshot at the seed's `snapshot` path,
 - Wherever it says to ask the user, decide yourself and record the decision. There is
   nobody to ask until you publish.
 - Ignore its output directory and its report format. Your report structure and your
-  findings register are fixed by the investigating and writing skills. The mapping is
+  findings register are fixed by the investigating skill and findings schema. The mapping is
   at the end of this file.
 - You have something this skill assumes you do not: the recorded runs. It is written
   for reviewing an eval before anyone runs it, so it reasons about what *could*
@@ -296,10 +296,10 @@ For each issue found, note:
 
 ## Recording findings
 
-Use the canonical nine dimensions and check definitions in report/framework.
+Use the canonical nine dimensions and check definitions in /workspace/analysis/framework.
 Claims and scope inform construct/content validity; question defects inform task
 specification; scorer defects inform grading; implementation defects inform harness
 or environment. Scaffolding and resource limits require their own assessment.
 Record evidence-backed findings in report/findings.json. Publication structure and
-severity definitions belong to the writing skill and supplied framework. No alternate
+severity definitions belong to the supplied framework. No alternate
 validity rating or automatic overall verdict follows from one finding.

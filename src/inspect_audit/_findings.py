@@ -64,7 +64,6 @@ class Findings(BaseModel):
 class FindingsState(StoreModel):
     """Authoritative submission and manifest, carried by Inspect checkpoints."""
 
-    enabled: bool = False
     phase: Literal["investigating", "publishing"] = "investigating"
     findings: dict[str, Any] = Field(default_factory=dict)
     manifest: dict[str, Any] = Field(default_factory=dict)
@@ -139,11 +138,12 @@ def validate_draft(data: Any, register: "Register") -> Findings:
     from ._verdicts import audit_items
 
     checks = {s.name: s for s in audit_items(register.checks)}
+    from ._register import apply_reviews
+
+    apply_reviews(register.model_copy(deep=True), draft.investigator.reviews, checks)
     for review in draft.investigator.reviews:
-        if review.sample_id not in samples or review.check not in checks:
-            raise ValueError("A review references an unknown sample or check")
-        if review.label not in checks[review.check].grades:
-            raise ValueError(f"Invalid grade for {review.check}: {review.label}")
+        if not review.explanation.strip():
+            raise ValueError("Reviews need an explanation")
     for rating in draft.investigator.ratings.values():
         if not rating.label.strip() or not rating.explanation.strip():
             raise ValueError("Ratings need a label and explanation")

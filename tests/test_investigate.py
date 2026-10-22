@@ -1,4 +1,4 @@
-"""Exercise input isolation, publication and the real Docker/Quarto path."""
+"""Exercise investigator inputs, configuration, tools and real Docker staging."""
 
 import asyncio
 import json
@@ -9,17 +9,13 @@ from typing import Any
 import pytest
 from inspect_ai import eval, task_with
 from inspect_ai.model import (
-    ModelCost,
-    ModelInfo,
     ModelOutput,
     get_model,
-    set_model_info,
 )
-from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.util import sandbox
+from inspect_ai.solver import TaskState
 from test_helpers.logs import run_fixture_eval
 
-from inspect_audit._investigate import investigate, publish_report, save_publication
+from inspect_audit._investigate import investigate
 
 
 def every(models: list[str]):
@@ -101,53 +97,6 @@ def test_snapshot_paths_paper_download_and_docs_mount(
     assert (root / "inputs/docs/inspect-docs/index.md").is_file()
 
 
-def test_findings_validate_and_bundle_input_evidence(tmp_path: Path) -> None:
-    from inspect_audit._report import validate_findings
-
-    report = tmp_path / "work/report"
-    inputs = tmp_path / "inputs"
-    report.mkdir(parents=True)
-    inputs.mkdir()
-    (inputs / "trace.txt").write_text("primary evidence")
-    (report / "report.tex").write_text("Report")
-    for name in ("Findings.tex", "metadata.tex", "assessments.tex"):
-        (report / name).write_text("Fixture")
-    (report / "report.pdf").write_text("<p>Report</p>")
-    finding = {
-        "id": "F1",
-        "section": "grading",
-        "claim": "A claim",
-        "status": "supported",
-        "origin": "historical",
-        "evidence": [{"path": "/inputs/trace.txt", "location": "line 1"}],
-        "reproduce": "Read line 1",
-        "limitations": "",
-    }
-    register = report / "findings.json"
-    register.write_text(json.dumps([finding]))
-    destination = save_publication(tmp_path)
-    saved = json.loads((destination / "findings.json").read_text())
-    assert (destination / saved[0]["evidence"][0]["path"]).read_text() == "primary evidence"
-    assert json.loads(register.read_text())[0]["evidence"][0]["path"] == "/inputs/trace.txt"
-    for change in [
-        {"status": "confirmed"},
-        {"section": "vibes"},
-        {"evidence": []},
-        {"evidence": [{"path": "../escape", "location": "line 1"}]},
-        {"evidence": [{"path": "/etc/passwd", "location": "line 1"}]},
-        {"evidence": [{"path": "missing", "location": "line 1"}]},
-    ]:
-        register.write_text(json.dumps([{**finding, **change}]))
-        with pytest.raises(ValueError):
-            validate_findings(tmp_path)
-    register.write_text(json.dumps([{"id": "missing-fields"}]))
-    with pytest.raises(ValueError):
-        validate_findings(tmp_path)
-    register.write_text(json.dumps([finding, finding]))
-    with pytest.raises(ValueError, match="unique"):
-        validate_findings(tmp_path)
-
-
 def test_log_inputs_share_storage_without_a_second_copy(tmp_path: Path) -> None:
     source = tmp_path / "source.eval"
     source.write_bytes(b"log content")
@@ -188,7 +137,7 @@ def git_repo(path: Path) -> Path:
     return path
 
 
-def test_snapshot_excludes_untracked_secrets_and_retains_publications(
+def test_snapshot_excludes_untracked_secrets(
     tmp_path: Path,
 ) -> None:
     target = investigate(
@@ -199,17 +148,12 @@ def test_snapshot_excludes_untracked_secrets_and_retains_publications(
     assert _snapshot_names(root) == ["task.py"]
     seed = json.loads((root / "inputs/seed.json").read_text())
     assert len(seed["revision"]) == 40
-    report = root / "work/report"
-    _declare_fixture_assessments(root)
-    (report / "report.pdf").write_text("first version")
-    first = save_publication(root)
-    (report / "report.pdf").write_text("second version")
-    second = save_publication(root)
-    assert first != second
-    assert (first / "report.pdf").read_text() == "first version"
-    (report / "leak").symlink_to(tmp_path / "repo/.env")
-    with pytest.raises(ValueError, match="symlinks"):
-        save_publication(root)
+    work = root / "work"
+    assert (work / "analysis/framework/checks.json").is_file()
+    assert not list(work.rglob("assessments.*"))
+    assert not list((work / "report").iterdir())
+    assert (work / "findings.json").is_file()
+    assert not (work / "register.json").exists()
 
 
 def test_a_missing_log_source_fails_early(tmp_path: Path) -> None:
@@ -221,206 +165,6 @@ def test_a_missing_log_source_fails_early(tmp_path: Path) -> None:
         )
 
 
-def test_publication_switches_from_work_to_discussion(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from inspect_ai.agent import AgentState
-    from inspect_ai.model import ChatMessageAssistant, ModelOutput
-
-    from inspect_audit import _investigate
-
-    record = _investigate.InvestigationState()
-    monkeypatch.setattr(_investigate, "store_as", lambda _: record)
-    state = AgentState(messages=[ChatMessageAssistant(content="Working")])
-    state.output = ModelOutput.from_content("mockllm/model", "Working")
-    assert isinstance(asyncio.run(_investigate._continue(state, True)), str)
-    record.published = "/published/version1"
-    assert asyncio.run(_investigate._continue(state, False)) is False
-
-    async def operator_reply(state: AgentState) -> str:
-        return "Show me the supporting transcript."
-
-    monkeypatch.setattr(_investigate, "operator_turn", operator_reply)
-    assert asyncio.run(_investigate._continue(state, True)) == "Show me the supporting transcript."
-
-
-@solver
-def render_probe(root: str) -> Solver:
-    async def solve(state: TaskState, generate: Generate) -> TaskState:
-        result = await sandbox().exec(
-            [
-                "bash",
-                "-c",
-                "test -f /inputs/source/task.py && test ! -e /inputs/source/.env && echo sandbox-copy >> /inputs/source/task.py",
-            ]
-        )
-        assert result.success, result.stderr
-        result = await sandbox().exec(
-            [
-                "python",
-                "-c",
-                "import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt; plt.bar(['Reviewed', 'Unreviewed'], [3, 1]); plt.ylabel('Attempts'); plt.savefig('/workspace/report/coverage.png')",
-            ]
-        )
-        assert result.success, result.stderr
-        # Exercise the same SVG preview that crashed real investigations.
-        from inspect_audit._image import view_image
-
-        await sandbox().write_file(
-            "/workspace/report/architecture.svg",
-            '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50">'
-            '<rect width="100" height="50" fill="red"/></svg>',
-        )
-        preview = await view_image()("/workspace/report/architecture.svg")
-        assert isinstance(preview, list)
-        assert preview[0].image.startswith("data:image/png;base64,")
-        _declare_fixture_assessments(Path(root))
-        receipt = await publish_report(root)()
-        state.store.set("publication_receipt", receipt)
-        return state
-
-    return solve
-
-
-@pytest.mark.docker
-def test_real_container_renders_and_exports_report(tmp_path: Path) -> None:
-    set_model_info(
-        "mockllm/model",
-        ModelInfo(cost=ModelCost(input=0, output=0, input_cache_read=0, input_cache_write=0)),
-    )
-    target = investigate(
-        str(git_repo(tmp_path / "repo")),
-        output_dir=str(tmp_path / "runs"),
-        interactive=False,
-    )
-    root = Path(target.metadata["investigation_dir"])
-    _declare_fixture_assessments(root)
-    target = task_with(target, solver=render_probe(str(root)))
-    log = eval(target, model="mockllm/model", display="none", log_dir=str(tmp_path / "logs"))[0]
-    assert log.status == "success", log.error
-    assert "sandbox-copy" not in (root / "inputs" / "source" / "task.py").read_text()
-    published = list((root / "published").glob("*/report.pdf"))
-    assert len(published) == 1
-    assert published[0].read_bytes().startswith(b"%PDF")
-
-
-def test_the_same_input_cited_twice_publishes_once(tmp_path: Path) -> None:
-    report = tmp_path / "work/report"
-    inputs = tmp_path / "inputs"
-    report.mkdir(parents=True)
-    inputs.mkdir()
-    (inputs / "paper.pdf").write_bytes(b"%PDF")
-    (report / "report.tex").write_text("Report")
-    for name in ("Findings.tex", "metadata.tex", "assessments.tex"):
-        (report / name).write_text("Fixture")
-    (report / "report.pdf").write_text("<p>Report</p>")
-    finding = {
-        "id": "F1",
-        "section": "dataset",
-        "claim": "A",
-        "status": "supported",
-        "origin": "source",
-        "evidence": [
-            {"path": "/inputs/paper.pdf", "location": "p. 1"},
-            {"path": "/inputs/paper.pdf", "location": "p. 2"},
-        ],
-        "reproduce": "read",
-        "limitations": "",
-    }
-    (report / "findings.json").write_text(json.dumps([finding, {**finding, "id": "F2"}]))
-    destination = save_publication(tmp_path)
-    saved = json.loads((destination / "findings.json").read_text())
-    assert {e["path"] for f in saved for e in f["evidence"]} == {"_inputs/paper.pdf"}
-    assert (destination / "_inputs/paper.pdf").read_bytes() == b"%PDF"
-
-
-def test_cited_logs_are_published_as_addresses_never_as_copies(tmp_path: Path) -> None:
-    """2026-09-28: the sol6 chess bundle carried three cited .eval logs, uploaded under
-    Hawk's evals/ prefix, and Hawk re-pointed their shared warehouse records at them.
-
-    A log cited from either place logs arrive under /inputs (staged at preparation,
-    including downloaded hawk: sources, or collected from a job) is published as its
-    address plus a checksum; a derived file cited alongside is still copied.
-    """
-    import hashlib
-
-    report = tmp_path / "work/report"
-    inputs = tmp_path / "inputs"
-    report.mkdir(parents=True)
-    supplied = "hawk:imported-epoch-chess-sour-0pexj5yimxsum0r9"
-    fetched = inputs / "logs" / "0" / "gemini.eval"
-    collected = inputs / "jobs" / "pilot" / "2026-09-28T10-00-00_audit.eval"
-    staged = inputs / "logs" / "1" / "local.eval"
-    table = inputs / "derived" / "samples.csv"
-    for path, body in ((fetched, b"a"), (collected, b"b"), (staged, b"c"), (table, b"id,score\n")):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(body)
-    (inputs / "seed.json").write_text(
-        json.dumps(
-            {
-                "logs": [
-                    {
-                        "source": f"{supplied}/gemini.eval",
-                        "staged": "/inputs/logs/0/gemini.eval",
-                        "remote": supplied,
-                    },
-                    {
-                        "source": "/Users/op/runs/local.eval",
-                        "staged": "/inputs/logs/1/local.eval",
-                        "remote": None,
-                    },
-                ]
-            }
-        )
-    )
-    (report / "report.tex").write_text("Report")
-    for name in ("Findings.tex", "metadata.tex", "assessments.tex"):
-        (report / name).write_text("Fixture")
-    (report / "report.pdf").write_text("pdf")
-    cited = [fetched, collected, staged, table]
-    (report / "findings.json").write_text(
-        json.dumps(
-            [
-                {
-                    "id": "F1",
-                    "section": "grading",
-                    "claim": "A",
-                    "status": "supported",
-                    "origin": "historical",
-                    "reproduce": "read",
-                    "limitations": "",
-                    "evidence": [
-                        {"path": "/" + str(p.relative_to(tmp_path)), "location": "x"} for p in cited
-                    ],
-                }
-            ]
-        )
-    )
-
-    destination = save_publication(tmp_path, {"pilot": "hawk:inv-pilot-1234abcd"})
-    assert not list(destination.rglob("*.eval"))
-    paths = [
-        e["path"] for e in json.loads((destination / "findings.json").read_text())[0]["evidence"]
-    ]
-    assert paths == [
-        f"{supplied}/gemini.eval",
-        "hawk:inv-pilot-1234abcd/2026-09-28T10-00-00_audit.eval",
-        "/Users/op/runs/local.eval",
-        "_inputs/derived/samples.csv",
-    ]
-    assert (destination / paths[3]).read_bytes() == b"id,score\n"
-    references = json.loads((destination / "_inputs/log-references.json").read_text())
-    assert [r["sha256"] for r in references] == [
-        hashlib.sha256(b).hexdigest() for b in (b"a", b"b", b"c")
-    ]
-
-    # an eval log placed in the report itself is refused, with the way out
-    (report / "evidence").mkdir()
-    (report / "evidence" / "copy.eval").write_bytes(b"a")
-    with pytest.raises(ValueError, match="cite the log where it lives"):
-        save_publication(tmp_path)
-
-
 def test_mounted_skills_are_wellformed_and_adapted() -> None:
     """Every mounted skill parses, is named after its directory, and says where it is.
 
@@ -430,7 +174,7 @@ def test_mounted_skills_are_wellformed_and_adapted() -> None:
     """
     from inspect_audit._investigate import ASSETS, INVESTIGATION_SKILLS
 
-    ours = {"investigating", "writing", "running-jobs", "security-audit-eval"}
+    ours = {"investigating", "running-jobs", "security-audit-eval"}
     for name in INVESTIGATION_SKILLS:
         text = (ASSETS / "skills" / name / "SKILL.md").read_text()
         import yaml
@@ -667,59 +411,6 @@ def test_the_snapshot_follows_what_the_task_imports(tmp_path: Path) -> None:
     assert not any("unrelated" in c for c in chosen)
 
 
-def _declare_fixture_assessments(root: Path) -> None:
-    from inspect_audit._assessment import framework_checks
-
-    report = root / "work/report"
-    if not (report / "framework").exists():
-        import shutil
-
-        from inspect_audit._investigate import ASSETS
-
-        shutil.copytree(ASSETS / "report", report, dirs_exist_ok=True)
-    rows = [
-        {
-            "id": key,
-            "assessment": "Not assessed",
-            "result": "Infrastructure smoke test; no benchmark judgments",
-            "evidence": [],
-        }
-        for key in framework_checks(report)
-    ]
-    (report / "assessments.json").write_text(json.dumps(rows))
-    from inspect_audit._assessment import assessment_latex
-
-    (report / "assessments.tex").write_text(assessment_latex(report))
-
-
-def test_a_run_short_of_its_required_coverage_is_recorded_incomplete(tmp_path: Path) -> None:
-    """Luna and sol6 on 09-25: 0/100 assessed, published, recorded as success."""
-    from inspect_audit._report import record_outcome
-
-    def coverage(not_assessed: int) -> None:
-        (tmp_path / "coverage.json").write_text(
-            json.dumps(
-                {
-                    "denominator": 100,
-                    "counts": {"NO_ISSUE_FOUND": 100 - not_assessed, "NOT_ASSESSED": not_assessed},
-                }
-            )
-        )
-
-    assert record_outcome(tmp_path, None)[0] == "published_complete"
-    assert record_outcome(tmp_path, 1.0) == (
-        "published_incomplete",
-        ["100% question coverage was required and the report has no coverage.json"],
-    )
-    coverage(100)
-    outcome, reasons = record_outcome(tmp_path, 1.0)
-    assert outcome == "published_incomplete" and reasons == [
-        "0/100 questions assessed; 100% was required"
-    ]
-    coverage(5)
-    assert record_outcome(tmp_path, 0.9) == ("published_complete", ["95/100 questions assessed"])
-
-
 def test_a_blocked_investigation_ends_and_scores_as_blocked() -> None:
     from inspect_ai.util._store import Store, init_subtask_store
 
@@ -758,8 +449,9 @@ def test_every_tool_schema_survives_a_strict_provider(tmp_path: Path) -> None:
     from inspect_ai.tool._tool_def import ToolDef
 
     from inspect_audit import _investigate
+    from inspect_audit._findings import submit_findings
     from inspect_audit._image import view_image
-    from inspect_audit._report import check_report, publish_report
+    from inspect_audit._publishing import load_publisher, publish_document
 
     inv = _investigate.Investigation(
         root=tmp_path,
@@ -778,8 +470,8 @@ def test_every_tool_schema_survives_a_strict_provider(tmp_path: Path) -> None:
         _investigate.jobs(inv),
         _investigate.budget(None, openrouter=False),
         view_image(),
-        check_report("/tmp"),
-        publish_report("/tmp"),
+        submit_findings(tmp_path),
+        publish_document(tmp_path, load_publisher("gl")),
     ]
 
     def free_form(schema: Any) -> bool:
@@ -907,8 +599,11 @@ def test_every_agent_tool_schema_meets_openais_strict_rules(tmp_path: Path) -> N
     from inspect_ai.tool._tool_def import ToolDef
 
     from inspect_audit import _investigate
+    from inspect_audit._findings import submit_findings
     from inspect_audit._image import view_image
-    from inspect_audit._report import check_report, publish_report, report_blocker
+    from inspect_audit._publishing import load_publisher, publish_document
+    from inspect_audit._report import report_blocker
+    from inspect_audit.publishers.gl import figure, preview_report
 
     inv = _investigate.Investigation(
         root=tmp_path,
@@ -927,14 +622,13 @@ def test_every_agent_tool_schema_meets_openais_strict_rules(tmp_path: Path) -> N
         _investigate.jobs(inv),
         _investigate.budget(None, openrouter=False),
         view_image(),
-        check_report("/tmp"),
-        publish_report("/tmp"),
+        submit_findings(tmp_path),
+        publish_document(tmp_path, load_publisher("gl")),
         report_blocker(),
         _investigate.start_register("b/t"),
         _investigate.register_view(),
-        _investigate.review(),
-        _investigate.finding(),
-        _investigate.rate(),
+        figure(),
+        preview_report(tmp_path),
         *_auditor_tools(),
     ]
 

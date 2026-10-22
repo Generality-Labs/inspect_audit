@@ -29,6 +29,7 @@ Hawk 4 is the target for investigation execution on Hawk. The current deployment
 
 - [ ] Run a complete investigator job on Hawk 4: launch an audit and benchmark experiment, collect logs and verdicts, and publish a report.
 - [ ] Exercise cancellation, failed submissions and checkpoint resume.
+- [ ] Rebuild and pin the investigator sandbox image from the trimmed Dockerfile; existing image digests still contain the old TeX publishing dependencies.
 - [ ] Provision the publishing host with the optional Playwright dependency and Chromium system requirements, then verify findings submission, artifact persistence and the GL PDF/HTML publisher on the actual runner image.
 - [ ] Rerun the API-free benchmark compatibility suite.
 - [ ] Document tested versions and remaining restrictions before declaring the Hawk 4 integration supported.

@@ -30,7 +30,8 @@ One Inspect task: a react agent in its own box, launching benchmark and audit jo
 | `_runs.py`                    | a `Job` and where it runs: Hawk through `HawkClient`, or a detached local `inspect eval-set`  |
 | `_policy.py`                  | frozen launch configuration, checkpoint identity and `InvestigationAuthorizer` for child jobs |
 | `_investigation_workspace.py` | staging inputs into the box, reading the report back out, publishing to Hawk's artifacts      |
-| `_report.py`                  | legacy LaTeX publication helpers, launched-job records and outcome scoring                    |
+| `_report.py`                  | launched-job records, log provenance, operator turn-taking and outcome scoring                |
+| `_framework.py`               | analytical definitions and rubric, without a separate judgment store                          |
 | `_findings.py`                | editable draft, trusted submitted bundle, manifest and checkpointed phase                     |
 | `_publishing.py`              | native dynamic tool source, publisher packages and standalone `publish` task                  |
 | `publishers/gl.py`            | reviewed GL components and static HTML/PDF output                                             |

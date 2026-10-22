@@ -12,13 +12,15 @@ The investigator edits `/workspace/findings.json` with Bash or Python. Its JSON 
 - `investigator.summary` states what the investigation established.
 - `investigator.findings` contains `issue`, `explanation`, `sample_ids` and `evidence`. An evidence observation has `observed` and `source`.
 - `investigator.reviews` contains `sample_id`, `check`, `label`, `explanation` and `evidence`. Reviews accompany the original auditor verdicts.
-- `investigator.ratings` holds broader dimension judgments, each with a label, explanation and supporting evidence.
+- `investigator.ratings` holds broader dimension judgments, each with a label, explanation and supporting evidence. Use framework dimension or check IDs as keys.
 - `investigator.limitations` records gaps and blockers.
 - `investigator.artifacts` lists absolute `/workspace/...` or `/inputs/...` paths needed by a fresh publisher: tables, calculation scripts and evidence extracts.
 
+The analytical framework is staged under `/workspace/analysis/framework`; its definitions are reference material. Ratings live only in `findings.json`, with no separate `assessments.json` to maintain. Publication tables and graphs are derived from this submitted data.
+
 `start_register` establishes the population. Collection refreshes the draft's subject and auditor section without replacing the investigator's edits. The host retains the collection register; it is not a second publication format. Submission refuses edited auditor records or references to samples outside the population.
 
-Empty cells and unresolved verdicts remain visible. They do not prevent submitting a scoped result, but publication records missing or unresolved planned checks as incomplete. An explicit `required_coverage` continues to require submitted coverage at `/workspace/analysis/coverage.json`; include that file in artifacts.
+Empty cells and unresolved verdicts, including `NO_VERDICT`, remain visible. Progress queries and publication use the same interpretation of each sample/check. They do not prevent submitting a scoped result, but publication records missing or unresolved planned checks as incomplete. An explicit `required_coverage` continues to require submitted coverage at `/workspace/analysis/coverage.json`; include that file in artifacts.
 
 ## Submission
 

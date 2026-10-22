@@ -33,7 +33,7 @@ from inspect_ai.log import list_eval_logs, read_eval_log_sample_summaries
 from inspect_ai.model import CompactionSummary, GenerateConfig, ModelConfig, get_model
 from inspect_ai.solver import TaskState
 from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
-from inspect_ai.util import CheckpointConfig, store_as
+from inspect_ai.util import CheckpointConfig, sandbox, store_as
 
 from . import prompts
 from ._image import view_image
@@ -60,17 +60,8 @@ from ._report import (
     operator_turn,
     report_blocker,
 )
-from ._report import (
-    publish_report as publish_report,
-)
-from ._report import (
-    save_publication as save_publication,
-)
-from ._report import (
-    validate_findings as validate_findings,
-)
 from ._runs import FINISHED, STUCK, HawkRuns, Job, LocalRuns, Runs, validate_environment
-from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS, Evidence
+from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS
 
 logger = getLogger(__name__)
 
@@ -528,14 +519,10 @@ def prepare_workspace(
         logs=log_index,
     )
     (inputs / "seed.json").write_text(json.dumps(seed, indent=2))
-    shutil.copytree(
-        ASSETS / "report",
-        work / "report",
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-    )
-    from ._assessment import prepare_assessments
+    from ._framework import stage_framework
 
-    prepare_assessments(work / "report")
+    stage_framework(work / "analysis")
+    (work / "report").mkdir()
     (work / "journal.md").write_text(
         "# Activity journal\n\nAppend actions and corrections with evidence references.\n"
     )
@@ -987,13 +974,7 @@ def start_register(task: str | None, policy: LaunchPolicy | None = None) -> Tool
             ensure_policy(policy, store_as(PolicyStore), require_existing=True)
             if canonical(args) != policy.task_args_json or set(checks) - set(policy.checks):
                 raise ToolError("register arguments and checks must match the launch policy")
-        from ._findings import FindingsState
-
-        if (
-            policy is not None
-            and store_as(FindingsState).enabled
-            and set(checks) != set(policy.checks)
-        ):
+        if policy is not None and set(checks) != set(policy.checks):
             raise ToolError("Start the register with all checks declared by the launch policy")
         try:
             skills = audit_items(checks)
@@ -1024,14 +1005,9 @@ def start_register(task: str | None, policy: LaunchPolicy | None = None) -> Tool
             samples={str(s.id): {c.name: [] for c in skills} for s in dataset},
         )
         await save(register)
-        snapshot = (
-            "/workspace/findings.json"
-            if store_as(FindingsState).enabled
-            else "/workspace/register.json"
-        )
         return (
             f"register started: {len(dataset)} items x {len(skills)} checks, at "
-            f"{snapshot}. register(view='summary') shows progress."
+            "/workspace/findings.json. register(view='summary') shows progress."
         )
 
     return execute
@@ -1057,149 +1033,19 @@ def register_view() -> Tool:
         if view not in ("summary", "flagged", "unresolved", "missing", "disputed"):
             raise ToolError("view is summary, flagged, unresolved, missing or disputed")
         skills = {s.name: s for s in audit_items(current.checks)}
-        from ._findings import Findings, FindingsState
+        from ._findings import DRAFT, Findings
+        from ._register import apply_reviews
 
-        if store_as(FindingsState).enabled:
-            from inspect_ai.util import sandbox
-
-            from ._register import Take
-
-            try:
-                draft = Findings.model_validate_json(
-                    await sandbox().read_file("/workspace/findings.json")
-                )
-                for reviewed in draft.investigator.reviews:
-                    if (
-                        reviewed.sample_id not in current.samples
-                        or reviewed.check not in skills
-                        or reviewed.label not in skills[reviewed.check].grades
-                    ):
-                        raise ValueError(
-                            "Review must name an existing sample/check and a valid grade"
-                        )
-                    current.samples[reviewed.sample_id][reviewed.check].append(
-                        Take(
-                            by="investigator",
-                            label=reviewed.label,
-                            explanation=reviewed.explanation,
-                            evidence=reviewed.evidence,
-                        )
-                    )
-            except (ValueError, OSError) as ex:
-                raise ToolError(f"Cannot read draft reviews: {ex}") from ex
+        try:
+            draft = Findings.model_validate_json(await sandbox().read_file(DRAFT))
+            apply_reviews(current, draft.investigator.reviews, skills)
+        except (ValueError, OSError) as ex:
+            raise ToolError(f"Cannot read draft reviews: {ex}") from ex
         rows = select(current, view, skills, check)  # type: ignore[arg-type]
         text = json.dumps(rows, indent=1)
         if len(text) > 12_000:
-            from ._findings import FindingsState
-
-            path = (
-                "/workspace/findings.json"
-                if store_as(FindingsState).enabled
-                else "/workspace/register.json"
-            )
-            text = text[:12_000] + f"\n... (read {path} for the rest)"
+            text = text[:12_000] + f"\n... (read {DRAFT} for the rest)"
         return text
-
-    return execute
-
-
-@tool
-def review() -> Tool:
-    async def execute(
-        sample: str, check: str, label: str, explanation: str, evidence: list[Evidence]
-    ) -> str:
-        """Record your own take on one item's check, beside the auditors'.
-
-        Your take stands over theirs; theirs stay on the record, so a disagreement
-        remains visible. Agreeing is a take too: it marks the cell reviewed.
-
-        Args:
-            sample: The item's id in the register.
-            check: The check, e.g. "gold-answer".
-            label: Your grade, one of the check's own grades.
-            explanation: Why, from the evidence.
-            evidence: Observations with their sources.
-        """
-        from ._register import Take, load, save, started
-        from ._verdicts import audit_items
-
-        current = load()
-        if not started(current):
-            raise ToolError("no register yet: start_register first")
-        if sample not in current.samples or check not in current.checks:
-            raise ToolError(f"no cell {sample}/{check} in the register")
-        [skill] = audit_items([check])
-        if label not in skill.grades:
-            raise ToolError(f"{check} grades are {', '.join(skill.grades)}")
-        if not explanation.strip() or not evidence:
-            raise ToolError("a take needs an explanation and at least one piece of evidence")
-        current.samples[sample][check].append(
-            Take(by="investigator", label=label, explanation=explanation, evidence=evidence)
-        )
-        await save(current)
-        return f"recorded investigator:{label} on {sample}/{check}"
-
-    return execute
-
-
-@tool
-def finding() -> Tool:
-    async def execute(
-        claim: str, explanation: str, samples: list[str], evidence: list[Evidence]
-    ) -> str:
-        """Record a finding broader than one item: a pattern, a mechanism, a population fact.
-
-        Args:
-            claim: What you conclude, in one sentence.
-            explanation: Why, from the evidence.
-            samples: The items it rests on, by register id; [] if none.
-            evidence: Observations with their sources.
-        """
-        from ._register import Claim, load, save, started
-
-        current = load()
-        if not started(current):
-            raise ToolError("no register yet: start_register first")
-        if unknown := [s for s in samples if s not in current.samples]:
-            raise ToolError(f"not in the register: {', '.join(unknown)}")
-        if not claim.strip() or not explanation.strip() or not evidence:
-            raise ToolError("a finding needs a claim, an explanation and evidence")
-        current.findings.append(
-            Claim(claim=claim, explanation=explanation, samples=samples, evidence=evidence)
-        )
-        await save(current)
-        return f"finding {len(current.findings)} recorded"
-
-    return execute
-
-
-@tool
-def rate() -> Tool:
-    async def execute(
-        dimension: str, label: str, explanation: str, evidence: list[Evidence]
-    ) -> str:
-        """Record your judgment on one dimension of the benchmark.
-
-        Args:
-            dimension: The dimension, by the name your report framework uses.
-            label: None, Minor, Major, Critical, Not assessed or Not applicable.
-            explanation: Why, citing the findings and items it rests on.
-            evidence: Observations with their sources; may cite register items.
-        """
-        from ._register import RATINGS, Take, load, save, started
-
-        current = load()
-        if not started(current):
-            raise ToolError("no register yet: start_register first")
-        if label not in RATINGS:
-            raise ToolError(f"label is one of {', '.join(RATINGS)}")
-        if not explanation.strip():
-            raise ToolError("a rating needs an explanation")
-        current.ratings.setdefault(dimension, []).append(
-            Take(by="investigator", label=label, explanation=explanation, evidence=evidence)
-        )
-        await save(current)
-        return f"rated {dimension}: {label}"
 
     return execute
 
@@ -1509,18 +1355,6 @@ def investigate(
         output_dir,
     )
 
-    analysis = root / "work/analysis"
-    analysis.mkdir()
-    shutil.copytree(
-        root / "work/report/framework",
-        analysis / "framework",
-        ignore=shutil.ignore_patterns("examples"),
-    )
-    from ._assessment import prepare_assessments
-
-    prepare_assessments(analysis)
-    shutil.rmtree(root / "work/report")
-    (root / "work/report").mkdir()
     (root / "work/findings.json").write_bytes(encoded(Findings().model_dump(mode="json")))
     (root / "work/findings.schema.json").write_text(
         json.dumps(Findings.model_json_schema(), indent=2)
@@ -1660,7 +1494,6 @@ def investigate(
     @solver
     def begin_findings() -> Solver:
         async def solve(state: TaskState, generate: Generate) -> TaskState:
-            state.store_as(FindingsState).enabled = True
             state.store_as(FindingsState).required_coverage = required_coverage
             from ._register import Register, save
 

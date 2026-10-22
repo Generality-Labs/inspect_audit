@@ -25,8 +25,8 @@ work is missing, not a clean verdict. Explain specific access or execution block
 
 Read /workspace/analysis/framework/Framework.tex, ScoringCriteria.tex and checks.json
 for the evaluation dimensions and their meanings. Use these as investigation criteria,
-not a requirement to manufacture a concern in every dimension. Keep per-dimension
-assessments as analysis artifacts. Read the relevant Inspect skills before unfamiliar
+not a requirement to manufacture a concern in every dimension. Record per-dimension judgments under investigator.ratings in findings.json.
+Use framework check IDs as keys, with a label, explanation and supporting evidence. Read the relevant Inspect skills before unfamiliar
 log, scoring or execution operations. Never unzip .eval files.
 
 If jobs are configured, read running-jobs before launching them. Use the exact permitted

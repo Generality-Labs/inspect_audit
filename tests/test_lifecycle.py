@@ -55,7 +55,6 @@ def test_child_audit_is_collected_once_into_the_register(tmp_path: Path) -> None
 
             from inspect_audit._findings import FindingsState, read_bundle, submit_findings
 
-            state.store_as(FindingsState).enabled = True
             await save(
                 Register(
                     subject={"task": "toy"},

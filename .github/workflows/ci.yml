@@ -29,7 +29,7 @@ jobs:
   # One real-container lifecycle gate on PRs; the complete Docker suite on main.
   docker:
     name: Docker tests
-    # Full report tests build TeX images from cold; keep the PR step bounded below.
+    # Keep the PR lifecycle gate bounded; the full Docker suite runs on main.
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:

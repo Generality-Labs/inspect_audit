@@ -52,5 +52,5 @@ Use provenance to locate evidence, not repository popularity as a proxy for corr
 If a target is absent, tests are wrong or the task is impossible as specified, investigate
 that validity issue rather than dismissing it as outside a security checklist.
 
-Use source locations, logs and safe reproductions. The writing skill governs publication;
+Use source locations, logs and safe reproductions. The findings schema governs recorded judgments;
 there is no separate security report, mandatory unsafe verdict or alternative JSON format.

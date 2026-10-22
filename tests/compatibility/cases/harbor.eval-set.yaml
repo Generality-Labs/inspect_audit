@@ -17,7 +17,7 @@ tasks:
           package_name: terminal-bench/terminal-bench-2
           package_ref: sha256:c6fc2e2382c1dbae99b2d5ecd2f4f4a60c3c01e0d84642d69b4afd92e99d078b
           dataset_task_names:
-          - make-mips-interpreter
+          - terminal-bench/make-mips-interpreter
           n_tasks: 1
         logs: []
         judges: {}

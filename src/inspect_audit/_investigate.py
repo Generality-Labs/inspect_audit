@@ -37,6 +37,7 @@ from inspect_ai.util import CheckpointConfig, store_as
 
 from . import prompts
 from ._image import view_image
+from ._log_sources import fetch_logs, is_remote_logs
 from ._policy import (
     AuditScope,
     Benchmark,
@@ -308,11 +309,6 @@ def _only_task(source: Path) -> str | None:
     return None
 
 
-def is_remote_logs(source: str) -> bool:
-    """Whether a log source is already parked somewhere a Hawk job can read it."""
-    return source.startswith(("hawk:", "s3://", "gs://", "http://", "https://"))
-
-
 def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | None:
     """The task's own directory, plus what the package shares with it.
 
@@ -424,8 +420,6 @@ def prepare_workspace(
     output_dir: str,
 ) -> Path:
     """Stage the declared inputs on the host; the box gets a copy at the start."""
-    from ._registry import fetch_logs
-
     root = Path(output_dir).expanduser().resolve() / uuid4().hex
     inputs = root / "inputs"
     work = root / "work"

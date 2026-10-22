@@ -505,7 +505,7 @@ def test_hawk_logs_are_fetched_with_the_runners_own_credentials(
     from hawk.runner import refresh_token as hawk_hook
     from inspect_ai.hooks import _hooks
 
-    from inspect_audit._registry import fetch_logs
+    from inspect_audit._log_sources import fetch_logs
 
     monkeypatch.setattr(
         hawk_hook,
@@ -552,7 +552,7 @@ def test_an_audit_reads_a_log_directory(tmp_path: Path) -> None:
     """A local job's address is its log directory; operator sources may be URLs."""
     from test_helpers.logs import run_fixture_eval
 
-    from inspect_audit._registry import log_files
+    from inspect_audit._log_sources import log_files
 
     log = Path(run_fixture_eval(str(tmp_path / "logs")))
     assert log_files([str(log.parent)]) == [str(log)]

@@ -3,7 +3,7 @@
 import urllib.request
 from pathlib import Path
 
-from inspect_audit._registry import fetch_logs
+from inspect_audit._log_sources import fetch_logs
 
 
 def _serve(monkeypatch, pages: dict[str, bytes]) -> None:

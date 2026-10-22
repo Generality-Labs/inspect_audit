@@ -354,3 +354,16 @@ def fetch_eval_sets(eval_sets: str) -> str:
     with concurrent.futures.ThreadPoolExecutor(1) as pool:
         pool.submit(asyncio.run, fetch()).result()
     return str(fetched)
+
+
+def declared_transcripts() -> dict[str, str] | None:
+    """The eval sets Hawk resolved for this run (Hawk 4 `transcripts`), else None."""
+    try:
+        from hawk.runtime import transcript_sources  # pyright: ignore[reportMissingImports]
+    except ImportError:
+        if "HAWK_TRANSCRIPT_SOURCES" in os.environ:
+            raise
+        return None  # a Hawk without declared inputs
+    if "HAWK_TRANSCRIPT_SOURCES" not in os.environ:
+        return None
+    return {s.eval_set_id: s.location for s in transcript_sources()}  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]

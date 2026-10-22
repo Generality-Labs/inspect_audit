@@ -6,11 +6,11 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1] / "src" / "inspect_audit"
 
 # Running jobs, policy, keys and prices know nothing about the agents that use them.
-LOWER = ("dispatch", "_runs", "_policy", "_prices")
+LOWER = ("dispatch", "_runs", "_policy", "_prices", "_log_sources")
 HIGHER = ("_investigate", "_registry", "_auditor", "_task", "_publishing", "_findings", "_report")
 
 # Cycles that exist today. Each consolidation step removes one; this list only shrinks.
-KNOWN_CYCLES = [{"_investigate", "_registry"}]
+KNOWN_CYCLES: list[set[str]] = []
 
 
 def _modules() -> dict[str, Path]:

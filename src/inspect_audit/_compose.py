@@ -63,10 +63,9 @@ def their_sandbox(task_sandbox: object, samples: list[Sample]) -> SandboxEnviron
         )
     if task_spec is None:
         return None  # no box of theirs: the audit runs with the auditor's alone
-    if task_spec.type != "docker":
+    if task_spec.type not in {"docker", "k8s"}:
         raise UnsupportedBenchmarkError(
-            f"the benchmark's sandbox is {task_spec.type!r}; the auditor needs its "
-            "Docker compose declaration (k8s runs convert that same compose)"
+            f"the benchmark's sandbox is {task_spec.type!r}; supported providers are docker and k8s"
         )
     return task_spec
 

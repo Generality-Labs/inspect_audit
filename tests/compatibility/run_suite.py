@@ -45,7 +45,7 @@ def summarize(paths: list[Path]) -> dict[str, Any]:
                 ),
                 None,
             )
-            result = (
+            result: dict[str, Any] = (
                 dict(score.metadata or {})
                 if score
                 else {
@@ -58,9 +58,30 @@ def summarize(paths: list[Path]) -> dict[str, Any]:
                 {
                     e.model
                     for e in sample.events
-                    if isinstance(e, ModelEvent) and not e.model.startswith("ia_probe/")
+                    if isinstance(e, ModelEvent)
+                    and not e.model.startswith("ia_probe/")
+                    and not (
+                        e.model == "mockllm/compatibility-judge"
+                        and (log.eval.metadata or {})
+                        .get("functionality_probe", {})
+                        .get("mock_judge")
+                    )
                 }
             )
+            mock_models = sorted(
+                {
+                    e.model
+                    for e in sample.events
+                    if isinstance(e, ModelEvent) and e.model == "mockllm/compatibility-judge"
+                }
+            )
+            if (log.eval.metadata or {}).get("functionality_probe", {}).get(
+                "mock_judge"
+            ) and not mock_models:
+                result["status"] = "failed"
+                result.setdefault("errors", {})["mock_judge"] = (
+                    "Configured mock judge was never called"
+                )
             if sample.error or sample.limit or external:
                 result["status"] = "failed"
             samples.append(
@@ -68,6 +89,7 @@ def summarize(paths: list[Path]) -> dict[str, Any]:
                     "sample": str(sample.id),
                     **result,
                     "external_models": external,
+                    "mock_models": mock_models,
                     "error": sample.error.message if sample.error else None,
                     "limit": sample.limit.type if sample.limit else None,
                 }
@@ -88,7 +110,7 @@ def write_results(output: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         "# Inspect Auditor compatibility",
         "",
-        "These are functionality probes, not scientific validity assessments. `partial` means a model judge was intentionally disabled.",
+        "These are functionality probes, not scientific validity assessments. `passed_mock` grading used a configured canned judge response. `partial` means a model judge was intentionally disabled.",
         "",
         "| Case | Result | Stages | Hawk |",
         "|---|---|---|---|",

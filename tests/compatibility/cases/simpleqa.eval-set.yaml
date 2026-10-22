@@ -1,7 +1,8 @@
 name: ia-api-free-simpleqa-20261021
 packages:
-- inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
-- inspect-evals[scicode] @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
+- inspect-ai==0.3.266
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-evals @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
 tasks:
 - package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility
   name: ia_compatibility
@@ -17,10 +18,15 @@ tasks:
         samples:
         - '3153'
         logs: []
-        judges:
-          grader: openrouter/openrouter/anthropic/claude-haiku-4.5
-        package: inspect-evals[scicode] @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
+        judges: {}
+        package: inspect-evals @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
         auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+        mock_judges:
+          grader:
+            tool: submit
+            arguments:
+              grade: INCORRECT
+              explanation: Scripted mock judgment; no answer verification.
       limit: 1
 models:
 - package: openai

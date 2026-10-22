@@ -1,10 +1,12 @@
 """Operational outcomes from actual probe tool results, separate from validity."""
 
 import json
+import math
 from collections.abc import Sequence
 from typing import Any
 
 from inspect_ai.model import ChatMessage
+from inspect_ai.scorer import Score
 
 
 def outcomes(messages: Sequence[ChatMessage], expected: dict[str, bool]) -> dict[str, Any]:
@@ -38,6 +40,23 @@ def outcomes(messages: Sequence[ChatMessage], expected: dict[str, bool]) -> dict
                     scores = json.loads(result.text)["scores"]
                     if not scores:
                         raise ValueError("Grader returned no scores")
+
+                    def scored(value: Any) -> bool:
+                        if isinstance(value, dict):
+                            return any(scored(v) for v in value.values())
+                        if isinstance(value, list):
+                            return any(scored(v) for v in value)
+                        return value is not None and not (
+                            isinstance(value, float) and not math.isfinite(value)
+                        )
+
+                    if any(
+                        s.reason in {"grader_failed", "scoring_failed"} or not scored(s.value)
+                        for s in (Score.model_validate(value) for value in scores)
+                    ):
+                        raise ValueError("Grader returned an unscored or failed judgment")
+                    if expected.get("mock_judge"):
+                        stages[stage] = "passed_mock"
                 except (ValueError, KeyError, TypeError) as ex:
                     stages[stage] = "failed"
                     errors[stage] = str(ex)

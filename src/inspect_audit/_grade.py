@@ -158,13 +158,7 @@ def grade_tool(
                 for scorer in scorers:
                     score = await scorer(graded, graded.target)
                     if score is not None:
-                        results.append(
-                            {
-                                "value": score.value,
-                                "answer": score.answer,
-                                "explanation": score.explanation,
-                            }
-                        )
+                        results.append(score.model_dump())
                 return results
 
             try:

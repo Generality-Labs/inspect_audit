@@ -60,6 +60,7 @@ class LogIndex:
 
     attempts: dict[str, list[Attempt]] = field(default_factory=dict)
     judges: dict[str, str] = field(default_factory=dict)
+    judge_configs: dict[str, ModelConfig] = field(default_factory=dict)
     """Model roles the recorded runs bound, role -> model; identical across logs."""
     scorer_models: set[str] = field(default_factory=set)
     """Models the recorded scorers actually called, from scoring spans."""
@@ -211,6 +212,19 @@ def index_logs(
                 f"{path} binds model roles {roles}, other logs bind {roles_seen}"
             )
         roles_seen = roles
+        configs = {
+            role: values[0] if isinstance(values, list) and len(values) == 1 else values
+            for role, values in (header.eval.model_roles or {}).items()
+        }
+        if any(not isinstance(value, ModelConfig) for value in configs.values()):
+            raise LogMismatchError("multi-model judge roles require explicit fan-out support")
+        if index.judge_configs and index.judge_configs != configs:
+            raise LogMismatchError(
+                f"{path} binds different judge configurations from the other logs"
+            )
+        index.judge_configs = {
+            role: value for role, value in configs.items() if isinstance(value, ModelConfig)
+        }
         index.eval_models.add(header.eval.model)
         index.shuffled = index.shuffled or bool(header.eval.dataset.shuffled)
         summaries = read_eval_log_sample_summaries(path)

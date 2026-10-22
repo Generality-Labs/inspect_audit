@@ -42,11 +42,15 @@ launched: check it before launching more.
 
 ## Money
 
-You and every job draw on one model key; `budget()` says what it has left, and when it
-is gone every model call fails. An audit's `item_cost_limit` caps one item. Bound a
+When configured to share one capped OpenRouter key, you and your jobs draw on that
+key; `budget()` reports its remaining allowance. Other provider routes have separate
+credentials and limits. The key balance is not a per-investigation usage breakdown. An audit's `item_cost_limit` caps one item. Bound a
 grader's `max_tokens` and check what a smoke job recorded before expanding. Scale in
 bounded batches.
 
 A missing credential, malformed request or broken audit image is an audit limitation.
 Record what it prevented, repair once if feasible, and avoid retry loops. Attribute a
 failure to the benchmark only after ruling out our configuration and reconstruction.
+
+Allocate the available budget yourself, including writing the report. You can run
+further experiments while writing if they are useful; there is no fixed reporting reserve.

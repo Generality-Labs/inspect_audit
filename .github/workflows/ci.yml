@@ -24,6 +24,7 @@ jobs:
     uses: Generality-Labs/python-project-template/.github/workflows/python-ci.yml@v1
     with:
       python-version: "3.13"
+      typecheck-paths: "src tests/compatibility/src/ia_compatibility tests/compatibility/run_suite.py"
 
   # One real-container lifecycle gate on PRs; the complete Docker suite on main.
   docker:

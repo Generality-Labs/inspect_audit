@@ -5,6 +5,29 @@ from typing import Any
 PRICE_KEYS = ("input", "output", "input_cache_read", "input_cache_write")
 
 
+def prices_for_models(models: list[str]) -> dict[str, dict[str, float]]:
+    """Use Inspect's configured costs; query OpenRouter only for its own routes."""
+    from inspect_ai.model import get_model_info
+
+    prices: dict[str, dict[str, float]] = {}
+    router: list[str] = []
+    for model in dict.fromkeys(models):
+        info = get_model_info(model)
+        if info is not None and info.cost is not None:
+            prices[model] = info.cost.model_dump()
+        elif model.startswith("openrouter/"):
+            router.append(model)
+        else:
+            raise ValueError(
+                f"No Inspect cost data for {model!r}; declare model_prices or configure Inspect model costs"
+            )
+    if router:
+        from ._openrouter import openrouter_prices
+
+        prices.update(openrouter_prices(router))
+    return prices
+
+
 def valid_price(price: Any) -> bool:
     """A usable per-million price: every field a non-negative number, and input or output set.
 

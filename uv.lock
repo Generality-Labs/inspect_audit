@@ -32,19 +32,6 @@ wheels = [
 ]
 
 [[package]]
-name = "aioboto3"
-version = "15.5.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiobotocore", extra = ["boto3"], marker = "python_full_version < '3.13'" },
-    { name = "aiofiles", marker = "python_full_version < '3.13'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a2/01/92e9ab00f36e2899315f49eefcd5b4685fbb19016c7f19a9edf06da80bb0/aioboto3-15.5.0.tar.gz", hash = "sha256:ea8d8787d315594842fbfcf2c4dce3bac2ad61be275bc8584b2ce9a3402a6979", size = 255069, upload-time = "2025-10-30T13:37:16.122Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/3e/e8f5b665bca646d43b916763c901e00a07e40f7746c9128bdc912a089424/aioboto3-15.5.0-py3-none-any.whl", hash = "sha256:cc880c4d6a8481dd7e05da89f41c384dbd841454fc1998ae25ca9c39201437a6", size = 35913, upload-time = "2025-10-30T13:37:14.549Z" },
-]
-
-[[package]]
 name = "aiobotocore"
 version = "2.25.1"
 source = { registry = "https://pypi.org/simple" }
@@ -60,11 +47,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/62/94/2e4ec48cf1abb89971cb2612d86f979a6240520f0a659b53a43116d344dc/aiobotocore-2.25.1.tar.gz", hash = "sha256:ea9be739bfd7ece8864f072ec99bb9ed5c7e78ebb2b0b15f29781fbe02daedbc", size = 120560, upload-time = "2025-10-28T22:33:21.787Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/95/2a/d275ec4ce5cd0096665043995a7d76f5d0524853c76a3d04656de49f8808/aiobotocore-2.25.1-py3-none-any.whl", hash = "sha256:eb6daebe3cbef5b39a0bb2a97cffbe9c7cb46b2fcc399ad141f369f3c2134b1f", size = 86039, upload-time = "2025-10-28T22:33:19.949Z" },
-]
-
-[package.optional-dependencies]
-boto3 = [
-    { name = "boto3", marker = "python_full_version < '3.13'" },
 ]
 
 [[package]]
@@ -1085,7 +1067,7 @@ cli = [
     { name = "aiofiles", marker = "python_full_version >= '3.13'" },
     { name = "aiohttp", marker = "python_full_version >= '3.13'" },
     { name = "click", version = "8.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
-    { name = "inspect-ai", version = "0.3.266", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "inspect-ai", marker = "python_full_version >= '3.13'" },
     { name = "joserfc", marker = "python_full_version >= '3.13'" },
     { name = "keyring", marker = "python_full_version >= '3.13'" },
     { name = "keyrings-alt", marker = "python_full_version >= '3.13'" },
@@ -1095,6 +1077,14 @@ cli = [
     { name = "python-dotenv", version = "1.2.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "sentry-sdk", marker = "python_full_version >= '3.13'" },
     { name = "tabulate", marker = "python_full_version >= '3.13'" },
+]
+client = [
+    { name = "aiohttp", marker = "python_full_version >= '3.13'" },
+    { name = "keyring", marker = "python_full_version >= '3.13'" },
+    { name = "keyrings-alt", marker = "python_full_version >= '3.13'" },
+    { name = "pydantic-settings", marker = "python_full_version >= '3.13'" },
+    { name = "pyjwt", marker = "python_full_version >= '3.13'" },
+    { name = "python-dotenv", version = "1.2.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
 ]
 
 [[package]]
@@ -1311,119 +1301,52 @@ wheels = [
 
 [[package]]
 name = "inspect-ai"
-version = "0.3.259"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version < '3.12' and sys_platform == 'win32'",
-    "python_full_version < '3.12' and sys_platform == 'emscripten'",
-    "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-]
-dependencies = [
-    { name = "agent-client-protocol", marker = "python_full_version < '3.13'" },
-    { name = "aioboto3", marker = "python_full_version < '3.13'" },
-    { name = "anyio", marker = "python_full_version < '3.13'" },
-    { name = "beautifulsoup4", marker = "python_full_version < '3.13'" },
-    { name = "boto3", marker = "python_full_version < '3.13'" },
-    { name = "click", version = "8.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "debugpy", marker = "python_full_version < '3.13'" },
-    { name = "docstring-parser", marker = "python_full_version < '3.13'" },
-    { name = "fastapi", marker = "python_full_version < '3.13'" },
-    { name = "fsspec", marker = "python_full_version < '3.13'" },
-    { name = "httpx", marker = "python_full_version < '3.13'" },
-    { name = "ijson", marker = "python_full_version < '3.13'" },
-    { name = "jsonlines", marker = "python_full_version < '3.13'" },
-    { name = "jsonpatch", marker = "python_full_version < '3.13'" },
-    { name = "jsonpath-ng", marker = "python_full_version < '3.13'" },
-    { name = "jsonref", marker = "python_full_version < '3.13'" },
-    { name = "jsonschema", marker = "python_full_version < '3.13'" },
-    { name = "mmh3", marker = "python_full_version < '3.13'" },
-    { name = "nest-asyncio2", marker = "python_full_version < '3.13'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.12.*'" },
-    { name = "platformdirs", marker = "python_full_version < '3.13'" },
-    { name = "psutil", marker = "python_full_version < '3.13'" },
-    { name = "pydantic", marker = "python_full_version < '3.13'" },
-    { name = "python-dotenv", version = "1.2.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "pyyaml", marker = "python_full_version < '3.13'" },
-    { name = "rich", marker = "python_full_version < '3.13'" },
-    { name = "s3fs", marker = "python_full_version < '3.13'" },
-    { name = "semver", marker = "python_full_version < '3.13'" },
-    { name = "shortuuid", marker = "python_full_version < '3.13'" },
-    { name = "sniffio", marker = "python_full_version < '3.13'" },
-    { name = "tenacity", marker = "python_full_version < '3.13'" },
-    { name = "textual", marker = "python_full_version < '3.13'" },
-    { name = "tiktoken", marker = "python_full_version < '3.13'" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-    { name = "universal-pathlib", marker = "python_full_version < '3.13'" },
-    { name = "uvicorn", marker = "python_full_version < '3.13'" },
-    { name = "zipfile-zstd", marker = "python_full_version < '3.13'" },
-    { name = "zipp", marker = "python_full_version < '3.13'" },
-    { name = "zstandard", marker = "python_full_version < '3.13'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/72/fd/57e7517ac3edd04938459d50c9fad4ebe5213fe1e59b48cf829d28242e39/inspect_ai-0.3.259.tar.gz", hash = "sha256:11542a4b8ddd7cbfd888efeeba833856fc683d43d3fc6f95cd3be9495dbdbf9e", size = 35993915, upload-time = "2026-08-16T19:13:00.559Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/89/9b/7bf516bb703cd5585befc83c052e84634f1d44782616350a1c879cd09364/inspect_ai-0.3.259-py3-none-any.whl", hash = "sha256:9ceba53a8a3859f187d4000a1309b02c98be820c9e6b1b5b112a61c997915670", size = 35095381, upload-time = "2026-08-16T19:12:54.56Z" },
-]
-
-[[package]]
-name = "inspect-ai"
 version = "0.3.266"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-]
 dependencies = [
-    { name = "agent-client-protocol", marker = "python_full_version >= '3.13'" },
-    { name = "aiobotocore", marker = "python_full_version >= '3.13'" },
-    { name = "anyio", marker = "python_full_version >= '3.13'" },
-    { name = "beautifulsoup4", marker = "python_full_version >= '3.13'" },
-    { name = "boto3", marker = "python_full_version >= '3.13'" },
+    { name = "agent-client-protocol" },
+    { name = "aiobotocore" },
+    { name = "anyio" },
+    { name = "beautifulsoup4" },
+    { name = "boto3" },
     { name = "click", version = "8.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
-    { name = "debugpy", marker = "python_full_version >= '3.13'" },
-    { name = "docstring-parser", marker = "python_full_version >= '3.13'" },
-    { name = "fastapi", marker = "python_full_version >= '3.13'" },
-    { name = "fsspec", marker = "python_full_version >= '3.13'" },
-    { name = "httpx", marker = "python_full_version >= '3.13'" },
-    { name = "ijson", marker = "python_full_version >= '3.13'" },
-    { name = "jsonlines", marker = "python_full_version >= '3.13'" },
-    { name = "jsonpatch", marker = "python_full_version >= '3.13'" },
-    { name = "jsonpath-ng", marker = "python_full_version >= '3.13'" },
-    { name = "jsonref", marker = "python_full_version >= '3.13'" },
-    { name = "jsonschema", marker = "python_full_version >= '3.13'" },
-    { name = "markdown-it-py", marker = "python_full_version >= '3.13'" },
-    { name = "mmh3", marker = "python_full_version >= '3.13'" },
-    { name = "nest-asyncio2", marker = "python_full_version >= '3.13'" },
-    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
-    { name = "platformdirs", marker = "python_full_version >= '3.13'" },
-    { name = "psutil", marker = "python_full_version >= '3.13'" },
-    { name = "pydantic", marker = "python_full_version >= '3.13'" },
+    { name = "click", version = "8.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
+    { name = "debugpy" },
+    { name = "docstring-parser" },
+    { name = "fastapi" },
+    { name = "fsspec" },
+    { name = "httpx" },
+    { name = "ijson" },
+    { name = "jsonlines" },
+    { name = "jsonpatch" },
+    { name = "jsonpath-ng" },
+    { name = "jsonref" },
+    { name = "jsonschema" },
+    { name = "markdown-it-py" },
+    { name = "mmh3" },
+    { name = "nest-asyncio2" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "platformdirs" },
+    { name = "psutil" },
+    { name = "pydantic" },
     { name = "python-dotenv", version = "1.2.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
-    { name = "pyyaml", marker = "python_full_version >= '3.13'" },
-    { name = "rich", marker = "python_full_version >= '3.13'" },
-    { name = "s3fs", marker = "python_full_version >= '3.13'" },
-    { name = "semver", marker = "python_full_version >= '3.13'" },
-    { name = "shortuuid", marker = "python_full_version >= '3.13'" },
-    { name = "sniffio", marker = "python_full_version >= '3.13'" },
-    { name = "tenacity", marker = "python_full_version >= '3.13'" },
-    { name = "textual", marker = "python_full_version >= '3.13'" },
-    { name = "tiktoken", marker = "python_full_version >= '3.13'" },
-    { name = "typing-extensions", marker = "python_full_version >= '3.13'" },
-    { name = "universal-pathlib", marker = "python_full_version >= '3.13'" },
-    { name = "uvicorn", marker = "python_full_version >= '3.13'" },
-    { name = "zipfile-zstd", marker = "python_full_version == '3.13.*'" },
-    { name = "zipp", marker = "python_full_version >= '3.13'" },
-    { name = "zstandard", marker = "python_full_version >= '3.13'" },
+    { name = "python-dotenv", version = "1.2.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
+    { name = "pyyaml" },
+    { name = "rich" },
+    { name = "s3fs" },
+    { name = "semver" },
+    { name = "shortuuid" },
+    { name = "sniffio" },
+    { name = "tenacity" },
+    { name = "textual" },
+    { name = "tiktoken" },
+    { name = "typing-extensions" },
+    { name = "universal-pathlib" },
+    { name = "uvicorn" },
+    { name = "zipfile-zstd", marker = "python_full_version < '3.14'" },
+    { name = "zipp" },
+    { name = "zstandard" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/5a/5b/2bb88d9bae363c613f64d1f9592ea93920c4a75da52669a18198a4b8d3fc/inspect_ai-0.3.266.tar.gz", hash = "sha256:07b26e1d197f22bf5d512f96e1790dc6130208eac4eafce6c170edd632856f0f", size = 35718190, upload-time = "2026-09-19T13:11:08.176Z" }
 wheels = [
@@ -1434,8 +1357,7 @@ wheels = [
 name = "inspect-audit"
 source = { editable = "." }
 dependencies = [
-    { name = "inspect-ai", version = "0.3.259", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "inspect-ai", version = "0.3.266", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "inspect-ai" },
     { name = "openai" },
     { name = "pillow" },
     { name = "semver" },
@@ -1448,6 +1370,10 @@ k8s = [
 remote = [
     { name = "aiofiles", marker = "python_full_version >= '3.13'" },
     { name = "hawk", extra = ["cli"], marker = "python_full_version >= '3.13'" },
+]
+runner = [
+    { name = "aiofiles", marker = "python_full_version >= '3.13'" },
+    { name = "hawk", extra = ["client"], marker = "python_full_version >= '3.13'" },
 ]
 
 [package.dev-dependencies]
@@ -1467,14 +1393,16 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiofiles", marker = "python_full_version >= '3.13' and extra == 'remote'" },
+    { name = "aiofiles", marker = "python_full_version >= '3.13' and extra == 'runner'" },
     { name = "hawk", extras = ["cli"], marker = "python_full_version >= '3.13' and extra == 'remote'", specifier = ">=3.4,<4" },
-    { name = "inspect-ai", specifier = ">=0.3.259" },
+    { name = "hawk", extras = ["client"], marker = "python_full_version >= '3.13' and extra == 'runner'", specifier = ">=3.4,<4" },
+    { name = "inspect-ai", specifier = ">=0.3.266" },
     { name = "inspect-k8s-sandbox", marker = "extra == 'k8s'", specifier = ">=0.13" },
     { name = "openai", specifier = ">=1.0" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "semver", specifier = ">=3.0,<3.1" },
 ]
-provides-extras = ["k8s", "remote"]
+provides-extras = ["k8s", "remote", "runner"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1499,8 +1427,7 @@ dependencies = [
     { name = "datasets" },
     { name = "hf-xet" },
     { name = "huggingface-hub" },
-    { name = "inspect-ai", version = "0.3.259", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "inspect-ai", version = "0.3.266", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "inspect-ai" },
     { name = "jinja2" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -1517,8 +1444,7 @@ name = "inspect-k8s-sandbox"
 version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "inspect-ai", version = "0.3.259", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
-    { name = "inspect-ai", version = "0.3.266", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "inspect-ai" },
     { name = "jsonschema" },
     { name = "kubernetes" },
     { name = "tenacity" },

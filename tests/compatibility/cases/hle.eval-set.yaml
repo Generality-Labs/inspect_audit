@@ -1,6 +1,7 @@
 name: ia-api-free-hle-20261021
 packages:
-- inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-ai==0.3.266
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
 - inspect-evals @ git+https://github.com/UKGovernmentBEIS/inspect_evals@49738b6412cf3215db7c9d3d4838fc58b6f422a2
 tasks:
 - package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility
@@ -30,12 +31,16 @@ tasks:
         - hle_b16eb337
         - hle_76827256
         logs: []
-        judges:
-          grader: openrouter/anthropic/claude-haiku-4.5
+        judges: {}
         selection: seeded random selection from the supplied recorded population
         child_secrets:
         - HF_TOKEN
         auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+        mock_judges:
+          grader:
+            content: '{"extracted_final_answer": "MOCK ANSWER", "reasoning": "Scripted
+              mock judgment; no answer verification.", "correct": "no", "confidence":
+              100}'
       limit: 1
 models:
 - package: openai

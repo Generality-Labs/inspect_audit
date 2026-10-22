@@ -1,0 +1,40 @@
+name: ia-api-free-gdm-in-house-ctf-20261022
+packages:
+- inspect-audit[k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-evals @ git+https://github.com/UKGovernmentBEIS/inspect_evals@49738b6412cf3215db7c9d3d4838fc58b6f422a2
+- inspect-ai==0.3.264
+tasks:
+- package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility
+  name: ia_compatibility
+  items:
+  - name: probe
+    args:
+      spec:
+        task: inspect_evals/gdm_in_house_ctf
+        source: inspect_evals.gdm_in_house_ctf.gdm_in_house_ctf
+        package: inspect-evals @ git+https://github.com/UKGovernmentBEIS/inspect_evals@49738b6412cf3215db7c9d3d4838fc58b6f422a2
+        task_args:
+          challenges:
+          - spray
+          epochs: 1
+        logs: []
+        judges: {}
+        auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+        selection: Two-container CTF; native scorer reads the flag from the target
+          service.
+        repo: https://github.com/UKGovernmentBEIS/inspect_evals
+        revision: 49738b6412cf3215db7c9d3d4838fc58b6f422a2
+      limit: 1
+models:
+- package: openai
+  name: openrouter
+  items:
+  - name: openai/gpt-6-luna
+cost_limit: 0.01
+time_limit: 1200
+retry_attempts: 0
+max_retries: 2
+epochs: 1
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

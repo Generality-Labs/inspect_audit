@@ -42,9 +42,9 @@ def test_identical_sample_sandboxes_stand_for_the_task() -> None:
     assert their_sandbox(None, samples).config == "a.yaml"
 
 
-def test_a_non_docker_sandbox_is_refused() -> None:
-    with pytest.raises(UnsupportedBenchmarkError, match="'k8s'"):
-        their_sandbox(("k8s", "values.yaml"), [Sample(input="q")])
+def test_an_unsupported_sandbox_provider_is_refused() -> None:
+    with pytest.raises(UnsupportedBenchmarkError, match="'modal'"):
+        their_sandbox(("modal", "values.yaml"), [Sample(input="q")])
 
 
 def test_a_benchmark_without_a_sandbox_has_no_box_of_theirs() -> None:

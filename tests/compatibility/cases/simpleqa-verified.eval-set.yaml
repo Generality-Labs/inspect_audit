@@ -1,0 +1,42 @@
+name: ia-api-free-simpleqa-verified-20261022
+packages:
+- inspect-ai==0.3.266
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-evals @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
+tasks:
+- package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility
+  name: ia_compatibility
+  items:
+  - name: probe
+    args:
+      spec:
+        task: inspect_evals/simpleqa_verified
+        task_args:
+          scorer: tool
+          grade_parse: strict
+        source: inspect_evals.simpleqa.simpleqa
+        logs: []
+        judges: {}
+        package: inspect-evals @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
+        auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+        selection: First sample of the explicitly declared Verified task, no historical
+          logs.
+        mock_judges:
+          grader:
+            tool: submit
+            arguments:
+              grade: INCORRECT
+              explanation: Scripted mock judgment; no answer verification.
+      limit: 1
+models:
+- package: inspect-ai
+  items:
+  - name: openrouter/openai/gpt-6-luna
+cost_limit: 0.01
+time_limit: 1200
+retry_attempts: 0
+max_retries: 2
+epochs: 1
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

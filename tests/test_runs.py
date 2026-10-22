@@ -48,9 +48,9 @@ def test_a_job_renders_as_a_config_hawk_accepts() -> None:
         {"scorer": "original"},
         ["1", "2"],
     )
-    # models go through Hawk's proxy, under its openrouter group
-    assert [(g.name, [i.name for i in g.items]) for g in config.models or []] == [
-        ("openrouter", ["openai/gpt-5-mini"])
+    # Hawk receives the full Inspect provider/model identity
+    assert [(g.package, [i.name for i in g.items]) for g in config.models or []] == [
+        ("inspect-ai", ["openai/gpt-5-mini"])
     ]
     assert config.retry_attempts == 0
 
@@ -131,12 +131,12 @@ def test_a_laptop_asks_the_operators_own_hawk_past_the_venvs(
 def test_a_local_job_runs_detached_and_hands_back_its_logs(tmp_path: Path) -> None:
     """A real `inspect eval-set` process, on mockllm: submitted, finished, collected."""
     (tmp_path / "tiny.py").write_text(TASK_FILE)
-    runs = LocalRuns(tmp_path / "runs", provider="mockllm")
+    runs = LocalRuns(tmp_path / "runs")
     job = Job(
         label="smoke",
         task=f"{tmp_path / 'tiny.py'}@tiny",
         package="unused locally",
-        models=["model"],
+        models=["mockllm/model"],
         task_args={"greeting": "hi there"},
         sample_ids=["1", "2"],
     )
@@ -232,8 +232,8 @@ def test_an_audit_reads_logs_by_job_label_or_supplied_source(
     record.jobs.append({"label": "smoke", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})
     monkeypatch.setattr(
         _investigate,
-        "openrouter_prices",
-        lambda models: {f"openrouter/{m}": {"input": 1.0, "output": 2.0} for m in models},
+        "prices_for_models",
+        lambda models: {m: {"input": 1.0, "output": 2.0} for m in models},
     )
     audit = _investigate.run_audit(inv)
     asyncio.run(
@@ -253,12 +253,12 @@ def test_an_audit_reads_logs_by_job_label_or_supplied_source(
     [job] = runs.submitted
     assert job.task == "inspect_audit/audit" and job.extra_packages == ["benchmark"]
     assert job.task_args["logs"] == ["hawk:r", "hawk:supplied-logs"]
-    assert job.task_args["judge"] == {"grader": "openrouter/openai/judge"}
+    assert job.task_args["judge"] == {"grader": "openai/judge"}
     assert job.task_args["cost_limit"] == 0.5
     assert job.task_args["source"] == "benchmark.task"
     assert set(job.task_args["model_prices"]) == {
-        "openrouter/openai/auditor",
-        "openrouter/openai/judge",
+        "openai/auditor",
+        "openai/judge",
     }
     with pytest.raises(ToolError, match="neither a job of yours nor a supplied source"):
         asyncio.run(
@@ -277,22 +277,37 @@ def test_an_audit_reads_logs_by_job_label_or_supplied_source(
         )
 
 
+@pytest.mark.parametrize(
+    ("model", "credential"),
+    [
+        ("mockllm/model", None),
+        ("openrouter/openai/gpt-4o-mini", "OPENROUTER_API_KEY"),
+        ("openai/gpt-4o-mini", "OPENAI_API_KEY"),
+    ],
+)
 def test_a_local_job_sees_only_the_environment_it_needs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model: str, credential: str | None
 ) -> None:
     """Benchmark code in a local job must not see the operator's other secrets."""
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "operator-secret")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-capped")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-direct")
+    monkeypatch.chdir(tmp_path)
     (tmp_path / "env.py").write_text(
         TASK_FILE.replace(
+            "@task\ndef tiny",
+            "from inspect_ai.solver import solver\n@solver\ndef no_calls():\n    async def solve(state, generate):\n        return state\n    return solve\n\n@task\ndef tiny",
+        )
+        .replace("scorer=match(),", "scorer=match(), solver=no_calls(),")
+        .replace(
             "    return Task(",
             "    import os, pathlib\n"
             "    pathlib.Path(__file__).with_name('seen.txt').write_text(','.join(sorted(os.environ)))\n"
             "    return Task(",
         )
     )
-    runs = LocalRuns(tmp_path / "runs", provider="mockllm")
-    job = Job(label="env", task=f"{tmp_path / 'env.py'}@tiny", package="", models=["model"])
+    runs = LocalRuns(tmp_path / "runs")
+    job = Job(label="env", task=f"{tmp_path / 'env.py'}@tiny", package="", models=[model])
     job.environment = {"IA_BENCHMARK_SETTING": "configured"}
 
     async def run() -> str:
@@ -305,7 +320,8 @@ def test_a_local_job_sees_only_the_environment_it_needs(
 
     assert asyncio.run(run()) == COMPLETE
     seen = set((tmp_path / "seen.txt").read_text().split(","))
-    assert "OPENROUTER_API_KEY" in seen
+    assert ("OPENROUTER_API_KEY" in seen) == (credential == "OPENROUTER_API_KEY")
+    assert ("OPENAI_API_KEY" in seen) == (credential == "OPENAI_API_KEY")
     assert "IA_BENCHMARK_SETTING" in seen
     assert "AWS_SECRET_ACCESS_KEY" not in seen
 
@@ -313,9 +329,7 @@ def test_a_local_job_sees_only_the_environment_it_needs(
 def test_task_arguments_cannot_place_code_or_name_other_models() -> None:
     allowed = ["openai/judge"]
     assert _investigate.argument_problems({"scorer": "original", "profile": "x"}, allowed) == []
-    assert (
-        _investigate.argument_problems({"grader_model": "openrouter/openai/judge"}, allowed) == []
-    )
+    assert _investigate.argument_problems({"grader_model": "openai/judge"}, allowed) == []
     problems = _investigate.argument_problems(
         {
             "sandbox": "local",
@@ -385,12 +399,12 @@ def test_a_dataset_without_ids_is_selected_by_position(tmp_path: Path) -> None:
             "Sample(input=greeting", "Sample(input=f'{greeting} {i}'"
         )
     )
-    runs = LocalRuns(tmp_path / "runs", provider="mockllm")
+    runs = LocalRuns(tmp_path / "runs")
     job = Job(
         label="pos",
         task=f"{tmp_path / 'noids.py'}@tiny",
         package="",
-        models=["model"],
+        models=["mockllm/model"],
         sample_range=(2, 3),
     )
 
@@ -412,12 +426,12 @@ def test_a_local_job_receives_string_arguments_exactly(tmp_path: Path) -> None:
     """Inspect parses each -T value as YAML and splits on commas; Hawk passes JSON.
     The two backends must give the task the same arguments."""
     (tmp_path / "tiny.py").write_text(TASK_FILE)
-    runs = LocalRuns(tmp_path / "runs", provider="mockllm")
+    runs = LocalRuns(tmp_path / "runs")
     job = Job(
         label="args",
         task=f"{tmp_path / 'tiny.py'}@tiny",
         package="",
-        models=["model"],
+        models=["mockllm/model"],
         task_args={"greeting": "a, yes"},
         sample_ids=["1"],
     )
@@ -532,9 +546,7 @@ def test_an_empty_judge_reaches_the_audit_as_empty(
     """{} means "their grader calls no model"; None means "infer it from the logs"."""
     runs = FakeRuns()
     inv = _investigation(tmp_path, runs)
-    monkeypatch.setattr(
-        _investigate, "openrouter_prices", lambda models: {f"openrouter/{m}": {} for m in models}
-    )
+    monkeypatch.setattr(_investigate, "prices_for_models", lambda models: {m: {} for m in models})
     asyncio.run(
         _investigate.run_audit(inv)(  # type: ignore[arg-type]
             "a", ["1"], ["gold-answer"], [], "openai/auditor", "b.t", 0.5, "{}", "{}", ""

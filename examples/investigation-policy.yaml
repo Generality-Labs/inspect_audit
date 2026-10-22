@@ -17,9 +17,9 @@ audit:
 
 policy:
   models:
-    investigator: ["<investigator-model>"]
-    auditors: ["<auditor-model>"]
-    subjects: ["<subject-model>"]
+    investigator: ["openrouter/<investigator-model>"]
+    auditors: ["openrouter/<auditor-model>"]
+    subjects: ["openrouter/<subject-model>"]
     judges: []
   inputs:
     logs: ["hawk:<source-run-id>"]

@@ -2,7 +2,7 @@
 
 The real auditor stages each sample and exposes its real tools. A scripted model
 drives those tools, probes the grader, records an unresolved validity judgment and
-submits. Judge calls are refused rather than given fabricated grades. Tool events
+submits. Judge calls use explicit mock fixtures when declared; otherwise they are refused. Tool events
 in the native Inspect log are the compatibility evidence, not the validity label.
 """
 
@@ -28,11 +28,12 @@ from inspect_ai.solver import TaskState
 from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_ai.util import registry_create
 
-from inspect_audit._investigate import openrouter_prices
+from inspect_audit._openrouter import openrouter_prices
 from inspect_audit._prices import register_prices
 from inspect_audit._registry import log_files, resolve_source
 from inspect_audit._task import audit_task, numbered
 
+from .judges import MOCK_JUDGE, mock_judge
 from .probe_results import outcomes
 
 
@@ -114,7 +115,7 @@ class ProbeAPI(ModelAPI):
                 evidence=evidence,
                 approaches="Deterministic tool calls, no LLM inference.",
                 tried="Stage sample/source, enumerate attempts, read a transcript when present, inspect the benchmark box and invoke its grader.",
-                remarks="A rejected candidate is a grader result, not a failed integration or a benchmark defect. Model-based judge calls are explicitly disabled.",
+                remarks="A rejected candidate is a grader result, not a failed integration or a benchmark defect. Judge calls use explicit mock fixtures when declared; otherwise they are disabled.",
                 details='{"independent": false}',
             )
         return call(
@@ -143,10 +144,19 @@ def probe(spec: dict[str, Any], limit: int = 1) -> Task:
     # This fetches public price metadata; it never requests a model completion.
     declared_model = str(get_model())
     if declared_model.startswith("openrouter/"):
-        register_prices(openrouter_prices([declared_model.removeprefix("openrouter/")]))
+        register_prices(openrouter_prices([declared_model]))
     for name in ("driver", "judge"):
         set_model_info(
             f"ia_probe/{name}",
+            ModelInfo(cost=ModelCost(input=0, output=0, input_cache_write=0, input_cache_read=0)),
+        )
+    fixtures = spec.get("mock_judges", {})
+    if not isinstance(fixtures, dict):
+        raise ValueError("mock_judges must map model role names to response fixtures")
+    mocked = {role: mock_judge(response) for role, response in fixtures.items()}
+    if mocked:
+        set_model_info(
+            MOCK_JUDGE,
             ModelInfo(cost=ModelCost(input=0, output=0, input_cache_write=0, input_cache_read=0)),
         )
     importlib.import_module(spec["source"])
@@ -157,7 +167,10 @@ def probe(spec: dict[str, Any], limit: int = 1) -> Task:
         dataset, _ = numbered(their)
         samples = [str(s.id) for s in dataset[:limit]]
     logs = spec.get("logs") or []
-    judges = dict.fromkeys(spec.get("judges", {}), "ia_probe/judge")
+    judges = {
+        role: MOCK_JUDGE if role in mocked else "ia_probe/judge"
+        for role in set(spec.get("judges", {})) | set(mocked)
+    }
     audit = audit_task(
         spec["task"],
         task_args=args,
@@ -176,6 +189,7 @@ def probe(spec: dict[str, Any], limit: int = 1) -> Task:
         "logs": bool(logs),
         "benchmark_box": bool(their.sandbox or any(s.sandbox for s in their.dataset)),
         "grader": bool(their.scorer),
+        "mock_judge": bool(mocked),
     }
     validity_scorers = (
         list(audit.scorer)
@@ -187,6 +201,7 @@ def probe(spec: dict[str, Any], limit: int = 1) -> Task:
     return task_with(
         audit,
         model=get_model("ia_probe/driver"),
+        model_roles={**(audit.model_roles or {}), **mocked},
         # Inspect truncates tool output for model context. This scripted driver
         # needs complete grader JSON, including SciCode's long explanations.
         config=GenerateConfig(max_tool_output=1_000_000),

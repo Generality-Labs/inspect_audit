@@ -333,13 +333,15 @@ def test_task_arguments_cannot_place_code_or_name_other_models(kind: str) -> Non
     from inspect_audit._policy import InvestigationAuthorizer, LaunchPolicy, Models, canonical
 
     for args in [
-        {"judge_prompt": "original", "grader_model": "openai/judge"},
+        {"judge_prompt": "original", "grader_model": "openai/judge", "judges": ["openai/judge"]},
         {"sandbox": "local"},
         {"image": "evil:latest"},
         {"paths": ["/etc"]},
         {"nested": {"data_dir": "/etc", "judge": "openai/other"}},
         {"items": [{"docker_image": "evil:latest"}]},
         {"grader_model": "openai/other"},
+        {"judges": ["openai/other"]},
+        {"models": {"reviewer": "openai/other"}},
     ]:
         policy = LaunchPolicy(
             task="bench",

@@ -167,21 +167,24 @@ PLACEMENT_ARG = re.compile(
 MODEL_ARG = re.compile(r"(^|_)(model|judge|grader)s?($|_)", re.IGNORECASE)
 
 
-def argument_problems(args: Any, allowed: list[str], where: str = "task_args") -> list[str]:
+def argument_problems(
+    args: Any, allowed: list[str], where: str = "task_args", model_value: bool = False
+) -> list[str]:
+    if isinstance(args, str) and model_value and "/" in args and args not in allowed:
+        return [f"{where}: {args!r} is not an allowed judge model"]
     problems: list[str] = []
     if isinstance(args, dict):
         for key, value in args.items():
             here = f"{where}.{key}"
             if PLACEMENT_ARG.search(str(key)):
                 problems.append(f"{here}: jobs may not set where code runs or what it reads")
-            elif MODEL_ARG.search(str(key)) and isinstance(value, str) and "/" in value:
-                if value not in allowed:
-                    problems.append(f"{here}: {value!r} is not an allowed judge model")
             else:
-                problems += argument_problems(value, allowed, here)
+                problems += argument_problems(
+                    value, allowed, here, model_value or bool(MODEL_ARG.search(str(key)))
+                )
     elif isinstance(args, list):
         for index, value in enumerate(args):
-            problems += argument_problems(value, allowed, f"{where}[{index}]")
+            problems += argument_problems(value, allowed, f"{where}[{index}]", model_value)
     return problems
 
 

@@ -1,5 +1,6 @@
 """The export: the JSON the table site reads, from the reviewed current view."""
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -435,6 +436,11 @@ def test_a_finding_row_carries_the_status_change_review_made(run: Run) -> None:
         "at": "2026-10-07T04:20:50Z",
         "reason": cited,
         "cited_by": ["inspect_audit_investigate-1/1", "inspect_audit_investigate-1/2"],
+        # neither citing record is in these runs or in a history the call was given
+        "citations": [
+            {"id": record, "rule": None, "summary": None, "at": None, "current": False}
+            for record in ["inspect_audit_investigate-1/1", "inspect_audit_investigate-1/2"]
+        ],
     }
     (row,) = index_document({EVAL: runs}, review, seen_range(runs), NOW)["findings"]
     assert row["status_change"] == expected
@@ -465,3 +471,65 @@ def test_a_status_set_by_a_person_cites_nothing(run: Run) -> None:
     runs = apply_review([run], review)
     (row,) = index_document({EVAL: runs}, review, seen_range(runs), NOW)["findings"]
     assert row["status_change"]["cited_by"] == [] and row["status"] == "retracted"
+
+
+def test_an_investigations_run_entry_carries_its_coverage_and_limitations(run: Run) -> None:
+    from inspect_audit.findings.export import eval_document, seen_range
+
+    coverage = {
+        "denominator": 4981,
+        "counts": {"NO_ISSUE_FOUND": 163, "DEFECT": 113, "UNRESOLVED": 9, "NOT_ASSESSED": 4696},
+    }
+    limitations = [{"id": "no-logs", "claim": "No logs were supplied."}]
+    inv = _investigation(run).model_copy(
+        update={"inputs": {"coverage": coverage, "limitations": limitations}}
+    )
+    runs = apply_review([inv, run], Review())
+    doc = eval_document(EVAL, runs, Review(), seen_range(runs), NOW)
+    entries = {r["producer"]: r for r in doc["runs"]}
+    assert entries["inspect_audit_investigate"]["coverage"] == coverage
+    assert entries["inspect_audit_investigate"]["limitations"] == limitations
+    assert entries["inspect_evals_lint"]["coverage"] is None
+    assert entries["inspect_evals_lint"]["limitations"] == []
+
+
+def test_a_citation_from_a_superseded_investigation_is_described_not_just_named(run: Run) -> None:
+    from datetime import timedelta
+
+    from inspect_audit.findings.export import export_texts
+    from inspect_audit.findings.fs import StoreFS
+    from inspect_audit.findings.models import Provenance
+
+    old = _investigation(run)  # superseded by a newer investigation below
+    new = old.model_copy(
+        update={
+            "id": "inspect_audit_investigate-2",
+            "timestamp": T1 + timedelta(days=4),
+            "findings": [],
+        }
+    )
+    cited = f"cited as evidence by {old.findings[0].id}"
+    review = Review(
+        statuses={"sha256:0": "supported"},
+        status_provenance={
+            "sha256:0": Provenance(timestamp=NOW, author="Ada <ada@example.com>", reason=cited)
+        },
+    )
+    current = apply_review([new, run], review)
+    _, texts = export_texts(
+        StoreFS.from_locator("memory://cite"),
+        {EVAL: current},
+        review,
+        history=[old, new, run],
+        generated_at=NOW,
+    )
+    doc = json.loads(texts["export/evals/inspect-evals-stereoset.json"])
+    lint = next(g for g in doc["groups"] if g["producer"] == "inspect_evals_lint")
+    (citation,) = lint["findings"][0]["status_change"]["citations"]
+    assert citation == {
+        "id": old.findings[0].id,
+        "rule": old.findings[0].rule,
+        "summary": old.findings[0].summary,
+        "at": "2026-10-06T04:24:42Z",
+        "current": False,
+    }

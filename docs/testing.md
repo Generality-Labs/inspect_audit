@@ -36,7 +36,7 @@ uv run python tests/compatibility/run_suite.py --submit-only --output out/compat
 uv run python tests/compatibility/run_suite.py --resume --output out/compatibility
 ```
 
-The suite saves job IDs immediately and resumes monitoring existing jobs rather than resubmitting them. Its default deadline is 30 minutes from submission; timed-out and stuck jobs receive a stop request. Cancellation outside that path can leave jobs to inspect on Hawk.
+The suite saves job IDs immediately and resumes monitoring existing jobs rather than resubmitting them. With `--resume --retry-blocked`, cases blocked before receiving a job ID may be submitted again; existing jobs are retained. Use a new output directory to rerun completed cases and preserve the previous evidence. Its default deadline is 30 minutes from submission; timed-out and stuck jobs receive a stop request. Cancellation outside that path can leave jobs to inspect on Hawk.
 
 ## What a result means
 
@@ -66,3 +66,33 @@ CI publishes the operational Markdown summary. Benchmark transcripts and gated d
 ## Before release
 
 Run the ordinary and Docker suites, then the external suite at the release candidate's exact commit. Review partial results and known failures individually. Passing functionality probes does not establish audit recall, false-positive rates, or report quality; those require separate labelled and paid agent evaluations.
+
+## Initial validation and follow-up order (2026-10-22)
+
+The local suite completed with **275 tests passed**, including the Docker tests. A separate regression also verifies that a recorded conversation longer than the auditor's message limit can be reconstructed without changing that limit. Both PR CI gates passed at `b36e32c`.
+
+The first external batches identified and led to fixes for:
+
+- Declared benchmark environment variables being lost in child jobs.
+- Hawk overriding the task model and displacing the scripted compatibility driver.
+- Recorded multiple-choice reasoning being treated as a bare answer letter.
+- A sample sandbox overriding the merged task sandbox and removing the auditor service.
+- Long grader JSON being truncated before the compatibility parser could read it.
+- Historical transcript reconstruction incorrectly hitting the auditor's message limit.
+- Concurrent Hawk CLI authentication refreshes racing over the same local keyring records.
+
+GPQA, SciCode and MirrorCode passed after their fixes. GSM8K, BBH and the selected AgentHarm case passed in the initial functional batch. SimpleQA and HLE were partial because their model judges were intentionally blocked. Every inspected probe log recorded no external model calls. Native logs and earlier failures remain under their original output directories.
+
+Harbor is blocked before sample execution: its pinned package requires released Inspect `>=0.3.264`, while the deployed Hawk runner supplies `0.3.264.dev13+g2203ee7a8`. Track the runtime requirement in [#58](https://github.com/Generality-Labs/inspect_audit/issues/58). This is not a passing Harbor integration result.
+
+CORE-Bench installs from the corrected source fork and loads one selected capsule, but Hawk refuses its native Compose requirements (`privileged` and `extra_hosts`) before execution. The probe uses the benchmark's own capsule filter and a positive dataset limit. It omits historical all-capsule logs because its task arguments differ; transcript compatibility is not claimed.
+
+The latest results span several pinned IA commits; they are debugging evidence, not a single-commit release certification. The next order of work is:
+
+1. Resolve CORE-Bench’s native Compose requirements on Hawk: its Kubernetes converter rejects `privileged` and `extra_hosts`, and the benchmark also needs a published image for its build-only service. Keep the environment semantics intact ([#59](https://github.com/Generality-Labs/inspect_audit/issues/59)).
+2. Unblock Harbor's runtime dependency and obtain an actual container/grader result.
+3. Provision the renewable Hawk CI identity ([#57](https://github.com/Generality-Labs/inspect_audit/issues/57)), then enable the weekly suite.
+4. Repeat the complete external suite at one candidate commit before treating it as a release gate.
+5. Run paid investigator pilots and inspect their transcripts separately from this execution gate. Then measure recall against human labels.
+
+Checkpoint resume remains separate ([#55](https://github.com/Generality-Labs/inspect_audit/issues/55)). The newer findings-store branch and report redesign are not part of these compatibility changes.

@@ -280,7 +280,7 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
 
 def test_every_prompt_is_a_file_and_every_placeholder_gets_filled() -> None:
     """Prose lives in markdown; a prompt that reaches a model with a stray {field} is a bug."""
-    import re
+    from string import Formatter
 
     from inspect_audit import prompts
 
@@ -294,10 +294,11 @@ def test_every_prompt_is_a_file_and_every_placeholder_gets_filled() -> None:
     for name, values in filled.items():
         template = getattr(prompts, name)
         assert (prompts.HERE / f"{name.lower()}.md").is_file(), f"{name} has no markdown file"
-        fields = set(re.findall(r"\{(\w+)\}", template))
+        fields = {field for _, field, _, _ in Formatter().parse(template) if field is not None}
         assert fields == set(values), f"{name} placeholders {fields} do not match {set(values)}"
         rendered = template.format(**values)
-        assert "{" not in rendered.replace("{{", ""), f"{name} rendered with a brace left in"
+        for field in fields:
+            assert "{" + field + "}" not in rendered, f"{name} left {field} unfilled"
 
 
 def test_the_prompts_carry_no_python() -> None:

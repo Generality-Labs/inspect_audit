@@ -1,0 +1,47 @@
+name: ia-api-free-gpqa-20261021
+packages:
+- inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-evals @ git+https://github.com/Generality-Labs/inspect_evals@32b79a244f17ecf54fa1186d30f33dc10143c10f
+tasks:
+- package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility
+  name: ia_compatibility
+  items:
+  - name: probe
+    args:
+      spec:
+        repo: https://github.com/Generality-Labs/inspect_evals
+        revision: 32b79a244f17ecf54fa1186d30f33dc10143c10f
+        task: inspect_evals/gpqa_diamond
+        source: inspect_evals.gpqa.gpqa
+        paths:
+        - src/inspect_evals/gpqa
+        package: inspect-evals @ git+https://github.com/Generality-Labs/inspect_evals@32b79a244f17ecf54fa1186d30f33dc10143c10f
+        task_args:
+          cot: true
+          epochs: 4
+          high_level_domain: null
+          subdomain: null
+        samples:
+        - rechgQucGlrnt8KRV
+        - recVEXvhYxAhELVqB
+        logs:
+        - hawk:union-full-gpqa-20260916
+        judges: {}
+        selection: seeded random selection from the supplied recorded population
+        child_secrets:
+        - HF_TOKEN
+        auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+      limit: 1
+models:
+- package: openai
+  name: openrouter
+  items:
+  - name: openai/gpt-6-luna
+cost_limit: 0.01
+time_limit: 1200
+retry_attempts: 0
+max_retries: 2
+epochs: 1
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

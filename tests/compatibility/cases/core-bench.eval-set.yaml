@@ -1,0 +1,59 @@
+name: ia-api-free-core-bench-20261021
+packages:
+- inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-evals @ git+https://github.com/UKGovernmentBEIS/inspect_evals@17b078d74c92d83dc0d14c4d3922e53509ba73eb
+tasks:
+- package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility
+  name: ia_compatibility
+  items:
+  - name: probe
+    args:
+      spec:
+        repo: https://github.com/UKGovernmentBEIS/inspect_evals
+        revision: 17b078d74c92d83dc0d14c4d3922e53509ba73eb
+        task: inspect_evals/core_bench
+        source: inspect_evals.core_bench.core_bench
+        paths:
+        - src/inspect_evals/core_bench
+        package: inspect-evals @ git+https://github.com/UKGovernmentBEIS/inspect_evals@17b078d74c92d83dc0d14c4d3922e53509ba73eb
+        task_args:
+          difficulty: medium
+          field: all
+          language: all
+          capsule_ids: null
+          exclude_capsule_ids: null
+          limit: 0
+          filter_out_gpu: false
+          filter_out_vision: false
+          vllm_model: null
+          shuffle: false
+          max_retries: 5
+          backoff_factor: 1
+          max_messages: 50
+          token_limit: null
+          solver: null
+          split: train
+        samples:
+        - capsule-7156696
+        - capsule-4884085
+        logs:
+        - hawk:imported-corebench-medium-1c10g1lsoeva2wfi/2026-04-01T05-00-48_00-00_core-bench_SYowSwEk4NpLf7tbB4RmXr.eval
+        judges: {}
+        selection: seeded random selection from the supplied recorded population
+        child_secrets:
+        - HF_TOKEN
+        auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+      limit: 1
+models:
+- package: openai
+  name: openrouter
+  items:
+  - name: openai/gpt-6-luna
+cost_limit: 0.01
+time_limit: 1200
+retry_attempts: 0
+max_retries: 2
+epochs: 1
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

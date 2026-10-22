@@ -143,7 +143,8 @@ class Launcher:
             finally:
                 if state is None or not state.disabled:
                     self.keys.disable(record.key_hash)
-            record.usage_usd = state.usage
+            if state is not None:
+                record.usage_usd = state.usage
         else:
             # a crash between asking OpenRouter for a key and writing its hash down
             for state in self.keys.list(record.id):

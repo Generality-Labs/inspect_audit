@@ -1,0 +1,49 @@
+name: ia-api-free-agentharm-20261021
+packages:
+- inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-evals[scicode] @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
+tasks:
+- package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility
+  name: ia_compatibility
+  items:
+  - name: probe
+    args:
+      spec:
+        task: inspect_evals/agentharm
+        task_args:
+          behavior_ids:
+          - 9-2
+          - 21-2
+          - 24-2
+          - 25-2
+          - 28-2
+          - 29-2
+          - 33-2
+          - 38-2
+          - 39-2
+          - 43-2
+          - 61-2
+          - 66-2
+          refusal_judge: ia_probe/judge
+          semantic_judge: ia_probe/judge
+        source: inspect_evals.agentharm.agentharm
+        samples:
+        - 39-2
+        logs: []
+        judges: {}
+        package: inspect-evals[scicode] @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
+        auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+      limit: 1
+models:
+- package: openai
+  name: openrouter
+  items:
+  - name: openai/gpt-6-luna
+cost_limit: 0.01
+time_limit: 1200
+retry_attempts: 0
+max_retries: 2
+epochs: 1
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

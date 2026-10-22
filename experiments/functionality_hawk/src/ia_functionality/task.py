@@ -139,6 +139,3 @@ def investigation(
             "a reason to silently substitute another benchmark or discard the run."
         ),
     )
-
-
-from .probe import probe as probe  # noqa: E402

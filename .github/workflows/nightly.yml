@@ -31,6 +31,7 @@ jobs:
       - name: Install dependencies, then Inspect from main
         run: |
           uv sync --locked
+          uv pip install --no-deps -e tests/compatibility
           uv pip install "inspect-ai @ git+https://github.com/UKGovernmentBEIS/inspect_ai@main"
           uv run --no-sync python -c "import inspect_ai; print('inspect_ai', inspect_ai.__version__)"
       - name: Pytest

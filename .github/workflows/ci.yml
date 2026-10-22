@@ -25,12 +25,10 @@ jobs:
     with:
       python-version: "3.13"
 
-  # The docker suite exercises real containers (phoenix, seeding, mirrored
-  # tools); slower, so it runs on demand and on main rather than every push.
-  # pytest's default addopts deselect it, and the explicit -m here wins.
+  # One real-container lifecycle gate on PRs; the complete Docker suite on main.
   docker:
     name: Docker tests
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -40,6 +38,12 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install dependencies
-        run: uv sync --locked
+        run: |
+          uv sync --locked
+          uv pip install --no-deps -e tests/compatibility
+      - name: PR container and child-job lifecycle gate
+        if: github.event_name == 'pull_request'
+        run: uv run pytest -m docker tests/test_audit.py::test_an_audit_runs_inside_the_benchmark tests/test_lifecycle.py
       - name: Pytest (docker)
+        if: github.event_name != 'pull_request'
         run: uv run pytest -m docker

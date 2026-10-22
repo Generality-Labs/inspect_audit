@@ -152,7 +152,7 @@ def test_an_audit_runs_inside_the_benchmark(tmp_path: Path) -> None:
         _call("reset"),
         _call("grade", answer="42", eval_id="", epoch=0),
         _call("grade", answer="", eval_id=eval_id, epoch=1),
-        _call("auditor_bash", command="cat /audit/item.json; ls /audit/benchmark"),
+        _call("auditor_bash", command="cat /audit/item.json; find /audit/benchmark -type f"),
         _call(
             "record_verdict",
             item="red-teaming",
@@ -199,7 +199,7 @@ def test_an_audit_runs_inside_the_benchmark(tmp_path: Path) -> None:
     staged, _, listing = by_call[8].rpartition("}")
     item = json.loads(staged + "}")
     assert item["target"] == ["42"] and "toy.py" in listing
-    assert "toy.py" in item["benchmark_source"]["copied"]
+    assert any(path.endswith("toy.py") for path in item["benchmark_source"]["copied"])
     assert sample.scores and sample.scores["red-teaming"].value == "RESISTANT"
     assert toy.SCORER_CALLS == ["a"] * 4  # their grader ran only for grade, never on the auditor
 

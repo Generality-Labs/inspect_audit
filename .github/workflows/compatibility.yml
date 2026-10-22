@@ -1,0 +1,56 @@
+name: Benchmark compatibility
+
+on:
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: Comma-separated case names; empty runs all ten
+        type: string
+        default: ""
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Group workflow invocations without cancelling active external jobs. All
+  # benchmark cases within a run are still submitted concurrently.
+  cancel-in-progress: false
+
+jobs:
+  hawk:
+    name: API-free Hawk benchmark probes
+    environment: compatibility
+    # Scheduled execution is opt-in until a CI identity is configured. Manual
+    # execution fails explicitly if its credentials are missing or expired.
+    if: github.event_name == 'workflow_dispatch' || vars.HAWK_COMPATIBILITY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      HAWK_API_URL: ${{ vars.HAWK_API_URL }}
+      HAWK_ACCESS_TOKEN: ${{ secrets.HAWK_ACCESS_TOKEN }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      PROBE_CASES: ${{ inputs.cases }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.13"
+      - name: Check CI identity
+        run: |
+          test -n "$HAWK_API_URL" || { echo 'Set the HAWK_API_URL repository variable'; exit 1; }
+          test -n "$HAWK_ACCESS_TOKEN" || { echo 'Configure a valid Hawk CI credential'; exit 1; }
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Run API-free benchmark probes
+        run: uv run python tests/compatibility/run_suite.py --ref "$GITHUB_SHA" --cases "$PROBE_CASES" --output out/compatibility
+      - name: Publish operational summary
+        if: always()
+        run: |
+          if [ -f out/compatibility/summary.md ]; then
+            cat out/compatibility/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -39,16 +39,18 @@ import pandas as pd
 from inspect_ai.dataset import csv_dataset, json_dataset
 
 dataset = csv_dataset("path/to/file.csv")  # or json_dataset()
-df = pd.DataFrame([
-    {
-        "id": s.id,
-        "input": s.input,
-        "target": s.target,
-        "choices": s.choices,
-        **(s.metadata or {})
-    }
-    for s in dataset
-])
+df = pd.DataFrame(
+    [
+        {
+            "id": s.id,
+            "input": s.input,
+            "target": s.target,
+            "choices": s.choices,
+            **(s.metadata or {}),
+        }
+        for s in dataset
+    ]
+)
 ```
 
 ## Testing the Inspect Loading Pipeline

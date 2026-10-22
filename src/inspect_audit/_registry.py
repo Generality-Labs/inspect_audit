@@ -1,6 +1,5 @@
 """The package's Inspect tasks, `audit` and `investigate`, and log fetching."""
 
-import asyncio
 import importlib
 import importlib.util
 import os
@@ -16,6 +15,7 @@ from inspect_ai.tool import WebSearchProviders
 from ._investigate import investigate as investigate
 from ._prices import register_prices
 from ._task import audit_task
+from .dispatch.hawk import fetch_eval_sets
 
 
 def resolve_source(source: str | None) -> str | None:
@@ -133,7 +133,7 @@ def fetch_logs(logs: str | list[str]) -> str:
             if source_id not in declared:
                 raise ValueError(f"Hawk input {source_id!r} was not declared for this execution")
             return declared[source_id]
-        return _hawk_fetch(logs.removeprefix("hawk:"))
+        return fetch_eval_sets(logs.removeprefix("hawk:"))
     if logs.startswith(("s3://", "gs://", "http://", "https://")):
         return _download(logs)
     return logs
@@ -167,51 +167,3 @@ def _declared_transcripts() -> dict[str, str] | None:
     if "HAWK_TRANSCRIPT_SOURCES" not in os.environ:
         return None
     return {s.eval_set_id: s.location for s in transcript_sources()}  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-
-
-def _hawk_fetch(eval_sets: str) -> str:
-    """Download eval logs from the Hawk warehouse to a temporary directory.
-
-    Hawk's API is HAWK_API_URL; the token is HAWK_ACCESS_TOKEN when set, else this
-    process's own Hawk credentials (`_runs.HawkLogin`): the runner's hook, which a
-    Hawk runner installs before it loads tasks, or the operator's `hawk` login.
-    """
-    import concurrent.futures
-
-    from hawk.cli.download import download_file
-    from hawk.client import HawkClient
-
-    fetched = Path(tempfile.mkdtemp(prefix="hawk_logs_"))
-    sets = eval_sets.split(",")
-
-    api = os.environ.get("HAWK_API_URL")
-    if not api:
-        raise ValueError("fetching hawk: logs needs HAWK_API_URL, Hawk's API address")
-
-    async def fetch() -> None:
-        from ._runs import HawkLogin
-
-        token = os.environ.get("HAWK_ACCESS_TOKEN") or await HawkLogin(api).access_token()
-        async with HawkClient(token=token, api_url=api) as client:
-            for address in sets:
-                eval_set, _, selected_file = address.partition("/")
-                files = await client.get_log_files(eval_set)
-                names = [f["name"] for f in files if str(f.get("name", "")).endswith(".eval")]
-                if selected_file:
-                    names = [name for name in names if Path(name).name == selected_file]
-                    if len(names) != 1:
-                        raise ValueError(
-                            f"Expected exactly one Hawk log at {address!r}, found {len(names)}"
-                        )
-                if not names:
-                    raise ValueError(f"No .eval files found in Hawk eval set {eval_set!r}.")
-                # several sets share one flat directory: prefix so same-named files
-                # cannot silently overwrite each other
-                prefix = f"{eval_set}_" if len(sets) > 1 else ""
-                async for url, filename in client.get_download_urls(names):
-                    await download_file(url, fetched / f"{prefix}{Path(filename).name}")
-
-    # task construction may already be inside inspect's event loop
-    with concurrent.futures.ThreadPoolExecutor(1) as pool:
-        pool.submit(asyncio.run, fetch()).result()
-    return str(fetched)

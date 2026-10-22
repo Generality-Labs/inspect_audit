@@ -26,7 +26,7 @@ inspect_audit = "inspect_audit._registry"
 
 [project.scripts]
 inspect-audit-regrade = "inspect_audit._regrade:main"
-inspect-audit-launch = "inspect_audit.launcher.__main__:main"
+inspect-audit-launch = "inspect_audit.dispatch.cli:main"
 
 [project.optional-dependencies]
 remote = [

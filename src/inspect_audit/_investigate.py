@@ -71,6 +71,8 @@ from ._report import (
 )
 from ._runs import FINISHED, STUCK, HawkRuns, Job, LocalRuns, Runs, validate_environment
 from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS, Evidence
+from .dispatch.packages import git_package_spec, own_package_spec
+from .dispatch.spend import key_balance
 
 logger = getLogger(__name__)
 
@@ -100,7 +102,6 @@ INVESTIGATION_SKILLS = (
 )
 # compact the investigator's context once it passes this many tokens
 COMPACTION_TOKENS = 200_000
-OPENROUTER = "https://openrouter.ai/api/v1"
 
 
 @dataclass(frozen=True)
@@ -312,65 +313,6 @@ def is_remote_logs(source: str) -> bool:
     return source.startswith(("hawk:", "s3://", "gs://", "http://", "https://"))
 
 
-def git_package_spec(repo: Path, revision: str | None = None) -> str | None:
-    """The pip spec that installs this checkout's code somewhere else.
-
-    A Hawk runner is a fresh pod: it installs the benchmark to run it. That spec is
-    the same repository the agent reads, at the same commit, so deriving it here
-    removes the chance of the agent auditing one commit while the jobs run another.
-    """
-    try:
-        origin = subprocess.check_output(
-            ["git", "-C", str(repo), "remote", "get-url", "origin"], text=True
-        ).strip()
-        commit = subprocess.check_output(
-            ["git", "-C", str(repo), "rev-parse", "--verify", f"{revision or 'HEAD'}^{{commit}}"],
-            text=True,
-        ).strip()
-    except (subprocess.CalledProcessError, OSError):
-        return None
-    if not origin.startswith(("https://", "git@", "ssh://")):
-        return None
-    url = origin.removesuffix(".git").replace("git@github.com:", "https://github.com/")
-    on_remote = subprocess.run(
-        ["git", "-C", str(repo), "branch", "-r", "--contains", commit],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if on_remote.returncode != 0 or not on_remote.stdout.strip():
-        logger.warning(
-            f"{url}@{commit[:8]} is not on any remote branch: a Hawk runner will not be "
-            "able to install it. Push the commit, or pass the package spec explicitly."
-        )
-    return f"git+{url}@{commit}"
-
-
-def own_package_spec() -> str | None:
-    """The spec that installs the inspect_audit a runner should use: this one.
-
-    With the `runner` extra: child jobs need Hawk client dependencies for
-    reading logs, without installing the operator CLI and its Inspect pin.
-    """
-    from importlib.metadata import Distribution, PackageNotFoundError
-
-    try:
-        dist = Distribution.from_name("inspect_audit")
-    except PackageNotFoundError:  # pragma: no cover - not installed
-        return None
-    direct_url = dist.read_text("direct_url.json")
-    spec: str | None = None
-    if direct_url:
-        data = json.loads(direct_url)
-        vcs = data.get("vcs_info") or {}
-        if vcs.get("vcs") == "git" and vcs.get("commit_id"):
-            spec = f"git+{data['url'].removesuffix('.git')}@{vcs['commit_id']}"
-        # an editable or local install: the code is a working tree, so ask git
-        elif (local := data.get("url", "")).startswith("file://"):
-            spec = git_package_spec(Path(local.removeprefix("file://")))
-    return f"inspect_audit[runner] @ {spec}" if spec else None
-
-
 def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | None:
     """The task's own directory, plus what the package shares with it.
 
@@ -561,56 +503,6 @@ def docker_box(root: Path) -> tuple[str, str]:
     }
     (root / "compose.yaml").write_text(yaml.safe_dump(compose))
     return "docker", str(root / "compose.yaml")
-
-
-async def key_balance(hawk_api_url: str | None, openrouter: bool) -> list[str]:
-    """What the model keys this investigation spends on have left, as their owners say.
-
-    Calls made as a Hawk user (the investigator in a Hawk pod, jobs run on Hawk)
-    bill to that user's key, which Hawk reports. Calls made on OPENROUTER_API_KEY
-    (the investigator in a local box, local jobs) bill to that key, which OpenRouter
-    reports. Which applies is declared by the caller; nothing is computed here.
-    """
-
-    def get(url: str, token: str) -> dict[str, Any]:
-        request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return dict(json.load(response))
-
-    lines: list[str] = []
-    if hawk_api_url:
-        from ._runs import HawkLogin
-
-        try:
-            login = HawkLogin(hawk_api_url)
-            body = await asyncio.to_thread(
-                get, f"{hawk_api_url.rstrip('/')}/usage/balance", await login.access_token()
-            )
-            remaining = body.get("remaining_usd")
-            if body.get("status") == "shared":
-                lines.append("Hawk: this user has no capped key; spending is not limited by a key")
-            elif isinstance(remaining, (int, float)):
-                lines.append(f"Hawk key: ${float(remaining):.2f} remaining")
-            else:
-                lines.append(f"Hawk key: remaining unknown (Hawk answered {body})")
-        except Exception as ex:
-            lines.append(f"Hawk key: could not ask ({type(ex).__name__}: {ex})")
-    if openrouter:
-        try:
-            key = os.environ["OPENROUTER_API_KEY"]
-            data = (await asyncio.to_thread(get, f"{OPENROUTER}/key", key)).get("data") or {}
-            if data.get("limit") is None:
-                lines.append(f"OpenRouter key: no limit; ${float(data.get('usage') or 0):.2f} used")
-            elif isinstance(data.get("limit_remaining"), (int, float)):
-                lines.append(
-                    f"OpenRouter key: ${float(data['limit_remaining']):.2f} of "
-                    f"${float(data['limit']):.2f} remaining"
-                )
-            else:
-                lines.append(f"OpenRouter key: remaining unknown (OpenRouter answered {data})")
-        except Exception as ex:
-            lines.append(f"OpenRouter key: could not ask ({type(ex).__name__}: {ex})")
-    return lines or ["no model key declared to ask about"]
 
 
 @tool(name="budget")

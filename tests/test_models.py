@@ -10,7 +10,9 @@ from inspect_ai.model import GenerateConfig, ModelConfig, ModelCost, ModelInfo
 from inspect_ai.tool import ToolError
 from inspect_ai.util import Store
 
-from inspect_audit._policy import (
+from inspect_audit._prices import prices_for_models
+from inspect_audit.dispatch import COMPLETE, FINISHED, Job, LocalRuns, hawk_config
+from inspect_audit.dispatch.policy import (
     InvestigationAuthorizer,
     LaunchPolicy,
     Models,
@@ -18,8 +20,6 @@ from inspect_audit._policy import (
     canonical,
     ensure_model,
 )
-from inspect_audit._prices import prices_for_models
-from inspect_audit._runs import COMPLETE, FINISHED, Job, LocalRuns, hawk_config
 
 
 @pytest.mark.parametrize(

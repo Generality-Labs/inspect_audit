@@ -9,7 +9,15 @@ import pytest
 
 from inspect_audit import _investigate
 from inspect_audit._report import InvestigationRecord
-from inspect_audit._runs import COMPLETE, FINISHED, HawkLogin, HawkRuns, Job, LocalRuns, hawk_config
+from inspect_audit.dispatch import (
+    COMPLETE,
+    FINISHED,
+    HawkLogin,
+    HawkRuns,
+    Job,
+    LocalRuns,
+    hawk_config,
+)
 
 TASK_FILE = """
 from inspect_ai import Task, task
@@ -330,7 +338,12 @@ def test_a_local_job_sees_only_the_environment_it_needs(
 def test_task_arguments_cannot_place_code_or_name_other_models(kind: str) -> None:
     from inspect_ai.tool import ToolError
 
-    from inspect_audit._policy import InvestigationAuthorizer, LaunchPolicy, Models, canonical
+    from inspect_audit.dispatch.policy import (
+        InvestigationAuthorizer,
+        LaunchPolicy,
+        Models,
+        canonical,
+    )
 
     for args in [
         {"judge_prompt": "original", "grader_model": "openai/judge", "judges": ["openai/judge"]},

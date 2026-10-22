@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from inspect_audit.launcher import secrets
-from inspect_audit.launcher.lifecycle import Launcher, Records
-from inspect_audit.launcher.openrouter import KeyState
+from inspect_audit.dispatch import secrets
+from inspect_audit.dispatch.launcher import Launcher, Records
+from inspect_audit.dispatch.openrouter import KeyState
 
 
 class FakeKeys:
@@ -98,7 +98,7 @@ def test_a_crash_before_the_keys_id_is_written_is_recovered_by_name(tmp_path: Pa
     launcher, keys, _ = _launcher(tmp_path)
     records = Records(tmp_path)
     # the state a crash leaves: planned on disk, key minted at OpenRouter, hash unrecorded
-    from inspect_audit.launcher.lifecycle import Record
+    from inspect_audit.dispatch.launcher import Record
 
     records.save(Record(id="inv-lost-0001", cap_usd=3.0))
     keys.create("inv-lost-0001", 3.0)

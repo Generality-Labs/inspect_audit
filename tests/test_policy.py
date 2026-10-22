@@ -3,14 +3,14 @@
 import pytest
 from inspect_ai.tool import ToolError
 
-from inspect_audit._policy import Execution, InvestigationAuthorizer, LaunchPolicy, Models
-from inspect_audit._runs import (
+from inspect_audit.dispatch import (
     HawkRuns,
     Job,
     hawk_config,
     hawk_supports_restricted,
     validate_environment,
 )
+from inspect_audit.dispatch.policy import Execution, InvestigationAuthorizer, LaunchPolicy, Models
 
 
 def test_execution_declares_its_credentials_by_backend() -> None:

@@ -10,9 +10,9 @@ from inspect_ai.dataset import Sample
 from inspect_ai.solver import Generate, TaskState, solver
 
 from inspect_audit._investigate import Investigation, ModelMenu, jobs
-from inspect_audit._policy import InvestigationAuthorizer, LaunchPolicy, Models, canonical
 from inspect_audit._register import Register, load, save
-from inspect_audit._runs import Job, LocalRuns
+from inspect_audit.dispatch import Job, LocalRuns
+from inspect_audit.dispatch.policy import InvestigationAuthorizer, LaunchPolicy, Models, canonical
 
 
 @pytest.mark.docker

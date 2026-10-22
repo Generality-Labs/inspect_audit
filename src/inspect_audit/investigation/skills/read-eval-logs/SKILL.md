@@ -62,15 +62,12 @@ from inspect_ai.log import (
     read_eval_log_sample,
     read_eval_log_samples,
     read_eval_log_sample_summaries,
-    
     # Writing
     write_eval_log,
-    
     # Utilities
     retryable_eval_logs,
     recompute_metrics,
     resolve_sample_attachments,
-    
     # Types
     EvalLog,
     EvalLogInfo,
@@ -139,9 +136,7 @@ summaries = read_eval_log_sample_summaries("path/to/logfile.eval")
 errors = []
 for summary in read_eval_log_sample_summaries(log_file):
     if summary.error is not None:
-        errors.append(
-            read_eval_log_sample(log_file, summary.id, summary.epoch)
-        )
+        errors.append(read_eval_log_sample(log_file, summary.id, summary.epoch))
 ```
 
 ## EvalLog Structure

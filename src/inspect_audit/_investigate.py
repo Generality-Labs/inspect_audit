@@ -1057,6 +1057,36 @@ def register_view() -> Tool:
         if view not in ("summary", "flagged", "unresolved", "missing", "disputed"):
             raise ToolError("view is summary, flagged, unresolved, missing or disputed")
         skills = {s.name: s for s in audit_items(current.checks)}
+        from ._findings import Findings, FindingsState
+
+        if store_as(FindingsState).enabled:
+            from inspect_ai.util import sandbox
+
+            from ._register import Take
+
+            try:
+                draft = Findings.model_validate_json(
+                    await sandbox().read_file("/workspace/findings.json")
+                )
+                for reviewed in draft.investigator.reviews:
+                    if (
+                        reviewed.sample_id not in current.samples
+                        or reviewed.check not in skills
+                        or reviewed.label not in skills[reviewed.check].grades
+                    ):
+                        raise ValueError(
+                            "Review must name an existing sample/check and a valid grade"
+                        )
+                    current.samples[reviewed.sample_id][reviewed.check].append(
+                        Take(
+                            by="investigator",
+                            label=reviewed.label,
+                            explanation=reviewed.explanation,
+                            evidence=reviewed.evidence,
+                        )
+                    )
+            except (ValueError, OSError) as ex:
+                raise ToolError(f"Cannot read draft reviews: {ex}") from ex
         rows = select(current, view, skills, check)  # type: ignore[arg-type]
         text = json.dumps(rows, indent=1)
         if len(text) > 12_000:

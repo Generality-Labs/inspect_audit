@@ -102,7 +102,26 @@ def test_child_audit_is_collected_once_into_the_register(tmp_path: Path) -> None
                 draft["investigator"]["summary"] = (
                     "The worker could not establish the reference answer."
                 )
+                from inspect_audit._investigate import register_view
+                from inspect_audit._verdicts import audit_items
+
+                [check] = audit_items(["gold-answer"])
+                label = next(grade for grade in check.grades if grade != takes[0].label)
+                draft["investigator"]["reviews"] = [
+                    {
+                        "sample_id": "a",
+                        "check": "gold-answer",
+                        "label": label,
+                        "explanation": "Synthetic review for the lifecycle test",
+                        "evidence": [
+                            {"observed": "Worker and reviewer differ", "source": "synthetic test"}
+                        ],
+                    }
+                ]
                 await sandbox().write_file("/workspace/findings.json", json.dumps(draft))
+                disputed = json.loads(await register_view()("disputed", None))
+                assert disputed[0]["sample"] == "a"
+                assert len(load().samples["a"]["gold-answer"]) == 1
                 await submit_findings(root, inv)()
                 submitted = Path(state.store_as(FindingsState).destination)
                 findings, manifest = read_bundle(submitted)

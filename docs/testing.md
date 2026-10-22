@@ -107,6 +107,8 @@ Checkpoint resume remains separate ([#55](https://github.com/Generality-Labs/ins
 
 `tests/test_native_k8s.py` checks path and object configurations at task and sample level. It verifies that existing services, volumes, environment settings, resource limits, probes, extra resources and network grants are preserved. It also renders the resulting values with the real provider's Helm chart. Custom charts and other sandbox providers remain outside this adapter.
 
+At `1da184c9c6018d37794957f8153ad863444e9030`, the native fixture passed on Hawk ([run](https://viewer.hawk.hawk.generalitylabs.ai/eval-set/ia-api-free-native-k8s-20-1zjbdw4793cpfcj9)): staging, benchmark shell, real grading, verdict and submission all passed. The grade was `C`, and the only model recorded was `ia_probe/driver`. Native logs and the summary are under `out/compatibility-native-k8s-20261022/`. The ordinary suite passed 197 tests; both existing Docker audit lifecycle variants passed separately; type checking passed.
+
 ## Add another eval
 
 Add a `*.eval-set.yaml` file under `tests/compatibility/cases`. There is no Python benchmark allowlist or fixed case count. Ordinary CI automatically validates every case against Hawk’s configuration model and checks its mock response fixtures. The heavy runner discovers the same directory and installs each case’s declared packages on Hawk.

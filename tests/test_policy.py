@@ -4,7 +4,13 @@ import pytest
 from inspect_ai.tool import ToolError
 
 from inspect_audit._policy import Execution, InvestigationAuthorizer, LaunchPolicy, Models
-from inspect_audit._runs import HawkRuns, Job, hawk_supports_restricted
+from inspect_audit._runs import (
+    HawkRuns,
+    Job,
+    hawk_config,
+    hawk_supports_restricted,
+    validate_environment,
+)
 
 
 def test_execution_declares_its_credentials_by_backend() -> None:
@@ -44,3 +50,27 @@ def test_a_label_that_is_not_a_plain_name_is_refused(label: str) -> None:
 def test_a_plain_label_is_authorised() -> None:
     job = Job(label="smoke_1-a", task="bench", package="bench-pkg", models=["m"])
     assert _authoriser().authorise(job, "benchmark", set()).label == "smoke_1-a"
+
+
+def test_declared_environment_is_frozen_and_applied_to_child_configs() -> None:
+    authoriser = _authoriser()
+    policy = authoriser.policy.model_copy(
+        update={"environment_json": '{"MC_IMAGE_NAME":"ghcr.io/jrh-mann/mirrorcode"}'}
+    )
+    job = Job(label="probe", task="bench", package="bench-pkg", models=["m"])
+    approved = InvestigationAuthorizer(policy).authorise(job, "benchmark", set())
+    assert approved.environment == {"MC_IMAGE_NAME": "ghcr.io/jrh-mann/mirrorcode"}
+    assert hawk_config(approved)["runner"]["environment"] == approved.environment
+    approved.environment["MC_IMAGE_NAME"] = "changed"
+    assert "changed" not in policy.environment_json
+    job.environment = {"MC_IMAGE_NAME": "changed"}
+    with pytest.raises(ToolError, match="environment must match"):
+        InvestigationAuthorizer(policy).authorise(job, "benchmark", set())
+
+
+@pytest.mark.parametrize(
+    "environment", [{"bad-name": "x"}, {"X": 1}, {"X": "a\x00b"}, {"HAWK_API_URL": "x"}]
+)
+def test_invalid_runner_settings_are_refused(environment) -> None:
+    with pytest.raises(ValueError):
+        validate_environment(environment)

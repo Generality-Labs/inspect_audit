@@ -13,7 +13,7 @@ from inspect_ai.tool import ToolError
 from inspect_ai.util import StoreModel
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ._runs import Job
+from ._runs import Job, validate_environment
 
 
 def canonical(value: Any) -> str:
@@ -54,6 +54,7 @@ class Benchmark(FrozenModel):
     source: str | None = None
     # Serialised below into the frozen launch policy; never retained as a mutable dict.
     task_args: dict[str, Any] = Field(default_factory=dict)
+    environment: dict[str, str] = Field(default_factory=dict)
 
 
 class AuditScope(FrozenModel):
@@ -94,6 +95,7 @@ class LaunchPolicy(FrozenModel):
     samples: tuple[str, ...] | None = None
     checks: tuple[str, ...]
     task_args_json: str = "{}"
+    environment_json: str = "{}"
     source: str | None = None
     supplied_logs: tuple[str, ...] = ()
     limits: Limits = Limits()
@@ -102,6 +104,7 @@ class LaunchPolicy(FrozenModel):
 
     @model_validator(mode="after")
     def unique_scope(self) -> "LaunchPolicy":
+        validate_environment(json.loads(self.environment_json))
         if self.samples is not None and (
             not self.samples or len(set(self.samples)) != len(self.samples)
         ):
@@ -198,6 +201,8 @@ class InvestigationAuthorizer:
 
     def authorise(self, job: Job, kind: str, known_logs: set[str]) -> Job:
         p = self.policy
+        if job.environment and canonical(job.environment) != p.environment_json:
+            raise ToolError("job environment must match the launch policy")
         # a run folder's and a Hawk eval set's name: no paths, nothing Hawk would refuse
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}", job.label):
             raise ToolError("a label is letters, digits, - and _, at most 48 characters")
@@ -281,4 +286,6 @@ class InvestigationAuthorizer:
         # Argument names are not permissions: e.g. HLE's judge_prompt="original"
         # selects a prompt, not a model. Models supplied through roles remain checked.
         # No caller-owned mutable lists/dicts cross the authorization boundary.
-        return deepcopy(job)
+        approved = deepcopy(job)
+        approved.environment = json.loads(p.environment_json)
+        return approved

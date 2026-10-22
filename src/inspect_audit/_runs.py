@@ -12,6 +12,7 @@ import asyncio
 import inspect
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -48,6 +49,22 @@ class Job:
     sample_range: tuple[int, int] | None = None
     epochs: int = 1
     extra_packages: list[str] = field(default_factory=list)
+    environment: dict[str, str] = field(default_factory=dict)
+
+
+def validate_environment(environment: dict[str, str]) -> dict[str, str]:
+    """Copy explicit runner settings; credentials use the separate secrets channel."""
+    if not isinstance(environment, dict) or any(
+        not isinstance(name, str)
+        or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
+        or not isinstance(value, str)
+        or "\x00" in value
+        for name, value in environment.items()
+    ):
+        raise ValueError("benchmark_environment must map environment variable names to strings")
+    if "HAWK_API_URL" in environment:
+        raise ValueError("declare Hawk's API with hawk_api_url, not benchmark_environment")
+    return dict(environment)
 
 
 class Runs(Protocol):
@@ -82,6 +99,7 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
         "epochs": job.epochs,
         # a failed child is reported, not retried behind the investigator's back
         "retry_attempts": 0,
+        "runner": {"environment": validate_environment(job.environment)},
     }
     if restricted:
         # Judges selected through task arguments are outside the eval model grid.
@@ -213,7 +231,7 @@ class HawkRuns:
         settings = hawk_config(job, restricted=restricted)
         # the job's own code may read Hawk (an audit fetching hawk: logs); Hawk does
         # not tell a runner where its API is
-        settings["runner"] = {"environment": {"HAWK_API_URL": self.login.api_url}}
+        settings["runner"]["environment"]["HAWK_API_URL"] = self.login.api_url
         config = EvalSetConfig.model_validate(settings)
         # the access token first: refreshing it may rotate the refresh token
         token = await self.login.access_token()
@@ -336,7 +354,7 @@ class LocalRuns:
             args += ["--sample-id", ",".join(job.sample_ids)]
         if job.sample_range is not None:
             args += ["--limit", f"{job.sample_range[0]}-{job.sample_range[1]}"]
-        launched = await asyncio.to_thread(_detach, args)
+        launched = await asyncio.to_thread(_detach, args, job.environment)
         (run_dir / "launch.json").write_text(json.dumps(launched))
         return run_dir.name
 
@@ -417,13 +435,14 @@ JOB_ENVIRONMENT = (
 )
 
 
-def _detach(args: list[str]) -> dict[str, Any]:
+def _detach(args: list[str], environment: dict[str, str] | None = None) -> dict[str, Any]:
     """Run `inspect ... --detach` and return its launch record.
 
     The launcher returns once the run is live (or fails pre-flight, non-zero), so
-    this is the whole handoff. The child sees only JOB_ENVIRONMENT.
+    this is the whole handoff. The child sees JOB_ENVIRONMENT plus declared settings.
     """
     env = {k: os.environ[k] for k in JOB_ENVIRONMENT if k in os.environ}
+    env.update(validate_environment(environment or {}))
     result = subprocess.run(args, capture_output=True, text=True, env=env, timeout=600, check=False)
     if result.returncode != 0:
         raise RuntimeError(f"inspect eval-set did not start: {result.stderr[-1500:]}")

@@ -17,6 +17,8 @@ tasks:
         revision: 819db252edc4e72feed767cb92b04ac2a5bc6792
         task: mc/mirrorcode
         source: mc.task
+        environment:
+          MC_IMAGE_NAME: ghcr.io/jrh-mann/mirrorcode
         paths:
         - mc
         package: mc @ git+https://github.com/jrh-mann/MirrorCode@819db252edc4e72feed767cb92b04ac2a5bc6792

@@ -98,6 +98,7 @@ def investigation(
         runs="hawk",
         credential_mode="user",
         child_secrets=spec.get("child_secrets", []),
+        benchmark_environment=spec.get("environment", {}),
         hawk_api_url="https://api.hawk.hawk.generalitylabs.ai",
         auditor_image=AUDITOR_IMAGE,
         investigator_image=INVESTIGATOR_IMAGE,
@@ -138,3 +139,6 @@ def investigation(
             "a reason to silently substitute another benchmark or discard the run."
         ),
     )
+
+
+from .probe import probe as probe  # noqa: E402

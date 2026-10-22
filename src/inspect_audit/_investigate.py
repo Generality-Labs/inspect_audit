@@ -69,7 +69,7 @@ from ._report import (
 from ._report import (
     validate_findings as validate_findings,
 )
-from ._runs import FINISHED, STUCK, HawkRuns, Job, LocalRuns, Runs
+from ._runs import FINISHED, STUCK, HawkRuns, Job, LocalRuns, Runs, validate_environment
 from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS, Evidence
 
 logger = getLogger(__name__)
@@ -251,7 +251,14 @@ def _investigation_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"{config} must be a mapping of task settings")
     # Structured launch sections resolve once, before the immutable policy is made.
     sections = {
-        "benchmark": (Benchmark, {"task": "target_task", "package": "task_package"}),
+        "benchmark": (
+            Benchmark,
+            {
+                "task": "target_task",
+                "package": "task_package",
+                "environment": "benchmark_environment",
+            },
+        ),
         "audit": (AuditScope, {"samples": "audit_samples", "checks": "checks"}),
         "execution": (Execution, {"backend": "runs"}),
     }
@@ -1244,6 +1251,7 @@ def investigate(
     source: str | None = None,
     credential_mode: str | None = None,
     child_secrets: list[str] | None = None,
+    benchmark_environment: dict[str, str] | None = None,
 ) -> Task:
     """Investigate a benchmark's source and logs, and publish a GL LaTeX report.
 
@@ -1303,6 +1311,10 @@ def investigate(
         child_secrets: Environment variable names to pass through Hawk's secrets API
             to child runners, e.g. ["HF_TOKEN"] for gated datasets. Names are frozen
             in the launch configuration; values stay out of policy and workspace files.
+        benchmark_environment: Non-secret runner settings required by the benchmark,
+            applied to every child job and to task loading in this process. YAML
+            accepts benchmark.environment. Values are frozen in the launch policy;
+            credentials belong in child_secrets instead.
     """
     # the file is read before anything else is decided: an argument is "given" only
     # when it is not None, so a value equal to a default is still an override
@@ -1338,6 +1350,15 @@ def investigate(
     required_coverage = settings.get("required_coverage", required_coverage)
     policy = settings.get("policy", policy)
     permissions = Permissions.model_validate(policy or {})
+    benchmark_environment = validate_environment(
+        settings.get("benchmark_environment", benchmark_environment) or {}
+    )
+    for name, value in benchmark_environment.items():
+        if os.environ.get(name) != value:
+            raise ValueError(
+                f"benchmark_environment declares {name!r}; set the same value in the "
+                "investigator runner environment so task loading uses the child configuration"
+            )
     child_secrets = list(settings.get("child_secrets", child_secrets) or [])
     if child_secrets and runs != "hawk":
         raise ValueError("child_secrets require runs='hawk'")
@@ -1463,6 +1484,7 @@ def investigate(
         samples=tuple(audit_samples) if isinstance(audit_samples, list) else None,
         checks=permitted_checks,
         task_args_json=canonical(task_args),
+        environment_json=canonical(benchmark_environment),
         source=source,
         supplied_logs=tuple(sorted(set(supplied))),
         limits=permissions.limits,

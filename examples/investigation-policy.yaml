@@ -8,6 +8,8 @@ benchmark:
   task: example_benchmarks/task
   source: example_benchmarks.task
   task_args: {}
+  # Non-secret settings, also set on the investigator runner. Applied to every child.
+  environment: {}
 
 audit:
   samples: all

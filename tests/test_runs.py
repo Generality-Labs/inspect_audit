@@ -293,6 +293,7 @@ def test_a_local_job_sees_only_the_environment_it_needs(
     )
     runs = LocalRuns(tmp_path / "runs", provider="mockllm")
     job = Job(label="env", task=f"{tmp_path / 'env.py'}@tiny", package="", models=["model"])
+    job.environment = {"IA_BENCHMARK_SETTING": "configured"}
 
     async def run() -> str:
         run_id = await runs.submit(job)
@@ -305,6 +306,7 @@ def test_a_local_job_sees_only_the_environment_it_needs(
     assert asyncio.run(run()) == COMPLETE
     seen = set((tmp_path / "seen.txt").read_text().split(","))
     assert "OPENROUTER_API_KEY" in seen
+    assert "IA_BENCHMARK_SETTING" in seen
     assert "AWS_SECRET_ACCESS_KEY" not in seen
 
 

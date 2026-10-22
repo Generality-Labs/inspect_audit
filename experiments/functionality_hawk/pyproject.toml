@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "ia-functionality"
 version = "0.1.0"
 requires-python = ">=3.13"
-dependencies = ["inspect-audit", "inspect-evals"]
+dependencies = ["inspect-audit"]
 
 [project.entry-points.inspect_ai]
 ia_functionality = "ia_functionality.task"

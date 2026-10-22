@@ -6,18 +6,19 @@ Working rules for coding agents in this repository. Read this before a substanti
 
 The audit is the benchmark's own Inspect task with the auditor in place of its solver. Inspect sets each sample up exactly as it did for the evaluated agent (their files, setup script, setup solvers, boxes, target, scorers). We add one box beside theirs for the auditor, and replace only what must be replaced.
 
-| Module         | Owns                                                                                                      |
-| -------------- | --------------------------------------------------------------------------------------------------------- |
-| `_task.py`     | `audit_task`: declared inputs, `task_with(theirs, ...)`, every override, loud refusals                    |
-| `_compose.py`  | their compose plus the `auditor` service, merged in Python with their relative paths made absolute        |
-| `_auditor.py`  | the solver: stages the item and source into the auditor's box, binds tools to the live sample, runs react |
-| `_grade.py`    | `grade`: a copy of the live state with the transcript under test, handed to their scorers                 |
-| `_reset.py`    | `reset`: force-recreate their boxes, lay files and run setup again (Docker only)                          |
-| `_logs.py`     | the declared logs: header checks, the attempt index, host-side reading tools                              |
-| `_verdicts.py` | checks as skills, `record_verdict`, `submit`, one scorer per check                                        |
-| `_image.py`    | `view_image`: an image in a box (the auditor's or the investigator's), SVGs rasterised there              |
-| `_source.py`   | the benchmark's code for the auditor: the task's package followed by import, data files, install specs    |
-| `_regrade.py`  | standalone concordance: Inspect's `score_async` on the declared logs, diffed against the recorded grades  |
+| Module         | Owns                                                                                                            |
+| -------------- | --------------------------------------------------------------------------------------------------------------- |
+| `_task.py`     | `audit_task`: declared inputs, `task_with(theirs, ...)`, every override, loud refusals                          |
+| `_compose.py`  | their compose plus the `auditor` service, merged in Python with their relative paths made absolute              |
+| `_k8s.py`      | native built-in-chart Kubernetes values plus the auditor service; preserves provider options and network policy |
+| `_auditor.py`  | the solver: stages the item and source into the auditor's box, binds tools to the live sample, runs react       |
+| `_grade.py`    | `grade`: a copy of the live state with the transcript under test, handed to their scorers                       |
+| `_reset.py`    | `reset`: force-recreate their boxes, lay files and run setup again (Docker only)                                |
+| `_logs.py`     | the declared logs: header checks, the attempt index, host-side reading tools                                    |
+| `_verdicts.py` | checks as skills, `record_verdict`, `submit`, one scorer per check                                              |
+| `_image.py`    | `view_image`: an image in a box (the auditor's or the investigator's), SVGs rasterised there                    |
+| `_source.py`   | the benchmark's code for the auditor: the task's package followed by import, data files, install specs          |
+| `_regrade.py`  | standalone concordance: Inspect's `score_async` on the declared logs, diffed against the recorded grades        |
 
 ## What the investigator is
 
@@ -54,6 +55,7 @@ Structured YAML accepts `benchmark`, `audit`, `policy` and `execution` sections 
 - Benchmarks that prepare their environment inside their solver (SWE-Lancer's `chain([setup, react])`): swapping the solver skips the preparation. Not detectable; documented, not handled.
 - Selections containing different per-sample sandboxes. One shared sample sandbox is supported; its declaration is merged with the auditor service at task level.
 - `reset` on k8s.
+- Custom Kubernetes Helm charts. Native values for the built-in chart and Kubernetes declarations using Compose are supported. Native values retain the declared network policy, so the auditor may be offline.
 - The evaluated agent's own tools. The auditor works through `benchmark_bash` and `grade`.
 
 ## Tests

@@ -101,6 +101,12 @@ The complete external baseline at runtime commit `24d92b25ed654285e32079175e9943
 
 Checkpoint resume remains separate ([#55](https://github.com/Generality-Labs/inspect_audit/issues/55)). The standalone deterministic findings package and its CLI have been removed. The investigation register remains in the core package. Findings/report redesign is the next phase after execution tests.
 
+## Native Kubernetes fixture
+
+`tests/compatibility/cases/native-k8s.eval-set.yaml` runs the small `ia_compatibility/native_k8s` benchmark on Hawk. Its native Helm values provision a default service and a named helper. The grader checks supplied files, a sample setup script, an environment variable and access to the helper. It uses no model judge. Network grants are left empty. This case checks the native Kubernetes adapter without downloading another benchmark.
+
+`tests/test_native_k8s.py` checks path and object configurations at task and sample level. It verifies that existing services, volumes, environment settings, resource limits, probes, extra resources and network grants are preserved. It also renders the resulting values with the real provider's Helm chart. Custom charts and other sandbox providers remain outside this adapter.
+
 ## Add another eval
 
 Add a `*.eval-set.yaml` file under `tests/compatibility/cases`. There is no Python benchmark allowlist or fixed case count. Ordinary CI automatically validates every case against Hawk’s configuration model and checks its mock response fixtures. The heavy runner discovers the same directory and installs each case’s declared packages on Hawk.

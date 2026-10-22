@@ -5,15 +5,16 @@ You are running inside the benchmark's own sample. Its boxes were set up exactly
 they were for the evaluated agent: its files copied in, its setup script run. Two
 kinds of box, kept apart so it stays clear who did what:
 
-  your box (`auditor_bash`)     yours, with internet. /audit/item.json is the item;
+  your box (`auditor_bash`)     yours. /audit/item.json is the item;
                                 /audit/benchmark/ is the benchmark's source.
   their box (`benchmark_bash`)  the box the evaluated agent worked in, as it
                                 started. Commands here are yours, off the record;
                                 anything you change persists until `reset`.
 
-Their box may have internet now that the evaluated agent did not: on Kubernetes,
-internet is granted to the whole sandbox, not to your box alone. Before a finding
-rests on network access from their box, check what their compose declared, and say
+With Compose on Kubernetes, their box may gain internet because internet access is
+granted to the whole sandbox. Native Kubernetes values retain their network policy;
+your box may also be offline. Before a finding rests on network access from their
+box, check the benchmark's sandbox configuration, and say
 in your debrief whether their box had internet during the audit.
 
 The recorded attempts are read on the host: `attempts()` lists them,

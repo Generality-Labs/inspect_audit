@@ -23,6 +23,7 @@ from inspect_ai.util import registry_create, registry_info
 
 from ._auditor import auditor
 from ._compose import UnsupportedBenchmarkError, audit_compose, their_compose, their_sandbox
+from ._k8s import audit_k8s
 from ._logs import LogIndex, LogMismatchError, index_logs
 from ._source import SourceCopy, collect_directory, collect_source
 from ._verdicts import audit_items, item_scorer
@@ -221,11 +222,18 @@ def audit_task(
     spec = their_sandbox(their.sandbox, selected)
     if spec is None and compose is not None:
         raise UnsupportedBenchmarkError("compose= was given but the benchmark declares no sandbox")
-    sandbox = audit_compose(
-        their_compose(spec, compose, stage) if spec is not None else None,
-        stage=stage / "sandbox",
-        auditor_image=auditor_image,
-    )
+    if spec is not None and spec.type == "k8s":
+        if compose is not None:
+            raise UnsupportedBenchmarkError(
+                "compose= applies to Docker; declare the k8s config on the task"
+            )
+        sandbox = audit_k8s(spec, stage=stage / "sandbox", auditor_image=auditor_image)
+    else:
+        sandbox = audit_compose(
+            their_compose(spec, compose, stage) if spec is not None else None,
+            stage=stage / "sandbox",
+            auditor_image=auditor_image,
+        )
 
     their_scorers: list[Scorer] = _as_list(their.scorer)
     their_setup: list[Solver] = _as_list(their.setup)

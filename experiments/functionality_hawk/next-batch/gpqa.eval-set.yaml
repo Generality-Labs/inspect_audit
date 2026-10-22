@@ -1,0 +1,49 @@
+name: ia-smoke-gpqa-haiku-20261021
+packages:
+- inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@8edecdc6b0eed9b4bb59581d9fb7943a0e9ec3a0
+- inspect-evals @ git+https://github.com/Generality-Labs/inspect_evals@32b79a244f17ecf54fa1186d30f33dc10143c10f
+tasks:
+- package: git+https://github.com/Generality-Labs/inspect_audit@8edecdc6b0eed9b4bb59581d9fb7943a0e9ec3a0#subdirectory=experiments/functionality_hawk
+  name: ia_functionality
+  items:
+  - name: investigation
+    args:
+      benchmark: gpqa
+      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@8edecdc6b0eed9b4bb59581d9fb7943a0e9ec3a0
+      model: openrouter/anthropic/claude-haiku-4.5
+      audit_sample_cost: 2.0
+      spec:
+        repo: https://github.com/Generality-Labs/inspect_evals
+        revision: 32b79a244f17ecf54fa1186d30f33dc10143c10f
+        task: inspect_evals/gpqa_diamond
+        source: inspect_evals.gpqa.gpqa
+        paths:
+        - src/inspect_evals/gpqa
+        package: inspect-evals @ git+https://github.com/Generality-Labs/inspect_evals@32b79a244f17ecf54fa1186d30f33dc10143c10f
+        task_args:
+          cot: true
+          epochs: 4
+          high_level_domain: null
+          subdomain: null
+        samples:
+        - rechgQucGlrnt8KRV
+        - recVEXvhYxAhELVqB
+        logs:
+        - hawk:union-full-gpqa-20260916
+        judges: {}
+        selection: seeded random selection from the supplied recorded population
+        child_secrets:
+        - HF_TOKEN
+models:
+- package: openai
+  name: openrouter
+  items:
+  - name: openrouter/anthropic/claude-haiku-4.5
+cost_limit: 2.0
+time_limit: 3600
+epochs: 1
+retry_attempts: 0
+max_retries: 2
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

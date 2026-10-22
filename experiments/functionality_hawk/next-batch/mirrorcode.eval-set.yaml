@@ -1,0 +1,52 @@
+name: ia-smoke-mirrorcode-haiku-20261021
+packages:
+- inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@8edecdc6b0eed9b4bb59581d9fb7943a0e9ec3a0
+- mc @ git+https://github.com/jrh-mann/MirrorCode@819db252edc4e72feed767cb92b04ac2a5bc6792
+tasks:
+- package: git+https://github.com/Generality-Labs/inspect_audit@8edecdc6b0eed9b4bb59581d9fb7943a0e9ec3a0#subdirectory=experiments/functionality_hawk
+  name: ia_functionality
+  items:
+  - name: investigation
+    args:
+      benchmark: mirrorcode
+      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@8edecdc6b0eed9b4bb59581d9fb7943a0e9ec3a0
+      model: openrouter/anthropic/claude-haiku-4.5
+      audit_sample_cost: 2.0
+      spec:
+        repo: https://github.com/jrh-mann/MirrorCode
+        revision: 819db252edc4e72feed767cb92b04ac2a5bc6792
+        task: mc/mirrorcode
+        source: mc.task
+        paths:
+        - mc
+        package: mc @ git+https://github.com/jrh-mann/MirrorCode@819db252edc4e72feed767cb92b04ac2a5bc6792
+        task_args:
+          docs: true
+          include_source: false
+          baseline: false
+          visible_case_ablation: 0.0
+          visible_case_ablation_seed: null
+          reference_binary: true
+          evaluate_testcases_tool: true
+          compaction_thresh: 300000
+          gated_submit: 0.3
+        samples:
+        - choose_python
+        logs:
+        - hawk:mirrorcode-stock-five-lun-7oiu33c6tnv9t4zv
+        judges: {}
+        selection: one declared small target from the stock run
+models:
+- package: openai
+  name: openrouter
+  items:
+  - name: openrouter/anthropic/claude-haiku-4.5
+cost_limit: 2.0
+time_limit: 3600
+epochs: 1
+retry_attempts: 0
+max_retries: 2
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai
+    MC_IMAGE_NAME: ghcr.io/jrh-mann/mirrorcode

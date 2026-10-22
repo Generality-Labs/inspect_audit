@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
@@ -22,6 +23,7 @@ DRAFT = "/workspace/findings.json"
 
 class Finding(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    criterion: str = ""
     issue: str = Field(min_length=1)
     explanation: str = Field(min_length=1)
     sample_ids: list[str] = Field(default_factory=list)
@@ -368,7 +370,10 @@ async def restore_bundle(root: Path) -> Path:
 
 @tool(parallel=False)
 def submit_findings(
-    root: Path, investigation: "Investigation | None" = None, task: str | None = None
+    root: Path,
+    investigation: "Investigation | None" = None,
+    task: str | None = None,
+    validate: Callable[[Findings], None] | None = None,
 ) -> Tool:
     async def execute() -> str:
         """Validate and freeze /workspace/findings.json, then enter publishing.
@@ -394,6 +399,8 @@ def submit_findings(
                         raise ToolError(f"Collect job {job['label']} before submitting findings")
             try:
                 draft = validate_draft(json.loads(await sandbox().read_file(DRAFT)), load())
+                if validate is not None:
+                    validate(draft)
                 await freeze(root, draft)
             except (ValueError, OSError) as ex:
                 raise ToolError(f"Findings submission failed: {ex}") from ex

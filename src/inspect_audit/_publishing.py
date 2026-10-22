@@ -15,7 +15,7 @@ from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
 from inspect_ai.util import CheckpointConfig, store_as
 from pydantic import TypeAdapter
 
-from ._findings import FindingsState, encoded, read_bundle, restore_bundle
+from ._findings import Findings, FindingsState, encoded, read_bundle, restore_bundle
 from ._image import view_image
 from ._report import InvestigationState, investigation_outcome, report_blocker
 
@@ -33,16 +33,21 @@ class Publisher:
     skills: list[str]
     build: Callable[[Path, Path], Awaitable[Path]]
     tools: Callable[[Path], list[Tool]] = lambda root: []
+    validate: Callable[[Findings], None] = lambda findings: None
 
 
 def load_publisher(name: str) -> Publisher:
+    if name == "latex":
+        from .publishers.latex import publisher
+
+        return publisher()
     if name == "gl":
         from .publishers.gl import publisher
 
         return publisher()
     module, separator, factory = name.partition(":")
     if not separator:
-        raise ValueError("publisher must be 'gl' or an installed module:factory")
+        raise ValueError("publisher must be 'latex', 'gl' or an installed module:factory")
     result = getattr(importlib.import_module(module), factory)()
     if not isinstance(result, Publisher):
         raise TypeError("Publisher factories must return inspect_audit.Publisher")
@@ -151,7 +156,7 @@ class PhaseTools:
 @task
 def publish(
     bundle: str,
-    publisher: str = "gl",
+    publisher: str = "latex",
     output_dir: str = "./publications",
     instructions: str = "",
     box: str = "docker",
@@ -162,7 +167,7 @@ def publish(
 
     Args:
         bundle: Local directory containing findings.json, manifest.json and evidence.
-        publisher: 'gl' or an installed module:factory returning a Publisher.
+        publisher: 'latex', 'gl' or an installed module:factory returning a Publisher.
         output_dir: Where immutable report bundles are saved.
         instructions: Presentation instructions for the publishing agent.
         box: docker or k8s, independently of where the original investigation ran.
@@ -181,6 +186,7 @@ def publish(
     (root / "work/report").mkdir(parents=True)
     shutil.copytree(source, root / "inputs/findings")
     selected = load_publisher(publisher)
+    selected.validate(findings)
     tools = PhaseTools(
         root,
         [

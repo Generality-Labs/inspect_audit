@@ -104,7 +104,7 @@ def test_agent_submits_then_publishes_and_a_fresh_agent_reuses_the_bundle(tmp_pa
     from inspect_audit._investigate import investigate
 
     repo = git_repo(tmp_path / "repo")
-    target = investigate(str(repo), output_dir=str(tmp_path / "runs"))
+    target = investigate(str(repo), output_dir=str(tmp_path / "runs"), publisher="gl")
     root = Path(target.metadata["investigation_dir"])
     assert not list((root / "work/report").iterdir())
     compose = tmp_path / "box.yaml"
@@ -202,7 +202,9 @@ PYCODE"""
         "distribution",
     }
     before = (bundle / "findings.json").read_bytes()
-    fresh = publish(str(bundle / "findings.json"), output_dir=str(tmp_path / "fresh"))
+    fresh = publish(
+        str(bundle / "findings.json"), output_dir=str(tmp_path / "fresh"), publisher="gl"
+    )
     fresh_root = Path(fresh.metadata["investigation_dir"])
     model = get_model(
         "mockllm/model",
@@ -288,14 +290,17 @@ def test_bundle_rejects_unlisted_files_and_directory_symlinks(tmp_path: Path) ->
         read_bundle(tmp_path)
 
 
-def test_default_publisher_is_an_actual_inspect_skill() -> None:
+@pytest.mark.parametrize(
+    ("publisher", "skill_name"), [("latex", "latex-publishing"), ("gl", "publishing")]
+)
+def test_publishers_are_actual_inspect_skills(publisher: str, skill_name: str) -> None:
     from inspect_ai.tool import read_skills
 
     from inspect_audit._investigate import INVESTIGATION_SKILLS
     from inspect_audit._publishing import load_publisher
 
-    skills = read_skills(load_publisher("gl").skills)
-    assert [skill.name for skill in skills] == ["publishing"]
+    skills = read_skills(load_publisher(publisher).skills)
+    assert [skill.name for skill in skills] == [skill_name]
     assert "writing" not in INVESTIGATION_SKILLS
     assert "eval-report-workflow" not in INVESTIGATION_SKILLS
 

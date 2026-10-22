@@ -5,7 +5,7 @@ description: Establish a benchmark's measurement claim, prioritise hypotheses an
 
 ## Orient
 
-Before planning, read /workspace/analysis/framework/Framework.tex, ScoringCriteria.tex and checks.json.
+Before planning, read /workspace/analysis/framework/criteria.json and checks.json.
 These define the scope, meanings and rating rubric. Plan evidence collection against the
 actual question for each dimension/check; record what was examined, the result and remaining
 gaps. For example, clustering concerns model-score discrimination, not dataset clustering;

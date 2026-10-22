@@ -34,6 +34,7 @@ One Inspect task: a react agent in its own box, launching benchmark and audit jo
 | `_framework.py`               | analytical definitions and rubric, without a separate judgment store                          |
 | `_findings.py`                | editable draft, trusted submitted bundle, manifest and checkpointed phase                     |
 | `_publishing.py`              | native dynamic tool source, publisher packages and standalone `publish` task                  |
+| `publishers/latex.py`         | default pinned GL audit template, generated structure and host/image TeX compilation          |
 | `publishers/gl.py`            | reviewed GL components and static HTML/PDF output                                             |
 
 The supported shared-budget setup routes calls through one capped OpenRouter key (the assigned Hawk user's key on Hawk). Inspect prices individual sample limits; there is no investigation-wide spending ledger or fixed reporting reserve. Resume is Inspect's checkpointing of `/workspace`, `/inputs` and the store.
@@ -72,4 +73,6 @@ Structured YAML accepts `benchmark`, `audit`, `policy` and `execution` sections 
 
 The investigator can edit its draft through Bash/Python. Collected auditor records remain host-authoritative. `submit_findings` validates and freezes the bundle; publishing tools and skills are withheld until this boundary. Afterwards job tools disappear and host launch code refuses new experiments. There is no reopening. The same agent continues, or `inspect_audit/publish` starts a fresh publishing run from the saved bundle. See `docs/findings.md`. Do not introduce a second mutable report findings format into this workflow.
 
-The GL publisher draws through pinned website components. Agent calculations may prepare data from existing evidence; agent-written drawing code is not an input. The optional Playwright dependency and Chromium browser run on the Inspect host. CI exercises actual Docker handoff and HTML/PDF publication without model spend.
+The default latex publisher downloads and verifies the pinned audit_reports template on the host; investigation uses generated analytical registry data. No template copy is vendored. Publisher validation runs before freezing findings. Agent-authored publishing input is prose only; grades, criterion assignments, counts and evidence remain in the frozen findings.
+
+The optional GL web publisher draws through pinned website components. Agent calculations may prepare data from existing evidence; agent-written drawing code is not an input. The optional Playwright dependency and Chromium browser run on the Inspect host. CI exercises actual Docker handoff and HTML/PDF publication without model spend.

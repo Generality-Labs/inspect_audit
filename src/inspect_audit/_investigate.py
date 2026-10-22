@@ -1203,7 +1203,7 @@ def investigate(
         model_configs: Inspect ModelConfig settings keyed by full model name.
             Child models and judge roles use these fixed settings.
         publisher: Publishing package, revealed only after findings submission.
-            Defaults to gl; installed module:factory packages can replace it.
+            Defaults to latex; installed module:factory packages can replace it.
         model_prices: Explicit per-million token prices for models without Inspect
             cost metadata. OpenRouter routes can use their published prices.
     """
@@ -1213,7 +1213,7 @@ def investigate(
     from ._findings import Findings, FindingsState, encoded, submit_findings
     from ._publishing import PhaseTools, load_publisher
 
-    publisher = settings.get("publisher", publisher) or "gl"
+    publisher = settings.get("publisher", publisher) or "latex"
     selected_publisher = load_publisher(str(publisher))
     repo = settings.get("repo", repo)
     logs = settings.get("logs", logs)
@@ -1463,7 +1463,7 @@ def investigate(
             "judge_models": menu.judges,
             "supplied_logs": inv.supplied,
         }
-    tools.append(submit_findings(root, inv, target_task))
+    tools.append(submit_findings(root, inv, target_task, selected_publisher.validate))
     # Common shell/image/budget/blocker tools survive the handoff. Skill and job
     # capabilities are resolved per turn by Inspect, not by a second agent loop.
     common = [

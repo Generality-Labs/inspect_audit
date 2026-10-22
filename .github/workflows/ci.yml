@@ -56,3 +56,29 @@ jobs:
       - name: Findings handoff and GL publication
         if: github.event_name == 'pull_request'
         run: uv run pytest -m publishing tests/test_findings_handoff.py
+
+  latex:
+    name: LaTeX fixture
+    environment: audit-template
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Pinned LaTeX template fixture
+        env:
+          GH_TOKEN: ${{ secrets.AUDIT_REPORTS_TOKEN }}
+          INSPECT_AUDIT_LATEX_IMAGE: inspect-audit:publishing
+        run: |
+          if [ -n "$GH_TOKEN" ]; then
+            sudo apt-get update
+            sudo apt-get install -y poppler-utils
+            docker build -f src/inspect_audit/containers/publishing.Dockerfile -t "$INSPECT_AUDIT_LATEX_IMAGE" src/inspect_audit/containers
+          fi
+          uv run pytest -m latex tests/test_latex_publisher.py

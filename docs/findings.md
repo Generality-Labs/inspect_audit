@@ -10,13 +10,13 @@ The investigator edits `/workspace/findings.json` with Bash or Python. Its JSON 
 - `auditors.checks` snapshots each check's grades and their meanings.
 - `auditors.samples` contains every selected sample/check and its original worker verdicts, including explanations, observations, model, run, eval and epoch.
 - `investigator.summary` states what the investigation established.
-- `investigator.findings` contains `issue`, `explanation`, `sample_ids` and `evidence`. An evidence observation has `observed` and `source`.
+- `investigator.findings` contains `criterion` (framework ID such as C or C.1), `issue`, `explanation`, `sample_ids` and `evidence`. An evidence observation has `observed` and `source`.
 - `investigator.reviews` contains `sample_id`, `check`, `label`, `explanation` and `evidence`. Reviews accompany the original auditor verdicts.
-- `investigator.ratings` holds broader dimension judgments, each with a label, explanation and supporting evidence. Use framework dimension or check IDs as keys.
+- `investigator.ratings` holds broader dimension judgments, each with a label, explanation and supporting evidence. Use framework dimension or check IDs as keys. The default LaTeX publisher also requires `ratings.overall`, with an A-D label, explanation and evidence, before submission.
 - `investigator.limitations` records gaps and blockers.
 - `investigator.artifacts` lists absolute `/workspace/...` or `/inputs/...` paths needed by a fresh publisher: tables, calculation scripts and evidence extracts.
 
-The analytical framework is staged under `/workspace/analysis/framework`; its definitions are reference material. Ratings live only in `findings.json`, with no separate `assessments.json` to maintain. Publication tables and graphs are derived from this submitted data.
+The analytical registry is generated from the pinned upstream framework; no TeX template is packaged. It is staged under `/workspace/analysis/framework`; its definitions are reference material. Ratings live only in `findings.json`, with no separate `assessments.json` to maintain. Publication tables and graphs are derived from this submitted data.
 
 `start_register` establishes the population. Collection refreshes the draft's subject and auditor section without replacing the investigator's edits. The host retains the collection register; it is not a second publication format. Submission refuses edited auditor records or references to samples outside the population.
 
@@ -39,15 +39,32 @@ The manifest records file checksums, artifact mappings, collected jobs and nativ
 
 Inspect checkpoints the submitted data, manifest and phase. A fresh host restores and checks evidence from the checkpointed sandbox; editing the sandbox copy cannot replace the submitted claims. A publisher may revise presentation repeatedly while using the same frozen bundle.
 
+## Default LaTeX publisher
+
+`latex` is the default for investigation and standalone publication. It fetches Laurence's template from `Generality-Labs/audit_reports` at revision `ad7de89658b6794112c2f65847991c7ed41d9e30`, with SHA-256 for every class, style, asset, build configuration and Example source recorded in `publishers/template.json`. Files are checked on every use in the host cache (`INSPECT_AUDIT_TEMPLATE_CACHE`, default `~/.cache/inspect-audit/templates`). There is no vendored template.
+
+The repository is private. Prefill the cache with `python -m inspect_audit.publishers._template`, using host-side `gh auth` or a read-only `GH_TOKEN`. The token is never passed to the agent sandbox. CI can use a read-only `AUDIT_REPORTS_TOKEN` secret in the `audit-template` environment; its PDF integration check reports a skip if no token/cache is supplied.
+
+Install `latexmk`, `texlive-latex-extra`, `texlive-fonts-recommended`, `texlive-fonts-extra` (Carlito) and `texlive-science` on the publishing host, or build the separate image:
+
+```sh
+docker build -f src/inspect_audit/containers/publishing.Dockerfile -t inspect-audit:publishing src/inspect_audit/containers
+export INSPECT_AUDIT_LATEX_IMAGE=inspect-audit:publishing
+```
+
+The agent writes `/workspace/report/prose.json` with `datasheet`, `setup` and `dimensions` (A-I) prose. Code escapes the text and generates the cover, contents, scorecard, datasheet, setup, nine dimension assessments and contribution rows, finding boxes and scoring criteria. Grades, sample counts and evidence references come from frozen findings, never the prose file. Contribution findings receive A.n labels; broader dimension findings receive F-n labels. Unknown metadata and missing assessments are displayed explicitly. Compilation runs on the host or publishing image, with networking disabled in the image. Output preserves the PDF, generated TeX, prose, template provenance and original findings bundle.
+
+The default standalone entry point is `inspect eval inspect_audit/publish -T bundle=/path/to/findings.json --model openrouter/openai/gpt-6-luna`. Choose `publisher=gl` explicitly for the optional web publisher described below, or use an installed `module:factory` plugin.
+
 ## Publish again from a saved bundle
 
-Install the browser dependency on the machine running Inspect, not in the agent's sandbox:
+For the optional GL web publisher, install the browser dependency on the machine running Inspect, not in the agent's sandbox:
 
 ```sh
 uv sync --extra publishing
 uv run python -m playwright install --with-deps chromium
 uv run inspect eval inspect_audit/publish \
-  -T bundle=/path/to/findings.json \
+  -T bundle=/path/to/findings.json -T publisher=gl \
   --model openrouter/anthropic/claude-haiku-4-5
 ```
 

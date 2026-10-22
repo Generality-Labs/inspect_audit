@@ -1,6 +1,5 @@
 """The framework provides reference definitions; findings owns all judgments."""
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -18,6 +17,12 @@ def test_framework_definitions_and_provenance(tmp_path: Path) -> None:
     framework = tmp_path / "framework"
     assert json.loads((framework / "checks.json").read_text()) == definitions
     provenance = json.loads((framework / "provenance.json").read_text())
-    for name, record in provenance["files"].items():
-        assert hashlib.sha256((framework / name).read_bytes()).hexdigest() == record["sha256"]
+    from inspect_audit.publishers._template import PIN
+
+    assert provenance == json.loads(PIN.read_text())
+    assert definitions["A.0"]["name"] == "measurement distortion"
+    criteria = json.loads((framework / "criteria.json").read_text())
+    assert set(criteria["grades"]) == set("ABCD")
+    assert not list(framework.rglob("*.tex"))
+    assert not list(framework.rglob("*.sty"))
     assert sorted(p.name for p in tmp_path.iterdir()) == ["framework"]

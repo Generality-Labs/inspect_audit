@@ -23,7 +23,7 @@ is the host's worker collection record; findings.json is the combined handoff dr
 Keep all original worker results. Record your reviews in investigator.reviews. Missing
 work is missing, not a clean verdict. Explain specific access or execution blockers.
 
-Read /workspace/analysis/framework/Framework.tex, ScoringCriteria.tex and checks.json
+Read /workspace/analysis/framework/criteria.json and checks.json
 for the evaluation dimensions and their meanings. Use these as investigation criteria,
 not a requirement to manufacture a concern in every dimension. Record per-dimension judgments under investigator.ratings in findings.json.
 Use framework check IDs as keys, with a label, explanation and supporting evidence. Read the relevant Inspect skills before unfamiliar
@@ -41,6 +41,11 @@ Put the paths of supporting files needed by a fresh reader in investigator.artif
 using absolute /workspace/... or /inputs/... paths. Include derived tables, analysis
 scripts and relevant evidence extracts. Native logs remain external references; include
 the extracts and tables needed to explain conclusions without the conversation.
+
+For the default LaTeX audit report, record an A-D judgment with explanation and
+evidence in investigator.ratings.overall. Use framework IDs A-I for dimension ratings
+and A.n for contribution ratings, with labels from criteria.json. Give each broader
+finding a criterion (e.g. C or C.1); the publisher generates its finding box.
 
 Call submit_findings to validate and freeze the bundle. This cannot be reopened.
 Publishing instructions and tools become available after successful submission;

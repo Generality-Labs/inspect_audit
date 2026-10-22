@@ -174,7 +174,7 @@ def probe(spec: dict[str, Any], limit: int = 1) -> Task:
     )
     expected = {
         "logs": bool(logs),
-        "benchmark_box": bool(their.sandbox or any(s.sandbox for s in audit.dataset)),
+        "benchmark_box": bool(their.sandbox or any(s.sandbox for s in their.dataset)),
         "grader": bool(their.scorer),
     }
     validity_scorers = (
@@ -187,6 +187,9 @@ def probe(spec: dict[str, Any], limit: int = 1) -> Task:
     return task_with(
         audit,
         model=get_model("ia_probe/driver"),
+        # Inspect truncates tool output for model context. This scripted driver
+        # needs complete grader JSON, including SciCode's long explanations.
+        config=GenerateConfig(max_tool_output=1_000_000),
         name=f"probe/{spec['task']}",
         scorer=[*validity_scorers, compatibility(expected)],
         metadata={**(audit.metadata or {}), "functionality_probe": expected},

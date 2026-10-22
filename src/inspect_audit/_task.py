@@ -247,7 +247,9 @@ def audit_task(
 
     # every setting of theirs that would govern the auditor is replaced, not inherited
     overrides: dict[str, Any] = {
-        "dataset": selected,
+        # Their sample declarations were resolved into the merged task sandbox.
+        # Leaving one here lets Inspect override that merge and lose our service.
+        "dataset": [s.model_copy(update={"sandbox": None}) for s in selected],
         "solver": solver,
         "scorer": [item_scorer(check) for check in scoped],
         "metrics": None,

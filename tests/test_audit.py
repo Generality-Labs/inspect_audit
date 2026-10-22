@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from inspect_ai import eval
+from inspect_ai import eval, task_with
 from inspect_ai.dataset import Sample
 from inspect_ai.event import ModelEvent, ToolEvent
 from inspect_ai.log import read_eval_log
@@ -125,7 +125,8 @@ def _call(tool: str, **arguments: Any) -> ModelOutput:
 
 
 @pytest.mark.docker
-def test_an_audit_runs_inside_the_benchmark(tmp_path: Path) -> None:
+@pytest.mark.parametrize("sample_sandbox", [False, True])
+def test_an_audit_runs_inside_the_benchmark(tmp_path: Path, sample_sandbox: bool) -> None:
     # a real recorded run of the benchmark: sample a answered correctly
     recorded_model = get_model(
         "mockllm/model",
@@ -166,8 +167,17 @@ def test_an_audit_runs_inside_the_benchmark(tmp_path: Path) -> None:
         ),
         _call("submit", environment_issues=[], unresolved=[], improvements=[]),
     ]
+    benchmark = toy.toy()
+    if sample_sandbox:
+        benchmark = task_with(
+            benchmark,
+            dataset=[
+                s.model_copy(update={"sandbox": benchmark.sandbox}) for s in benchmark.dataset
+            ],
+            sandbox=None,
+        )
     audit = audit_task(
-        toy.toy(),
+        benchmark,
         samples=["a"],
         checks=["red-teaming"],
         logs=[recorded.location],

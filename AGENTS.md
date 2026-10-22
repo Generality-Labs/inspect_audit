@@ -52,7 +52,7 @@ Structured YAML accepts `benchmark`, `audit`, `policy` and `execution` sections 
 ## Unsupported, on purpose
 
 - Benchmarks that prepare their environment inside their solver (SWE-Lancer's `chain([setup, react])`): swapping the solver skips the preparation. Not detectable; documented, not handled.
-- Samples with their own sandboxes (per-sample compose files).
+- Selections containing different per-sample sandboxes. One shared sample sandbox is supported; its declaration is merged with the auditor service at task level.
 - `reset` on k8s.
 - The evaluated agent's own tools. The auditor works through `benchmark_bash` and `grade`.
 

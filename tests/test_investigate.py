@@ -249,7 +249,7 @@ def render_probe(root: str) -> Solver:
             [
                 "bash",
                 "-c",
-                "test -f /inputs/source/task.py && test ! -e /inputs/source/.env && test ! -w /inputs/source/task.py",
+                "test -f /inputs/source/task.py && test ! -e /inputs/source/.env && echo sandbox-copy >> /inputs/source/task.py",
             ]
         )
         assert result.success, result.stderr
@@ -295,6 +295,7 @@ def test_real_container_renders_and_exports_report(tmp_path: Path) -> None:
     target = task_with(target, solver=render_probe(str(root)))
     log = eval(target, model="mockllm/model", display="none", log_dir=str(tmp_path / "logs"))[0]
     assert log.status == "success", log.error
+    assert "sandbox-copy" not in (root / "inputs" / "source" / "task.py").read_text()
     published = list((root / "published").glob("*/report.pdf"))
     assert len(published) == 1
     assert published[0].read_bytes().startswith(b"%PDF")
@@ -335,6 +336,7 @@ PY"""
     log = eval(target, model=model, display="none", log_dir=str(tmp_path / "logs"))[0]
     assert log.status == "success", log.error
     root = Path(target.metadata["investigation_dir"])
+    assert "sandbox-copy" not in (root / "inputs" / "source" / "task.py").read_text()
     published = list((root / "published").glob("*/report.pdf"))
     assert len(published) == 1
     assert published[0].read_bytes().startswith(b"%PDF")

@@ -140,17 +140,29 @@ async def run(args: argparse.Namespace) -> int:
     if not api:
         raise ValueError("HAWK_API_URL is required")
     login = HawkLogin(api)
+    # Authenticate once before concurrent submissions. Independent CLI refreshes
+    # otherwise race while updating the same system-keyring token records.
+    access_token = os.environ.get("HAWK_ACCESS_TOKEN") or await login.access_token()
+    auth_lock = asyncio.Lock()
     rows: list[dict[str, Any]] = []
     if args.resume:
         rows = json.loads((output / "summary.json").read_text())
 
     async def client() -> HawkClient:
-        token = os.environ.get("HAWK_ACCESS_TOKEN") or await login.access_token()
+        async with auth_lock:
+            token = os.environ.get("HAWK_ACCESS_TOKEN") or await login.access_token()
         return HawkClient(token=token, api_url=api)
 
     async def case(path: Path) -> None:
         name = path.name.removesuffix(".eval-set.yaml")
         existing = next((r for r in rows if r["case"] == name), None)
+        if (
+            existing is not None
+            and args.retry_blocked
+            and existing["status"] == "blocked"
+            and not existing.get("job")
+        ):
+            existing["status"] = "preparing"
         if existing is not None and existing["status"] in (
             "passed",
             "partial",
@@ -176,6 +188,7 @@ async def run(args: argparse.Namespace) -> int:
             if not row.get("job"):
                 spec = config["tasks"][0]["items"][0]["args"]["spec"]
                 environment = dict(os.environ)
+                environment["HAWK_ACCESS_TOKEN"] = access_token
                 secrets = spec.get("child_secrets", [])
                 if "HF_TOKEN" in secrets and not environment.get("HF_TOKEN"):
                     from huggingface_hub import get_token
@@ -208,6 +221,7 @@ async def run(args: argparse.Namespace) -> int:
                 if match is None:
                     raise RuntimeError("Hawk returned no eval-set ID")
                 row.update(job=match[1], status="submitted", submitted_at=time.time())
+                row.pop("reason", None)
                 print(f"{name}: {row['job']}", flush=True)
                 write_results(output, rows)
             if args.submit_only:
@@ -264,5 +278,10 @@ if __name__ == "__main__":
     parser.add_argument("--submit-only", action="store_true")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--retry-blocked",
+        action="store_true",
+        help="With --resume, retry cases that failed before receiving a job ID",
+    )
     parser.add_argument("--viewer", default="https://viewer.hawk.hawk.generalitylabs.ai")
     raise SystemExit(asyncio.run(run(parser.parse_args())))

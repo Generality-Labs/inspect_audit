@@ -16,7 +16,7 @@ from inspect_ai.model import ChatMessage, ChatMessageAssistant, ModelName, Model
 from inspect_ai.scorer import Scorer, Target
 from inspect_ai.solver import TaskState
 from inspect_ai.tool import Tool, ToolError, tool
-from inspect_ai.util import LimitExceededError, subtask
+from inspect_ai.util import LimitExceededError, registry_info, subtask
 
 from ._logs import LogIndex
 
@@ -120,7 +120,26 @@ def grade_tool(
                 sample_uuid=recorded.uuid if recorded is not None else None,
             )
             if graded.choices:
-                chosen = _letters(output.completion, len(graded.choices))
+                if recorded is not None and not answer:
+                    # Logs preserve choice text, not the solver's `correct` flags.
+                    # Reconstruct those flags from this scorer's extracted answer;
+                    # the full recorded completion is reasoning, not a bare letter.
+                    names = {registry_info(s).name.split("/")[-1] for s in scorers}
+                    selections = {
+                        tuple(_letters(score.answer, len(graded.choices)))
+                        if score.answer.strip()
+                        else ()
+                        for name, score in (recorded.scores or {}).items()
+                        if name.split("/")[-1] in names and score.answer is not None
+                    }
+                    if len(selections) != 1:
+                        raise ToolError(
+                            "Cannot reconstruct a unique recorded choice selection from the "
+                            "scorer's extracted answers; supply an explicit answer letter."
+                        )
+                    chosen = list(selections.pop())
+                else:
+                    chosen = _letters(output.completion, len(graded.choices))
                 for i in range(len(graded.choices)):
                     graded.choices.mark_choice(i, i in chosen)
 

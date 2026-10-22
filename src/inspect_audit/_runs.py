@@ -180,10 +180,15 @@ class HawkRuns:
     """Jobs on Hawk, through `hawk.client.HawkClient`."""
 
     def __init__(
-        self, api_url: str, *, credential_mode: Literal["restricted", "user"] = "user"
+        self,
+        api_url: str,
+        *,
+        credential_mode: Literal["restricted", "user"] = "user",
+        secrets: dict[str, str] | None = None,
     ) -> None:
         self.login = HawkLogin(api_url)
         self.credential_mode = credential_mode
+        self.secrets = dict(secrets or {})
         if credential_mode == "restricted" and not hawk_supports_restricted():
             # refused now, not at the first child job an hour into an investigation
             raise RuntimeError(
@@ -216,10 +221,15 @@ class HawkRuns:
             if restricted:
                 # No fallback: old clients/deployments must refuse this mode.
                 options: dict[str, Any] = {"credential_mode": "restricted"}
+                if self.secrets:
+                    options["secrets"] = self.secrets
                 created = await client.create_eval_set(config, **options)
             else:
                 refresh_token = await self.login.refresh_token()
-                created = await client.create_eval_set(config, refresh_token=refresh_token)
+                options = {"refresh_token": refresh_token}
+                if self.secrets:
+                    options["secrets"] = self.secrets
+                created = await client.create_eval_set(config, **options)
         return created["eval_set_id"]
 
     def address(self, run_id: str) -> str:

@@ -97,6 +97,7 @@ def investigation(
         box="k8s",
         runs="hawk",
         credential_mode="user",
+        child_secrets=spec.get("child_secrets", []),
         hawk_api_url="https://api.hawk.hawk.generalitylabs.ai",
         auditor_image=AUDITOR_IMAGE,
         investigator_image=INVESTIGATOR_IMAGE,

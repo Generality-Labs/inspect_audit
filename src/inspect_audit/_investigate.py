@@ -1243,6 +1243,7 @@ def investigate(
     checks: list[str] | None = None,
     source: str | None = None,
     credential_mode: str | None = None,
+    child_secrets: list[str] | None = None,
 ) -> Task:
     """Investigate a benchmark's source and logs, and publish a GL LaTeX report.
 
@@ -1299,6 +1300,9 @@ def investigate(
         source: Optional fixed benchmark source module for audit jobs.
         credential_mode: "restricted" or "user" for Hawk children. Structured
             execution configuration defaults to restricted; legacy calls use user.
+        child_secrets: Environment variable names to pass through Hawk's secrets API
+            to child runners, e.g. ["HF_TOKEN"] for gated datasets. Names are frozen
+            in the launch configuration; values stay out of policy and workspace files.
     """
     # the file is read before anything else is decided: an argument is "given" only
     # when it is not None, so a value equal to a default is still an override
@@ -1334,6 +1338,16 @@ def investigate(
     required_coverage = settings.get("required_coverage", required_coverage)
     policy = settings.get("policy", policy)
     permissions = Permissions.model_validate(policy or {})
+    child_secrets = list(settings.get("child_secrets", child_secrets) or [])
+    if child_secrets and runs != "hawk":
+        raise ValueError("child_secrets require runs='hawk'")
+    for name in child_secrets:
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            raise ValueError("child_secrets must contain environment variable names")
+        if not os.environ.get(name):
+            raise ValueError(
+                f"declared child secret {name!r} is missing from the runner environment"
+            )
     task_args = json.loads(canonical(settings.get("task_args", task_args) or {}))
     audit_samples = settings.get("audit_samples", audit_samples)
     checks = settings.get("checks", checks)
@@ -1489,7 +1503,11 @@ def investigate(
         inv = Investigation(
             root=root,
             # local runs outside the per-construction folder: a resumed run must find them
-            runs=HawkRuns(hawk_api_url or "", credential_mode=launch_policy.credential_mode)
+            runs=HawkRuns(
+                hawk_api_url or "",
+                credential_mode=launch_policy.credential_mode,
+                secrets={name: os.environ[name] for name in child_secrets},
+            )
             if runs == "hawk"
             else LocalRuns(Path(output_dir).expanduser().resolve() / "runs"),
             where=runs,

@@ -1,7 +1,7 @@
 name: ia-api-free-core-bench-20261021
 packages:
 - inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
-- inspect-evals @ git+https://github.com/UKGovernmentBEIS/inspect_evals.git@17b078d74c92d83dc0d14c4d3922e53509ba73eb
+- inspect-evals @ git+https://github.com/NelsonG-C/inspect_evals.git@17b078d74c92d83dc0d14c4d3922e53509ba73eb
 tasks:
 - package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility
   name: ia_compatibility
@@ -9,13 +9,13 @@ tasks:
   - name: probe
     args:
       spec:
-        repo: https://github.com/UKGovernmentBEIS/inspect_evals
+        repo: https://github.com/NelsonG-C/inspect_evals
         revision: 17b078d74c92d83dc0d14c4d3922e53509ba73eb
         task: inspect_evals/core_bench
         source: inspect_evals.core_bench.core_bench
         paths:
         - src/inspect_evals/core_bench
-        package: inspect-evals @ git+https://github.com/UKGovernmentBEIS/inspect_evals.git@17b078d74c92d83dc0d14c4d3922e53509ba73eb
+        package: inspect-evals @ git+https://github.com/NelsonG-C/inspect_evals.git@17b078d74c92d83dc0d14c4d3922e53509ba73eb
         task_args:
           difficulty: medium
           field: all

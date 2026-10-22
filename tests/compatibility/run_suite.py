@@ -153,10 +153,12 @@ async def run(args: argparse.Namespace) -> int:
     if args.resume:
         rows = json.loads((output / "summary.json").read_text())
 
-    async def client() -> HawkClient:
+    async def current_token() -> str:
         async with auth_lock:
-            token = os.environ.get("HAWK_ACCESS_TOKEN") or await login.access_token()
-        return HawkClient(token=token, api_url=api)
+            return os.environ.get("HAWK_ACCESS_TOKEN") or await login.access_token()
+
+    async def client() -> HawkClient:
+        return HawkClient(token=await current_token(), api_url=api)
 
     async def case(path: Path) -> None:
         name = path.name.removesuffix(".eval-set.yaml")
@@ -246,6 +248,7 @@ async def run(args: argparse.Namespace) -> int:
             downloaded = await asyncio.to_thread(
                 subprocess.run,
                 [login.binary, "download", row["job"], "-o", str(directory / "logs"), "--force"],
+                env={**os.environ, "HAWK_ACCESS_TOKEN": await current_token()},
                 capture_output=True,
                 text=True,
                 timeout=180,

@@ -20,7 +20,8 @@ tasks:
           difficulty: medium
           field: all
           language: all
-          capsule_ids: null
+          capsule_ids:
+          - capsule-7156696
           exclude_capsule_ids: null
           limit: 0
           filter_out_gpu: false
@@ -35,11 +36,10 @@ tasks:
           split: train
         samples:
         - capsule-7156696
-        - capsule-4884085
-        logs:
-        - hawk:imported-corebench-medium-1c10g1lsoeva2wfi/2026-04-01T05-00-48_00-00_core-bench_SYowSwEk4NpLf7tbB4RmXr.eval
+        logs: []
         judges: {}
-        selection: seeded random selection from the supplied recorded population
+        selection: One explicitly filtered training capsule; historical all-capsule
+          logs are not compatible with these task arguments.
         child_secrets:
         - HF_TOKEN
         auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa

@@ -174,8 +174,8 @@ def argument_problems(args: Any, allowed: list[str], where: str = "task_args") -
             here = f"{where}.{key}"
             if PLACEMENT_ARG.search(str(key)):
                 problems.append(f"{here}: jobs may not set where code runs or what it reads")
-            elif MODEL_ARG.search(str(key)) and isinstance(value, str):
-                if value not in allowed or "/" not in value:
+            elif MODEL_ARG.search(str(key)) and isinstance(value, str) and "/" in value:
+                if value not in allowed:
                     problems.append(f"{here}: {value!r} is not an allowed judge model")
             else:
                 problems += argument_problems(value, allowed, here)
@@ -282,9 +282,8 @@ class InvestigationAuthorizer:
             p.models.judges,
             "judges",
         )
-        # The operator approved these exact arguments in the frozen policy above.
-        # Argument names are not permissions: e.g. HLE's judge_prompt="original"
-        # selects a prompt, not a model. Models supplied through roles remain checked.
+        if problems := argument_problems(benchmark_args, list(p.models.judges)):
+            raise ToolError("; ".join(problems))
         # No caller-owned mutable lists/dicts cross the authorization boundary.
         approved = deepcopy(job)
         configs = {

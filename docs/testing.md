@@ -95,4 +95,4 @@ The latest results span several pinned IA commits; they are debugging evidence, 
 4. Repeat the complete external suite at one candidate commit before treating it as a release gate.
 5. Run paid investigator pilots and inspect their transcripts separately from this execution gate. Then measure recall against human labels.
 
-Checkpoint resume remains separate ([#55](https://github.com/Generality-Labs/inspect_audit/issues/55)). The newer findings-store branch and report redesign are not part of these compatibility changes.
+Checkpoint resume remains separate ([#55](https://github.com/Generality-Labs/inspect_audit/issues/55)). The standalone deterministic findings package and its CLI have been removed. The investigation register remains in the core package. Findings/report redesign is the next phase after execution tests.

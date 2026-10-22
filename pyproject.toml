@@ -14,9 +14,7 @@ authors = [{ name = "James Mann", email = "james.mann@generality.org" }]
 requires-python = ">=3.11"
 dependencies = [
     "inspect-ai>=0.3.259",
-    "pandas>=2.0.0",
     "pillow>=10.0",
-    "pyarrow>=10.0.1",
     "openai>=1.0",
     # k8s_sandbox passes newline-terminated Helm output to Version.parse;
     # semver 3.1 rejects that output before any audit sample can start.
@@ -27,7 +25,6 @@ dependencies = [
 inspect_audit = "inspect_audit._registry"
 
 [project.scripts]
-inspect-audit-findings = "inspect_audit.findings.cli:main"
 inspect-audit-regrade = "inspect_audit._regrade:main"
 inspect-audit-launch = "inspect_audit.launcher.__main__:main"
 
@@ -48,7 +45,6 @@ dev = [
     "pytest-xdist",
     "basedpyright>=1.39",
     "pre-commit>=4.0.0",
-    "pandas-stubs",
     "types-PyYAML",
     "hawk[cli]>=3.4,<4; python_version >= '3.13'",
     "inspect-k8s-sandbox>=0.13",

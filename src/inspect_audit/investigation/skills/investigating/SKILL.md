@@ -5,7 +5,7 @@ description: Establish a benchmark's measurement claim, prioritise hypotheses an
 
 ## Orient
 
-Before planning, read report/framework/Framework.tex, ScoringCriteria.tex and checks.json.
+Before planning, read /workspace/analysis/framework/Framework.tex, ScoringCriteria.tex and checks.json.
 These define the scope, meanings and rating rubric. Plan evidence collection against the
 actual question for each dimension/check; record what was examined, the result and remaining
 gaps. For example, clustering concerns model-score discrimination, not dataset clustering;
@@ -81,23 +81,23 @@ prevalence, regardless of sample count. Distinguish measured score effects from
 hypothesised consequences. Do not subtract headline scores from incomparable runs.
 Check dataset identity before joining by sample ID, especially across revisions.
 
-The findings register follows report/findings.schema.json. Supported/qualified claims
+The findings draft follows /workspace/findings.schema.json. Supported/qualified claims
 need evidence; source inspection, historical observations, experiments and audit
 limitations have separate origins. Use the journal for actions and corrections, and
 the register for what is currently supported. Save scripts and tables under
-report/evidence. Read writing before drafting; presentation rules live there.
+/workspace/analysis/evidence. Submit findings when the investigation is ready; publishing instructions appear afterwards.
 
 ## Focused references
 
 Load eval-validity-review for a measurement checklist, investigate-dataset for dataset
 inspection, and security-audit-eval when the benchmark executes untrusted code. Use
 them for relevant questions; do not adopt their alternative report formats. The
-writing skill and supplied report schema define publication.
+findings schema defines the handoff; publication is a subsequent phase.
 
 ## Comprehensive assessment
 
 Use the framework's dimensions and checks as an investigation plan, not headings to
-fill after item audits. Maintain report/assessments.json as work progresses. For each
+fill after item audits. Maintain /workspace/analysis/assessments.json as work progresses. For each
 outstanding check choose an informative next step or record a concrete scope/access
 blocker. Specialist review can strengthen analysis; its absence is not a reason to skip
 an assessment that source, papers, datasets and logs can support.
@@ -114,4 +114,4 @@ Review all unresolved assessment units, including those inside already-defective
 A complete label table is saved progress, not substantive completion. Reallocate available
 worker funding toward useful follow-up rather than treating a worker cap as a final answer.
 Before publication compare remaining investigations with their likely value and cost,
-while preserving publication allowance. Do not spend merely to exhaust the budget.
+including the cost of subsequent publication. Do not spend merely to exhaust the budget.

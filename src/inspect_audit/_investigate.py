@@ -56,7 +56,6 @@ from ._prices import prices_for_models, register_prices
 from ._report import (
     InvestigationRecord,
     InvestigationState,
-    check_report,
     investigation_outcome,
     operator_turn,
     report_blocker,
@@ -90,13 +89,11 @@ DEFAULT_INVESTIGATOR_IMAGE = (
 
 INVESTIGATION_SKILLS = (
     "investigating",
-    "writing",
     "running-jobs",
     "eval-validity-review",
     "investigate-dataset",
     "security-audit-eval",
     "check-trajectories-workflow",
-    "eval-report-workflow",
     "read-eval-logs",
 )
 # compact the investigator's context once it passes this many tokens
@@ -681,6 +678,9 @@ class Investigation:
 
     async def launch(self, job: Job, kind: str, note: str) -> str:
         async with self.launch_lock:
+            from ._findings import require_investigation
+
+            require_investigation()
             return await self._launch(job, kind, note)
 
     async def _launch(self, job: Job, kind: str, note: str) -> str:
@@ -890,6 +890,9 @@ def jobs(inv: Investigation) -> Tool:
             label: Which job, for every action but "list".
             wait_minutes: How long "wait" may block; null means twenty.
         """
+        from ._findings import require_investigation
+
+        require_investigation()
         if action == "list":
             rows = inv.record().jobs
             return (
@@ -930,7 +933,14 @@ def jobs(inv: Investigation) -> Tool:
             host = inv.root / "inputs" / "jobs" / label
             files = await inv.runs.logs(run_id, host)
             if not files:
-                raise ToolError(f"{label} ({status}) wrote no logs; jobs(action='log') shows why")
+                record = inv.record()
+                record.jobs = [
+                    {**j, "collection_error": f"{status}: no logs"} if j["label"] == label else j
+                    for j in record.jobs
+                ]
+                raise ToolError(
+                    f"{label} ({status}) wrote no logs; the failure was recorded. jobs(action='log') shows why"
+                )
             if files[0].parent != host:  # a local run's logs are already on this machine
                 host.mkdir(parents=True, exist_ok=True)
                 files = [Path(shutil.copy2(f, host / f.name)) for f in files]
@@ -977,6 +987,14 @@ def start_register(task: str | None, policy: LaunchPolicy | None = None) -> Tool
             ensure_policy(policy, store_as(PolicyStore), require_existing=True)
             if canonical(args) != policy.task_args_json or set(checks) - set(policy.checks):
                 raise ToolError("register arguments and checks must match the launch policy")
+        from ._findings import FindingsState
+
+        if (
+            policy is not None
+            and store_as(FindingsState).enabled
+            and set(checks) != set(policy.checks)
+        ):
+            raise ToolError("Start the register with all checks declared by the launch policy")
         try:
             skills = audit_items(checks)
         except ValueError as ex:
@@ -996,6 +1014,7 @@ def start_register(task: str | None, policy: LaunchPolicy | None = None) -> Tool
             dataset = [s for s in dataset if str(s.id) in policy.samples]
         register = Register(
             subject={
+                **load().subject,
                 "task": task,
                 "task_args": args,
                 "dataset": getattr(their.dataset, "name", None),
@@ -1005,9 +1024,14 @@ def start_register(task: str | None, policy: LaunchPolicy | None = None) -> Tool
             samples={str(s.id): {c.name: [] for c in skills} for s in dataset},
         )
         await save(register)
+        snapshot = (
+            "/workspace/findings.json"
+            if store_as(FindingsState).enabled
+            else "/workspace/register.json"
+        )
         return (
             f"register started: {len(dataset)} items x {len(skills)} checks, at "
-            "/workspace/register.json. register(view='summary') shows progress."
+            f"{snapshot}. register(view='summary') shows progress."
         )
 
     return execute
@@ -1036,7 +1060,14 @@ def register_view() -> Tool:
         rows = select(current, view, skills, check)  # type: ignore[arg-type]
         text = json.dumps(rows, indent=1)
         if len(text) > 12_000:
-            text = text[:12_000] + "\n... (read /workspace/register.json for the rest)"
+            from ._findings import FindingsState
+
+            path = (
+                "/workspace/findings.json"
+                if store_as(FindingsState).enabled
+                else "/workspace/register.json"
+            )
+            text = text[:12_000] + f"\n... (read {path} for the rest)"
         return text
 
     return execute
@@ -1184,7 +1215,7 @@ async def _continue(state: AgentState, interactive: bool) -> bool | str:
         return (
             True
             if state.output.message.tool_calls
-            else "Continue the investigation, or write and publish a report explaining the evidence and any limitations."
+            else "Continue the current phase: investigate and submit findings, or use the publishing skill after submission."
         )
     if not interactive:
         return False
@@ -1229,8 +1260,9 @@ def investigate(
     benchmark_environment: dict[str, str] | None = None,
     model_configs: dict[str, dict[str, Any]] | None = None,
     model_prices: dict[str, dict[str, float]] | None = None,
+    publisher: str | None = None,
 ) -> Task:
-    """Investigate a benchmark's source and logs, and publish a GL LaTeX report.
+    """Investigate a benchmark, submit findings, then use the selected publisher.
 
     Runs wherever Inspect runs it. The agent's box (`box`) and where its jobs run
     (`runs`) are declared, never inferred. Every model call bills to the key it is
@@ -1270,7 +1302,7 @@ def investigate(
         subject_models: Full Inspect model names a benchmark job may evaluate.
         judge_models: Full Inspect model names the benchmark's own judges may be. Declare the
             judges the audited logs record; none by default.
-        investigator_image: Published investigator image, including LaTeX, for Hawk.
+        investigator_image: Published investigator sandbox image for Hawk.
         artifact_dir: Where the published report is also saved, under this sample:
             on Hawk, the job's S3 artifacts directory. None keeps it on the host only.
         instructions: Operator instructions and scope, separate from benchmark background.
@@ -1294,12 +1326,19 @@ def investigate(
             credentials belong in child_secrets instead.
         model_configs: Inspect ModelConfig settings keyed by full model name.
             Child models and judge roles use these fixed settings.
+        publisher: Publishing package, revealed only after findings submission.
+            Defaults to gl; installed module:factory packages can replace it.
         model_prices: Explicit per-million token prices for models without Inspect
             cost metadata. OpenRouter routes can use their published prices.
     """
     # the file is read before anything else is decided: an argument is "given" only
     # when it is not None, so a value equal to a default is still an override
     settings = _investigation_file(config, locals()) if config else {}
+    from ._findings import Findings, FindingsState, encoded, submit_findings
+    from ._publishing import PhaseTools, load_publisher
+
+    publisher = settings.get("publisher", publisher) or "gl"
+    selected_publisher = load_publisher(str(publisher))
     repo = settings.get("repo", repo)
     logs = settings.get("logs", logs)
     paper = settings.get("paper", paper)
@@ -1440,6 +1479,22 @@ def investigate(
         output_dir,
     )
 
+    analysis = root / "work/analysis"
+    analysis.mkdir()
+    shutil.copytree(
+        root / "work/report/framework",
+        analysis / "framework",
+        ignore=shutil.ignore_patterns("examples"),
+    )
+    from ._assessment import prepare_assessments
+
+    prepare_assessments(analysis)
+    shutil.rmtree(root / "work/report")
+    (root / "work/report").mkdir()
+    (root / "work/findings.json").write_bytes(encoded(Findings().model_dump(mode="json")))
+    (root / "work/findings.schema.json").write_text(
+        json.dumps(Findings.model_json_schema(), indent=2)
+    )
     seed_path = root / "inputs" / "seed.json"
     seed = json.loads(seed_path.read_text())
     if runs:
@@ -1506,17 +1561,13 @@ def investigate(
             openrouter=box == "docker" or runs == "local",
         ),
         view_image(),
-        check_report(str(root)),
-        publish_report(str(root), required_coverage),
         report_blocker(),
         start_register(target_task, launch_policy),
         register_view(),
-        review(),
-        finding(),
-        rate(),
     ]
     if required_coverage is not None:
         seed["required_coverage"] = float(required_coverage)
+    inv = None
     if runs:
         if task_package is None or audit_package is None or target_task is None:
             raise RuntimeError("child-job packages and task were not resolved")
@@ -1548,6 +1599,15 @@ def investigate(
             "judge_models": menu.judges,
             "supplied_logs": inv.supplied,
         }
+    tools.append(submit_findings(root, inv, target_task))
+    # Common shell/image/budget/blocker tools survive the handoff. Skill and job
+    # capabilities are resolved per turn by Inspect, not by a second agent loop.
+    common = [
+        t for t in tools if ToolDef(t).name in ("bash", "view_image", "budget", "report_blocker")
+    ]
+    phase_tools = PhaseTools(
+        root, common, [t for t in tools if t not in common], selected_publisher
+    )
     seed_path.write_text(json.dumps(seed, indent=2))
 
     from ._investigation_workspace import configure, stage_inputs
@@ -1565,6 +1625,28 @@ def investigate(
         ensure_policy(launch_policy, store_as(PolicyStore), require_existing=True)
         return await _continue(state, interactive)
 
+    from inspect_ai.solver import Generate, Solver, solver
+
+    @solver
+    def begin_findings() -> Solver:
+        async def solve(state: TaskState, generate: Generate) -> TaskState:
+            state.store_as(FindingsState).enabled = True
+            state.store_as(FindingsState).required_coverage = required_coverage
+            from ._register import Register, save
+
+            await save(
+                Register(
+                    subject={
+                        "repo": seed.get("repo"),
+                        "revision": seed.get("revision"),
+                        "task": target_task,
+                    }
+                )
+            )
+            return state
+
+        return solve
+
     async def on_resume(
         state: TaskState, attempt: Literal["initial", "resume", "resume_for_scoring"]
     ) -> None:
@@ -1572,7 +1654,7 @@ def investigate(
         ensure_model(launch_policy, state.store_as(PolicyStore), str(state.model))
 
     return Task(
-        setup=[bind_policy(launch_policy), stage_inputs(root)],
+        setup=[bind_policy(launch_policy), stage_inputs(root), begin_findings()],
         on_resume=on_resume,
         dataset=[
             Sample(
@@ -1592,7 +1674,7 @@ def investigate(
             name="investigator",
             prompt=prompts.INVESTIGATE,
             submit=False,
-            tools=tools,
+            tools=[phase_tools],
             # an absolute threshold: 0.8 of a 1.05M-token context fired at ~840k,
             # long after every turn had become expensive
             compaction=CompactionSummary(threshold=COMPACTION_TOKENS),

@@ -80,9 +80,15 @@ def load() -> Register:
 
 async def save(register: Register) -> None:
     """Keep the store's copy, and mirror it into the box for the agent to read."""
+    from ._findings import FindingsState, require_investigation, sync_draft
+
+    if store_as(FindingsState).enabled:
+        require_investigation()
+        await sync_draft(register)
     data = register.model_dump(mode="json", exclude_none=True)
     store_as(RegisterStore).data = data  # assigned, not mutated: the store sees it
-    await sandbox().write_file(BOX_PATH, json.dumps(data, indent=1))
+    if not store_as(FindingsState).enabled:
+        await sandbox().write_file(BOX_PATH, json.dumps(data, indent=1))
 
 
 def started(register: Register) -> bool:

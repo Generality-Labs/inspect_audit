@@ -43,6 +43,8 @@ jobs:
         run: |
           uv sync --locked
           uv pip install --no-deps -e tests/compatibility
+      - name: Install publishing browser
+        run: uv run python -m playwright install --with-deps chromium
       - name: PR container and child-job lifecycle gate
         timeout-minutes: 15
         if: github.event_name == 'pull_request'
@@ -50,3 +52,7 @@ jobs:
       - name: Pytest (docker)
         if: github.event_name != 'pull_request'
         run: uv run pytest -m docker
+
+      - name: Findings handoff and GL publication
+        if: github.event_name == 'pull_request'
+        run: uv run pytest -m publishing tests/test_findings_handoff.py

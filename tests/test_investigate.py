@@ -158,8 +158,10 @@ def test_log_inputs_share_storage_without_a_second_copy(tmp_path: Path) -> None:
     )
     root = Path(target.metadata["investigation_dir"])
     assert (root / "inputs/logs/0/source.eval").stat().st_ino == source.stat().st_ino
-    assert not (root / "work/findings.json").exists()
-    assert (root / "work/report/findings.json").is_file()
+    assert (root / "work/findings.json").is_file()
+    assert not (root / "work/report/findings.json").exists()
+    assert not (root / "work/report/report.tex").exists()
+    assert (root / "work/analysis/framework/checks.json").is_file()
 
 
 def git_repo(path: Path) -> Path:
@@ -198,8 +200,8 @@ def test_snapshot_excludes_untracked_secrets_and_retains_publications(
     seed = json.loads((root / "inputs/seed.json").read_text())
     assert len(seed["revision"]) == 40
     report = root / "work/report"
-    (report / "report.pdf").write_text("first version")
     _declare_fixture_assessments(root)
+    (report / "report.pdf").write_text("first version")
     first = save_publication(root)
     (report / "report.pdf").write_text("second version")
     second = save_publication(root)
@@ -292,6 +294,7 @@ def test_real_container_renders_and_exports_report(tmp_path: Path) -> None:
         interactive=False,
     )
     root = Path(target.metadata["investigation_dir"])
+    _declare_fixture_assessments(root)
     target = task_with(target, solver=render_probe(str(root)))
     log = eval(target, model="mockllm/model", display="none", log_dir=str(tmp_path / "logs"))[0]
     assert log.status == "success", log.error
@@ -299,53 +302,6 @@ def test_real_container_renders_and_exports_report(tmp_path: Path) -> None:
     published = list((root / "published").glob("*/report.pdf"))
     assert len(published) == 1
     assert published[0].read_bytes().startswith(b"%PDF")
-
-
-@pytest.mark.docker
-def test_agent_reads_logs_and_publishes_before_batch_exit(tmp_path: Path) -> None:
-    set_model_info(
-        "mockllm/model",
-        ModelInfo(cost=ModelCost(input=0, output=0, input_cache_read=0, input_cache_write=0)),
-    )
-    source_log = run_fixture_eval(str(tmp_path / "source_logs"))
-    target = investigate(
-        str(git_repo(tmp_path / "repo")),
-        logs=[source_log],
-        output_dir=str(tmp_path / "runs"),
-        interactive=False,
-    )
-    _declare_fixture_assessments(Path(target.metadata["investigation_dir"]))
-    script = """python - <<'PY'
-import json
-from pathlib import Path
-from inspect_ai.log import read_eval_log
-seed = json.loads(Path('/inputs/seed.json').read_text())
-log = read_eval_log(seed['logs'][0]['staged'])
-assert len(log.samples) == 3
-assert len(log.samples) == 3
-PY"""
-    model = get_model(
-        "mockllm/model",
-        custom_outputs=[
-            ModelOutput.for_tool_call("mockllm/model", "skill", {"command": "investigating"}),
-            ModelOutput.for_tool_call("mockllm/model", "bash", {"command": script}),
-            ModelOutput.for_tool_call("mockllm/model", "budget", {}),
-            ModelOutput.for_tool_call("mockllm/model", "publish_report", {}),
-        ],
-    )
-    log = eval(target, model=model, display="none", log_dir=str(tmp_path / "logs"))[0]
-    assert log.status == "success", log.error
-    root = Path(target.metadata["investigation_dir"])
-    assert "sandbox-copy" not in (root / "inputs" / "source" / "task.py").read_text()
-    published = list((root / "published").glob("*/report.pdf"))
-    assert len(published) == 1
-    assert published[0].read_bytes().startswith(b"%PDF")
-    assert log.samples and log.samples[0].store
-    from inspect_ai.model import ChatMessageTool
-
-    assert not [
-        m.error for m in log.samples[0].messages if isinstance(m, ChatMessageTool) and m.error
-    ]
 
 
 def test_the_same_input_cited_twice_publishes_once(tmp_path: Path) -> None:
@@ -715,6 +671,12 @@ def _declare_fixture_assessments(root: Path) -> None:
     from inspect_audit._assessment import framework_checks
 
     report = root / "work/report"
+    if not (report / "framework").exists():
+        import shutil
+
+        from inspect_audit._investigate import ASSETS
+
+        shutil.copytree(ASSETS / "report", report, dirs_exist_ok=True)
     rows = [
         {
             "id": key,

@@ -39,6 +39,7 @@ runner = [
     "hawk[client]>=3.4,<4; python_version >= '3.13'",
     "aiofiles; python_version >= '3.13'",
 ]
+publishing = ["playwright>=1.49"]
 k8s = [
     "inspect-k8s-sandbox>=0.13",
 ]
@@ -46,6 +47,7 @@ k8s = [
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
+    "playwright>=1.49",
     "pytest-cov>=7.0.0",
     "pytest-xdist",
     "basedpyright>=1.39",
@@ -133,7 +135,7 @@ exclude = ["src/inspect_audit/skills", "**/__pycache__"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests", "tests/compatibility/src"]
-markers = ["docker: needs a running Docker daemon"]
+markers = ["docker: needs a running Docker daemon", "publishing: needs the Playwright Chromium browser and downloads pinned GL components"]
 # The docker suite is deselected by default; `pytest -m docker` runs it alone.
 addopts = "-rA --durations=10 --color=yes --cov=src --cov-report=term-missing -m 'not docker'"
 

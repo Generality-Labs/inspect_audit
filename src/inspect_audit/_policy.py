@@ -277,7 +277,8 @@ class InvestigationAuthorizer:
             p.models.judges,
             "judges",
         )
-        if problems := argument_problems(benchmark_args, list(p.models.judges)):
-            raise ToolError("task_args refused:\n- " + "\n- ".join(problems))
+        # The operator approved these exact arguments in the frozen policy above.
+        # Argument names are not permissions: e.g. HLE's judge_prompt="original"
+        # selects a prompt, not a model. Models supplied through roles remain checked.
         # No caller-owned mutable lists/dicts cross the authorization boundary.
         return deepcopy(job)

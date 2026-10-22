@@ -2,6 +2,7 @@ name: ia-api-free-harbor-20261021
 packages:
 - inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
 - inspect-harbor @ git+https://github.com/meridianlabs-ai/inspect_harbor@e3a0d9bc738e77739792ca06ad7bbb1d845c8da6
+- inspect-ai==0.3.264
 tasks:
 - package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility
   name: ia_compatibility

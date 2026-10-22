@@ -30,12 +30,16 @@ tasks:
         - hle_b16eb337
         - hle_76827256
         logs: []
-        judges:
-          grader: openrouter/anthropic/claude-haiku-4.5
+        judges: {}
         selection: seeded random selection from the supplied recorded population
         child_secrets:
         - HF_TOKEN
         auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+        mock_judges:
+          grader:
+            content: '{"extracted_final_answer": "MOCK ANSWER", "reasoning": "Scripted
+              mock judgment; no answer verification.", "correct": "no", "confidence":
+              100}'
       limit: 1
 models:
 - package: openai

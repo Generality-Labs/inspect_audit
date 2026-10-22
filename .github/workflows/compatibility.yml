@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       cases:
-        description: Comma-separated case names; empty runs all ten
+        description: Comma-separated case names; empty runs every configured case
         type: string
         default: ""
   schedule:

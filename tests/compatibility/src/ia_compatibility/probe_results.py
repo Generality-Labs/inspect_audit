@@ -1,6 +1,7 @@
 """Operational outcomes from actual probe tool results, separate from validity."""
 
 import json
+import math
 from collections.abc import Sequence
 from typing import Any
 
@@ -38,6 +39,19 @@ def outcomes(messages: Sequence[ChatMessage], expected: dict[str, bool]) -> dict
                     scores = json.loads(result.text)["scores"]
                     if not scores:
                         raise ValueError("Grader returned no scores")
+
+                    def invalid(value: Any) -> bool:
+                        if isinstance(value, dict):
+                            return any(invalid(v) for v in value.values())
+                        return isinstance(value, float) and not math.isfinite(value)
+
+                    if any(
+                        s.get("reason") == "grader_failed" or invalid(s.get("value"))
+                        for s in scores
+                    ):
+                        raise ValueError("Grader returned an unscored or failed judgment")
+                    if expected.get("mock_judge"):
+                        stages[stage] = "passed_mock"
                 except (ValueError, KeyError, TypeError) as ex:
                     stages[stage] = "failed"
                     errors[stage] = str(ex)

@@ -6,7 +6,7 @@
 2. **Real containers:** `uv pip install --no-deps -e tests/compatibility`, then `uv run --no-sync pytest -m docker`. The PR gate runs the benchmark setup/grading/reset test and the child-job lifecycle test. Main and manual CI run the full Docker suite.
 3. **External benchmark compatibility:** the API-free suite below runs real benchmark packages and environments on Hawk. It tests execution, not whether an agent's scientific conclusions are correct.
 
-The ordinary suite still uses `mockllm` where scripted model outputs are useful. The external suite uses a registered `ModelAPI` driver that emits deterministic tool calls. Its judge model raises instead of fabricating answers. Hawk requires a model declaration and overrides `Task.model`, so the driver is bound directly to the agent. Public price metadata is fetched for the declaration; no completion is requested from it. An observed external model call fails the compatibility result.
+The ordinary suite still uses `mockllm` where scripted model outputs are useful. The external suite uses a registered `ModelAPI` driver that emits deterministic tool calls. Declared `mock_judges` use Inspect’s `mockllm` provider with explicit response fixtures. Other judge calls raise. Hawk requires a model declaration and overrides `Task.model`, so the driver is bound directly to the agent. Public price metadata is fetched for the declaration; no completion is requested from it. An observed external model call fails the compatibility result; the explicitly configured mock judge is recorded separately.
 
 ## External suite
 
@@ -17,7 +17,7 @@ uv sync --locked
 uv run python tests/compatibility/run_suite.py --prepare-only
 ```
 
-This validates all ten rendered Hawk configs without authentication, containers or model calls.
+This validates all rendered Hawk configs without authentication, containers or model calls.
 
 With `HAWK_API_URL` set and an existing `hawk login`:
 
@@ -45,6 +45,7 @@ Each probe exercises the production auditor's staging, source access, attempt to
 The separate compatibility score derives from actual tool results:
 
 - **passed:** every applicable operation returned successfully, including a nonempty grade when a grader exists. An incorrect submission score is still successful grader execution.
+- **passed_mock** (grading stage): the real benchmark scorer parsed an explicit mock judge reply. This tests grading integration, not judge correctness.
 - **partial:** a model-based grader was intentionally blocked. Its output has not been validated.
 - **failed:** task/sandbox setup, a tool or the probe itself failed; an operation was not reached; or an external model call was observed.
 - **blocked:** configuration, credentials or submission prevented the job from launching.
@@ -53,7 +54,7 @@ The separate compatibility score derives from actual tool results:
 
 Results are `out/compatibility/summary.json` and `summary.md`; native Inspect logs are downloaded under each case. The Hawk links retain runner/sandbox diagnostics when no eval log was written. Cleanup of every remote resource is not yet independently asserted by the summary.
 
-The ten initial cases are SimpleQA, SciCode, GSM8K, BBH, AgentHarm, GPQA, HLE, MirrorCode, CORE-Bench and Terminal-Bench through Inspect Harbor. Each is a small selection, not exhaustive coverage. HLE's environment probe deliberately omits the known mismatching historical log so environment startup and log compatibility remain distinguishable. The original log mismatch still needs investigation. The Harbor case covers one sample-level Compose environment, not arbitrary heterogeneous multi-sample Harbor jobs.
+The current cases are SimpleQA, SimpleQA Verified, SciCode, GSM8K, BBH, AgentHarm, GPQA, HLE, MirrorCode, CORE-Bench and Terminal-Bench through Inspect Harbor. Each is a small selection, not exhaustive coverage. HLE's environment probe deliberately omits the known mismatching historical log so environment startup and log compatibility remain distinguishable. The original log mismatch still needs investigation. The Harbor case covers one sample-level Compose environment, not arbitrary heterogeneous multi-sample Harbor jobs.
 
 ## CI
 
@@ -83,7 +84,7 @@ The first external batches identified and led to fixes for:
 
 GPQA, SciCode and MirrorCode passed after their fixes. GSM8K, BBH and the selected AgentHarm case passed in the initial functional batch. SimpleQA and HLE were partial because their model judges were intentionally blocked. Every inspected probe log recorded no external model calls. Native logs and earlier failures remain under their original output directories.
 
-Harbor is blocked before sample execution: its pinned package requires released Inspect `>=0.3.264`, while the deployed Hawk runner supplies `0.3.264.dev13+g2203ee7a8`. Track the runtime requirement in [#58](https://github.com/Generality-Labs/inspect_audit/issues/58). This is not a passing Harbor integration result.
+Harbor's case explicitly requests `inspect-ai==0.3.264` in its native Hawk `packages` list to satisfy the pinned Harbor dependency. Its actual remote execution result must still be checked; the earlier failure is tracked in [#58](https://github.com/Generality-Labs/inspect_audit/issues/58).
 
 CORE-Bench installs from the corrected source fork and loads one selected capsule, but Hawk refuses its native Compose requirements (`privileged` and `extra_hosts`) before execution. The probe uses the benchmark's own capsule filter and a positive dataset limit. It omits historical all-capsule logs because its task arguments differ; transcript compatibility is not claimed.
 
@@ -96,3 +97,32 @@ The latest results span several pinned IA commits; they are debugging evidence, 
 5. Run paid investigator pilots and inspect their transcripts separately from this execution gate. Then measure recall against human labels.
 
 Checkpoint resume remains separate ([#55](https://github.com/Generality-Labs/inspect_audit/issues/55)). The standalone deterministic findings package and its CLI have been removed. The investigation register remains in the core package. Findings/report redesign is the next phase after execution tests.
+
+## Add another eval
+
+Add a `*.eval-set.yaml` file under `tests/compatibility/cases`. There is no Python benchmark allowlist or fixed case count. Ordinary CI automatically validates every case against Hawk’s configuration model and checks its mock response fixtures. The heavy runner discovers the same directory and installs each case’s declared packages on Hawk.
+
+Declare the benchmark package at a pinned revision, its registered task, the source module to import, task arguments, sample selection, and any required environment or secrets. Copy an existing case with a similar environment. The probe runs the production auditor tools and the benchmark’s actual setup and scorer. An unsupported benchmark reports the stage that failed.
+
+For a tool-calling judge, put its exact canned response in the case specification:
+
+```yaml
+mock_judges:
+  grader:
+    tool: submit
+    arguments:
+      grade: INCORRECT
+      explanation: Scripted mock judgment; no answer verification.
+```
+
+For a text or structured-JSON judge, use `content` instead:
+
+```yaml
+mock_judges:
+  grader:
+    content: '{"extracted_final_answer":"MOCK ANSWER","reasoning":"Scripted mock judgment","correct":"no","confidence":100}'
+```
+
+The grader still builds its own prompt and validates the reply. Unknown tool names, malformed fixtures and unscored judgments fail the test. Mock fixtures are per model role, so different roles may use different reply formats.
+
+Run `uv run pytest tests/test_compatibility_cases.py` for cheap validation, then `uv run python tests/compatibility/run_suite.py --cases NAME --output out/NAME` for the real Hawk probe. The ordinary checks do not download every external benchmark. The heavy run is the package-installation and execution check.

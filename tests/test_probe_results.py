@@ -1,6 +1,7 @@
 """Probe success depends on observed operations, not an unresolved validity label."""
 
 import asyncio
+import json
 
 import pytest
 from ia_compatibility.probe import ProbeAPI
@@ -68,3 +69,33 @@ def test_missing_operations_and_empty_grades_cannot_pass() -> None:
 def test_the_probe_cannot_generate_a_judge_response() -> None:
     with pytest.raises(RuntimeError, match="model-based grading is disabled"):
         asyncio.run(ProbeAPI("judge").generate([], [], "auto", GenerateConfig()))
+
+
+def test_mocked_grading_is_visible_in_the_result() -> None:
+    messages = [
+        result("auditor_bash"),
+        result("grade", '{"scores":[{"value":"I"}]}'),
+        result("record_verdict"),
+        result("submit"),
+    ]
+    report = outcomes(
+        messages, {"logs": False, "benchmark_box": False, "grader": True, "mock_judge": True}
+    )
+    assert report["status"] == "passed"
+    assert report["stages"]["grading"] == "passed_mock"
+
+
+@pytest.mark.parametrize(
+    "score",
+    [
+        {"value": float("nan")},
+        {"value": {"score": float("nan"), "confidence": 100}},
+        {"value": "I", "reason": "grader_failed"},
+    ],
+)
+def test_unscored_judgments_are_not_successful_grader_execution(score: dict) -> None:
+    report = outcomes(
+        [result("grade", json.dumps({"scores": [score]}))],
+        {"logs": False, "benchmark_box": False, "grader": True},
+    )
+    assert report["stages"]["grading"] == "failed"

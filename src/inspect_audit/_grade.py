@@ -163,6 +163,7 @@ def grade_tool(
                                 "value": score.value,
                                 "answer": score.answer,
                                 "explanation": score.explanation,
+                                "reason": score.reason,
                             }
                         )
                 return results

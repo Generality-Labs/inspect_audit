@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from inspect_ai.model import ModelConfig
+
 # a job's lifecycle as both backends report it
 RUNNING = "running"
 COMPLETE = "complete"
@@ -40,7 +42,7 @@ class Job:
     label: str
     task: str  # registry name, e.g. inspect_evals/simpleqa_verified
     package: str  # pip spec that installs the task's package
-    models: list[str]  # OpenRouter model ids, e.g. openai/gpt-5-mini
+    models: list[str]  # Full Inspect names, e.g. openrouter/openai/gpt-5-mini.
     task_args: dict[str, Any] = field(default_factory=dict)
     model_roles: dict[str, str] = field(default_factory=dict)
     sample_ids: list[str] | None = None
@@ -50,6 +52,7 @@ class Job:
     epochs: int = 1
     extra_packages: list[str] = field(default_factory=list)
     environment: dict[str, str] = field(default_factory=dict)
+    model_configs: dict[str, ModelConfig] = field(default_factory=dict)
 
 
 def validate_environment(environment: dict[str, str]) -> dict[str, str]:
@@ -83,7 +86,15 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
     package_name, _, task_name = job.task.partition("/")
 
     def group(model: str) -> dict[str, Any]:
-        return {"package": "openai", "name": "openrouter", "items": [{"name": model}]}
+        configured = job.model_configs.get(model)
+        item: dict[str, Any] = {"name": model}
+        if configured is not None:
+            item["args"] = {
+                **configured.args,
+                "config": configured.config.model_dump(exclude_none=True),
+                "base_url": configured.base_url,
+            }
+        return {"package": "inspect-ai", "items": [item]}
 
     item: dict[str, Any] = {"name": task_name, "args": job.task_args}
     if job.sample_ids is not None:
@@ -105,9 +116,7 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
         # Judges selected through task arguments are outside the eval model grid.
         judges = (job.task_args.get("judge") or {}) if job.task == "inspect_audit/audit" else {}
         if judges:
-            config["additional_models"] = [
-                group(str(m).removeprefix("openrouter/")) for m in dict.fromkeys(judges.values())
-            ]
+            config["additional_models"] = [group(str(m)) for m in dict.fromkeys(judges.values())]
         sources = (job.task_args.get("logs") or []) if job.task == "inspect_audit/audit" else []
         if any(not str(source).startswith("hawk:") for source in sources):
             raise ValueError("restricted audit jobs require Hawk transcript sources")
@@ -304,13 +313,11 @@ class LocalRuns:
     status is that `done` record, or the process being gone without one. Logs live
     under `root/<id>/logs`.
 
-    Models are OpenRouter ids, run through Inspect's `openrouter` provider on this
-    process's OPENROUTER_API_KEY; `provider` exists so tests can run `mockllm`.
+    Model identities and configurations are passed to Inspect unchanged.
     """
 
-    def __init__(self, root: Path, provider: str = "openrouter") -> None:
+    def __init__(self, root: Path) -> None:
         self.root = root
-        self.provider = provider
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _dir(self, run_id: str) -> Path:
@@ -333,8 +340,6 @@ class LocalRuns:
             "inspect_ai",
             "eval-set",
             job.task,
-            "--model",
-            ",".join(f"{self.provider}/{m}" for m in job.models),
             "--log-dir",
             str(run_dir / "logs"),
             "--epochs",
@@ -343,18 +348,65 @@ class LocalRuns:
             "0",
             "--detach",
         ]
+        for model in job.models:
+            configured = job.model_configs.get(model)
+            if configured is None:
+                args += ["--model-spec", json.dumps({"model": model})]
+            else:
+                args += [
+                    "--model-spec",
+                    json.dumps(
+                        {
+                            "model": model,
+                            **configured.config.model_dump(exclude_none=True),
+                            "base_url": configured.base_url,
+                            "model_args": configured.args,
+                        }
+                    ),
+                ]
         if job.task_args:
             # a file, not -T: inspect parses each -T value as YAML and splits commas,
             # so "a,b" or "yes" would not reach the task as Hawk passes them
             (run_dir / "task_args.json").write_text(json.dumps(job.task_args))
             args += ["--task-config", str(run_dir / "task_args.json")]
         for role, model in job.model_roles.items():
-            args += ["--model-role", f"{role}={self.provider}/{model}"]
+            configured = job.model_configs.get(model)
+            value = (
+                model
+                if configured is None
+                else json.dumps(
+                    {
+                        "model": model,
+                        **configured.config.model_dump(exclude_none=True),
+                        "model_args": {
+                            **configured.args,
+                            **({"base_url": configured.base_url} if configured.base_url else {}),
+                        },
+                    }
+                )
+            )
+            args += ["--model-role", f"{role}={value}"]
         if job.sample_ids is not None:
             args += ["--sample-id", ",".join(job.sample_ids)]
         if job.sample_range is not None:
             args += ["--limit", f"{job.sample_range[0]}-{job.sample_range[1]}"]
-        launched = await asyncio.to_thread(_detach, args, job.environment)
+        credentials: dict[str, str] = {}
+        from inspect_ai.model import get_model
+
+        for name in set(job.models) | set(job.model_roles.values()):
+            configured = job.model_configs.get(name)
+            model_kwargs: dict[str, Any] = dict(configured.args) if configured else {}
+            model_kwargs["memoize"] = False
+            model = get_model(
+                name,
+                config=configured.config if configured else None,
+                base_url=configured.base_url if configured else None,
+                **model_kwargs,
+            )
+            for variable in model.api.api_key_vars:
+                if variable in os.environ:
+                    credentials[variable] = os.environ[variable]
+        launched = await asyncio.to_thread(_detach, args, {**credentials, **job.environment})
         (run_dir / "launch.json").write_text(json.dumps(launched))
         return run_dir.name
 
@@ -431,7 +483,6 @@ JOB_ENVIRONMENT = (
     "DOCKER_HOST",
     "DOCKER_CONFIG",
     "DOCKER_CONTEXT",
-    "OPENROUTER_API_KEY",
 )
 
 

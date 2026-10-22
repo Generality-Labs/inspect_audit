@@ -22,10 +22,9 @@ tasks:
           sample files, setup script and a named-service grader.'
       limit: 1
 models:
-- package: openai
-  name: openrouter
+- package: inspect-ai
   items:
-  - name: openai/gpt-6-luna
+  - name: openrouter/openai/gpt-6-luna
 cost_limit: 0.01
 time_limit: 1200
 retry_attempts: 0

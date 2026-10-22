@@ -30,20 +30,20 @@ def test_child_audit_is_collected_once_into_the_register(tmp_path: Path) -> None
         task_package="fixture",
         audit_package="inspect_audit",
         auditor_image="python:3.12-slim",
-        models=Models(auditors=("driver",)),
+        models=Models(auditors=("ia_probe/driver",)),
         checks=("gold-answer",),
         environment_json=canonical({"PYTHONPATH": str(fixtures.resolve())}),
         configuration_json="{}",
     )
     inv = Investigation(
         root=root,
-        runs=LocalRuns(tmp_path / "children", provider="ia_probe"),
+        runs=LocalRuns(tmp_path / "children"),
         where="local",
         task="toy",
         task_package="fixture",
         audit_package="inspect_audit",
         auditor_image="python:3.12-slim",
-        menu=ModelMenu(auditors=["driver"], subjects=[], judges=[]),
+        menu=ModelMenu(auditors=["ia_probe/driver"], subjects=[], judges=[]),
         supplied=[],
         authorizer=InvestigationAuthorizer(policy),
     )
@@ -63,7 +63,7 @@ def test_child_audit_is_collected_once_into_the_register(tmp_path: Path) -> None
                 task="inspect_audit/audit",
                 package="inspect_audit",
                 extra_packages=["fixture"],
-                models=["driver"],
+                models=["ia_probe/driver"],
                 task_args={
                     "task": "toy",
                     "task_args": {},

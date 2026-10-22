@@ -28,7 +28,7 @@ from inspect_ai.solver import TaskState
 from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_ai.util import registry_create
 
-from inspect_audit._investigate import openrouter_prices
+from inspect_audit._openrouter import openrouter_prices
 from inspect_audit._prices import register_prices
 from inspect_audit._registry import log_files, resolve_source
 from inspect_audit._task import audit_task, numbered
@@ -144,7 +144,7 @@ def probe(spec: dict[str, Any], limit: int = 1) -> Task:
     # This fetches public price metadata; it never requests a model completion.
     declared_model = str(get_model())
     if declared_model.startswith("openrouter/"):
-        register_prices(openrouter_prices([declared_model.removeprefix("openrouter/")]))
+        register_prices(openrouter_prices([declared_model]))
     for name in ("driver", "judge"):
         set_model_info(
             f"ia_probe/{name}",

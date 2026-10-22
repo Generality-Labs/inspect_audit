@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from inspect_ai.model import ModelConfig
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import ToolError
 from inspect_ai.util import StoreModel
@@ -100,6 +101,8 @@ class LaunchPolicy(FrozenModel):
     supplied_logs: tuple[str, ...] = ()
     limits: Limits = Limits()
     credential_mode: Literal["restricted", "user"] = "user"
+    model_configs_json: str = "{}"
+    model_prices_json: str = "{}"
     configuration_json: str
 
     @model_validator(mode="after")
@@ -140,10 +143,7 @@ def ensure_model(policy: LaunchPolicy, saved: PolicyStore, model: str) -> None:
         saved.investigator_model = model
     elif saved.investigator_model != model:
         raise RuntimeError("the investigator model cannot change during an investigation")
-    if (
-        policy.models.investigator
-        and model.removeprefix("openrouter/") not in policy.models.investigator
-    ):
+    if policy.models.investigator and model not in policy.models.investigator:
         raise RuntimeError("the investigator model is outside the launch policy")
 
 
@@ -175,7 +175,7 @@ def argument_problems(args: Any, allowed: list[str], where: str = "task_args") -
             if PLACEMENT_ARG.search(str(key)):
                 problems.append(f"{here}: jobs may not set where code runs or what it reads")
             elif MODEL_ARG.search(str(key)) and isinstance(value, str):
-                if value.removeprefix("openrouter/") not in allowed or "/" not in value:
+                if value not in allowed or "/" not in value:
                     problems.append(f"{here}: {value!r} is not an allowed judge model")
             else:
                 problems += argument_problems(value, allowed, here)
@@ -278,7 +278,7 @@ class InvestigationAuthorizer:
         if canonical(benchmark_args) != p.task_args_json:
             raise ToolError("benchmark task_args are fixed by the launch policy")
         self.allow(
-            [str(model).removeprefix("openrouter/") for model in roles.values()],
+            [str(model) for model in roles.values()],
             p.models.judges,
             "judges",
         )
@@ -287,5 +287,20 @@ class InvestigationAuthorizer:
         # selects a prompt, not a model. Models supplied through roles remain checked.
         # No caller-owned mutable lists/dicts cross the authorization boundary.
         approved = deepcopy(job)
+        configs = {
+            name: ModelConfig.model_validate(value)
+            for name, value in json.loads(p.model_configs_json).items()
+        }
+        selected_models = set(job.models) | set(roles.values())
+        expected_configs = {name: configs[name] for name in selected_models if name in configs}
+        if job.model_configs and job.model_configs != expected_configs:
+            raise ToolError("model configuration must match the launch policy")
+        approved.model_configs = expected_configs
+        if kind == "audit" and expected_configs:
+            approved.task_args["judge_configs"] = {
+                role: configs[name].model_dump(mode="json", exclude_none=True)
+                for role, name in roles.items()
+                if name in configs
+            }
         approved.environment = json.loads(p.environment_json)
         return approved

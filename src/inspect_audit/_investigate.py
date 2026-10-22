@@ -2,8 +2,9 @@
 
 An investigation is one Inspect task. Its agent works in one box, with the inputs
 the host staged there. Jobs it launches run through `_runs`, on Hawk or locally,
-and bill to the same model key as the agent itself: that key's limit is the
-investigation's budget, enforced by the provider. Inspect's checkpointing carries
+and, when configured to share one capped OpenRouter key, bill to that key. Its
+limit bounds model spending across those calls. Other provider routes have their
+own credentials and limits. Inspect's checkpointing carries
 the box and the store across a crash; the store holds the jobs launched.
 """
 
@@ -29,7 +30,7 @@ from inspect_ai import Task, task
 from inspect_ai.agent import AgentState, react
 from inspect_ai.dataset import Sample
 from inspect_ai.log import list_eval_logs, read_eval_log_sample_summaries
-from inspect_ai.model import CompactionSummary, GenerateConfig
+from inspect_ai.model import CompactionSummary, GenerateConfig, ModelConfig, get_model
 from inspect_ai.solver import TaskState
 from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
 from inspect_ai.util import CheckpointConfig, store_as
@@ -51,7 +52,7 @@ from ._policy import (
     ensure_model,
     ensure_policy,
 )
-from ._prices import valid_price
+from ._prices import prices_for_models, register_prices
 from ._report import (
     InvestigationRecord,
     InvestigationState,
@@ -117,12 +118,12 @@ class ModelMenu:
 
 
 DEFAULT_WORKERS = [
-    "openai/gpt-5.6-luna",
-    "google/gemini-3.6-flash",
-    "openai/gpt-5-mini",
-    "openai/gpt-5.6-sol",
-    "openai/gpt-5.6-terra",
-    "openai/gpt-6-astra",
+    "openrouter/openai/gpt-5.6-luna",
+    "openrouter/google/gemini-3.6-flash",
+    "openrouter/openai/gpt-5-mini",
+    "openrouter/openai/gpt-5.6-sol",
+    "openrouter/openai/gpt-5.6-terra",
+    "openrouter/openai/gpt-6-astra",
 ]
 
 
@@ -617,45 +618,19 @@ async def key_balance(hawk_api_url: str | None, openrouter: bool) -> list[str]:
 @tool(name="budget")
 def budget(hawk_api_url: str | None, openrouter: bool) -> Tool:
     async def execute() -> str:
-        """What the investigation's model key has left: this agent and every job draw on it.
+        """Read the configured model key's remaining allowance.
 
-        When it runs out, model calls fail with the provider's error, yours and your
-        jobs' alike. Publish what you have before that.
+        This covers all calls only when the investigator and jobs share that key.
+        It is not an attributed investigation spend total. Calls using the key fail
+        when its provider-enforced allowance is exhausted.
         """
-        return "\n".join(await key_balance(hawk_api_url, openrouter))
+        return "\n".join(
+            await key_balance(
+                hawk_api_url, openrouter and str(get_model()).startswith("openrouter/")
+            )
+        )
 
     return execute
-
-
-def openrouter_prices(models: list[str]) -> dict[str, dict[str, float]]:
-    """OpenRouter's published per-million prices, by the name Inspect runs each under.
-
-    An audit job caps each item's spend with Inspect's cost limit, which needs a
-    price for the auditor; the job registers these itself.
-    """
-    request = urllib.request.Request(
-        f"{OPENROUTER}/models", headers={"User-Agent": "inspect_audit"}
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        listing = {str(m["id"]): m.get("pricing") or {} for m in json.load(response)["data"]}
-    prices: dict[str, dict[str, float]] = {}
-    for model in models:
-        pricing = listing.get(model.removeprefix("openrouter/"))
-        if pricing is None:
-            raise ValueError(f"OpenRouter does not list {model!r}")
-        price = {
-            key: float(pricing.get(field) or 0) * 1_000_000
-            for key, field in (
-                ("input", "prompt"),
-                ("output", "completion"),
-                ("input_cache_read", "input_cache_read"),
-                ("input_cache_write", "input_cache_write"),
-            )
-        }
-        if not valid_price(price):
-            raise ValueError(f"OpenRouter lists no usable price for {model!r}")
-        prices[f"openrouter/{model}"] = price
-    return prices
 
 
 @dataclass
@@ -784,7 +759,7 @@ def run_benchmark(inv: Investigation) -> Tool:
 
         Args:
             label: A short name for this job, unique in the investigation.
-            models: Models to evaluate, as OpenRouter ids from the subject list.
+            models: Full Inspect model names from the subject list.
             sample_ids: The benchmark's own sample ids to run, when its samples have
                 ids; null for none.
             sample_range: [first, last] positions in the dataset, counting from 1,
@@ -794,7 +769,7 @@ def run_benchmark(inv: Investigation) -> Tool:
             epochs: Attempts per sample per model.
             task_args: The task's arguments as a JSON object, exactly as the
                 benchmark takes them; "{}" for its defaults. A model named in one must
-                be a judge, written openrouter/<id>; arguments that set a sandbox,
+                be a permitted judge; arguments that set a sandbox,
                 image, path or file are refused.
             model_roles: Role name to model for the benchmark's own judges, as a JSON
                 object, from the judge list; "{}" when it has none.
@@ -846,7 +821,7 @@ def run_audit(inv: Investigation) -> Tool:
             checks: Checks to run, e.g. ["gold-answer", "red-teaming"].
             logs: Recorded attempts to audit against: labels of benchmark jobs you
                 ran, or supplied log sources from the seed; [] for none.
-            auditor_model: The auditor, an OpenRouter id from the auditor list.
+            auditor_model: The auditor, a full Inspect model name from the auditor list.
             source: The Python module that defines the benchmark's task, e.g.
                 inspect_evals.simpleqa.simpleqa: its code is what the auditor reads.
             item_cost_limit: Dollars one audited item may spend.
@@ -874,7 +849,7 @@ def run_audit(inv: Investigation) -> Tool:
                     f"({', '.join(inv.supplied) or 'none supplied'})"
                 )
         try:
-            prices = openrouter_prices([auditor_model, *judges.values()])
+            prices = prices_for_models([auditor_model, *judges.values()])
         except Exception as ex:
             raise ToolError(f"cannot price the auditor for its cost limit: {ex}") from ex
         job = Job(
@@ -891,7 +866,7 @@ def run_audit(inv: Investigation) -> Tool:
                 "source": source,
                 "logs": addresses or None,
                 # {} is "their grader calls no model", not "unknown": pass it as given
-                "judge": {r: f"openrouter/{m}" for r, m in judges.items()},
+                "judge": judges,
                 "auditor_image": inv.auditor_image,
                 "cost_limit": item_cost_limit,
                 "model_prices": prices,
@@ -1252,6 +1227,8 @@ def investigate(
     credential_mode: str | None = None,
     child_secrets: list[str] | None = None,
     benchmark_environment: dict[str, str] | None = None,
+    model_configs: dict[str, dict[str, Any]] | None = None,
+    model_prices: dict[str, dict[str, float]] | None = None,
 ) -> Task:
     """Investigate a benchmark's source and logs, and publish a GL LaTeX report.
 
@@ -1289,9 +1266,9 @@ def investigate(
         task_package: pip spec of the benchmark for jobs. Defaults to the source
             repository and revision.
         auditor_image: Published auditor image for audit jobs on Kubernetes.
-        auditor_models: OpenRouter ids an audit job may use as its auditor.
-        subject_models: OpenRouter ids a benchmark job may evaluate.
-        judge_models: OpenRouter ids the benchmark's own judges may be. Declare the
+        auditor_models: Full Inspect model names an audit job may use as its auditor.
+        subject_models: Full Inspect model names a benchmark job may evaluate.
+        judge_models: Full Inspect model names the benchmark's own judges may be. Declare the
             judges the audited logs record; none by default.
         investigator_image: Published investigator image, including LaTeX, for Hawk.
         artifact_dir: Where the published report is also saved, under this sample:
@@ -1315,6 +1292,10 @@ def investigate(
             applied to every child job and to task loading in this process. YAML
             accepts benchmark.environment. Values are frozen in the launch policy;
             credentials belong in child_secrets instead.
+        model_configs: Inspect ModelConfig settings keyed by full model name.
+            Child models and judge roles use these fixed settings.
+        model_prices: Explicit per-million token prices for models without Inspect
+            cost metadata. OpenRouter routes can use their published prices.
     """
     # the file is read before anything else is decided: an argument is "given" only
     # when it is not None, so a value equal to a default is still an override
@@ -1359,6 +1340,21 @@ def investigate(
                 f"benchmark_environment declares {name!r}; set the same value in the "
                 "investigator runner environment so task loading uses the child configuration"
             )
+    requested_configs: dict[str, dict[str, Any]] = (
+        settings.get("model_configs", model_configs) or {}
+    )
+    configured = {}
+    for name, value in requested_configs.items():
+        parsed = ModelConfig.model_validate({"model": name, **value})
+        if parsed.model != name:
+            raise ValueError("model_configs keys must match each config's model")
+        if "api_key" in parsed.args or any(key.startswith("aws_") for key in parsed.args):
+            raise ValueError("model credentials belong in the environment or child_secrets")
+        configured[name] = parsed.model_dump(mode="json", exclude_none=True)
+    model_configs = configured
+    price_table: dict[str, dict[str, float]] = settings.get("model_prices", model_prices) or {}
+    model_prices = price_table
+    register_prices(price_table)
     child_secrets = list(settings.get("child_secrets", child_secrets) or [])
     if child_secrets and runs != "hawk":
         raise ValueError("child_secrets require runs='hawk'")
@@ -1475,6 +1471,8 @@ def investigate(
         task_package=task_package,
         audit_package=audit_package,
         auditor_image=auditor_image,
+        model_configs_json=canonical(model_configs),
+        model_prices_json=canonical(model_prices),
         models=Models(
             investigator=permissions.models.investigator,
             auditors=tuple(menu.auditors),

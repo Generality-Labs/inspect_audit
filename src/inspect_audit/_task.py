@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from inspect_ai import Task, task_with
 from inspect_ai.dataset import Sample
-from inspect_ai.model import GenerateConfig, Model
+from inspect_ai.model import GenerateConfig, Model, ModelConfig, get_model
 from inspect_ai.scorer import Scorer
 from inspect_ai.solver import Solver
 from inspect_ai.tool import WebSearchProviders
@@ -132,6 +132,7 @@ def audit_task(
     task_args: dict[str, Any] | None = None,
     logs: Sequence[str] | None = None,
     judge: dict[str, str] | None = None,
+    judge_configs: dict[str, dict[str, Any]] | None = None,
     source: str | None = None,
     compose: str | None = None,
     assessment_ids: dict[str, list[str]] | None = None,
@@ -159,6 +160,8 @@ def audit_task(
         judge: Model roles for their scorers (the LLM judge), role -> model. Taken
             from the logs when given; declared values must agree with them. Required
             without logs: `{}` when their scorers call no model.
+        judge_configs: Inspect ModelConfig records for judge roles, including
+            generation settings and endpoints. Must agree with recorded roles.
         source: The benchmark's code for the auditor's box: the task's `.py` file (its
             imports within its package are followed, with their folders' data files;
             see `_source`) or a directory copied whole. Required for tasks from an
@@ -212,6 +215,32 @@ def audit_task(
         else None
     )
     roles = judge_roles(index, judge)
+    configured_roles: dict[str, str | Model] = dict(roles)
+    configurations = {
+        **(index.judge_configs if index is not None else {}),
+        **{
+            role: ModelConfig.model_validate(value) for role, value in (judge_configs or {}).items()
+        },
+    }
+    for role, configured in configurations.items():
+        if roles.get(role) != configured.model:
+            raise ValueError(f"judge configuration for {role!r} must match its declared model")
+        if (
+            index is not None
+            and role in index.judge_configs
+            and configured != index.judge_configs[role]
+        ):
+            raise LogMismatchError(
+                f"judge configuration for {role!r} differs from the recorded configuration"
+            )
+        model_kwargs: dict[str, Any] = dict(configured.args)
+        model_kwargs["memoize"] = False
+        configured_roles[role] = get_model(
+            configured.model,
+            config=configured.config,
+            base_url=configured.base_url,
+            **model_kwargs,
+        )
     if index is not None:
         # every log that attempted an audited sample must have given it this sample's
         # input: positional ids under a shuffled run, a changed dataset or a different
@@ -263,7 +292,7 @@ def audit_task(
         "metrics": None,
         "sandbox": sandbox,
         "config": GenerateConfig(),
-        "model_roles": roles or None,
+        "model_roles": configured_roles or None,
         "epochs": 1,
         "approval": None,
         "checkpoint": None,

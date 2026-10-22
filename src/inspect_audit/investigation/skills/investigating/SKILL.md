@@ -5,6 +5,15 @@ description: Establish a benchmark's measurement claim, prioritise hypotheses an
 
 ## Orient
 
+Before planning, read report/framework/Framework.tex, ScoringCriteria.tex and checks.json.
+These define the scope, meanings and rating rubric. Plan evidence collection against the
+actual question for each dimension/check; record what was examined, the result and remaining
+gaps. For example, clustering concerns model-score discrimination, not dataset clustering;
+unequal constraint effects concerns how a constraint binds different models. Related
+observations can be findings without answering those checks. Do not assign a clean rating
+merely because no worker reported a problem.
+
+
 Establish what the benchmark claims to measure from the paper and README. Trace the
 implementation: dataset, model-visible information, tools/environment, submission,
 scorer and aggregation. Keep a short source-linked brief. Compare the pinned version
@@ -27,6 +36,13 @@ Inaccessible reasoning and inaccessible log sources are missing coverage.
 
 ## Prioritise and check
 
+Before agreeing with a material auditor finding, read the exact source assertion and
+the probe input/output it rests on. Run the cheapest independent countercheck against
+the original code; copying an auditor's explanation into review is not verification.
+Record what you checked, and distinguish reproduced claims from claims merely read.
+For clean multi-step samples, check which subproblems were actually examined. Preserve
+the operator's sample-selection method; a seeded random sample is not purposive.
+
 For each lead, state the suspected mechanism, what it would change about interpreting
 the score, the strongest alternative explanation and the cheapest check that could
 refute it. Prefer existing evidence and deterministic calculations before new runs.
@@ -37,9 +53,12 @@ route; a failure may reflect scoring, environment, format or elicitation problem
 An auditor's inability to solve an item does not prove it unachievable. Check our own
 parser, reconstructed tools, sandbox and configuration before blaming the benchmark.
 
-Delegate item-level checks through inspect_audit/audit when useful. Select its items
-(checks) and sample IDs for the question at hand; each auditor can inspect recorded
-attempts and probe the benchmark scorer. Treat verdicts as leads: verify the evidence
+Delegate item-level checks through inspect_audit/audit when useful. It runs the
+benchmark's own task with an auditor in place of its solver: declare the task and its
+arguments, the sample IDs, the checks, the logs (which must match that task, those
+arguments and the installed benchmark version) and `source` (the task's module).
+Each auditor reads the recorded attempts, works in the benchmark's own box and grades
+submissions with the benchmark's own scorer, within operator scope. Pass relevant framework IDs, definitions, and the evidence question in worker notes; scope those notes to the worker's supplied assessment manifest rather than repeating the whole campaign population; item-level labels alone do not answer benchmark-wide checks. Treat verdicts as leads: verify the evidence
 behind consequential claims and examine some unflagged cases before estimating
 coverage. Retain your own benchmark-wide analysis; item checks cannot establish
 population representativeness or cross-model comparability by themselves.
@@ -74,3 +93,25 @@ Load eval-validity-review for a measurement checklist, investigate-dataset for d
 inspection, and security-audit-eval when the benchmark executes untrusted code. Use
 them for relevant questions; do not adopt their alternative report formats. The
 writing skill and supplied report schema define publication.
+
+## Comprehensive assessment
+
+Use the framework's dimensions and checks as an investigation plan, not headings to
+fill after item audits. Maintain report/assessments.json as work progresses. For each
+outstanding check choose an informative next step or record a concrete scope/access
+blocker. Specialist review can strengthen analysis; its absence is not a reason to skip
+an assessment that source, papers, datasets and logs can support.
+
+For content validity compare the claimed domain with actual task types, domain counts,
+concentration, repetition and omissions. State the basis for any representativeness
+judgment; counts alone do not establish a representative distribution.
+For elicitation examine whether prompts, tools, agent loops, context, feedback, recovery
+and limits give the model an appropriate opportunity to solve the task. Successful
+execution and correct aggregation do not establish this. Choose targeted comparisons
+where they can distinguish explanations; no fixed experiment is mandatory for every audit.
+
+Review all unresolved assessment units, including those inside already-defective samples.
+A complete label table is saved progress, not substantive completion. Reallocate available
+worker funding toward useful follow-up rather than treating a worker cap as a final answer.
+Before publication compare remaining investigations with their likely value and cost,
+while preserving publication allowance. Do not spend merely to exhaust the budget.

@@ -5,8 +5,9 @@ description: Establish whether the packaging of answers corrupted the measuremen
   to follow. Investigate the scorer's parsing before judging any attempt.
 metadata:
   grades: [PENALISED, AMBIGUOUS, SOUND, INCONCLUSIVE]
-  unevidenced: [INCONCLUSIVE]
-  tools: [attempt]
+  flags: [PENALISED, AMBIGUOUS]
+  unresolved: [INCONCLUSIVE]
+  tools: [grade]
   details:
     instances: every formatting casualty, as {address, submitted, expected,
       content_right}
@@ -22,7 +23,7 @@ submitted and what the parser accepts.
 ## First: what does the scorer accept?
 
 Read the scorer's parsing and comparison code before reading any transcript
-(`gold/grading.md` names the modules). Establish exactly what it extracts --
+(under `/audit/benchmark/`). Establish exactly what it extracts --
 key names, types, tolerances, normalisation -- and what the task prompt told
 agents about the required format. The gap between those two texts is where
 this defect lives.
@@ -34,9 +35,14 @@ scores and errors. Review every actual submitted answer, whether credited or
 rejected. Interpret its meaning independently of the recorded extraction; then
 compare that interpretation, substantive correctness, extracted answer and score.
 For non-text tasks, inspect the artifact or state that the scorer actually used.
+Where the prompt fixes an answer format and a model extracts the answer, also apply
+the prompt's stated format yourself, deterministically, to every attempt, and
+tabulate where your parse and the extraction disagree in either direction: a
+correct final answer the extractor dropped, or credit for an answer the submission
+never committed to.
 
 Save an attempt-level CSV or JSON table and print it in bounded chunks so the
-audit log retains it after sandbox cleanup. Include exact log/sample/epoch references,
+audit log retains it after sandbox cleanup. Include exact eval_id/epoch references,
 submission evidence, recorded extraction/score, your interpretation and review
 status. Classify justified credit/rejection, false credit/rejection, abstention,
 scoring failure, and unresolved cases. Compute counts from the saved table;

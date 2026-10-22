@@ -18,10 +18,9 @@ def _read(name: str) -> str:
     return (HERE / name).read_text()
 
 
-# The sample auditor. Filled with `root` (where the item is staged), `items` (the audit
-# items this auditor was granted, rendered from their skills), and the two optional
-# sections below, which are empty strings when they do not apply.
-AUDIT = _read("audit.md")
+# The auditor, running inside the benchmark's own sample. Filled with `items`,
+# `confidential` and `notes`.
+AUDITOR = _read("auditor.md")
 
 # Rendered into the audit prompt only when the benchmark is unpublished. The auditor
 # keeps its shell and its internet -- an auditor that cannot check anything invents
@@ -37,18 +36,9 @@ AUDIT_NOTES = _read("audit_notes.md")
 # The outer investigator: one benchmark, its logs, its paper, a container and a budget.
 INVESTIGATE = _read("investigate.md")
 
-# The layer-2 synthesis agent, which works over finished audit logs with an operator on
-# the other end of an ACP connection. Filled with `root`.
-REPORT = _read("report.md")
-
-# The same agent when no logs were staged and it has no tools: a plumbing test.
-REPORT_CHAT_ONLY = _read("report_chat_only.md")
-
 __all__ = [
-    "AUDIT",
+    "AUDITOR",
     "AUDIT_CONFIDENTIAL",
     "AUDIT_NOTES",
     "INVESTIGATE",
-    "REPORT",
-    "REPORT_CHAT_ONLY",
 ]

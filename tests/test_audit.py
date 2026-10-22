@@ -1,221 +1,414 @@
-"""Assembling the audit task, and resolving what is being audited.
+"""The audit: declared inputs, loud refusals, and one real run inside the benchmark.
 
-No network and no Docker: `audit_task` accepts an already-constructed `Task`, so
-these exercise the assembly without resolving a published benchmark.
+The refusal tests need no Docker. The end-to-end test runs the toy benchmark's own
+task with a scripted (mockllm) auditor driving the real tools: their box, the
+recorded attempts, `grade`, `reset`, a verdict and a submit. No model spend.
 """
 
+import json
+import sys
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
-from inspect_ai import Task
-from inspect_ai.dataset import MemoryDataset, Sample
-from inspect_ai.scorer import match
-from test_helpers.logs import fixture_task, run_fixture_eval
+from inspect_ai import eval, task_with
+from inspect_ai.dataset import Sample
+from inspect_ai.event import ModelEvent, ToolEvent
+from inspect_ai.log import read_eval_log
+from inspect_ai.model import ModelOutput, get_model
 
-from inspect_audit import audit_task, resolve_task
-from inspect_audit._audit import attempts
-from inspect_audit._item import AUDIT_ROOT
-from inspect_audit._sandbox import audit_sandbox
+from inspect_audit._compose import UnsupportedBenchmarkError, their_compose, their_sandbox
+from inspect_audit._logs import LogIndex, LogMismatchError, index_logs
+from inspect_audit._task import audit_task, judge_roles
+
+sys.path.insert(0, str(Path(__file__).parent / "fixtures" / "toy_benchmark"))
+import toy
+
+# -- refusals -------------------------------------------------------------------------
 
 
-def make_task(n: int = 3, with_ids: bool = True) -> Task:
+def test_samples_with_their_own_sandboxes_are_refused() -> None:
     samples = [
-        Sample(id=(100 + i) if with_ids else None, input=f"question {i}", target=str(i))
-        for i in range(n)
+        Sample(input="q", sandbox=("docker", "a.yaml")),
+        Sample(input="q", sandbox=("docker", "b.yaml")),
     ]
-    return Task(name="fixture_task", dataset=MemoryDataset(samples), scorer=match())
+    with pytest.raises(UnsupportedBenchmarkError, match="own sandboxes"):
+        their_sandbox(None, samples)
 
 
-def test_resolve_task_passes_a_task_through() -> None:
-    task = make_task()
-    assert resolve_task(task) is task
+def test_identical_sample_sandboxes_stand_for_the_task() -> None:
+    samples = [Sample(input="q", sandbox=("docker", "a.yaml")) for _ in range(3)]
+    assert their_sandbox(None, samples).config == "a.yaml"
 
 
-def test_resolve_task_names_the_spec_it_could_not_resolve() -> None:
-    with pytest.raises(ValueError, match="no_such_package/no_such_task"):
-        resolve_task("no_such_package/no_such_task")
+def test_a_non_docker_sandbox_is_refused() -> None:
+    with pytest.raises(UnsupportedBenchmarkError, match="'k8s'"):
+        their_sandbox(("k8s", "values.yaml"), [Sample(input="q")])
 
 
-def test_audit_task_makes_one_item_per_sample() -> None:
-    audit = audit_task(make_task(3))
-
-    assert audit.name == "audit/fixture_task"
-    assert len(audit.dataset) == 3
-    assert audit.metadata is not None and audit.metadata["audited_task"] == "fixture_task"
+def test_a_benchmark_without_a_sandbox_has_no_box_of_theirs() -> None:
+    assert their_sandbox(None, [Sample(input="q")]) is None
 
 
-def test_limit_and_sample_selection() -> None:
-    assert len(audit_task(make_task(5), limit=2).dataset) == 2
-
-    selected = audit_task(make_task(5), samples=[101, 103]).dataset
-    assert [s.id for s in selected] == ["101", "103"]
-
-
-def test_samples_without_ids_are_addressed_by_position() -> None:
-    # Inspect assigns 1-based ids when a dataset does not set them, so an audit
-    # must address them the same way or the join to logs silently mismatches.
-    audit = audit_task(make_task(3, with_ids=False))
-    assert [s.id for s in audit.dataset] == ["1", "2", "3"]
+def test_a_bare_docker_sandbox_needs_its_compose_declared(tmp_path: Path) -> None:
+    spec = their_sandbox("docker", [Sample(input="q")])
+    with pytest.raises(UnsupportedBenchmarkError, match="pass compose="):
+        their_compose(spec, None, tmp_path)
+    assert their_compose(spec, str(toy.COMPOSE), tmp_path) == toy.COMPOSE.resolve()
 
 
-def test_each_item_gets_a_sandbox_and_a_filesystem() -> None:
-    item = audit_task(make_task(1)).dataset[0]
+def test_a_declared_compose_must_match_the_tasks_own(tmp_path: Path) -> None:
+    other = tmp_path / "other.yaml"
+    other.write_text("services: {}\n")
+    spec = their_sandbox(("docker", str(toy.COMPOSE)), [Sample(input="q")])
+    with pytest.raises(UnsupportedBenchmarkError, match="differs"):
+        their_compose(spec, str(other), tmp_path)
 
-    assert item.sandbox is not None
-    assert item.files is not None
-    assert f"{AUDIT_ROOT}/sample.json" in item.files
+
+def test_a_log_of_another_task_is_refused(fixture_log: str) -> None:
+    with pytest.raises(LogMismatchError, match="records task"):
+        index_logs([fixture_log], task_name="other_task", task_args={}, package=None)
 
 
-def test_the_audited_tasks_environment_runs_alongside_the_auditors(tmp_path: Path) -> None:
-    """Their services keep their definitions; ours is the default environment.
+def test_a_log_run_with_other_arguments_is_refused(fixture_log: str) -> None:
+    with pytest.raises(LogMismatchError, match="not the declared"):
+        index_logs([fixture_log], task_name="fixture_task", task_args={"n": 3}, package=None)
 
-    An audit of what an environment affords is only valid against the environment as it
-    was, so the merge never edits their service - not its name, not its network, not the
-    hosts it null-routes.
-    """
-    their_compose = tmp_path / "their-compose.yaml"
-    their_compose.write_text(
-        'services:\n'
-        '  default:\n'
-        '    build: .\n'
-        '    extra_hosts:\n'
-        '      - "codeocean.com:127.0.0.1"\n'
+
+def test_the_same_attempt_in_two_logs_is_refused(fixture_log: str) -> None:
+    with pytest.raises(LogMismatchError, match="appears in both"):
+        index_logs([fixture_log, fixture_log], task_name="fixture_task", task_args={}, package=None)
+
+
+def test_the_benchmark_version_must_match_the_logs(fixture_log: str) -> None:
+    index = index_logs([fixture_log], task_name="fixture_task", task_args={}, package="inspect_ai")
+    assert sorted(index.attempts) == ["1", "2", "3"]
+    with pytest.raises(LogMismatchError, match="not installed"):
+        index_logs(
+            [fixture_log], task_name="fixture_task", task_args={}, package="no-such-benchmark"
+        )
+
+
+def test_a_declared_judge_must_agree_with_the_logs() -> None:
+    index = LogIndex(judges={"grader": "openai/gpt-5"})
+    assert judge_roles(index, None) == {"grader": "openai/gpt-5"}
+    with pytest.raises(LogMismatchError, match="differs"):
+        judge_roles(index, {"grader": "anthropic/claude"})
+
+
+def test_a_scorer_that_judged_with_the_evaluated_model_is_refused() -> None:
+    index = LogIndex(scorer_models={"openai/gpt-5"}, eval_models={"openai/gpt-5"})
+    with pytest.raises(UnsupportedBenchmarkError, match="evaluated model"):
+        judge_roles(index, None)
+
+
+# -- one real audit inside the benchmark ----------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def priced_mockllm() -> Iterator[None]:
+    """The audit is capped in dollars and refuses an unpriced auditor; price the mock,
+    and put it back, so tests elsewhere in this worker still see it unpriced."""
+    from inspect_ai.model import ModelInfo, get_model_info, set_model_info
+
+    from inspect_audit._prices import register_prices
+
+    before = get_model_info("mockllm/model")
+    register_prices({"mockllm/model": {"input": 1.0, "output": 1.0}})
+    yield
+    set_model_info("mockllm/model", before or ModelInfo())
+
+
+def _call(tool: str, **arguments: Any) -> ModelOutput:
+    return ModelOutput.for_tool_call("mockllm/model", tool, arguments)
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("sample_sandbox", [False, True])
+def test_an_audit_runs_inside_the_benchmark(tmp_path: Path, sample_sandbox: bool) -> None:
+    # a real recorded run of the benchmark: sample a answered correctly
+    recorded_model = get_model(
+        "mockllm/model",
+        custom_outputs=[
+            ModelOutput.from_content("mockllm/model", answer) for answer in ("42", "9")
+        ],
     )
-    task = make_task(1)
-    task.sandbox = ("docker", str(their_compose))  # type: ignore[assignment]
+    [recorded] = eval(
+        toy.toy(),
+        model=recorded_model,
+        log_dir=str(tmp_path / "recorded"),
+        display="none",
+        max_samples=1,
+    )
+    assert recorded.status == "success", recorded.error
+    eval_id = recorded.eval.eval_id
 
-    sandbox = audit_task(task).dataset[0].sandbox
-    assert sandbox is not None and sandbox.type == "docker"
-    merged = Path(str(sandbox.config)).read_text()
+    script = [
+        _call("benchmark_bash", command="cat /work/input.txt /work/setup_done"),
+        _call("attempts"),
+        _call("grade", answer="42", eval_id="", epoch=0),
+        _call("benchmark_bash", command="rm -rf /work"),
+        _call("grade", answer="42", eval_id="", epoch=0),
+        _call("reset"),
+        _call("grade", answer="42", eval_id="", epoch=0),
+        _call("grade", answer="", eval_id=eval_id, epoch=1),
+        _call("auditor_bash", command="cat /audit/item.json; find /audit/benchmark -type f"),
+        _call(
+            "record_verdict",
+            item="red-teaming",
+            explanation="every wrong answer the grader saw was graded wrong",
+            evidence=[{"observed": "wrong answers graded I", "source": "grade"}],
+            approaches="one",
+            tried="wrong answers",
+            remarks="sound",
+            grade="RESISTANT",
+            details=json.dumps({"attempts": [], "mechanism": "none"}),
+        ),
+        _call("submit", environment_issues=[], unresolved=[], improvements=[]),
+    ]
+    benchmark = toy.toy()
+    if sample_sandbox:
+        benchmark = task_with(
+            benchmark,
+            dataset=[
+                s.model_copy(update={"sandbox": benchmark.sandbox}) for s in benchmark.dataset
+            ],
+            sandbox=None,
+        )
+    audit = audit_task(
+        benchmark,
+        samples=["a"],
+        checks=["red-teaming"],
+        logs=[recorded.location],
+        message_limit=50,
+        cost_limit=1.0,
+        auditor_model=get_model("mockllm/model", custom_outputs=script),
+    )
+    toy.SCORER_CALLS.clear()
+    [log] = eval(
+        audit,
+        # Like Hawk, the runner may supply a different model. The explicitly
+        # bound driver must still perform all of the scripted tool operations.
+        model=get_model(
+            "mockllm/model",
+            custom_outputs=[ModelOutput.from_content("mockllm/model", "wrong driver")],
+        ),
+        log_dir=str(tmp_path / "audit"),
+        display="none",
+    )
+    assert log.status == "success", log.error
+    log = read_eval_log(log.location)
+    assert log.eval.task == "audit/toy"
+    assert log.eval.config.message_limit == 50
+    [sample] = log.samples or []
+    assert sample.error is None, sample.error
 
-    import yaml
-
-    services = yaml.safe_load(merged)["services"]
-    # ours is `default`, because Inspect treats that name as an alias for the default
-    # environment rather than as a service lookup, so a benchmark service called
-    # `default` would be unaddressable.
-    assert set(services) == {"default", "benchmark"}
-    # theirs keeps its definition, including the hosts it deliberately null-routes
-    assert services["benchmark"]["extra_hosts"] == ["codeocean.com:127.0.0.1"]
-    # and its relative build context is re-anchored to its own directory
-    assert services["benchmark"]["build"] == str(tmp_path)
-
-    ours = audit_task(make_task(1)).dataset[0].sandbox
-    assert ours is not None
-    assert ours.type == "docker"
-    assert ours.config is not None
-
-
-def test_every_item_records_which_item_it_audits() -> None:
-    for item in audit_task(make_task(2)).dataset:
-        audited = (item.metadata or {})["audit_item"]
-        assert audited["task"] == "fixture_task"
-        assert str(audited["sample_id"]) == str(item.id)
-        assert audited["attempts"] == []  # no logs were given
-
-
-def test_the_generated_sandbox_pins_the_tasks_own_packages() -> None:
-    from inspect_audit._sandbox import task_requirements
-
-    reqs = task_requirements(make_task(1))
-    # inspect-ai always, pinned to the resolving environment's version.
-    assert any(r.startswith("inspect-ai==") for r in reqs)
-    assert all("==" in r for r in reqs)
-
-
-def test_attempts_join_only_the_audited_tasks_logs(tmp_path: Path) -> None:
-    """Sample ids are unique only within a task, so the join must filter on task.
-
-    Two tasks in one logs directory both number their samples 1..N. Joining on id
-    alone would attach the other task's attempts to these items -- foreign
-    transcripts graded as if they were attempts at this question.
-    """
-    logs = str(tmp_path / "logs")
-    run_fixture_eval(logs, name="audited_task")
-    run_fixture_eval(logs, name="other_task")
-
-    mine = attempts(logs, task="audited_task")
-    assert set(mine["task_name"].astype(str).unique()) == {"audited_task"}
-    # both tasks have samples with id "1"; only the audited task's is joined
-    assert len(mine[mine["id"].astype(str) == "1"]) == 1
-
-    with pytest.raises(ValueError, match="record task 'absent_task'"):
-        attempts(logs, task="absent_task")
-
-
-def test_audit_task_does_not_attach_a_foreign_tasks_attempts(tmp_path: Path) -> None:
-    """End to end: audit one task from a dir that also holds another task's logs."""
-    logs = str(tmp_path / "logs")
-    run_fixture_eval(logs, name="fixture_task")
-    run_fixture_eval(logs, name="decoy_task")
-
-    audit = audit_task(fixture_task(), logs, samples=["1"])
-    item = audit.dataset[0].metadata["audit_item"]  # type: ignore[index]
-    assert item["attempts"], "the audited task's own attempt should be joined"
-    for attempt in item["attempts"]:
-        assert attempt["sample_id"] in ("1", 1)
-    # exactly the one fixture_task attempt at sample 1, not the decoy's too
-    assert len(item["attempts"]) == 1
-
-
-def test_the_generated_sandbox_has_network_access() -> None:
-    """An auditor without egress cannot read a source, and will invent one instead.
-
-    Inspect's own generated compose for a Dockerfile sandbox sets
-    `network_mode: none`, which is why we write our own. We give the auditor egress
-    via the shared `bridge` (not a named/project network), so it allocates no
-    per-sample network and can't exhaust Docker's address pool at concurrency.
-    """
-    sandbox = audit_sandbox(make_task(1))
-    assert isinstance(sandbox, tuple)
-    compose = Path(sandbox[1])
-    assert compose.name == "compose.yaml"
-    assert (compose.parent / "Dockerfile").is_file()
-    text = compose.read_text()
-    assert "network_mode: bridge" in text  # egress, zero per-sample networks
-    assert "network_mode: none" not in text
+    results = [(e.function, str(e.result)) for e in sample.events if isinstance(e, ToolEvent)]
+    by_call = [r for _, r in results]
+    assert [f for f, _ in results] == [o.message.tool_calls[0].function for o in script]  # type: ignore[index]
+    assert "ready" in by_call[0]  # their files and setup script
+    assert eval_id in by_call[1]  # the recorded attempt is indexed
+    grades = [json.loads(r)["scores"][0]["value"] for f, r in results if f == "grade"]
+    assert grades == ["C", "I", "C", "C"]  # right, broken box, rebuilt, recorded completion
+    assert "rebuilt default" in by_call[5]
+    staged, _, listing = by_call[8].rpartition("}")
+    item = json.loads(staged + "}")
+    assert item["target"] == ["42"] and "toy.py" in listing
+    assert any(path.endswith("toy.py") for path in item["benchmark_source"]["copied"])
+    assert sample.scores and sample.scores["red-teaming"].value == "RESISTANT"
+    assert toy.SCORER_CALLS == ["a"] * 4  # their grader ran only for grade, never on the auditor
 
 
-def test_attempts_can_come_from_a_sibling_variant_of_the_audited_task(
-    fixture_log: str,
-) -> None:
-    """The same items often ship under several variants; the field's answers still count.
-
-    Benchmarks routinely run the same questions as `<name>` and `<name>_tools`
-    variants with identical sample ids. Auditing the tools task -- the one with a
-    real environment -- while joining the no-tools attempts is the only way to get
-    both a benchmark box and an evidence base. Each sliced log keeps its own header, so the
-    auditor can see which variant produced each attempt.
-    """
-    from inspect_audit import attempts
-
-    recorded = attempts(fixture_log)
-    name = str(recorded["task_name"].iloc[0]).split("/")[-1]
-
-    # the guard still fires for a genuinely unrelated task
-    with pytest.raises(ValueError, match="None of these logs record task"):
-        attempts(fixture_log, task="some_other_benchmark")
-
-    # ...but an explicit sibling name is honoured
-    assert not attempts(fixture_log, task=name).empty
+# -- the benchmark's code, as staged for the auditor ----------------------------------
 
 
+def test_the_source_copy_follows_imports_within_the_package() -> None:
+    from inspect_audit._source import collect_source
 
-def test_resolve_task_accepts_either_registry_name_form(monkeypatch) -> None:  # noqa: ANN001
-    """`pkg/name` and bare `name` both resolve, whichever way the package was installed."""
-    from inspect_audit import _resolve
+    package = Path(__file__).parent / "fixtures" / "source_pkg"
+    copied = set(collect_source(package / "bench" / "tasks" / "qa" / "qa.py").manifest()["copied"])  # type: ignore[arg-type]
+    assert {
+        "bench/__init__.py",
+        "bench/tasks/__init__.py",
+        "bench/tasks/qa/__init__.py",
+        "bench/tasks/qa/qa.py",
+        "bench/tasks/qa/items.csv",  # the task folder's data
+        "bench/tasks/shared.py",  # a relative import
+        "bench/utils/__init__.py",
+        "bench/utils/data.py",
+        "bench/utils/grading.py",  # imported lazily, inside a function
+        "bench/utils/templates/judge.txt",  # a helper's data folder
+    } <= copied
+    assert "bench/other/unrelated.py" not in copied
 
-    registered = {"pkg/thing": object()}
 
-    def load_tasks(specs, args):  # noqa: ANN001, ANN202
-        return [registered[specs[0]]] if specs[0] in registered else []
+def test_without_logs_the_judge_must_be_declared() -> None:
+    with pytest.raises(ValueError, match="declare their scorers' judge"):
+        judge_roles(None, None)
+    assert judge_roles(None, {}) == {}
+    assert judge_roles(None, {"grader": "openai/gpt-4.1"}) == {"grader": "openai/gpt-4.1"}
 
-    monkeypatch.setattr(_resolve, "load_tasks", load_tasks)
-    monkeypatch.setattr(_resolve, "_registry_packages", lambda: ["pkg"])
-    assert _resolve.resolve_task("pkg/thing") is registered["pkg/thing"]
-    assert _resolve.resolve_task("thing") is registered["pkg/thing"]
-    registered.clear()
-    registered["thing"] = object()
-    assert _resolve.resolve_task("pkg/thing") is registered["thing"]
-    with pytest.raises(ValueError, match="Tried"):
-        _resolve.resolve_task("pkg/missing")
+
+def test_the_checks_and_prompt_name_only_what_the_v2_auditor_has() -> None:
+    """A skill pointing at a v1 path or tool sends a real auditor looking for nothing."""
+    from inspect_audit import prompts
+    from inspect_audit._verdicts import SKILLS, SUPPORT_SKILLS, audit_items
+
+    stale = [
+        "sample.json",
+        "/audit/logs",
+        "gold/grading.md",
+        "samples_df(",
+        "audit_probe",
+        "discrepancies.md",
+        "assessment_ids.json",
+        "`attempt`",
+        "benchmark_*",
+    ]
+    texts = {"prompts/auditor.md": prompts.AUDITOR}
+    for name in [c.name for c in audit_items()] + list(SUPPORT_SKILLS):
+        texts[name] = (SKILLS / name / "SKILL.md").read_text()
+    found = {name: [s for s in stale if s in text] for name, text in texts.items()}
+    assert not {k: v for k, v in found.items() if v}
+
+
+@pytest.mark.docker
+def test_an_audit_of_a_benchmark_without_a_box(graded_log: str, tmp_path: Path) -> None:
+    from test_helpers.logs import fixture_task
+
+    [recorded] = [read_eval_log(graded_log, header_only=True)]
+    script = [
+        _call("grade", answer="ANSWER", eval_id="", epoch=0),
+        _call("grade", answer="WRONG", eval_id="", epoch=0),
+        _call("grade", answer="", eval_id=recorded.eval.eval_id, epoch=1),
+        _call(
+            "record_verdict",
+            item="gold-answer",
+            explanation="the grader credits the stored answer and nothing else",
+            evidence=[{"observed": "the grader credits ANSWER", "source": "grade"}],
+            approaches="one",
+            tried="graded both",
+            remarks="sound",
+            grade="CORRECT",
+            details=json.dumps({"independent": "false"}),
+        ),
+        _call("submit", environment_issues=[], unresolved=[], improvements=[]),
+    ]
+    audit = audit_task(
+        fixture_task("graded_task"),
+        samples=["2"],
+        checks=["gold-answer"],
+        logs=[graded_log],
+        source=str(tmp_path),
+        cost_limit=1.0,
+    )
+    [log] = eval(
+        audit,
+        model=get_model("mockllm/model", custom_outputs=script),
+        log_dir=str(tmp_path / "a"),
+        display="none",
+    )
+    assert log.status == "success", log.error
+    [sample] = read_eval_log(log.location).samples or []
+    offered = {t.name for e in sample.events if isinstance(e, ModelEvent) for t in e.tools}
+    assert "benchmark_bash" not in offered and "reset" not in offered and "grade" in offered
+    grades = [
+        json.loads(str(e.result))["scores"][0]["value"]
+        for e in sample.events
+        if isinstance(e, ToolEvent) and e.function == "grade"
+    ]
+    assert grades == ["C", "I", "I"]  # sample 2 was recorded WRONG
+    assert sample.scores and sample.scores["gold-answer"].value == "CORRECT"
+
+
+def test_every_auditor_tool_schema_is_strict() -> None:
+    """OpenAI's strict function calling (Azure too) rejects a parameter not listed as required."""
+    from inspect_ai.solver import TaskState
+    from inspect_ai.tool import ToolDef
+
+    from inspect_audit._auditor import view_image
+    from inspect_audit._grade import grade_tool
+    from inspect_audit._logs import LogIndex, log_tools
+    from inspect_audit._reset import reset_tool
+    from inspect_audit._verdicts import audit_items, record_verdict, submit_audit
+
+    checks = audit_items()
+    state = TaskState(model="m", sample_id="a", epoch=1, input="q", messages=[])
+    tools = [
+        record_verdict(checks),
+        submit_audit(checks),
+        view_image(),
+        *log_tools(LogIndex(), "a"),
+        grade_tool(state, [], [], None),
+        reset_tool(Sample(input="q"), [], state, None),  # type: ignore[arg-type]
+    ]
+    loose = {}
+    for tool in tools:
+        params = ToolDef(tool).parameters
+        missing = set(params.properties) - set(params.required)
+        if missing:
+            loose[ToolDef(tool).name] = sorted(missing)
+    assert not loose
+
+
+@pytest.mark.docker
+def test_an_unpriced_auditor_is_refused(graded_log: str, tmp_path: Path) -> None:
+    from inspect_ai.model import ModelInfo, set_model_info
+    from test_helpers.logs import fixture_task
+
+    set_model_info("mockllm/model", ModelInfo())  # no cost
+    audit = audit_task(
+        fixture_task("graded_task"),
+        samples=["2"],
+        checks=["gold-answer"],
+        logs=[graded_log],
+        source=str(tmp_path),
+        cost_limit=1.0,
+    )
+    with pytest.raises(Exception, match="cost_limit requires cost data"):
+        eval(audit, model="mockllm/model", log_dir=str(tmp_path / "a"), display="none")
+
+
+def test_every_task_setting_is_either_overridden_or_kept_on_purpose(tmp_path: Path) -> None:
+    """A setting Inspect adds to task_with must not quietly govern the auditor."""
+    import inspect as pyinspect
+
+    from inspect_ai import task_with
+
+    from inspect_audit._task import KEPT
+
+    audit = audit_task(toy.toy(), samples=["a"], checks=["gold-answer"], judge={}, cost_limit=1.0)
+    for name in set(pyinspect.signature(task_with).parameters) - KEPT - {"task"}:
+        assert name in {
+            "dataset",
+            "solver",
+            "scorer",
+            "metrics",
+            "sandbox",
+            "config",
+            "model_roles",
+            "epochs",
+            "approval",
+            "checkpoint",
+            "early_stopping",
+            "fail_on_error",
+            "continue_on_fail",
+            "score_on_error",
+            "review",
+            "on_checkpoint",
+            "on_resume",
+            "headline_metric",
+            "sentinel",
+            "tags",
+            "viewer",
+            "message_limit",
+            "token_limit",
+            "turn_limit",
+            "time_limit",
+            "working_limit",
+            "cost_limit",
+            "name",
+            "metadata",
+        }, name
+    assert audit.approval is None and getattr(audit, "review", None) is None

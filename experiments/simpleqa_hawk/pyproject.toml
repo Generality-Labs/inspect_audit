@@ -1,0 +1,12 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+[project]
+name = "ia-simpleqa-experiment"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["inspect-audit", "inspect-evals"]
+[project.entry-points.inspect_ai]
+ia_simpleqa_experiment = "ia_simpleqa_experiment.task"
+[tool.hatch.build.targets.wheel]
+packages = ["src/ia_simpleqa_experiment"]

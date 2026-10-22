@@ -1,0 +1,34 @@
+{
+  "dataset_name": "McGill-NLP/stereoset",
+  "split": "validation",
+  "source_type": "hf",
+  "revision": null,
+  "config": "intersentence",
+  "files_root": null,
+  "total_samples": 2123,
+  "total_findings": 2169,
+  "by_scanner": {
+    "answer_length": {
+      "total": 2123,
+      "high": 0,
+      "medium": 2123,
+      "low": 0
+    },
+    "duplicate_questions": {
+      "total": 18,
+      "high": 0,
+      "medium": 0,
+      "low": 18
+    },
+    "inconsistent_format": {
+      "total": 28,
+      "high": 0,
+      "medium": 28,
+      "low": 0
+    }
+  },
+  "by_severity": {
+    "medium": 2151,
+    "low": 18
+  }
+}

@@ -5,7 +5,8 @@ description: Record what you noticed that none of the other audit items would ha
   one is for the defect nobody wrote an item for yet.
 metadata:
   grades: [FOUND, NONE]
-  unevidenced: [NONE]
+  flags: [FOUND]
+  unresolved: []
   details:
     findings: every observation, as a list of {observed, source, why_it_matters,
       scope} -- scope is `item` when it is a fact about this item alone, or
@@ -50,11 +51,6 @@ not here. This is the residue, not a summary.
 
 Do not report an impression you could not check. An observation with no source is a
 line in `not_pursued`, not a finding.
-
-Read `/audit/discrepancies.md` if it is there. It is a mechanical diff of the tools
-the benchmark's code declares against the tools the logs show reaching the model. A
-mismatch you can confirm -- a tool the field used that the benchmark never declared,
-or a declared one that never ran -- is a `benchmark`-scope finding.
 
 ## Scope, and why it matters
 

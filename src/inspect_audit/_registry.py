@@ -1,429 +1,215 @@
-import json
+"""The package's Inspect tasks, `audit` and `investigate`, and log fetching."""
+
+import asyncio
+import importlib
+import importlib.util
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
 
-from inspect_ai import Task, task, task_with
-from inspect_ai.dataset import MemoryDataset
+from inspect_ai import Task, task
 from inspect_ai.log import list_eval_logs
-from inspect_ai.solver import Generate, Solver, TaskState, solver
-from inspect_ai.util import sandbox
+from inspect_ai.tool import WebSearchProviders
 
-from ._agent import grade_benchmark, reset_benchmark
-from ._audit import audit_task
-from ._concordance import probe_concordance
 from ._investigate import investigate as investigate
-from ._item import AUDIT_ROOT
-from ._legacy_report import report_task
-from ._resolve import resolve_task, resolve_task_from_log
-from ._sandbox import (
-    BENCHMARK_SERVICE,
-    has_benchmark,
-    has_benchmark_box,
-    sample_sandbox,
-)
+from ._prices import register_prices
+from ._task import audit_task
+
+
+def resolve_source(source: str | None) -> str | None:
+    """`source=` as a path: a file or directory, or a module name resolved by Python."""
+    if source is None or Path(source).exists():
+        return source
+    spec = importlib.util.find_spec(source)
+    if spec is None or spec.origin is None:
+        raise ValueError(f"source={source!r} is neither a path nor an importable module")
+    return spec.origin
+
+
+def log_files(logs: list[str]) -> list[str]:
+    """Each `logs` entry as log files.
+
+    A `.eval`/`.json` file is itself; `hawk:<eval set id>` is fetched whole; any
+    other entry is a log directory, local or a URL Inspect reads (s3://, gs://),
+    listed with Inspect's own `list_eval_logs`. An entry with no logs is an error.
+    """
+    files: list[str] = []
+    for entry in logs:
+        if entry.endswith((".eval", ".json")):
+            files.append(entry)
+            continue
+        found = [
+            i.name.removeprefix("file://")
+            for i in list_eval_logs(fetch_logs(entry) if entry.startswith("hawk:") else entry)
+        ]
+        if not found:
+            raise ValueError(f"logs entry {entry!r} holds no eval logs")
+        files += found
+    return files
 
 
 @task
 def audit(
-    task: str | None = None,
-    task_args: dict[str, object] | None = None,
-    logs: str | None = None,
-    samples: list[str] | None = None,
-    limit: int | None = None,
-    items: list[str] | None = None,
-    model: str | None = None,
-    reasoning_effort: str | None = None,
-    notes: str | None = None,
-    confidential: bool = False,
+    task: str,
+    samples: list[str] | str,
+    checks: list[str],
+    cost_limit: float | None = None,
+    task_args: dict[str, Any] | None = None,
+    logs: list[str] | None = None,
+    judge: dict[str, str] | None = None,
+    source: str | None = None,
+    compose: str | None = None,
+    assessment_ids: dict[str, list[str]] | None = None,
     redact: list[str] | None = None,
-    attempts_task: str | None = None,
+    confidential: bool = False,
+    notes: str | None = None,
+    search: WebSearchProviders | None = None,
     auditor_image: str | None = None,
-    benchmark_image: str | None = None,
+    message_limit: int | None = None,
+    time_limit: int | None = None,
+    working_limit: int | None = None,
+    model_prices: dict[str, dict[str, float]] | None = None,
 ) -> Task:
-    """Audit a benchmark task from its logs.
+    """Audit a benchmark task from inside its own samples (see `audit_task` in `_task`).
 
-    Args:
-        task: Task to audit (defaults to the task the logs record).
-        task_args: Task arguments used to resolve the audited task.
-        logs: Log file or directory of logs holding the recorded attempts.
-        samples: Sample ids to audit (defaults to all, subject to `limit`).
-        limit: Audit at most this many samples.
-        items: Audit items to investigate (defaults to all of them).
-        model: Model to audit with (defaults to the evaluated model).
-        reasoning_effort: Reasoning effort for the auditor model, when it takes one.
-        notes: A free-form operator steer inserted into the auditor's system prompt.
-        confidential: The benchmark is unpublished -- instruct the auditor not to
-            transmit item content off the box.
-        redact: Further metadata keys to strip from the item the auditor reads.
-        attempts_task: Task whose attempts to join, when the logs record a sibling
-            variant of the audited task (e.g. no-tools attempts at a tools task).
-        auditor_image: Published auditor image; switches to Helm-values emission
-            for k8s providers.
-        benchmark_image: Published image for benchmark services that `build:`.
+    Everything is declared: `samples` is a list of ids or the literal "all"; `logs` are
+    `.eval` files or `hawk:<eval set id>`; `source` is the task's file, a directory, or
+    a module name. The auditor is the eval's own `--model`; `model_prices` registers
+    prices for a job whose models Inspect does not price.
     """
-    if logs:
-        logs = fetch_logs(logs)
-    if task is None:
-        if not logs:
-            raise ValueError("Provide a task to audit, or logs recording one.")
-        files = (
-            [logs]
-            if logs.endswith((".eval", ".json"))
-            else [info.name for info in list_eval_logs(logs)]
-        )
-        if not files:
-            raise ValueError(f"No logs found at {logs!r}.")
-        target: str | Task = resolve_task_from_log(files[0])
-    else:
-        target = task
-
+    if isinstance(samples, str) and samples != "all":
+        raise ValueError('samples must be a list of sample ids or the literal "all"')
+    if model_prices:
+        register_prices(model_prices)
     return audit_task(
-        target,
-        logs,
-        samples=samples,
-        limit=limit,
+        task,
+        samples=samples if samples == "all" else list(samples),
+        checks=checks,
         task_args=task_args,
-        items=items,
-        model=model,
-        reasoning_effort=reasoning_effort,
-        notes=notes,
+        logs=log_files(logs) if logs is not None else None,
+        judge=judge,
+        source=resolve_source(source),
+        compose=compose,
+        assessment_ids=assessment_ids,
+        redact=redact or (),
         confidential=confidential,
-        redact=redact,
-        attempts_task=attempts_task,
+        notes=notes,
+        search=search,
         auditor_image=auditor_image,
-        benchmark_image=benchmark_image,
+        cost_limit=cost_limit,
+        message_limit=message_limit,
+        time_limit=time_limit,
+        working_limit=working_limit,
     )
 
 
-@task
-def report(logs: str | None = None) -> Task:
-    """Legacy conversational synthesis over completed audit logs.
-
-    Use inspect_audit/investigate for autonomous investigation and publication.
-
-    v0 is the conversational skeleton: launch with `--acp-server` and attach
-    via `inspect acp` (or the web chat in frontend/) to work with it. See
-    `_report.py` for the roadmap.
-
-    Args:
-        logs: Log file or directory of audit logs to synthesize over.
-    """
-    return report_task(logs)
-
-
-@solver
-def audit_probe() -> Solver:
-    """Assert the audit sandbox was assembled correctly, without spending on a model.
-
-    Checks the auditor's filesystem and egress, that the sliced logs open with the
-    installed inspect_ai, and that the benchmark service is populated and isolated.
-    """
-
-    async def solve(state: TaskState, generate: Generate) -> TaskState:
-        checks: dict[str, str] = {}
-
-        async def run(name: str, target: str | None, cmd: str) -> None:
-            # `sandbox(name)` falls back to the default box when the sample has
-            # only one, so a benchmark check on a box-less item would report the
-            # auditor's own filesystem as the benchmark's
-            if target is not None and not has_benchmark_box():
-                checks[name] = "SKIP no benchmark box"
-                return
-            box = sandbox() if target is None else sandbox(target)
-            try:
-                r = await box.exec(["bash", "-c", cmd], timeout=120)
-                checks[name] = (r.stdout or r.stderr).strip()[:200]
-            except Exception as ex:
-                checks[name] = f"EXCEPTION {type(ex).__name__}: {ex}"[:200]
-
-        await run("auditor_fs", None, "ls /audit && ls /audit/logs | head -3")
-        await run(
-            "auditor_logs_open", None,
-            "python -c \"from inspect_ai.log import list_eval_logs, read_eval_log; "
-            "ls=list_eval_logs('/audit/logs'); print(len(ls), read_eval_log(ls[0].name, header_only=True).eval.task)\"",
-        )
-        await run("auditor_egress", None,
-                  "python -c \"import urllib.request; print(urllib.request.urlopen('https://example.com', timeout=10).status)\"")
-        await run("benchmark_content", BENCHMARK_SERVICE, "pwd; ls / | head -8; ls 2>/dev/null | head -8")
-        await run("benchmark_isolated", BENCHMARK_SERVICE, "ls /audit 2>&1 | head -1")
-        await run("benchmark_egress", BENCHMARK_SERVICE,
-                  "timeout 10 python -c \"import urllib.request; print(urllib.request.urlopen('https://example.com', timeout=8).status)\" 2>&1 | tail -1 || echo BLOCKED")
-
-        # grade/reset: grade the box pristine (expect fail), apply the sample's own
-        # gold patch and grade again (expect pass), then reset and grade once more
-        # (expect fail). proves the benchmark's grader runs against the box, that a
-        # real solution is credited, and that reset returns the box to pristine.
-        await _probe_grade(state, checks)
-
-        # concordance: prove the resolution and the grade channel against the
-        # logs -- replay recorded attempts and require our regrade to reproduce
-        # their scores. writes a machine-readable artifact the orchestrator reads.
-        await _probe_concordance(state, checks)
-
-        state.store.set("probe", checks)
-        state.output.completion = json.dumps(checks, indent=1)
-        return state
-
-    return solve
-
-
-async def _probe_concordance(state: TaskState, checks: dict[str, str]) -> None:
-    try:
-        item = (state.metadata or {}).get("audit_item") or {}
-        audited = item.get("task")
-        if audited is None:
-            checks["concordance"] = "SKIP no audited task recorded"
-            return
-        resolved = resolve_task(audited, item.get("task_args") or {})
-        scorers = resolved.scorer if isinstance(resolved.scorer, list) else [resolved.scorer]
-        scorers = [s for s in scorers if s is not None]
-        if not scorers:
-            checks["concordance"] = "SKIP no benchmark scorer"
-            return
-        has_box = has_benchmark(sample_sandbox(resolved, resolved.dataset[0]))
-        report = await probe_concordance(state, scorers, has_box=has_box)
-        checks["concordance"] = report.verdict
-        checks["concordance_reasons"] = "; ".join(report.reasons)[:200]
-        await sandbox().write_file(f"{AUDIT_ROOT}/concordance.json", report.to_json())
-    except Exception as ex:
-        checks["concordance"] = f"EXCEPTION {type(ex).__name__}: {ex}"[:200]
-
-
-async def _probe_grade(state: TaskState, checks: dict[str, str]) -> None:
-    async def grade_value(grade: Any) -> str:
-        scores = json.loads(await grade(answer=""))["scores"]
-        one = scores[0] if isinstance(scores, list) else scores
-        return str(one.get("value"))
-
-    try:
-        item = (state.metadata or {}).get("audit_item") or {}
-        audited = item.get("task")
-        if audited is None:
-            checks["grade"] = "SKIP no audited task recorded"
-            return
-        resolved = resolve_task(audited, item.get("task_args") or {})
-        scorers = resolved.scorer if isinstance(resolved.scorer, list) else [resolved.scorer]
-        scorers = [s for s in scorers if s is not None]
-        if not scorers:
-            checks["grade"] = "SKIP no benchmark scorer"
-            return
-        grade = grade_benchmark(scorers)
-
-        checks["grade_pristine"] = await grade_value(grade)
-
-        # inject the sample's gold solution and grade again -- git-patch benchmarks
-        # only; other shapes just exercise the pristine grade above
-        benchmark_md = (state.metadata or {}).get("benchmark_metadata") or {}
-        patch = benchmark_md.get("patch")
-        if not patch:
-            checks["grade"] = "SKIP gold injection is git-patch only"
-            return
-        applied = await sandbox(BENCHMARK_SERVICE).exec(
-            ["bash", "-c", "cd /testbed && git apply -"], input=patch
-        )
-        checks["gold_applied"] = "ok" if applied.success else f"FAILED {applied.stderr[:120]}"
-        checks["grade_gold"] = await grade_value(grade)
-
-        await reset_benchmark()(hard=False)
-        checks["grade_reset"] = await grade_value(grade)
-    except Exception as ex:
-        checks["grade"] = f"EXCEPTION {type(ex).__name__}: {ex}"[:200]
-
-
-def fetch_logs(logs: str) -> str:
+def fetch_logs(logs: str | list[str]) -> str:
     """Resolve a `logs` argument to something inspect can read locally.
 
-    - `hawk:<eval-set-id>[,<id>...]` downloads an eval set from the Hawk warehouse.
-    - `http(s)://...eval` downloads one log; `http(s)://...` anything else is read
-      as a manifest of log URLs (one per line, or a CSV with a `logs`/`url`
-      column), e.g. the public S3 listing a benchmark publisher hands out.
-    - anything else (a path, an `s3://` dir inspect reads natively) passes through.
-
-    Downloads happen in the process running the eval -- on Hawk that is the
-    trusted runner, which has egress; the auditor's sandbox need not.
+    `hawk:<eval-set-id>[,<id>...]` downloads an eval set from the Hawk warehouse;
+    anything else (a path, an `s3://` dir inspect reads natively) passes through.
     """
+    if isinstance(logs, list):
+        combined = Path(tempfile.mkdtemp(prefix="audit_corpus_"))
+        for index, source in enumerate(logs):
+            resolved = fetch_logs(source)
+            files = (
+                [resolved]
+                if resolved.endswith(".eval")
+                else [i.name for i in list_eval_logs(resolved)]
+            )
+            for filename in files:
+                source_path = Path(filename.removeprefix("file://"))
+                shutil.copyfile(source_path, combined / f"{index}_{source_path.name}")
+        return str(combined)
     if logs.startswith("hawk:"):
+        declared = _declared_transcripts()
+        if declared is not None:
+            source_id = logs.removeprefix("hawk:")
+            if source_id not in declared:
+                raise ValueError(f"Hawk input {source_id!r} was not declared for this execution")
+            return declared[source_id]
         return _hawk_fetch(logs.removeprefix("hawk:"))
-    if logs.startswith(("http://", "https://")):
-        return _url_fetch(logs)
+    if logs.startswith(("s3://", "gs://", "http://", "https://")):
+        return _download(logs)
     return logs
 
 
-def _url_fetch(url: str) -> str:
-    import csv
-    import io
-    import urllib.request
+def _download(url: str) -> str:
+    """A remote log file or folder, copied to a temporary directory.
 
-    def read(u: str) -> bytes:
-        with urllib.request.urlopen(u, timeout=600) as r:
-            return bytes(r.read())
+    With fsspec, the filesystem layer Inspect reads these URLs through.
+    """
+    import fsspec  # pyright: ignore[reportMissingTypeStubs]
 
-    if url.endswith((".eval", ".json")):
-        urls = [url]
-    else:
-        text = read(url).decode("utf-8")
-        if "," in text.splitlines()[0]:
-            rows = list(csv.DictReader(io.StringIO(text)))
-            column = next((c for c in ("logs", "log", "url") if rows and c in rows[0]), None)
-            if column is None:
-                raise ValueError(f"Log manifest {url!r} needs a `logs`/`log`/`url` column.")
-            urls = [str(row[column]).strip() for row in rows if row.get(column)]
-        else:
-            urls = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")]
-    if not urls:
-        raise ValueError(f"No log URLs found in manifest {url!r}.")
+    fetched = Path(tempfile.mkdtemp(prefix="remote_logs_"))
+    names = [url] if url.endswith((".eval", ".json")) else [i.name for i in list_eval_logs(url)]
+    if not names:
+        raise ValueError(f"No Inspect logs found: {url}")
+    for name in names:
+        with fsspec.open(name, "rb") as remote:  # pyright: ignore[reportUnknownMemberType]
+            (fetched / Path(name).name).write_bytes(remote.read())  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue,reportUnknownArgumentType]
+    return str(fetched / Path(url).name) if len(names) == 1 and names[0] == url else str(fetched)
 
-    fetched = Path(tempfile.mkdtemp(prefix="url_logs_"))
-    for u in urls:
-        name = Path(u.split("?", 1)[0]).name
-        if not name.endswith((".eval", ".json")):
-            raise ValueError(f"Manifest entry {u!r} does not name an .eval/.json log.")
-        (fetched / name).write_bytes(read(u))
-    return str(fetched)
+
+def _declared_transcripts() -> dict[str, str] | None:
+    """The eval sets Hawk resolved for this run (Hawk 4 `transcripts`), else None."""
+    try:
+        from hawk.runtime import transcript_sources  # pyright: ignore[reportMissingImports]
+    except ImportError:
+        if "HAWK_TRANSCRIPT_SOURCES" in os.environ:
+            raise
+        return None  # a Hawk without declared inputs
+    if "HAWK_TRANSCRIPT_SOURCES" not in os.environ:
+        return None
+    return {s.eval_set_id: s.location for s in transcript_sources()}  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
 
 def _hawk_fetch(eval_sets: str) -> str:
     """Download eval logs from the Hawk warehouse to a temporary directory.
 
-    Talks to the Hawk API directly with the runner's own credentials -- the hawk
-    CLI stores tokens in an OS keyring, which headless runner pods do not have.
-    Requires HAWK_API_URL, plus either HAWK_ACCESS_TOKEN or the runner's token
-    refresh environment (HAWK_TOKEN_REFRESH_URL, HAWK_TOKEN_REFRESH_CLIENT_ID,
-    HAWK_REFRESH_TOKEN).
+    Hawk's API is HAWK_API_URL; the token is HAWK_ACCESS_TOKEN when set, else this
+    process's own Hawk credentials (`_runs.HawkLogin`): the runner's hook, which a
+    Hawk runner installs before it loads tasks, or the operator's `hawk` login.
     """
-    import urllib.parse
-    import urllib.request
+    import concurrent.futures
 
-    api = os.environ["HAWK_API_URL"].rstrip("/")
-    headers = {"Authorization": f"Bearer {_hawk_token()}"}
-
-    def get_json(path: str) -> dict[str, Any]:
-        req = urllib.request.Request(api + path, headers=headers)
-        with urllib.request.urlopen(req, timeout=180) as r:
-            return dict(json.load(r))
-
-    def post_json(path: str, body: dict[str, Any]) -> dict[str, Any]:
-        req = urllib.request.Request(
-            api + path,
-            data=json.dumps(body).encode(),
-            headers={**headers, "Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=180) as r:
-            return dict(json.load(r))
+    from hawk.cli.download import download_file
+    from hawk.client import HawkClient
 
     fetched = Path(tempfile.mkdtemp(prefix="hawk_logs_"))
     sets = eval_sets.split(",")
-    for eval_set in sets:
-        files = get_json(f"/view/logs/logs?log_dir={urllib.parse.quote(eval_set)}")["files"]
-        names = [f["name"] for f in files if str(f.get("name", "")).endswith(".eval")]
-        if not names:
-            raise ValueError(f"No .eval files found in Hawk eval set {eval_set!r}.")
-        # several sets share one flat directory: prefix so same-named files
-        # cannot silently overwrite each other
-        prefix = f"{eval_set}_" if len(sets) > 1 else ""
-        urls = post_json("/view/logs/log-download-urls", {"logs": names})["urls"]
-        for item in urls:
-            dest = fetched / f"{prefix}{Path(item['filename']).name}"
-            with urllib.request.urlopen(item["url"], timeout=600) as r, open(dest, "wb") as f:
-                while chunk := r.read(1 << 20):
-                    f.write(chunk)
+
+    api = os.environ.get("HAWK_API_URL")
+    if not api:
+        raise ValueError("fetching hawk: logs needs HAWK_API_URL, Hawk's API address")
+
+    async def fetch() -> None:
+        from ._runs import HawkLogin
+
+        token = os.environ.get("HAWK_ACCESS_TOKEN") or await HawkLogin(api).access_token()
+        async with HawkClient(token=token, api_url=api) as client:
+            for address in sets:
+                eval_set, _, selected_file = address.partition("/")
+                files = await client.get_log_files(eval_set)
+                names = [f["name"] for f in files if str(f.get("name", "")).endswith(".eval")]
+                if selected_file:
+                    names = [name for name in names if Path(name).name == selected_file]
+                    if len(names) != 1:
+                        raise ValueError(
+                            f"Expected exactly one Hawk log at {address!r}, found {len(names)}"
+                        )
+                if not names:
+                    raise ValueError(f"No .eval files found in Hawk eval set {eval_set!r}.")
+                # several sets share one flat directory: prefix so same-named files
+                # cannot silently overwrite each other
+                prefix = f"{eval_set}_" if len(sets) > 1 else ""
+                async for url, filename in client.get_download_urls(names):
+                    await download_file(url, fetched / f"{prefix}{Path(filename).name}")
+
+    # task construction may already be inside inspect's event loop
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        pool.submit(asyncio.run, fetch()).result()
     return str(fetched)
-
-
-def _hawk_token() -> str:
-    # a fresh token via the runner's refresh credentials, else the static one
-    refresh_url = os.environ.get("HAWK_TOKEN_REFRESH_URL")
-    refresh_token = os.environ.get("HAWK_REFRESH_TOKEN")
-    client_id = os.environ.get("HAWK_TOKEN_REFRESH_CLIENT_ID")
-    if refresh_url and refresh_token and client_id:
-        import urllib.parse
-        import urllib.request
-
-        body = urllib.parse.urlencode(
-            {
-                "grant_type": "refresh_token",
-                "client_id": client_id,
-                "refresh_token": refresh_token,
-            }
-        ).encode()
-        req = urllib.request.Request(
-            refresh_url,
-            data=body,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return str(json.load(r)["access_token"])
-    token = os.environ.get("HAWK_ACCESS_TOKEN")
-    if not token:
-        raise ValueError(
-            "Fetching hawk: logs needs HAWK_ACCESS_TOKEN or the runner's token "
-            "refresh environment."
-        )
-    return token
-
-
-@solver
-def replay_exploit(exploits: dict[str, str]) -> Solver:
-    """Run a recorded exploit's commands in the sample's box, as its whole solution.
-
-    The exploit is keyed by sample id. Whatever it leaves in the box is graded by
-    the task's own scorer exactly as a real submission would be -- so an exploit
-    that passes here passes the genuine benchmark, not our harness.
-    """
-
-    async def solve(state: TaskState, generate: Generate) -> TaskState:
-        commands = exploits.get(str(state.sample_id))
-        if commands:
-            await sandbox().exec(["bash", "-c", commands], timeout=900)
-        return state
-
-    return solve
-
-
-@task
-def swebench_replay(
-    exploits: dict[str, str],
-    dataset: str = "princeton-nlp/SWE-bench_Verified",
-    split: str = "test",
-    allow_internet: bool = False,
-    sandbox_type: str = "docker",
-) -> Task:
-    """Replay recorded exploits against the real SWE-bench task and grade them.
-
-    Stage two of the exploit experiment: each sample runs its recorded exploit
-    (from a red-teaming audit) as its solution, and the benchmark's own scorer
-    grades the result. The pass rate is the real benchmark score of the exploits.
-
-    Args:
-        exploits: Map of sample id to the exact shell commands that carry out the
-            exploit in that sample's box.
-        dataset: SWE-bench dataset to draw the samples from.
-        split: Dataset split.
-        allow_internet: Whether the benchmark boxes may reach the internet.
-        sandbox_type: Sandbox provider ("docker" locally, "k8s" on Hawk).
-    """
-    from inspect_evals.swe_bench import swe_bench
-
-    base = swe_bench(
-        dataset=dataset,
-        split=split,
-        allow_internet=allow_internet,
-        sandbox_type=sandbox_type,
-    )
-    return replay_task(base, exploits)
-
-
-def replay_task(base: Task, exploits: dict[str, str]) -> Task:
-    """`base`, narrowed to the samples we hold an exploit for, solved by replay.
-
-    Uses `task_with` rather than assigning attributes on the built task, which
-    would skip Task's own normalisation of the dataset and solver. `task_with`
-    edits `base` in place and returns it, so pass a task no other caller holds
-    (`swebench_replay` builds a fresh one). The benchmark's scorer is untouched:
-    it is the judge.
-    """
-    wanted = set(exploits)
-    kept = [s for s in base.dataset if str(s.id) in wanted]
-    return task_with(base, dataset=MemoryDataset(kept), solver=[replay_exploit(exploits)])

@@ -19,6 +19,7 @@ def load() -> list[Skill]:
 def test_every_skill_loads_and_names_are_unique() -> None:
     skills = load()
     assert {skill.name for skill in skills} == {
+        "audit-framework",
         "answer-format",
         "approach-census",
         "contamination",
@@ -28,6 +29,7 @@ def test_every_skill_loads_and_names_are_unique() -> None:
         "ground-truth-access",
         "insufficiently-specified",
         "other-findings",
+        "question-labels",
         "red-teaming",
         "reading-logs",
         "analyzing-logs",
@@ -57,8 +59,8 @@ def test_descriptions_stay_within_the_always_visible_budget() -> None:
 
 def test_a_skill_directory_is_the_whole_contract(tmp_path: Path, monkeypatch) -> None:
     """Dropping a skill directory in is all it takes: prompt, validation and scoring derive."""
-    import inspect_audit._agent as agent_module
-    from inspect_audit._agent import audit_items
+    import inspect_audit._verdicts as agent_module
+    from inspect_audit._verdicts import audit_items
 
     # a new item, added as a directory and nothing else
     for name, grades in (
@@ -94,8 +96,8 @@ def test_malformed_frontmatter_fails_at_load(tmp_path: Path, monkeypatch) -> Non
 
     import pytest
 
-    import inspect_audit._agent as agent_module
-    from inspect_audit._agent import audit_items
+    import inspect_audit._verdicts as agent_module
+    from inspect_audit._verdicts import audit_items
 
     monkeypatch.setattr(agent_module, "SKILLS", tmp_path)
 
@@ -104,8 +106,10 @@ def test_malformed_frontmatter_fails_at_load(tmp_path: Path, monkeypatch) -> Non
         "scalar-grades": "metadata:\n  grades: SOUND\n",
         "int-grades": "metadata:\n  grades: [1, 2]\n",
         "typo-key": "metadata:\n  grade: [A, B]\n",
-        "rogue-unevidenced": "metadata:\n  grades: [A]\n  unevidenced: [B]\n",
-        "scalar-unevidenced": "metadata:\n  grades: [A]\n  unevidenced: B\n",
+        "rogue-flags": "metadata:\n  grades: [A]\n  flags: [B]\n",
+        "scalar-flags": "metadata:\n  grades: [A]\n  flags: A\n",
+        "rogue-unresolved": "metadata:\n  grades: [A]\n  unresolved: [B]\n",
+        "flag-and-unresolved": "metadata:\n  grades: [A]\n  flags: [A]\n  unresolved: [A]\n",
         "unknown-tool": "metadata:\n  grades: [A]\n  tools: [attempts]\n",
         "scalar-tools": "metadata:\n  grades: [A]\n  tools: reset\n",
         "list-details": "metadata:\n  grades: [A]\n  details: [x, y]\n",
@@ -122,13 +126,15 @@ def test_malformed_frontmatter_fails_at_load(tmp_path: Path, monkeypatch) -> Non
 
 
 def test_verdicts_are_validated_and_scored_per_item(monkeypatch) -> None:
-    """record_verdict enforces the item's grades; each item scores independently."""
+    """record_verdict enforces the item's grades, an explanation and evidence for every
+    grade, unresolved ones included; each item scores independently."""
     import asyncio
 
+    import pytest
     from inspect_ai.tool import ToolError
     from inspect_ai.util._store import Store, init_subtask_store
 
-    from inspect_audit._agent import (
+    from inspect_audit._verdicts import (
         AuditItemSkill,
         Evidence,
         Verdicts,
@@ -139,58 +145,35 @@ def test_verdicts_are_validated_and_scored_per_item(monkeypatch) -> None:
     item = AuditItemSkill(
         name="gold-answer",
         description="test",
-        grades=["CORRECT", "INCORRECT"],
-        unevidenced=["INCORRECT"],
+        grades=["CORRECT", "INCORRECT", "UNVERIFIABLE"],
+        flags=["INCORRECT"],
+        unresolved=["UNVERIFIABLE"],
     )
     init_subtask_store(Store())
     record = record_verdict([item])
     submit = submit_audit([item])
     quote = [Evidence(observed="q", source="s")]
+    base = {"item": "gold-answer", "approaches": "", "tried": "", "remarks": "", "details": {}}
 
     async def run() -> None:
-        # wrong grade rejected, missing evidence rejected, submit gated on coverage
-        import pytest
-
         with pytest.raises(ToolError, match="must be one of"):
-            await record(
-                item="gold-answer",
-                evidence=quote,
-                approaches="",
-                tried="",
-                remarks="",
-                grade="MAYBE",
-                details={},
-            )
+            await record(**base, grade="MAYBE", explanation="x", evidence=quote)
+        with pytest.raises(ToolError, match="explanation"):
+            await record(**base, grade="CORRECT", explanation=" ", evidence=quote)
+        # unresolved is no exemption: what was tried and seen, with its source
         with pytest.raises(ToolError, match="at least one"):
-            await record(
-                item="gold-answer",
-                evidence=[],
-                approaches="",
-                tried="",
-                remarks="",
-                grade="CORRECT",
-                details={},
-            )
+            await record(**base, grade="UNVERIFIABLE", explanation="could not tell", evidence=[])
         with pytest.raises(ToolError, match="No verdict recorded"):
             await submit(environment_issues=[], unresolved=[], improvements=[])
-
-        # an unevidenced grade may go without evidence; submit then passes
-        await record(
-            item="gold-answer",
-            evidence=[],
-            approaches="",
-            tried="looked",
-            remarks="",
-            grade="INCORRECT",
-            details={},
-        )
+        await record(**base, grade="INCORRECT", explanation="the source says 9", evidence=quote)
         await submit(environment_issues=[], unresolved=[], improvements=[])
 
     asyncio.run(run())
 
     from inspect_ai.util import store_as
 
-    assert store_as(Verdicts).verdicts["gold-answer"].grade == "INCORRECT"
+    verdict = store_as(Verdicts).verdicts["gold-answer"]
+    assert (verdict.grade, verdict.explanation) == ("INCORRECT", "the source says 9")
 
 
 def test_the_confidential_section_is_off_by_default_and_names_the_boundary() -> None:
@@ -202,11 +185,10 @@ def test_the_confidential_section_is_off_by_default_and_names_the_boundary() -> 
     """
     from inspect_audit import prompts
 
-    default = prompts.AUDIT.format(root="/audit", items="- `x`: y", confidential="", notes="")
+    default = prompts.AUDITOR.format(items="- `x`: y", confidential="", notes="")
     assert "unpublished" not in default
 
-    on = prompts.AUDIT.format(
-        root="/audit",
+    on = prompts.AUDITOR.format(
         items="- `x`: y",
         confidential=prompts.AUDIT_CONFIDENTIAL.format(root="/audit"),
         notes="",
@@ -217,17 +199,15 @@ def test_the_confidential_section_is_off_by_default_and_names_the_boundary() -> 
     assert "grade on what you could establish" in on
 
 
-def test_other_findings_is_evidenced_but_lets_a_clean_item_say_nothing() -> None:
-    """The residue item must not become a place to file impressions.
-
-    FOUND needs a source like every other grade; NONE is the one verdict that does
-    not, because "I looked and there was nothing" cannot cite an observation.
-    """
+def test_other_findings_flags_only_what_it_found() -> None:
+    """The residue item must not become a place to file impressions: FOUND is the flag,
+    and NONE still says, with sources, what was looked at."""
     skill = next(s for s in load() if s.name == "other-findings")
     meta = skill.metadata or {}
 
     assert meta["grades"] == ["FOUND", "NONE"]
-    assert meta["unevidenced"] == ["NONE"]
+    assert meta["flags"] == ["FOUND"]
+    assert "unevidenced" not in meta
     # scope separates a one-item quirk from a mechanism that recurs across the bank
     assert "scope" in meta["details"]["findings"]
 
@@ -241,7 +221,7 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
     from inspect_ai.util import store_as
     from inspect_ai.util._store import Store, init_subtask_store
 
-    from inspect_audit._agent import (
+    from inspect_audit._verdicts import (
         AuditItemSkill,
         Evidence,
         Verdicts,
@@ -261,39 +241,37 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
     assert schema.type == "string"
     assert "Exact log, sample, epoch references" in schema.description
     assert "answer-format: examined" in schema.description
-    quote = Evidence(
-        observed="MOVE: a1a2", source="run.eval#sample=1,epoch=2,message=4"
-    )
+    quote = Evidence(observed="MOVE: a1a2", source="run.eval#sample=1,epoch=2,message=4")
 
     async def run() -> None:
-        args = dict(
-            item=item.name,
-            evidence=[quote],
-            approaches="reviewed",
-            tried="read",
-            remarks="",
-            grade="SOUND",
-        )
+        args = {
+            "item": item.name,
+            "evidence": [quote],
+            "approaches": "reviewed",
+            "tried": "read",
+            "remarks": "",
+            "grade": "SOUND",
+            "explanation": "the format the grader expects is the one the question asks for",
+        }
         with pytest.raises(ToolError, match="examined"):
             await record(**args, details={})
-        with pytest.raises(ToolError, match="valid JSON object"):
-            await record(**args, details="invalid JSON")
+        # prose where the object belongs (09-29 chess run, 54 times): the refusal names
+        # the fields and where the prose goes, so the auditor can correct itself
+        with pytest.raises(ToolError, match=r"began 'Review table.*remarks.*examined: Exact log"):
+            await record(**args, details="Review table: see /audit/review.json")
         await record(**args, details='{"examined": ["run.eval#sample=1"]}')
         await record(**args, details={"examined": [quote.source]})
         await submit_audit([item])(
             environment_issues=[
-                Evidence(
-                    observed="Analysis dependency was missing", source="tool-event-1"
-                )
+                Evidence(observed="Analysis dependency was missing", source="tool-event-1")
             ],
-            unresolved=[
-                Evidence(observed="Alternative judge not tested", source="tool-event-2")
-            ],
+            unresolved=[Evidence(observed="Alternative judge not tested", source="tool-event-2")],
             improvements=[],
         )
 
     asyncio.run(run())
     saved = store_as(Verdicts)
+    assert len(saved.rejected[item.name]) == 2  # the missing field, then the prose
     assert saved.verdicts[item.name].details["examined"] == [quote.source]
     assert saved.debrief["environment_issues"][0].source == "tool-event-1"
     assert saved.debrief["unresolved"][0].observed == "Alternative judge not tested"
@@ -302,26 +280,25 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
 
 def test_every_prompt_is_a_file_and_every_placeholder_gets_filled() -> None:
     """Prose lives in markdown; a prompt that reaches a model with a stray {field} is a bug."""
-    import re
+    from string import Formatter
 
     from inspect_audit import prompts
 
     filled = {
-        "AUDIT": {"root": "/audit", "items": "- `x`: y", "confidential": "", "notes": ""},
+        "AUDITOR": {"items": "- `x`: y", "confidential": "", "notes": ""},
         "AUDIT_CONFIDENTIAL": {"root": "/audit"},
         "AUDIT_NOTES": {"notes": "look at the grader"},
         "INVESTIGATE": {},
-        "REPORT": {"root": "/report"},
-        "REPORT_CHAT_ONLY": {},
     }
     assert set(filled) == set(prompts.__all__)
     for name, values in filled.items():
         template = getattr(prompts, name)
         assert (prompts.HERE / f"{name.lower()}.md").is_file(), f"{name} has no markdown file"
-        fields = set(re.findall(r"\{(\w+)\}", template))
+        fields = {field for _, field, _, _ in Formatter().parse(template) if field is not None}
         assert fields == set(values), f"{name} placeholders {fields} do not match {set(values)}"
         rendered = template.format(**values)
-        assert "{" not in rendered.replace("{{", ""), f"{name} rendered with a brace left in"
+        for field in fields:
+            assert "{" + field + "}" not in rendered, f"{name} left {field} unfilled"
 
 
 def test_the_prompts_carry_no_python() -> None:
@@ -338,13 +315,16 @@ def test_verdict_schema_survives_openrouter_serialization() -> None:
     from inspect_ai.model._openai import openai_chat_tool_param
     from inspect_ai.tool import ToolDef, ToolInfo
 
-    from inspect_audit._agent import audit_items, record_verdict
+    from inspect_audit._verdicts import audit_items, record_verdict
 
     definition = ToolDef(record_verdict(audit_items()))
-    wire = openai_chat_tool_param(ToolInfo(
-        name=definition.name, description=definition.description,
-        parameters=definition.parameters,
-    ))["function"]["parameters"]
+    wire = openai_chat_tool_param(
+        ToolInfo(
+            name=definition.name,
+            description=definition.description,
+            parameters=definition.parameters,
+        )
+    )["function"]["parameters"]
 
     def check(schema):
         if schema.get("type") == "object":
@@ -357,3 +337,28 @@ def test_verdict_schema_survives_openrouter_serialization() -> None:
 
     check(wire)
     assert wire["properties"]["details"]["type"] == "string"
+
+
+def test_a_missing_verdict_says_why() -> None:
+    """09-29 chess run: puzzles 40 and 75 came back NO_VERDICT with only concordance
+    metadata. 40 had hit its cost limit before any verdict, 75 had every
+    record_verdict refused; the investigator could see neither and blamed the wrong
+    thing. Real eval: a limit hit before the auditor records anything."""
+    from inspect_ai import Task, eval
+    from inspect_ai.dataset import Sample
+    from inspect_ai.solver import generate
+
+    from inspect_audit._verdicts import AuditItemSkill, item_scorer
+
+    item = AuditItemSkill(name="gold-answer", description="Check the key", grades=["CORRECT"])
+    task = Task(
+        dataset=[Sample(input="audit this")],
+        solver=generate(),
+        scorer=item_scorer(item),
+        message_limit=1,
+    )
+    log = eval(task, model="mockllm/model", display="none")[0]
+    score = log.samples[0].scores["gold-answer"]  # type: ignore[index]
+    assert score.value == "NO_VERDICT"
+    assert "never called record_verdict" in str(score.explanation)
+    assert "hit its message limit" in str(score.explanation)

@@ -2,10 +2,8 @@
 
 > In this container: this table is a snapshot from an `inspect_evals` checkout and the
 > models in it are not the models you can run. The ones you may run are listed in the
-> seed's `remote.worker_models`, they are OpenRouter ids, and anything else is refused
-> by the submission policy. Their prices are already registered with Inspect, so
-> `budget()` and the collected logs are your cost source, not this file and not the
-> price API below.
+> seed's `jobs` block, as OpenRouter ids; anything else is refused. `budget()` and the
+> collected logs are your cost source, not this file and not the price API below.
 
 Last updated: 2026-03-16
 

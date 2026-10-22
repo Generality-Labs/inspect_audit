@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ia-compatibility"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = ["inspect-audit"]
+
+[project.entry-points.inspect_ai]
+ia_compatibility = "ia_compatibility.probe"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ia_compatibility"]

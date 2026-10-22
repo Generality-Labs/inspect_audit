@@ -1,0 +1,115 @@
+% ==================================================================
+% AUDITING FRAMEWORK (one page, shared by all audit documents)
+% The validity chain (benchmark -> measurement -> evaluation ->
+% claim), the validity aspects attached to each step, and the audit
+% dimensions that operationalise them. Claim-level validities are
+% explicitly out of scope. Eval-independent: edit here and every
+% audit document picks up the change.
+% ==================================================================
+\phantomsection
+\addcontentsline{toc}{section}{Auditing Framework}
+\label{sec:framework}
+
+\begin{adjustwidth}{-10mm}{0mm}
+
+% --- Title row -----------------------------------------------------
+\noindent
+{\LARGE\itshape \textbf{Auditing Framework}}\hfill
+{\small\itshape\color{black!55}version \aauditframework}
+
+\smallskip
+
+% --- Intro ----------------------------------------------------------
+\noindent
+\begin{dsbox}[top=1mm, bottom=1mm, before skip=3pt, after skip=3pt]{Validity aspects}
+\footnotesize
+An evaluation supports a chain of increasingly ambitious inferences:
+running a \textbf{benchmark} produces a \textbf{measurement}, the
+measurement is interpreted as an \textbf{evaluation} of some
+capability, and the evaluation is enlisted to support \textbf{claims}.
+Each link can fail in its own way, so validity threats attach at
+different points of the chain. The audit dimensions on the next page
+operationalise the validity aspects below the claim line; each
+dimension is assessed in the Audit Findings. The validity aspects
+associated with claims (criterion, external, and consequential
+validity) depend on the specific claim being made and its deployment
+context, not on the eval alone -- they are \textbf{beyond the scope of
+this audit}.
+\end{dsbox}
+
+\smallskip
+
+% --- Diagram ---------------------------------------------------------
+% Chips name audit dimensions (scorecard row labels). "Task
+% specification" and "Tasks and datasets" are both assessed under the
+% Tasks-and-datasets dimension, which straddles the measurement and
+% evaluation rungs.
+\newcommand{\fwchip}[1]{{\setlength{\fboxsep}{2.5pt}\setlength{\fboxrule}{0.5pt}%
+  \fcolorbox{black!40}{white}{\footnotesize #1}}}
+\newcommand{\fwchipg}[1]{{\setlength{\fboxsep}{2.5pt}\setlength{\fboxrule}{0.5pt}%
+  \fcolorbox{black!35}{black!4}{\footnotesize\color{black!55}#1}}}
+\noindent
+\begin{tikzpicture}[
+    aspectbox/.style={rectangle, rounded corners=1.5mm, draw=brandTeal,
+      line width=0.6pt, fill=brandTeal!4, inner sep=2.5mm,
+      text width=98mm, align=left, anchor=north west},
+    greybox/.style={rectangle, rounded corners=1.5mm, draw=black!45,
+      line width=0.6pt, fill=black!3, inner sep=2.5mm,
+      text width=98mm, align=left, anchor=north west},
+    rung/.style={rectangle, rounded corners=1.5mm, fill=brandTeal,
+      text=white, minimum width=46mm, minimum height=13mm,
+      text width=42mm, align=center},
+    rungx/.style={rung, fill=black!45},
+    tolink/.style={->, line width=0.7pt, black!60},
+    ladder/.style={->, line width=1pt, black!60}]
+
+  % --- claim tier (out of scope) -------------------------------------
+  \node[greybox] (claimbox) at (0mm,0mm) {%
+    {\small\bfseries\color{black!60}Claim validities -- beyond audit scope}\\[3pt]
+    \fwchipg{Criterion validity}\ \fwchipg{External validity}\
+    \fwchipg{Consequential validity}\\[3pt]
+    {\scriptsize\itshape\color{black!55}Assessed against a specific
+     claim and deployment context, not the eval alone; explicitly out
+     of scope for this audit.}};
+  \node[rungx] (claim) at (139mm,-13mm) {%
+    {\small\bfseries Claim}\\[1pt]
+    {\scriptsize\itshape what the eval is used to argue}};
+
+  % --- evaluation tier ------------------------------------------------
+  \node[aspectbox] (construct) at (0mm,-36mm) {%
+    {\small\bfseries\color{brandTeal}Construct validity}\\[3pt]
+    \fwchip{{\bfseries\color{brandTeal}A}~Construct validity}\ \fwchip{{\bfseries\color{brandTeal}I}~Informativeness}};
+  \node[aspectbox] (content) at (0mm,-56mm) {%
+    {\small\bfseries\color{brandTeal}Content validity}\\[3pt]
+    \fwchip{{\bfseries\color{brandTeal}B}~Content validity}};
+  \node[rung] (evaluation) at (139mm,-53mm) {%
+    {\small\bfseries Evaluation}\\[1pt]
+    {\scriptsize\itshape the interpretation of the score}};
+
+  % --- measurement tier -----------------------------------------------
+  \node[aspectbox] (impl) at (0mm,-78mm) {%
+    {\small\bfseries\color{brandTeal}Implementation validity}\\[3pt]
+    \fwchip{{\bfseries\color{brandTeal}C}~Task Specification}\ \fwchip{{\bfseries\color{brandTeal}D}~Scaffolding}\ \fwchip{{\bfseries\color{brandTeal}E}~Harness}\\[3pt]
+    \fwchip{{\bfseries\color{brandTeal}F}~Environment}\ \fwchip{{\bfseries\color{brandTeal}G}~Grading}\ \fwchip{{\bfseries\color{brandTeal}H}~Resource limits}};
+  \node[rung] (measurement) at (139mm,-89mm) {%
+    {\small\bfseries Measurement}\\[1pt]
+    {\scriptsize\itshape the score produced by a run}};
+
+  % --- benchmark ------------------------------------------------------
+  \node[rung] (benchmark) at (139mm,-118mm) {%
+    {\small\bfseries Benchmark}\\[1pt]
+    {\scriptsize\itshape tasks, data, harness, grading}};
+
+  % --- ladder ----------------------------------------------------------
+  \draw[ladder] (benchmark) -- (measurement);
+  \draw[ladder] (measurement) -- (evaluation);
+  \draw[ladder] (evaluation) -- (claim);
+
+  % --- aspect -> rung ---------------------------------------------------
+  \draw[tolink, dashed] (claimbox.east) -- (claim.west);
+  \draw[tolink] (construct.east) -- (evaluation.west);
+  \draw[tolink] (content.east) -- (evaluation.west);
+  \draw[tolink] (impl.east) -- (measurement.west);
+\end{tikzpicture}
+
+\end{adjustwidth}

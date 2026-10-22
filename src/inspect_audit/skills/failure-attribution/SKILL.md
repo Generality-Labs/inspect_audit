@@ -7,7 +7,8 @@ description: For the attempts that failed, establish why -- a genuine capability
   simply cannot do this.
 metadata:
   grades: [CAPABILITY, ARTEFACT, MIXED, UNCLEAR]
-  unevidenced: [UNCLEAR]
+  flags: [ARTEFACT, MIXED]
+  unresolved: [UNCLEAR]
   details:
     attributions: each distinct cause of failure, as {route, why, owner} -- why the
       attempts on that route failed, and owner is the audit item that owns it if an
@@ -36,6 +37,12 @@ it with enough evidence to be worth its attention, and record the owner. The
 transcripts decide: a failure that reproduces the same missing dependency across the
 field is an artefact; a field that each reaches a different wrong answer by sound
 reasoning is a capability limit.
+
+For sequential tasks, trace which earlier outputs or implementations the failing
+step consumes. Where possible, check the step independently using a controlled,
+valid upstream input. Keep the original end-to-end result separate: an isolated
+step passing does not make the recorded chain pass, and an inherited error does
+not establish a new defect in every downstream step.
 
 ## Grade
 

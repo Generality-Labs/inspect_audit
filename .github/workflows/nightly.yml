@@ -1,0 +1,40 @@
+name: Nightly
+
+# inspect_audit leans on Inspect's behaviour (sample ids, task_with, scorers,
+# checkpointing, the k8s converter). Inspect moves daily; this runs the full suite
+# against its main branch so a breaking change shows up here, not in a paid run.
+
+on:
+  schedule:
+    - cron: "0 4 * * *" # daily, 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# one nightly at a time: a manual run supersedes the one still going
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  inspect-main:
+    name: Tests against inspect_ai main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.13"
+      - name: Install dependencies, then Inspect from main
+        run: |
+          uv sync --locked
+          uv pip install --no-deps -e tests/compatibility
+          uv pip install "inspect-ai @ git+https://github.com/UKGovernmentBEIS/inspect_ai@main"
+          uv run --no-sync python -c "import inspect_ai; print('inspect_ai', inspect_ai.__version__)"
+      - name: Pytest
+        run: uv run --no-sync pytest
+      - name: Pytest (docker)
+        run: uv run --no-sync pytest -m docker

@@ -1,0 +1,28 @@
+name: ia-simpleqa-scramble-200
+packages:
+- git+https://github.com/Generality-Labs/inspect_audit@8f546b51316afdc0a8fa021f15dc3a6b9ee9d318
+- git+https://github.com/Generality-Labs/inspect_evals@67a9ea5333d3fc672ebce3ca9724bcfdad87f541
+tasks:
+- package: git+https://github.com/Generality-Labs/inspect_audit@8f546b51316afdc0a8fa021f15dc3a6b9ee9d318#subdirectory=experiments/simpleqa_hawk
+  name: ia_simpleqa_experiment
+  items:
+  - name: audit
+models:
+- &id001
+  package: openai
+  name: openrouter
+  items:
+  - name: openai/gpt-6-luna
+    args:
+      config:
+        reasoning_effort: low
+model_roles:
+  grader: *id001
+max_connections: 8
+max_retries: 2
+cost_limit: 0.1
+epochs: 1
+retry_attempts: 0
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

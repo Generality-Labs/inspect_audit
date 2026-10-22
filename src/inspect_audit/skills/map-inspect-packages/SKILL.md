@@ -12,7 +12,7 @@ Inspect AI is an open-source Python framework for LLM evaluations. The core (`in
 | Package | Owns | Docs |
 |---|---|---|
 | **Inspect AI** | Core eval framework: `Task` / `Solver` / `Scorer` / datasets / models and providers / agents / tools / sandbox API / log and analysis APIs (`inspect_ai.log`, `inspect_ai.analysis`) / eval runners (`eval()`, `eval_set()`). | https://inspect.aisi.org.uk/llms.txt |
-| **Inspect Evals** | Community catalog of 130+ pre-built benchmark evals (GAIA, SWE-Bench, Cybench, MMLU, GPQA, …). Use these before writing your own. | https://ukgovernmentbeis.github.io/inspect_evals/llms.txt |
+| **Inspect Evals** | Community catalog of pre-built benchmark evals. Use these before writing your own. | https://ukgovernmentbeis.github.io/inspect_evals/llms.txt |
 | **Inspect Flow** | Declarative workflow orchestration: run many tasks × models × params at scale, with sweeps, defaults, and post-eval steps (`FlowSpec`, `FlowTask`). | https://meridianlabs-ai.github.io/inspect_flow/llms.txt |
 | **Inspect Scout** | In-depth analysis of AI agent transcripts via LLM, grep/pattern, or multi-agent scanners. Detects issues like refusals, misconfiguration, or evaluation awareness. Imports natively from Inspect logs, plus Arize Phoenix, LangSmith, Logfire, MLFlow, W&B Weave, Claude Code sessions, and arbitrary Arrow/Parquet/custom Python sources. | https://meridianlabs-ai.github.io/inspect_scout/llms.txt |
 | **Inspect Viz** | Data visualization for Inspect log dataframes: bar charts, line and scatter plots, scorer & sample heatmaps, radar plots, with interactive filtering and tables. | https://meridianlabs-ai.github.io/inspect_viz/llms.txt |
@@ -29,7 +29,7 @@ The table above is curated for the most-used packages. For the comprehensive eco
 - *"Reusable / declarative orchestration: config-driven runs, post-eval workflows, or re-running the same setup later"* → **Inspect Flow** (rather than a hand-rolled Python wrapper around `eval_set()`).
 - *"Identify patterns across many samples, or analyze long agent trajectories"* → **Inspect Scout**.
 - *"Plot or dashboard eval results"* → **Inspect Viz**.
-- *"Evaluate a coding agent"* → **Inspect SWE** for the agent, **Inspect Evals** (SWE-Bench, etc.) or **Inspect Harbor** for the benchmark.
+- *"Evaluate a coding agent"* → **Inspect SWE** for the agent, **Inspect Evals**  or **Inspect Harbor** for the benchmark.
 - *"Sample needs an isolated environment"* → **Inspect AI** sandbox API. Default to the built-in Docker sandbox for development and small/test runs; reach for an external sandbox package (managed cloud or self-hosted K8s/Proxmox/EC2) for large-scale runs, resource-intensive tasks, or GPU needs.
 - *"Read or inspect a single eval log or a handful of samples"* → **Inspect AI** (`inspect_ai.log` for one log; `inspect_ai.analysis` for cross-log dataframes). Use this rather than Scout when you're looking at one log or a small set.
 - *"Add a custom scorer, solver, tool, or dataset"* → **Inspect AI** core.
@@ -42,7 +42,7 @@ The table above is curated for the most-used packages. For the comprehensive eco
 
 **Tip: markdown variants for agent-readable docs.** HTML versions of these docs sites are JS-rendered and may return empty content to fetch tools; use the markdown variant instead.
 - `inspect.aisi.org.uk` pages: append `.html.md` (e.g. `https://inspect.aisi.org.uk/agents.html.md`).
-- `ukgovernmentbeis.github.io/inspect_evals` pages: append `.llms.md` (e.g. `https://ukgovernmentbeis.github.io/inspect_evals/evals/gpqa/index.llms.md`).
+- `ukgovernmentbeis.github.io/inspect_evals` pages: append `.llms.md`.
 
 ---
 

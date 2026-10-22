@@ -1,0 +1,27 @@
+{
+  "about": "What each audit check should conclude about each item of benchmark/short_answers.py. Kept outside the benchmark folder: the auditor is given that folder's code and each sample's metadata, and neither may carry the answers.",
+  "clean": {
+    "gold-answer": "CORRECT",
+    "answer-format": "SOUND",
+    "insufficiently-specified": "SPECIFIED",
+    "ground-truth-access": "PROTECTED"
+  },
+  "planted": {
+    "q1": {},
+    "q2": {},
+    "q3": {"gold-answer": "INCORRECT"},
+    "q4": {"gold-answer": "INCORRECT"},
+    "q5": {"answer-format": "PENALISED"},
+    "q6": {"insufficiently-specified": "UNDERSPECIFIED"},
+    "q7": {"gold-answer": "ALTERNATIVES"},
+    "q8": {"ground-truth-access": "ACCESSIBLE"}
+  },
+  "notes": {
+    "q3": "3*3 is 9",
+    "q4": "the capital is Canberra",
+    "q5": "the exact-match grader fails 1/4 and 25%, which the question allows",
+    "q6": "no planet is named",
+    "q7": "13, 17 and 19 are also right; the exact-match grader fails them",
+    "q8": "the answer key is in the box at /work/.grading/answer_key.txt"
+  }
+}

@@ -1,0 +1,37 @@
+name: ia-api-free-harbor-20261021
+packages:
+- inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-harbor @ git+https://github.com/meridianlabs-ai/inspect_harbor@e3a0d9bc738e77739792ca06ad7bbb1d845c8da6
+tasks:
+- package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility
+  name: ia_compatibility
+  items:
+  - name: probe
+    args:
+      spec:
+        task: inspect_harbor/harbor
+        source: inspect_harbor._harbor.task
+        package: inspect-harbor @ git+https://github.com/meridianlabs-ai/inspect_harbor@e3a0d9bc738e77739792ca06ad7bbb1d845c8da6
+        task_args:
+          package_name: terminal-bench/terminal-bench-2
+          package_ref: sha256:c6fc2e2382c1dbae99b2d5ecd2f4f4a60c3c01e0d84642d69b4afd92e99d078b
+          dataset_task_names:
+          - make-mips-interpreter
+          n_tasks: 1
+        logs: []
+        judges: {}
+        auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+      limit: 1
+models:
+- package: openai
+  name: openrouter
+  items:
+  - name: openai/gpt-6-luna
+cost_limit: 0.01
+time_limit: 1200
+retry_attempts: 0
+max_retries: 2
+epochs: 1
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

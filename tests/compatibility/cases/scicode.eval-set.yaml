@@ -1,0 +1,43 @@
+name: ia-api-free-scicode-20261021
+packages:
+- inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-evals[scicode] @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
+tasks:
+- package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility
+  name: ia_compatibility
+  items:
+  - name: probe
+    args:
+      spec:
+        task: inspect_evals/scicode
+        task_args:
+          provide_scientific_background: false
+          timeout: 1800
+          include_dev_set: false
+          scaling: false
+          scaling_token_limit: 200000
+          feedback: null
+          stop_on_success: false
+          scaling_agent: react
+        source: inspect_evals.scicode.scicode
+        samples:
+        - '58'
+        logs:
+        - hawk:scicode-provider-default-pgcjfyx2vbyas1w5
+        judges: {}
+        package: inspect-evals[scicode] @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
+        auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+      limit: 1
+models:
+- package: openai
+  name: openrouter
+  items:
+  - name: openai/gpt-6-luna
+cost_limit: 0.01
+time_limit: 1200
+retry_attempts: 0
+max_retries: 2
+epochs: 1
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

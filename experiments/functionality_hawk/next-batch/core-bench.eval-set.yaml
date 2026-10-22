@@ -1,0 +1,61 @@
+name: ia-smoke-core-bench-haiku-20261021
+packages:
+- inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@8edecdc6b0eed9b4bb59581d9fb7943a0e9ec3a0
+- inspect-evals @ git+https://github.com/UKGovernmentBEIS/inspect_evals@17b078d74c92d83dc0d14c4d3922e53509ba73eb
+tasks:
+- package: git+https://github.com/Generality-Labs/inspect_audit@8edecdc6b0eed9b4bb59581d9fb7943a0e9ec3a0#subdirectory=experiments/functionality_hawk
+  name: ia_functionality
+  items:
+  - name: investigation
+    args:
+      benchmark: core-bench
+      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@8edecdc6b0eed9b4bb59581d9fb7943a0e9ec3a0
+      model: openrouter/anthropic/claude-haiku-4.5
+      audit_sample_cost: 2.0
+      spec:
+        repo: https://github.com/UKGovernmentBEIS/inspect_evals
+        revision: 17b078d74c92d83dc0d14c4d3922e53509ba73eb
+        task: inspect_evals/core_bench
+        source: inspect_evals.core_bench.core_bench
+        paths:
+        - src/inspect_evals/core_bench
+        package: inspect-evals @ git+https://github.com/UKGovernmentBEIS/inspect_evals@17b078d74c92d83dc0d14c4d3922e53509ba73eb
+        task_args:
+          difficulty: medium
+          field: all
+          language: all
+          capsule_ids: null
+          exclude_capsule_ids: null
+          limit: 0
+          filter_out_gpu: false
+          filter_out_vision: false
+          vllm_model: null
+          shuffle: false
+          max_retries: 5
+          backoff_factor: 1
+          max_messages: 50
+          token_limit: null
+          solver: null
+          split: train
+        samples:
+        - capsule-7156696
+        - capsule-4884085
+        logs:
+        - hawk:imported-corebench-medium-1c10g1lsoeva2wfi/2026-04-01T05-00-48_00-00_core-bench_SYowSwEk4NpLf7tbB4RmXr.eval
+        judges: {}
+        selection: seeded random selection from the supplied recorded population
+        child_secrets:
+        - HF_TOKEN
+models:
+- package: openai
+  name: openrouter
+  items:
+  - name: openrouter/anthropic/claude-haiku-4.5
+cost_limit: 2.0
+time_limit: 3600
+epochs: 1
+retry_attempts: 0
+max_retries: 2
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

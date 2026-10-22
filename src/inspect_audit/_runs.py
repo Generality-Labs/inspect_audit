@@ -42,7 +42,7 @@ class Job:
     label: str
     task: str  # registry name, e.g. inspect_evals/simpleqa_verified
     package: str  # pip spec that installs the task's package
-    models: list[str]  # Full Inspect names, e.g. openrouter/openai/gpt-5-mini.
+    models: list[str]  # Full Inspect names, e.g. openrouter/openai/gpt-6-luna.
     task_args: dict[str, Any] = field(default_factory=dict)
     model_roles: dict[str, str] = field(default_factory=dict)
     sample_ids: list[str] | None = None

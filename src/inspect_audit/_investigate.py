@@ -46,7 +46,6 @@ from ._policy import (
     Models,
     Permissions,
     PolicyStore,
-    argument_problems,
     bind_policy,
     canonical,
     ensure_model,
@@ -120,7 +119,6 @@ class ModelMenu:
 DEFAULT_WORKERS = [
     "openrouter/openai/gpt-5.6-luna",
     "openrouter/google/gemini-3.6-flash",
-    "openrouter/openai/gpt-5-mini",
     "openrouter/openai/gpt-5.6-sol",
     "openrouter/openai/gpt-5.6-terra",
     "openrouter/openai/gpt-6-astra",
@@ -736,11 +734,6 @@ def json_object(text: str, name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ToolError(f"{name} must be a JSON object, not {type(value).__name__}")
     return value
-
-
-def check_arguments(task_args: dict[str, Any], allowed: list[str]) -> None:
-    if problems := argument_problems(task_args, allowed):
-        raise ToolError("task_args refused:\n- " + "\n- ".join(problems))
 
 
 @tool

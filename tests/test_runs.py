@@ -33,9 +33,9 @@ def test_a_job_renders_as_a_config_hawk_accepts() -> None:
         label="smoke",
         task="inspect_evals/simpleqa_verified",
         package="inspect-evals@git+https://example.org/evals@abc",
-        models=["openai/gpt-5-mini"],
+        models=["openai/gpt-6-luna"],
         task_args={"scorer": "original"},
-        model_roles={"grader": "openai/gpt-5-mini"},
+        model_roles={"grader": "openai/gpt-6-luna"},
         sample_ids=["1", "2"],
         epochs=2,
     )
@@ -50,7 +50,7 @@ def test_a_job_renders_as_a_config_hawk_accepts() -> None:
     )
     # Hawk receives the full Inspect provider/model identity
     assert [(g.package, [i.name for i in g.items]) for g in config.models or []] == [
-        ("inspect-ai", ["openai/gpt-5-mini"])
+        ("inspect-ai", ["openai/gpt-6-luna"])
     ]
     assert config.retry_attempts == 0
 
@@ -326,24 +326,57 @@ def test_a_local_job_sees_only_the_environment_it_needs(
     assert "AWS_SECRET_ACCESS_KEY" not in seen
 
 
-def test_task_arguments_cannot_place_code_or_name_other_models() -> None:
-    allowed = ["openai/judge"]
-    assert _investigate.argument_problems({"scorer": "original", "profile": "x"}, allowed) == []
-    assert _investigate.argument_problems({"grader_model": "openai/judge"}, allowed) == []
-    problems = _investigate.argument_problems(
-        {
-            "sandbox": "local",
-            "nested": {"data_dir": "/etc", "judge": "openai/gpt-6-astra"},
-            "items": [{"docker_image": "evil:latest"}],
-        },
-        allowed,
-    )
-    assert [p.split(":")[0] for p in problems] == [
-        "task_args.sandbox",
-        "task_args.nested.data_dir",
-        "task_args.nested.judge",
-        "task_args.items[0].docker_image",
-    ]
+@pytest.mark.parametrize("kind", ["benchmark", "audit"])
+def test_task_arguments_cannot_place_code_or_name_other_models(kind: str) -> None:
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit._policy import InvestigationAuthorizer, LaunchPolicy, Models, canonical
+
+    for args in [
+        {"judge_prompt": "original", "grader_model": "openai/judge", "judges": ["openai/judge"]},
+        {"sandbox": "local"},
+        {"image": "evil:latest"},
+        {"paths": ["/etc"]},
+        {"nested": {"data_dir": "/etc", "judge": "openai/other"}},
+        {"items": [{"docker_image": "evil:latest"}]},
+        {"grader_model": "openai/other"},
+        {"judges": ["openai/other"]},
+        {"models": {"reviewer": "openai/other"}},
+    ]:
+        policy = LaunchPolicy(
+            task="bench",
+            task_package="bench",
+            audit_package="audit",
+            auditor_image="img",
+            models=Models(subjects=("subject",), auditors=("auditor",), judges=("openai/judge",)),
+            checks=("gold-answer",),
+            task_args_json=canonical(args),
+            configuration_json="{}",
+        )
+        job = Job(label="probe", task="bench", package="bench", models=["subject"], task_args=args)
+        if kind == "audit":
+            job = Job(
+                label="probe",
+                task="inspect_audit/audit",
+                package="audit",
+                models=["auditor"],
+                extra_packages=["bench"],
+                task_args={
+                    "task": "bench",
+                    "task_args": args,
+                    "source": "bench",
+                    "auditor_image": "img",
+                    "checks": ["gold-answer"],
+                    "samples": ["1"],
+                    "cost_limit": 0.1,
+                },
+            )
+        authorizer = InvestigationAuthorizer(policy)
+        if "judge_prompt" in args:
+            assert authorizer.authorise(job, kind, set()).task_args == job.task_args
+        else:
+            with pytest.raises(ToolError, match="task_args"):
+                authorizer.authorise(job, kind, set())
 
 
 def test_the_runner_credentials_come_from_hawks_real_hook(

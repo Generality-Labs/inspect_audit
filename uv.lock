@@ -1078,6 +1078,14 @@ cli = [
     { name = "sentry-sdk", marker = "python_full_version >= '3.13'" },
     { name = "tabulate", marker = "python_full_version >= '3.13'" },
 ]
+client = [
+    { name = "aiohttp", marker = "python_full_version >= '3.13'" },
+    { name = "keyring", marker = "python_full_version >= '3.13'" },
+    { name = "keyrings-alt", marker = "python_full_version >= '3.13'" },
+    { name = "pydantic-settings", marker = "python_full_version >= '3.13'" },
+    { name = "pyjwt", marker = "python_full_version >= '3.13'" },
+    { name = "python-dotenv", version = "1.2.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+]
 
 [[package]]
 name = "hf-xet"
@@ -1363,6 +1371,10 @@ remote = [
     { name = "aiofiles", marker = "python_full_version >= '3.13'" },
     { name = "hawk", extra = ["cli"], marker = "python_full_version >= '3.13'" },
 ]
+runner = [
+    { name = "aiofiles", marker = "python_full_version >= '3.13'" },
+    { name = "hawk", extra = ["client"], marker = "python_full_version >= '3.13'" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1381,14 +1393,16 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiofiles", marker = "python_full_version >= '3.13' and extra == 'remote'" },
+    { name = "aiofiles", marker = "python_full_version >= '3.13' and extra == 'runner'" },
     { name = "hawk", extras = ["cli"], marker = "python_full_version >= '3.13' and extra == 'remote'", specifier = ">=3.4,<4" },
+    { name = "hawk", extras = ["client"], marker = "python_full_version >= '3.13' and extra == 'runner'", specifier = ">=3.4,<4" },
     { name = "inspect-ai", specifier = ">=0.3.266" },
     { name = "inspect-k8s-sandbox", marker = "extra == 'k8s'", specifier = ">=0.13" },
     { name = "openai", specifier = ">=1.0" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "semver", specifier = ">=3.0,<3.1" },
 ]
-provides-extras = ["k8s", "remote"]
+provides-extras = ["k8s", "remote", "runner"]
 
 [package.metadata.requires-dev]
 dev = [

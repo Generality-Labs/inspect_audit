@@ -1,7 +1,7 @@
 name: ia-api-free-simpleqa-verified-20261022
 packages:
 - inspect-ai==0.3.266
-- inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
 - inspect-evals @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
 tasks:
 - package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility

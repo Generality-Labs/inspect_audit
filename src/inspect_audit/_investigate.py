@@ -351,8 +351,8 @@ def git_package_spec(repo: Path, revision: str | None = None) -> str | None:
 def own_package_spec() -> str | None:
     """The spec that installs the inspect_audit a runner should use: this one.
 
-    With the `remote` extra: a Hawk runner's own hawk has no keyring, which
-    hawk.client imports, so jobs that talk to Hawk need it installed beside us.
+    With the `runner` extra: child jobs need Hawk client dependencies for
+    reading logs, without installing the operator CLI and its Inspect pin.
     """
     from importlib.metadata import Distribution, PackageNotFoundError
 
@@ -370,7 +370,7 @@ def own_package_spec() -> str | None:
         # an editable or local install: the code is a working tree, so ask git
         elif (local := data.get("url", "")).startswith("file://"):
             spec = git_package_spec(Path(local.removeprefix("file://")))
-    return f"inspect_audit[remote] @ {spec}" if spec else None
+    return f"inspect_audit[runner] @ {spec}" if spec else None
 
 
 def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | None:

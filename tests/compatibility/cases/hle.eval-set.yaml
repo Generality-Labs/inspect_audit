@@ -1,7 +1,7 @@
 name: ia-api-free-hle-20261021
 packages:
 - inspect-ai==0.3.266
-- inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
 - inspect-evals @ git+https://github.com/UKGovernmentBEIS/inspect_evals@49738b6412cf3215db7c9d3d4838fc58b6f422a2
 tasks:
 - package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility

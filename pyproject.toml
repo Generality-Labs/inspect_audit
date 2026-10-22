@@ -34,6 +34,11 @@ remote = [
     # hawk download-artifacts needs it; the CLI extra omits it
     "aiofiles; python_version >= '3.13'",
 ]
+# In-cluster jobs need the client, not a second installation of the full CLI.
+runner = [
+    "hawk[client]>=3.4,<4; python_version >= '3.13'",
+    "aiofiles; python_version >= '3.13'",
+]
 k8s = [
     "inspect-k8s-sandbox>=0.13",
 ]

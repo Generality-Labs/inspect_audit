@@ -33,3 +33,9 @@ model_prices:
 ```
 
 Inspect sample cost limits are additional controls, not one allowance shared across independent jobs. The investigator decides how to allocate its available budget, including reporting. The same investigator retains its context and may run further experiments while writing. There is no fixed reporting reserve or automatic key minting requirement.
+
+## Hawk installations
+
+Use the `remote` extra for the operator CLI. Hawk child jobs use the `runner` extra, which installs Hawk client dependencies without the CLI extra. This avoids reintroducing a deployment's CLI-specific Inspect dependency into the child environment. Both use Hawk's existing client and download helpers.
+
+The current deployment remains on Hawk 3.7.2. Passing compatibility probes there does not validate Hawk 4 restricted credentials. The remaining migration work is tracked in [Hawk 4 migration](hawk-4-migration.md).

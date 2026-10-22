@@ -20,7 +20,7 @@ Hawk 4 is the target for investigation execution on Hawk. The current deployment
 
 ## Launcher, routing and spending
 
-- [ ] Review `launcher/hawk.py` authentication and investigation submission against the new API. Keep administrative launch authority outside agent sandboxes.
+- [ ] Review `dispatch/hawk.py` authentication and investigation submission against the new API. Keep administrative launch authority outside agent sandboxes.
 - [ ] Verify Middleman routes all calls intended to share a capped OpenRouter key through that assigned key, including judges and child experiments.
 - [ ] Check provider passthrough routes and remove dependencies on retired unified Middleman endpoints, if present.
 - [ ] Confirm balance queries and usage attribution against the deployed API. A key balance remains distinct from an investigation's attributed usage.
@@ -29,6 +29,8 @@ Hawk 4 is the target for investigation execution on Hawk. The current deployment
 
 - [ ] Run a complete investigator job on Hawk 4: launch an audit and benchmark experiment, collect logs and verdicts, and publish a report.
 - [ ] Exercise cancellation, failed submissions and checkpoint resume.
+- [ ] Rebuild and pin the investigator sandbox image from the trimmed Dockerfile; existing image digests still contain the old TeX publishing dependencies.
+- [ ] Provision the publishing host or separate publishing image with TeX and access to the checksum-pinned private template. Prefer a preverified cache layered into the Python publishing runner image, so no GitHub token is needed in the pod. For the optional GL web publisher, install Playwright and Chromium. Verify findings submission, artifact persistence and both publishers on the actual runner image.
 - [ ] Rerun the API-free benchmark compatibility suite.
 - [ ] Document tested versions and remaining restrictions before declaring the Hawk 4 integration supported.
 

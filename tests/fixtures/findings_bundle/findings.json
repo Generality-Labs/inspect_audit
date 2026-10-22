@@ -1,0 +1,135 @@
+{
+  "subject": {
+    "task": "fixture_eval",
+    "revision": "abc123456789",
+    "dataset": "three synthetic samples"
+  },
+  "auditors": {
+    "checks": {
+      "gold-answer": {
+        "name": "gold-answer",
+        "description": "Judge whether a benchmark item's recorded answer is the answer to the question it asks, and whether it is the only one.",
+        "grades": [
+          "CORRECT",
+          "INCORRECT",
+          "ALTERNATIVES",
+          "UNVERIFIABLE"
+        ],
+        "flags": [
+          "INCORRECT",
+          "ALTERNATIVES"
+        ],
+        "unresolved": [
+          "UNVERIFIABLE"
+        ],
+        "details": {
+          "independent": "whether any source you cite is independent of the item's own cited sources (true/false)"
+        },
+        "tools": []
+      }
+    },
+    "samples": {
+      "sample-a": {
+        "gold-answer": [
+          {
+            "by": "auditor",
+            "label": "INCORRECT",
+            "explanation": "Reference disagrees",
+            "evidence": [
+              {
+                "observed": "Reference says 9; the answer key says 7.",
+                "source": "evidence/reference.txt:1"
+              }
+            ],
+            "model": "openai/gpt-6-luna",
+            "at": "2026-10-22T00:00:00Z"
+          }
+        ]
+      },
+      "sample-b": {
+        "gold-answer": []
+      },
+      "sample-c": {
+        "gold-answer": []
+      }
+    }
+  },
+  "investigator": {
+    "summary": "Synthetic audit: a wrong reference answer and a construct concern.",
+    "findings": [
+      {
+        "criterion": "C.1",
+        "issue": "Incorrect reference answer",
+        "explanation": "The key disagrees with the cited reference.",
+        "sample_ids": [
+          "sample-a"
+        ],
+        "evidence": [
+          {
+            "observed": "Reference says 9; the answer key says 7.",
+            "source": "evidence/reference.txt:1"
+          }
+        ]
+      },
+      {
+        "criterion": "A",
+        "issue": "Construct interpretation requires care",
+        "explanation": "This synthetic sample covers only one part of the claimed capability.",
+        "sample_ids": [
+          "sample-a"
+        ],
+        "evidence": [
+          {
+            "observed": "Reference says 9; the answer key says 7.",
+            "source": "evidence/reference.txt:1"
+          }
+        ]
+      }
+    ],
+    "reviews": [],
+    "ratings": {
+      "overall": {
+        "label": "C",
+        "explanation": "Notable issues; some useful signal remains.",
+        "evidence": [
+          {
+            "observed": "Reference says 9; the answer key says 7.",
+            "source": "evidence/reference.txt:1"
+          }
+        ]
+      },
+      "A": {
+        "label": "Minor",
+        "explanation": "Limited construct coverage.",
+        "evidence": [
+          {
+            "observed": "Reference says 9; the answer key says 7.",
+            "source": "evidence/reference.txt:1"
+          }
+        ]
+      },
+      "C": {
+        "label": "Major",
+        "explanation": "One synthetic reference answer is incorrect.",
+        "evidence": [
+          {
+            "observed": "Reference says 9; the answer key says 7.",
+            "source": "evidence/reference.txt:1"
+          }
+        ]
+      },
+      "C.1": {
+        "label": "Major",
+        "explanation": "The key says 7, while the reference says 9.",
+        "evidence": [
+          {
+            "observed": "Reference says 9; the answer key says 7.",
+            "source": "evidence/reference.txt:1"
+          }
+        ]
+      }
+    },
+    "limitations": [],
+    "artifacts": []
+  }
+}

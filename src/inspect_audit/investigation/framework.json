@@ -1,0 +1,310 @@
+{
+  "repository": "Generality-Labs/audit_reports",
+  "revision": "ad7de89658b6794112c2f65847991c7ed41d9e30",
+  "files": {
+    ".latexmkrc": "fde749e4bc6d665909d51624f38a0e7c6d2705caeb224ed64f2a556eb651a360",
+    "template/auditframework.sty": "24e4c39156d9c578f8aa6dd5635d62f879b59736174621a4b82d913d8b1b4748",
+    "template/GLaudit.cls": "73346855e7869326a7d0b218bf2373f67978b345bb48f86da4f9a0173ca7d4cc",
+    "reports/Example/Content.tex": "e8d1dc7a10ba20593f2364121d1a7082dd55244b608f3f0ad16e874ce0720d8d",
+    "reports/Example/.latexmkrc": "c6423b178c6939b1ca82fa9100d25cfb8b4c5780c7ccc70027fb2f2071c957f1",
+    "reports/Example/Example_Audit.tex": "24b6356069bc510bbb88b53ca94e31b4e6ab908595d47f86db0ecd9e003415b9",
+    "template/sections/ScoringCriteria.tex": "d40ce921bdaf50af495471d5d2278b1737cc7779a00add9990f7dbeb244a45fd",
+    "template/assets/Generality_Labs.png": "5304d3127dcc12b680061fc74617f0bd2169fc9cfadb028896ea628441162f6a"
+  },
+  "dimensions": {
+    "A": {
+      "name": "Construct validity",
+      "definition": "Does performance on the eval validly measure the capability or behaviour the eval aims to assess?",
+      "dimension": "construct"
+    },
+    "A.0": {
+      "name": "measurement distortion",
+      "definition": "flaws in implementation validity dimensions distort measurement of the target construct",
+      "dimension": "construct"
+    },
+    "A.1": {
+      "name": "contamination",
+      "definition": "benchmark items or their solutions were present in training data or otherwise accessible during training",
+      "dimension": "construct"
+    },
+    "A.2": {
+      "name": "memorisation",
+      "definition": "performance depends on recalling a memorised solution rather than exercising the intended capability",
+      "dimension": "construct"
+    },
+    "A.3": {
+      "name": "eval awareness",
+      "definition": "models recognise the evaluation context and alter their behaviour as a result",
+      "dimension": "construct"
+    },
+    "A.4": {
+      "name": "sandbagging",
+      "definition": "models deliberately or strategically underperform relative to their capability",
+      "dimension": "construct"
+    },
+    "A.5": {
+      "name": "confounds",
+      "definition": "scores are systematically affected by factors unrelated to the target construct",
+      "dimension": "construct"
+    },
+    "A.6": {
+      "name": "proxy measurement",
+      "definition": "the measured outcome is only an imperfect proxy for the target capability or behaviour",
+      "dimension": "construct"
+    },
+    "A.7": {
+      "name": "capability vs propensity",
+      "definition": "the evaluation conflates what a model can do with what it tends to do",
+      "dimension": "construct"
+    },
+    "B": {
+      "name": "Content validity",
+      "definition": "Do the tasks adequately represent the target domain and situations the evaluation aims to cover?",
+      "dimension": "contentvalidity"
+    },
+    "B.1": {
+      "name": "coverage gaps",
+      "definition": "important parts of the target domain or capability are absent or underrepresented",
+      "dimension": "contentvalidity"
+    },
+    "B.2": {
+      "name": "unrepresentative task distribution",
+      "definition": "the distribution of tasks differs materially from the target domain",
+      "dimension": "contentvalidity"
+    },
+    "C": {
+      "name": "Task Specification",
+      "definition": "Are individual tasks correctly specified, solvable, and free from defects that affect performance?",
+      "dimension": "dataset"
+    },
+    "C.1": {
+      "name": "incorrect reference answer",
+      "definition": "the reference answer is incorrect or inconsistent with the task",
+      "dimension": "dataset"
+    },
+    "C.2": {
+      "name": "impossible tasks",
+      "definition": "no correct answer is attainable as posed",
+      "dimension": "dataset"
+    },
+    "C.3": {
+      "name": "missing information",
+      "definition": "required parameters or context are not supplied",
+      "dimension": "dataset"
+    },
+    "C.4": {
+      "name": "guessability",
+      "definition": "tasks can be solved using superficial cues rather than the intended competence",
+      "dimension": "dataset"
+    },
+    "C.5": {
+      "name": "prompt defects",
+      "definition": "the prompts are ambiguous, incomplete, misleading, or otherwise fail to specify correctly what the model should do",
+      "dimension": "dataset"
+    },
+    "C.6": {
+      "name": "hidden requirements",
+      "definition": "success depends on unstated conventions or assumptions",
+      "dimension": "dataset"
+    },
+    "C.7": {
+      "name": "unintended shortcuts",
+      "definition": "answers are reachable without performing the intended work",
+      "dimension": "dataset"
+    },
+    "D": {
+      "name": "Scaffolding",
+      "definition": "Does the scaffolding provide the model with an appropriate setup for performing the task?",
+      "dimension": "scaffold"
+    },
+    "D.1": {
+      "name": "system prompt issues",
+      "definition": "system-level instructions are ambiguous, misleading, or otherwise distort performance",
+      "dimension": "scaffold"
+    },
+    "D.2": {
+      "name": "planning or agent loop",
+      "definition": "the agent structure constrains or alters performance",
+      "dimension": "scaffold"
+    },
+    "D.3": {
+      "name": "memory & context strategy",
+      "definition": "the strategy for retaining and presenting context loses or obscures information needed to solve the task",
+      "dimension": "scaffold"
+    },
+    "D.4": {
+      "name": "retry/error feedback",
+      "definition": "failures are surfaced poorly or recovery opportunities are handled inconsistently",
+      "dimension": "scaffold"
+    },
+    "D.5": {
+      "name": "coaching",
+      "definition": "the scaffolding provides hints or information that artificially improves performance",
+      "dimension": "scaffold"
+    },
+    "E": {
+      "name": "Harness",
+      "definition": "Does the evaluation infrastructure correctly execute the specified task and scaffolding?",
+      "dimension": "harness"
+    },
+    "E.1": {
+      "name": "tool-call handling",
+      "definition": "tool calls are parsed, routed, or executed incorrectly",
+      "dimension": "harness"
+    },
+    "E.2": {
+      "name": "submission/termination logic",
+      "definition": "episodes terminate earlier or later than intended",
+      "dimension": "harness"
+    },
+    "E.3": {
+      "name": "context delivery",
+      "definition": "task materials or interaction history reach the model incompletely",
+      "dimension": "harness"
+    },
+    "E.4": {
+      "name": "message handling",
+      "definition": "messages are truncated, reordered, duplicated, or otherwise mishandled",
+      "dimension": "harness"
+    },
+    "E.5": {
+      "name": "state management",
+      "definition": "evaluation state is lost, corrupted, or inconsistently maintained",
+      "dimension": "harness"
+    },
+    "E.6": {
+      "name": "harness bugs",
+      "definition": "other defects in the evaluation infrastructure affect performance",
+      "dimension": "harness"
+    },
+    "E.7": {
+      "name": "harness sensitivity",
+      "definition": "results change materially across equivalent harnesses",
+      "dimension": "harness"
+    },
+    "F": {
+      "name": "Environment",
+      "definition": "Does the task environment and its resources function as specified?",
+      "dimension": "environment"
+    },
+    "F.1": {
+      "name": "tool failures",
+      "definition": "tools error, malfunction, or hang during episodes",
+      "dimension": "environment"
+    },
+    "F.2": {
+      "name": "missing resources",
+      "definition": "files, packages, or services assumed by the task are absent",
+      "dimension": "environment"
+    },
+    "F.3": {
+      "name": "broken files & dependencies",
+      "definition": "inputs or dependencies are corrupt, incompatible, or unreadable",
+      "dimension": "environment"
+    },
+    "F.4": {
+      "name": "non-determinism",
+      "definition": "the environment varies between otherwise equivalent runs",
+      "dimension": "environment"
+    },
+    "F.5": {
+      "name": "information leakage",
+      "definition": "the environment exposes answers or unintended hints",
+      "dimension": "environment"
+    },
+    "F.6": {
+      "name": "implementation differs from specification",
+      "definition": "the environment behaves differently from its documented design",
+      "dimension": "environment"
+    },
+    "G": {
+      "name": "Grading",
+      "definition": "Does the grading procedure correctly determine whether task performance satisfies the evaluation criteria?",
+      "dimension": "grading"
+    },
+    "G.1": {
+      "name": "false positives and false negatives",
+      "definition": "the grading procedure incorrectly classifies responses as satisfying or failing the evaluation criteria",
+      "dimension": "grading"
+    },
+    "G.2": {
+      "name": "underspecified criteria",
+      "definition": "the grading criteria do not clearly determine what counts as satisfying them",
+      "dimension": "grading"
+    },
+    "G.3": {
+      "name": "judge errors",
+      "definition": "LLM judges make systematic, inconsistent, or otherwise erroneous grading decisions",
+      "dimension": "grading"
+    },
+    "G.4": {
+      "name": "surface-form sensitivity",
+      "definition": "otherwise equivalent responses receive different scores because of differences in wording, formatting, or presentation",
+      "dimension": "grading"
+    },
+    "G.5": {
+      "name": "incorrect partial credit",
+      "definition": "partial scores do not appropriately reflect the quality or correctness of the response",
+      "dimension": "grading"
+    },
+    "G.6": {
+      "name": "grader exploitation",
+      "definition": "submissions can manipulate or exploit the grading procedure",
+      "dimension": "grading"
+    },
+    "H": {
+      "name": "Resource limits",
+      "definition": "Do resource constraints provide an appropriate opportunity for models to perform on the task?",
+      "dimension": "resources"
+    },
+    "H.1": {
+      "name": "turn/token/time limits",
+      "definition": "limits terminate productive attempts before the model can complete the task",
+      "dimension": "resources"
+    },
+    "H.2": {
+      "name": "resource sensitivity",
+      "definition": "performance changes materially with the available resource budget",
+      "dimension": "resources"
+    },
+    "H.3": {
+      "name": "unequal constraint effects",
+      "definition": "the same nominal constraint binds models differently",
+      "dimension": "resources"
+    },
+    "I": {
+      "name": "Informativeness",
+      "definition": "Does the evaluation provide enough variation and signal to distinguish relevant differences between models?",
+      "dimension": "informativeness"
+    },
+    "I.1": {
+      "name": "saturation",
+      "definition": "frontier models cluster at the attainable ceiling, limiting the benchmark's ability to distinguish between them",
+      "dimension": "informativeness"
+    },
+    "I.2": {
+      "name": "floor/ceiling effects",
+      "definition": "the attainable score range compresses meaningful differences between models",
+      "dimension": "informativeness"
+    },
+    "I.3": {
+      "name": "clustering",
+      "definition": "model scores cluster tightly relative to measurement uncertainty, providing little discriminative power between models",
+      "dimension": "informativeness"
+    }
+  },
+  "grades": {
+    "A": "No obvious issues.",
+    "B": "Minor issues, but unlikely to produce misleading results.",
+    "C": "Notable issues, but evaluation still contains some useful signal.",
+    "D": "Serious issues, and the evaluation is very unlikely to contain useful signal."
+  },
+  "assessments": {
+    "None": "No material issues found.",
+    "Minor": "Contains issues that add undesired noise but do not change the headline conclusions.",
+    "Major": "Contains issues that distort results or their interpretation.",
+    "Critical": "Contains issues that severely affect the dimension.",
+    "Not assessed": "Applicable to this evaluation, but assessment is beyond the scope of the audit.",
+    "Not applicable": "Not applicable to this evaluation."
+  }
+}

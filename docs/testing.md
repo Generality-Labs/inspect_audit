@@ -143,3 +143,7 @@ Run `uv run pytest tests/test_compatibility_cases.py` for cheap validation, then
 The grade tool returns Inspect's complete `Score` record, including metadata and failure reasons. Compatibility checks validate that record with Inspect's `Score` model. A `grader_failed` or `scoring_failed` reason fails the grading stage. A wholly unscored result also fails. Optional empty metric groups may contain NaN when other groups have actual scores, as MirrorCode does; that is not itself a grading failure.
 
 Mocked grading is marked `passed_mock`, and the native log must contain the declared mock model call. An undeclared external model call fails the run. These checks test execution and parsing, not the correctness of the canned judgment.
+
+## Private-template publishing checks
+
+The default pytest selection excludes both `docker` and `latex` tests. Heavy publishing checks run in CI, not on the operator's machine. The dedicated `LaTeX fixture` job requires the `audit-template` environment's read-only `AUDIT_REPORTS_TOKEN`; missing access fails the job rather than passing with skipped tests. It checks full registry regeneration, an actual PDF build, and a cache image running without networking or GitHub credentials. No model calls are made.

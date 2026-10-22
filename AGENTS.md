@@ -24,15 +24,20 @@ The audit is the benchmark's own Inspect task with the auditor in place of its s
 
 One Inspect task: a react agent in its own box, launching benchmark and audit jobs. It runs wherever Inspect runs it (a Docker container locally, a pod on Hawk); only its jobs' backend differs.
 
-| Module                        | Owns                                                                                          |
-| ----------------------------- | --------------------------------------------------------------------------------------------- |
-| `_investigate.py`             | `investigate`: declared inputs staged on the host, the job tools, the budget tool, the task   |
-| `_runs.py`                    | a `Job` and where it runs: Hawk through `HawkClient`, or a detached local `inspect eval-set`  |
-| `_policy.py`                  | frozen launch configuration, checkpoint identity and `InvestigationAuthorizer` for child jobs |
-| `_investigation_workspace.py` | staging inputs into the box, reading the report back out, publishing to Hawk's artifacts      |
-| `_report.py`                  | findings, publication, the store's record of launched jobs, the outcome scorer                |
+| Module                        | Owns                                                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `_investigate.py`             | `investigate`: declared inputs staged on the host, the job tools, the budget tool, the task                   |
+| `dispatch/`                   | jobs and where they run (`local`, `hawk`), `policy` and the authoriser, `packages`, `spend`, the key launcher |
+| `_log_sources.py`             | every way of naming logs (path, `hawk:`, URL) resolved to local files                                         |
+| `_investigation_workspace.py` | staging inputs into the box, reading the report back out, publishing to Hawk's artifacts                      |
+| `_report.py`                  | launched-job records, log provenance, operator turn-taking and outcome scoring                                |
+| `_framework.py`               | analytical definitions and rubric, without a separate judgment store                                          |
+| `_findings.py`                | editable draft, trusted submitted bundle, manifest and checkpointed phase                                     |
+| `_publishing.py`              | native dynamic tool source, publisher packages and standalone `publish` task                                  |
+| `publishers/latex.py`         | default pinned GL audit template, generated structure and host/image TeX compilation                          |
+| `publishers/gl.py`            | reviewed GL components and static HTML/PDF output                                                             |
 
-Budget is the model key every call bills to (a capped OpenRouter key locally, the run's Hawk user's assigned key on Hawk); nothing here prices or reserves. Resume is Inspect's checkpointing of `/workspace`, `/inputs` and the store.
+The supported shared-budget setup routes calls through one capped OpenRouter key (the assigned Hawk user's key on Hawk). Inspect prices individual sample limits; there is no investigation-wide spending ledger or fixed reporting reserve. Resume is Inspect's checkpointing of `/workspace`, `/inputs` and the store.
 
 Launch configuration is resolved once into an immutable `LaunchPolicy`. Its snapshot and SHA-256 are saved in Inspect's sample store; resume must match the original policy and investigator model. `/inputs/policy.json` is a readable copy, never authority. Child submissions pass through `InvestigationAuthorizer` and record the policy digest. The launch policy permits per-sample audit cost and concurrency limits; it does not implement a shared dollar ledger. Unsupported policy fields are refused.
 
@@ -63,3 +68,11 @@ Structured YAML accepts `benchmark`, `audit`, `policy` and `execution` sections 
 - Test behaviour against real Inspect, real logs and real Docker. A test that only checks our code agrees with itself measures nothing.
 - `tests/test_audit.py` runs a real audit of `tests/fixtures/toy_benchmark` with a scripted mockllm auditor. Docker tests are deselected by default: `uv run pytest -m docker`.
 - No model spend in tests. Paid validation runs are separate and need an explicit go.
+
+## Findings handoff
+
+The investigator can edit its draft through Bash/Python. Collected auditor records remain host-authoritative. `submit_findings` validates and freezes the bundle; publishing tools and skills are withheld until this boundary. Afterwards job tools disappear and host launch code refuses new experiments. There is no reopening. The same agent continues, or `inspect_audit/publish` starts a fresh publishing run from the saved bundle. See `docs/findings.md`. Do not introduce a second mutable report findings format into this workflow.
+
+The default latex publisher downloads and verifies the pinned audit_reports template on the host; investigation uses generated analytical registry data. No template copy is vendored. Publisher validation runs before freezing findings. Agent-authored publishing input is prose only; grades, criterion assignments, counts and evidence remain in the frozen findings.
+
+The optional GL web publisher draws through pinned website components. Agent calculations may prepare data from existing evidence; agent-written drawing code is not an input. The optional Playwright dependency and Chromium browser run on the Inspect host. CI exercises actual Docker handoff and HTML/PDF publication without model spend.

@@ -1,31 +1,20 @@
-"""The investigation's register: every take on every item, in one machine-readable file.
+"""Host-side auditor collection and shared interpretation of sample/check results.
 
-The population is the benchmark's own items (numbered as an eval numbers them) crossed
-with the checks the investigation declares, so missing work is visible as an empty
-cell. A take is one judgment by one party: an auditor's verdict, imported from its
-audit log, or the investigator's own review. Takes are only ever appended: a review
-never overwrites a verdict, so a disagreement stays on the record. Broader claims
-(`findings`) and per-dimension judgments (`ratings`) sit beside the grid.
-
-The register lives in the sample store, which Inspect's checkpointing carries, and is
-mirrored to /workspace/register.json after every change for the agent to read and
-script against. It is the investigation's working record; reports are built from it
-as a separate step.
+The register retains all collected auditor takes in Inspect's checkpointed store.
+The agent works in findings.json; investigator reviews are applied to a temporary
+register for queries and publication, never written into the collection history.
 """
 
-import json
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from inspect_ai.util import StoreModel, sandbox, store_as
+from inspect_ai.util import StoreModel, store_as
 from pydantic import BaseModel, Field, JsonValue
 
 from ._verdicts import AuditItemSkill, Evidence
 
-BOX_PATH = "/workspace/register.json"
-
-# the framework's scale for a dimension, as the report uses it
-RATINGS = ("None", "Minor", "Major", "Critical", "Not assessed", "Not applicable")
+if TYPE_CHECKING:
+    from ._findings import Review
 
 
 def now() -> str:
@@ -49,23 +38,10 @@ class Take(BaseModel):
     at: str = Field(default_factory=now)
 
 
-class Claim(BaseModel):
-    """A finding broader than one item: what the investigator concludes, and on what."""
-
-    by: Literal["investigator"] = "investigator"
-    claim: str
-    explanation: str
-    samples: list[str] = Field(default_factory=list)
-    evidence: list[Evidence] = Field(default_factory=list)
-    at: str = Field(default_factory=now)
-
-
 class Register(BaseModel):
     subject: dict[str, JsonValue] = Field(default_factory=dict)
     checks: list[str] = Field(default_factory=list)
     samples: dict[str, dict[str, list[Take]]] = Field(default_factory=dict)
-    findings: list[Claim] = Field(default_factory=list)
-    ratings: dict[str, list[Take]] = Field(default_factory=dict)
 
 
 class RegisterStore(StoreModel):
@@ -79,10 +55,11 @@ def load() -> Register:
 
 
 async def save(register: Register) -> None:
-    """Keep the store's copy, and mirror it into the box for the agent to read."""
-    data = register.model_dump(mode="json", exclude_none=True)
-    store_as(RegisterStore).data = data  # assigned, not mutated: the store sees it
-    await sandbox().write_file(BOX_PATH, json.dumps(data, indent=1))
+    """Refresh the combined draft, then save authoritative auditor history."""
+    from ._findings import sync_draft
+
+    await sync_draft(register)
+    store_as(RegisterStore).data = register.model_dump(mode="json", exclude_none=True)
 
 
 def started(register: Register) -> bool:
@@ -141,6 +118,40 @@ def standing(takes: list[Take]) -> Take | None:
     return (mine or takes or [None])[-1]
 
 
+def apply_reviews(
+    register: Register, reviews: list["Review"], checks: dict[str, AuditItemSkill]
+) -> None:
+    """Overlay draft or submitted reviews on a temporary collection snapshot."""
+    for review in reviews:
+        skill = checks.get(review.check)
+        if (
+            review.sample_id not in register.samples
+            or review.check not in register.samples[review.sample_id]
+            or skill is None
+            or review.label not in skill.grades
+        ):
+            raise ValueError("Review must name an existing sample/check and a valid grade")
+        register.samples[review.sample_id][review.check].append(
+            Take(by="investigator", **review.model_dump(exclude={"sample_id", "check"}))
+        )
+
+
+def cell_states(takes: list[Take], skill: AuditItemSkill | None) -> set[str]:
+    """Interpret a cell identically for progress queries and publication outcomes."""
+    if not takes:
+        return {"missing"}
+    found: set[str] = set()
+    top = standing(takes)
+    if skill and top and (top.label not in skill.grades or top.label in skill.unresolved):
+        found.add("unresolved")
+    last_review = max((i for i, take in enumerate(takes) if take.by == "investigator"), default=-1)
+    if skill and any(t.label in skill.flags for t in takes[last_review + 1 :]):
+        found.add("flagged")
+    if len({t.label for t in takes}) > 1:
+        found.add("disputed")
+    return found
+
+
 View = Literal["summary", "flagged", "unresolved", "missing", "disputed"]
 
 
@@ -161,23 +172,6 @@ def select(
         if check is None or name == check
     ]
 
-    def state(name: str, takes: list[Take]) -> set[str]:
-        skill = checks.get(name)
-        found: set[str] = set()
-        if not takes:
-            return {"missing"}
-        top = standing(takes)
-        if skill and top and top.label in skill.unresolved:
-            found.add("unresolved")
-        last_review = max(
-            (i for i, take in enumerate(takes) if take.by == "investigator"), default=-1
-        )
-        if skill and any(t.label in skill.flags for t in takes[last_review + 1 :]):
-            found.add("flagged")
-        if len({t.label for t in takes}) > 1:
-            found.add("disputed")
-        return found
-
     if view == "summary":
         counts: dict[str, dict[str, int]] = {}
         for _, name, takes in cells:
@@ -185,7 +179,7 @@ def select(
                 name, {"cells": 0, "missing": 0, "flagged": 0, "unresolved": 0, "disputed": 0}
             )
             row["cells"] += 1
-            for found in state(name, takes):
+            for found in cell_states(takes, checks.get(name)):
                 row[found] += 1
         return counts
     return [
@@ -196,5 +190,5 @@ def select(
             "standing": (standing(takes) or Take(by="auditor", label="-", explanation="")).label,
         }
         for sample_id, name, takes in cells
-        if view in state(name, takes)
+        if view in cell_states(takes, checks.get(name))
     ]

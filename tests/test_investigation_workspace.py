@@ -1,87 +1,14 @@
 """The investigator's box, and the host's trusted copy of what is in it."""
 
 import asyncio
-import io
 import json
-import tarfile
 from pathlib import Path
 
 import pytest
 import yaml
-from inspect_ai.tool import tool
 
 from inspect_audit import _investigation_workspace as workspace
 from inspect_audit._investigate import investigate
-
-
-@pytest.mark.parametrize(
-    ("name", "kind"),
-    [
-        ("../escape", tarfile.REGTYPE),
-        ("/escape", tarfile.REGTYPE),
-        ("link", tarfile.SYMTYPE),
-        ("hardlink", tarfile.LNKTYPE),
-        ("fifo", tarfile.FIFOTYPE),
-    ],
-)
-def test_workspace_skips_paths_and_links_without_failing(tmp_path, name, kind):
-    """A venv or a cloned repo makes links; they are left out, never fatal."""
-    stream = io.BytesIO()
-    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
-        member = tarfile.TarInfo(name)
-        member.type = kind
-        member.linkname = "/etc/passwd"
-        archive.addfile(member)
-        kept = tarfile.TarInfo("report/findings.json")
-        kept.size = 2
-        archive.addfile(kept, io.BytesIO(b"[]"))
-    skipped = workspace.extract_workspace(stream.getvalue(), tmp_path)
-    assert skipped == [name]
-    assert (tmp_path / "report/findings.json").read_text() == "[]"
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["report"]
-
-
-def test_valid_workspace_extracts(tmp_path):
-    stream = io.BytesIO()
-    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
-        member = tarfile.TarInfo("report/findings.json")
-        member.size = 2
-        archive.addfile(member, io.BytesIO(b"[]"))
-    workspace.extract_workspace(stream.getvalue(), tmp_path)
-    assert (tmp_path / "report/findings.json").read_text() == "[]"
-
-
-def _sync_recorder(monkeypatch, calls, fail_push=False):
-    async def pull(root):
-        calls.append("pull")
-        return ["not mirrored (links or special files): env/bin/python"]
-
-    async def push(root):
-        calls.append("push")
-        if fail_push:
-            raise RuntimeError("tar timed out")
-
-    async def save_state(root):
-        calls.append("save_state")
-
-    monkeypatch.setattr(workspace, "pull", pull)
-    monkeypatch.setattr(workspace, "push", push)
-    monkeypatch.setattr(workspace, "save_state", save_state)
-
-
-@tool
-def operation(fail: bool = False):
-    async def execute(config: str) -> str:
-        """Read configuration.
-
-        Args:
-            config: Configuration path.
-        """
-        if fail:
-            raise RuntimeError("failed")
-        return f"submitted {config}"
-
-    return execute
 
 
 def _remote_root(tmp_path, base="memory://audit-test/artifacts"):
@@ -107,52 +34,6 @@ def test_persistence_keeps_nested_files_and_versions_publications(tmp_path):
             assert file.read() == b"{}"
     fs = fsspec.filesystem("memory")
     assert not fs.exists("/audit-test/artifacts/sample/published/v2/fig-old.png")
-
-
-def test_the_pull_guard_follows_the_sandboxs_own_read_limit(monkeypatch):
-    """Hawk raises the read limit to 1 GiB; Inspect applies it when an eval starts."""
-    from inspect_ai.util._sandbox.limits import reset_sandbox_limits, set_sandbox_limits
-
-    assert workspace.max_pull_bytes() < 100 * 1024**2
-    monkeypatch.setenv("INSPECT_SANDBOX_MAX_READ_FILE_SIZE", str(1024**3))
-    tokens = set_sandbox_limits()
-    try:
-        assert workspace.max_pull_bytes() > 900 * 1024**2
-    finally:
-        reset_sandbox_limits(tokens)
-
-
-def test_publication_fetches_only_the_inputs_it_cites(monkeypatch, tmp_path):
-    """A resumed run's collected logs are in the box, not on the fresh host."""
-    from inspect_audit import _report
-
-    root = _remote_root(tmp_path)
-    (root / "inputs/jobs/pilot").mkdir(parents=True)
-    (root / "inputs/jobs/pilot/have.eval").write_text("x")
-    report = root / "work/report"
-    report.mkdir(parents=True)
-    evidence = [
-        {"path": "/inputs/jobs/pilot/have.eval", "location": "s1"},
-        {"path": "/inputs/jobs/pilot/missing.eval", "location": "s2"},
-        {"path": "figure.png", "location": "fig"},
-    ]
-    (report / "findings.json").write_text(json.dumps([{"id": "F1", "evidence": evidence}]))
-    assert _report.cited_inputs(root) == [
-        "/inputs/jobs/pilot/have.eval",
-        "/inputs/jobs/pilot/missing.eval",
-    ]
-
-    read: list[str] = []
-
-    class Box:
-        async def read_file(self, path, text=True):
-            read.append(path)
-            return b"restored"
-
-    monkeypatch.setattr(workspace, "sandbox", Box)
-    asyncio.run(workspace.fetch_inputs_files(root, _report.cited_inputs(root)))
-    assert read == ["/inputs/jobs/pilot/missing.eval"]
-    assert (root / "inputs/jobs/pilot/missing.eval").read_bytes() == b"restored"
 
 
 @pytest.mark.parametrize(
@@ -240,50 +121,3 @@ def test_artifacts_land_where_hawks_viewer_looks_for_the_sample(tmp_path):
     assert workspace._destination(root, "published").endswith(
         "/artifacts/9uE3myJMUv4H9bs2Rw4nVj/published"
     )
-
-
-def test_cited_evidence_only_in_the_box_is_recovered_before_validation(monkeypatch, tmp_path):
-    """After a resume on a fresh host the restored box has inputs this host lacks;
-    checking the report must fetch what it cites before looking for it."""
-    from inspect_audit import _report
-
-    report = tmp_path / "work/report"
-    report.mkdir(parents=True)
-    (report / "findings.json").write_text(
-        json.dumps(
-            [
-                {
-                    "id": "F1",
-                    "section": "grading",
-                    "claim": "c",
-                    "status": "supported",
-                    "origin": "historical",
-                    "reproduce": "read",
-                    "limitations": "",
-                    "evidence": [{"path": "/inputs/jobs/bench/table.csv", "location": "row 1"}],
-                }
-            ]
-        )
-    )
-    fetched = []
-
-    async def pull(root):
-        return []
-
-    async def push(root):
-        pass
-
-    async def fetch(root, paths):
-        # what the box holds: the cited file appears on the host once fetched
-        for path in paths:
-            host = root / "inputs" / Path(path).relative_to("/inputs")
-            host.parent.mkdir(parents=True, exist_ok=True)
-            host.write_text("id,score\n")
-            fetched.append(path)
-
-    monkeypatch.setattr(workspace, "pull", pull)
-    monkeypatch.setattr(workspace, "push_assessments", push)
-    monkeypatch.setattr(workspace, "fetch_inputs_files", fetch)
-    result = asyncio.run(_report.check_report(str(tmp_path))())
-    assert "validated" in result
-    assert fetched == ["/inputs/jobs/bench/table.csv"]

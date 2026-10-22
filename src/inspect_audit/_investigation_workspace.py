@@ -2,18 +2,14 @@
 
 The box is the agent's only workspace, on Docker locally and on Kubernetes on Hawk
 alike. The host keeps the inputs it staged and the logs its tools collected, and
-reads the report back out of the box when the agent checks or publishes it: the
-report is validated and published from the host, never trusted in place. Inspect's
+reads explicitly selected findings evidence and stages immutable submitted bundles. Inspect's
 checkpointing carries the box and the sample store across a crash.
 """
 
 import io
 import json
 import logging
-import posixpath
-import shutil
 import tarfile
-import tempfile
 from pathlib import Path
 
 import anyio
@@ -26,24 +22,6 @@ from inspect_ai.util import sandbox
 from .containers import EGRESS_POLICY
 
 logger = logging.getLogger(__name__)
-
-# The host reads only these parts of the agent's workspace: the report it validates
-# and publishes, and the journal. Everything else the agent makes in /workspace
-# (clones, venvs, downloads) stays in the box, so its links and sizes cannot break
-# the sync. Job configs are fetched one file at a time by hawk_submit.
-MIRRORED = ("report", "journal.md")
-
-
-def max_pull_bytes() -> int:
-    """What the sandbox will read back in one go, with headroom for the archive.
-
-    Inspect's own read limit (`SandboxEnvironmentLimits`), which Hawk raises to 1 GiB
-    through INSPECT_SANDBOX_MAX_READ_FILE_SIZE; a fixed number refused pulls there that
-    would have transferred fine.
-    """
-    from inspect_ai.util import SandboxEnvironmentLimits
-
-    return int(SandboxEnvironmentLimits.MAX_READ_FILE_SIZE * 0.9)
 
 
 def configure(root: Path, image: str) -> tuple[str, str]:
@@ -65,123 +43,6 @@ def configure(root: Path, image: str) -> tuple[str, str]:
     path = root / "investigator.values.yaml"
     path.write_text(yaml.safe_dump(values) + EGRESS_POLICY)
     return "k8s", str(path)
-
-
-def extract_workspace(data: bytes, destination: Path) -> list[str]:
-    """Extract regular files and directories only; return what was skipped.
-
-    Links, devices and paths escaping the destination are never written to the
-    trusted mirror. They are skipped rather than fatal: an agent's ordinary work
-    (a venv, a cloned repository) makes them, and one must not end the run.
-    """
-    skipped: list[str] = []
-    safe: list[tarfile.TarInfo] = []
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
-        for member in archive.getmembers():
-            path = Path(member.name)
-            if path.is_absolute() or ".." in path.parts or not (member.isfile() or member.isdir()):
-                skipped.append(member.name)
-                continue
-            safe.append(member)
-        archive.extractall(destination, members=safe, filter="data")
-    return skipped
-
-
-async def pull(root: Path) -> list[str]:
-    """Copy the report and journal to the host; return notes for the agent."""
-    listing = await sandbox().exec(
-        [
-            "sh",
-            "-c",
-            'cd /workspace && for p in "$@"; do [ -e "$p" ] && echo "$p"; done; '
-            "du -sb \"$@\" 2>/dev/null | awk '{s+=$1} END {print s+0}'",
-            "sh",
-            *MIRRORED,
-        ],
-        timeout=120,
-    )
-    if not listing.success:
-        raise ToolError(f"Could not inspect the workspace: {listing.stderr}")
-    lines = listing.stdout.split()
-    present, size = lines[:-1], int(lines[-1]) if lines else 0
-    if size > (limit := max_pull_bytes()):
-        biggest = await sandbox().exec(
-            ["sh", "-c", "cd /workspace && du -ab report | sort -rn | head -8"], timeout=120
-        )
-        raise ToolError(
-            f"/workspace/report is {size // 2**20} MiB, over the {limit // 2**20} MiB "
-            f"the host can read back. Move large files out of /workspace/report "
-            f"(cite /inputs paths instead of copying logs):\n{biggest.stdout}"
-        )
-    if not present:
-        return []
-    # GNU tar exits 1 when a file changes while it is read; the archive is still whole
-    result = await sandbox().exec(
-        [
-            "tar",
-            "--exclude=.git",
-            "--exclude=.venv",
-            "--exclude=__pycache__",
-            "--warning=no-file-changed",
-            "--ignore-failed-read",
-            "--hard-dereference",
-            "-czf",
-            "/tmp/investigator-workspace.tar.gz",
-            "-C",
-            "/workspace",
-            *present,
-        ],
-        timeout=300,
-    )
-    if result.returncode not in (0, 1):
-        raise ToolError(f"Could not collect investigator workspace: {result.stderr}")
-    data = await sandbox().read_file("/tmp/investigator-workspace.tar.gz", text=False)
-    work = root / "work"
-    with tempfile.TemporaryDirectory(dir=root) as temporary:
-        staged = Path(temporary)
-        skipped = extract_workspace(data, staged)
-        for name in MIRRORED:
-            target = work / name
-            if target.is_dir():
-                shutil.rmtree(target)
-            elif target.exists():
-                target.unlink()
-            if (staged / name).exists():
-                shutil.move(str(staged / name), target)
-    if skipped:
-        shown = ", ".join(skipped[:10]) + (
-            f" and {len(skipped) - 10} more" if len(skipped) > 10 else ""
-        )
-        return [f"not mirrored (links or special files): {shown}"]
-    return []
-
-
-async def fetch_inputs_files(root: Path, paths: list[str]) -> None:
-    """Copy /inputs files the host does not have back from the box, on demand.
-
-    A run resumed on a fresh runner has its collected job logs in the restored box but
-    not in the host's scratch directory; publication validates cited evidence on the
-    host, so it asks for exactly the files it cites.
-    """
-    for path in paths:
-        normal = posixpath.normpath(path)
-        if not normal.startswith("/inputs/"):
-            continue
-        host = root / "inputs" / Path(normal).relative_to("/inputs")
-        if host.exists():
-            continue
-        try:
-            content = await sandbox().read_file(normal, text=False)
-        except FileNotFoundError:
-            continue  # validation reports it as missing, with the path
-        host.parent.mkdir(parents=True, exist_ok=True)
-        host.write_bytes(content)
-
-
-async def push_assessments(root: Path) -> None:
-    path = root / "work/report/assessments.tex"
-    if path.exists():
-        await sandbox().write_file("/workspace/report/assessments.tex", path.read_bytes())
 
 
 def _destination(root: Path, name: str) -> str:

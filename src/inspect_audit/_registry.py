@@ -12,6 +12,7 @@ from ._investigate import investigate as investigate
 from ._log_sources import fetch_logs as fetch_logs
 from ._log_sources import log_files as log_files
 from ._prices import register_prices
+from ._publishing import publish as publish
 from ._task import audit_task
 
 

@@ -12,7 +12,7 @@ from inspect_ai.tool import ToolError
 from inspect_ai.util._store import Store, init_subtask_store
 
 from inspect_audit import _investigate, _register
-from inspect_audit._verdicts import Evidence, audit_items
+from inspect_audit._verdicts import audit_items
 
 
 @task
@@ -23,15 +23,22 @@ def register_fixture() -> Task:
 
 @pytest.fixture
 def box(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """A fresh sample store, and the box's register.json captured."""
+    """A fresh sample store, and the box's findings.json captured."""
     init_subtask_store(Store())
     written: dict[str, str] = {}
 
     class Box:
-        async def write_file(self, path: str, contents: str) -> None:
-            written[path] = contents
+        async def write_file(self, path: str, contents: str | bytes) -> None:
+            written[path] = contents.decode() if isinstance(contents, bytes) else contents
 
-    monkeypatch.setattr(_register, "sandbox", Box)
+        async def read_file(self, path: str) -> str:
+            if path not in written:
+                raise FileNotFoundError(path)
+            return written[path]
+
+    from inspect_audit import _findings
+
+    monkeypatch.setattr(_findings, "sandbox", Box)
     return written
 
 
@@ -71,9 +78,10 @@ def test_the_population_is_the_benchmarks_items_with_an_empty_cell_per_check(
         "3": {"gold-answer": [], "answer-format": []},
     }
     # the box holds the same thing, for the agent to read and script against
-    assert json.loads(box[_register.BOX_PATH]) == register.model_dump(
-        mode="json", exclude_none=True
-    )
+    from inspect_audit._findings import DRAFT, auditor_results
+
+    assert json.loads(box[DRAFT])["auditors"] == auditor_results(register)
+    assert "/workspace/register.json" not in box
     with pytest.raises(ToolError, match="already started"):
         _start(["gold-answer"])
 
@@ -100,34 +108,6 @@ def test_auditor_verdicts_arrive_as_takes_with_their_origin_once(box: dict[str, 
         _register.import_audit_log(
             register, _audit_log(("99", 1, "gold-answer", "CORRECT")), "hawk:a", skills
         )
-
-
-def test_the_investigators_take_stands_and_the_auditors_stays(box: dict[str, str]) -> None:
-    _start(["gold-answer"])
-    register = _register.load()
-    skills = {s.name: s for s in audit_items()}
-    _register.import_audit_log(
-        register, _audit_log(("1", 1, "gold-answer", "INCORRECT")), "hawk:a", skills
-    )
-    asyncio.run(_register.save(register))
-    reviewed = _investigate.review()
-    with pytest.raises(ToolError, match="grades are"):
-        asyncio.run(
-            reviewed("1", "gold-answer", "WRONG", "x", [Evidence(observed="o", source="s")])
-        )  # type: ignore[arg-type]
-    with pytest.raises(ToolError, match="explanation and at least one"):
-        asyncio.run(reviewed("1", "gold-answer", "CORRECT", "x", []))  # type: ignore[arg-type]
-    asyncio.run(
-        reviewed(
-            "1", "gold-answer", "CORRECT", "the source agrees", [Evidence(observed="o", source="s")]
-        )  # type: ignore[arg-type]
-    )
-    takes = _register.load().samples["1"]["gold-answer"]
-    assert [(t.by, t.label) for t in takes] == [
-        ("auditor", "INCORRECT"),
-        ("investigator", "CORRECT"),
-    ]
-    assert _register.standing(takes).label == "CORRECT"  # type: ignore[union-attr]
 
 
 def test_the_views_select_cells_by_state(box: dict[str, str]) -> None:
@@ -162,20 +142,6 @@ def test_the_views_select_cells_by_state(box: dict[str, str]) -> None:
     )
     assert cells("flagged") == []
     assert cells("disputed") == ["1"]
-
-
-def test_findings_and_ratings_sit_beside_the_grid(box: dict[str, str]) -> None:
-    _start(["gold-answer"])
-    quote = [Evidence(observed="o", source="s")]
-    asyncio.run(_investigate.finding()("gold answers drift", "seen in 2", ["1", "2"], quote))  # type: ignore[arg-type]
-    with pytest.raises(ToolError, match="not in the register"):
-        asyncio.run(_investigate.finding()("x", "y", ["9"], quote))  # type: ignore[arg-type]
-    with pytest.raises(ToolError, match="label is one of"):
-        asyncio.run(_investigate.rate()("C.1", "Bad", "x", quote))  # type: ignore[arg-type]
-    asyncio.run(_investigate.rate()("C.1", "Major", "two of three wrong", quote))  # type: ignore[arg-type]
-    register = _register.load()
-    assert register.findings[0].samples == ["1", "2"]
-    assert [t.label for t in register.ratings["C.1"]] == ["Major"]
 
 
 def test_collecting_an_audit_job_fills_the_register_from_its_real_log(

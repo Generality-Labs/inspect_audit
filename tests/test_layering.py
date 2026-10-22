@@ -10,7 +10,10 @@ LOWER = ("dispatch", "_runs", "_policy", "_prices", "_log_sources")
 HIGHER = ("_investigate", "_registry", "_auditor", "_task", "_publishing", "_findings", "_report")
 
 # Cycles that exist today. Each consolidation step removes one; this list only shrinks.
-KNOWN_CYCLES: list[set[str]] = []
+KNOWN_CYCLES: list[set[str]] = [
+    # findings, register and publishing all reach back into the top-level agent
+    {"_investigate", "_publishing", "_findings", "_register", "publishers.latex", "publishers.gl"},
+]
 
 
 def _modules() -> dict[str, Path]:

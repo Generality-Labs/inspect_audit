@@ -14,10 +14,12 @@ from ..models import (
     Dimension,
     Finding,
     Outcome,
+    Provenance,
     Run,
     Severity,
     Source,
     Subject,
+    Suppression,
     utcnow,
 )
 from . import (
@@ -42,6 +44,13 @@ LINT_RULES: dict[str, tuple[Dimension, Severity]] = {
     "IEBP007": ("environment", "minor"),
     "IEBP008": ("dataset", "minor"),
     "IEBP009": ("dataset", "minor"),
+    # shuffle_choices_seeded, shuffle_seeded: unseeded shuffles vary samples between builds (F.4)
+    "IEBP010": ("environment", "minor"),
+    "IEBP011": ("environment", "minor"),
+    # sandbox_privileges: a compose file granting privileged mode, host mounts or extra capabilities
+    "IESC001": ("environment", "major"),
+    # host_code_execution: model-controlled input reaches code run on the host, not in the sandbox
+    "IESC002": ("environment", "major"),
 }
 _DEFAULT: tuple[Dimension, Severity] = ("harness", "minor")
 
@@ -53,6 +62,56 @@ def _status(raw: str) -> Literal["pass", "fail", "skip"]:
     if raw in ("skip", "suppressed"):
         return "skip"
     return "fail"
+
+
+def _in_source_suppression(row: Mapping[str, Any], timestamp: datetime) -> list[Suppression]:
+    """A diagnostic lint reports as `suppressed` was silenced by a comment in the eval's source."""
+    if row.get("status") != "suppressed":
+        return []
+    return [
+        Suppression(kind="in_source", provenance=Provenance(timestamp=timestamp, author=PRODUCER))
+    ]
+
+
+def _outcomes(entry: Mapping[str, Any]) -> list[Outcome]:
+    """One Outcome per rule that ran.
+
+    Lint 0.9 writes `outcomes` only for rules that passed or skipped; a rule with diagnostics
+    appears only under `rules`, at its worst status, with the indices of its diagnostics. Read
+    `rules` when present so failing rules are counted and a run whose other rules all skipped is
+    not mistaken for a skipped run. Older documents have only `outcomes`.
+    """
+    rules = entry.get("rules")
+    if isinstance(rules, list) and rules:
+        # `rules` rows carry no message; the `outcomes` rows for passed and skipped rules do,
+        # and a skip's reason is what a reader of "not examined" needs
+        messages = {
+            str(row.get("code") or row.get("rule")): row.get("message")
+            for row in entry.get("outcomes") or []
+            if isinstance(row, dict)
+        }
+        outcomes: list[Outcome] = []
+        for row in rules:
+            code = str(row.get("code") or row.get("rule"))
+            status = _status(str(row.get("status")))
+            diagnostics = row.get("diagnostics") or []
+            count = len(diagnostics) if isinstance(diagnostics, list) else 0
+            message = (
+                f"{count} diagnostic{'' if count == 1 else 's'}"
+                if status == "fail" and count
+                else messages.get(code)
+            )
+            outcomes.append(Outcome(rule=code, status=status, message=message))
+        return outcomes
+    return [
+        Outcome(
+            rule=str(row.get("code") or row.get("rule")),
+            status=_status(str(row.get("status"))),
+            message=row.get("message"),
+        )
+        for row in entry.get("outcomes") or []
+        if isinstance(row, dict)
+    ]
 
 
 def parse(
@@ -88,18 +147,14 @@ def parse(
             ],
         )
     entry = packages[0]
-    outcomes = [
-        Outcome(
-            rule=str(row.get("code") or row.get("rule")),
-            status=_status(str(row.get("status"))),
-            message=row.get("message"),
-        )
-        for row in entry.get("outcomes", [])
-    ]
+    outcomes = _outcomes(entry)
     findings: list[Finding] = []
     for row in entry.get("diagnostics", []):
         code = str(row.get("code") or row.get("rule"))
         dimension, severity = LINT_RULES.get(code, _DEFAULT)
+        # a rule can report a traced flow as an error and an untraced sink as a warning
+        if row.get("severity") == "warning" and severity in ("major", "critical"):
+            severity = "minor"
         primary = CodeLocation(
             role="primary",
             file=str(row.get("file")),
@@ -121,6 +176,7 @@ def parse(
                 locations=[primary],
                 run_id=run_id,
                 source=Source(format=f"inspect_evals_lint.Diagnostic@{version}", record=dict(row)),
+                suppressions=_in_source_suppression(row, timestamp),
             )
         )
     return Run(

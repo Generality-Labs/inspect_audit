@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from inspect_audit.findings.fs import StoreFS
 from inspect_audit.findings.io import (
     FINDING_COLUMNS,
     findings_df,
@@ -12,7 +13,6 @@ from inspect_audit.findings.io import (
     read_run,
     read_runs,
     runs_df,
-    update_current,
     write_parquet,
     write_run,
 )
@@ -27,16 +27,28 @@ from inspect_audit.findings.models import (
 
 
 def test_write_and_read_a_run(tmp_path: Path, run: Run) -> None:
-    path = write_run(run, tmp_path / "stereoset" / "lint.run.json")
-    assert path.name == "lint.run.json"
-    assert read_run(path) == run
+    fs = StoreFS.from_locator(tmp_path)
+    key = write_run(run, fs, "stereoset/runs/lint.run.json")
+    assert key == "stereoset/runs/lint.run.json"
+    assert read_run(fs, key) == run
 
 
-def test_read_runs_walks_the_tree(tmp_path: Path, run: Run) -> None:
-    write_run(run, tmp_path / "a" / "lint.run.json")
-    write_run(run.model_copy(update={"id": "lint-2"}), tmp_path / "b" / "lint.run.json")
-    (tmp_path / "b" / "notes.json").write_text("{}")
-    assert sorted(r.id for r in read_runs(tmp_path)) == ["lint-1", "lint-2"]
+def test_read_runs_reads_every_eval_runs_dir(tmp_path: Path, run: Run) -> None:
+    fs = StoreFS.from_locator(tmp_path)
+    write_run(run, fs, "a/runs/lint.run.json")
+    write_run(run.model_copy(update={"id": "lint-2"}), fs, "b/runs/lint.run.json")
+    fs.write_text("b/runs/notes.json", "{}")
+    fs.write_text("stray.run.json", "{}")  # not under <slug>/runs: not a run of the store
+    assert sorted(r.id for r in read_runs(fs)) == ["lint-1", "lint-2"]
+
+
+def test_runs_read_identically_from_a_directory_and_from_memory(tmp_path: Path, run: Run) -> None:
+    stores = [StoreFS.from_locator(tmp_path), StoreFS.from_locator("memory://io-parity")]
+    for fs in stores:
+        write_run(run, fs, "inspect-evals-stereoset/runs/lint-1.run.json")
+    ids = [[r.id for r in read_current(fs)] for fs in stores]
+    assert ids == [["lint-1"], ["lint-1"]]
+    assert read_runs(stores[0]) == read_runs(stores[1])
 
 
 def test_findings_df_columns_and_values(run: Run) -> None:
@@ -81,8 +93,9 @@ def test_runs_df_counts_outcomes(run: Run) -> None:
 
 
 def test_parquet_round_trip(tmp_path: Path, run: Run) -> None:
-    path = write_parquet(findings_df([run]), tmp_path / "findings.parquet")
-    again = pd.read_parquet(path)
+    fs = StoreFS.from_locator(tmp_path)
+    key = write_parquet(findings_df([run]), fs, "findings.parquet")
+    again = pd.read_parquet(tmp_path / key)
     assert list(again.columns) == list(FINDING_COLUMNS)
     assert again.iloc[0]["fingerprint"] == "sha256:0"
 
@@ -135,20 +148,34 @@ def test_findings_df_carries_review_and_effect_columns(run: Run) -> None:
     assert bool(plain["suppressed"]) is False and plain["effect"] is None
 
 
-def test_current_runs_follow_the_manifest(tmp_path: Path, run: Run) -> None:
-    eval_dir = tmp_path / "inspect-evals-stereoset"
-    first = write_run(run, eval_dir / "runs" / "lint-1.run.json")
-    second = write_run(
-        run.model_copy(update={"id": "lint-2"}), eval_dir / "runs" / "lint-2.run.json"
+def test_current_view_is_the_newest_run_per_producer(tmp_path: Path, run: Run) -> None:
+    fs = StoreFS.from_locator(tmp_path)
+    older = run.model_copy(update={"id": "lint-1"})
+    newer = run.model_copy(update={"id": "lint-2", "timestamp": datetime(2026, 9, 26, tzinfo=UTC)})
+    other = run.model_copy(update={"id": "dataset-1", "producer": "inspect_dataset"})
+    for r in (newer, older, other):
+        write_run(r, fs, f"inspect-evals-stereoset/runs/{r.id}.run.json")
+    assert sorted(r.id for r in read_current(fs)) == ["dataset-1", "lint-2"]
+    assert sorted(r.id for r in read_runs(fs)) == ["dataset-1", "lint-1", "lint-2"]
+
+
+def test_current_view_breaks_timestamp_ties_by_file_name(tmp_path: Path, run: Run) -> None:
+    fs = StoreFS.from_locator(tmp_path)
+    write_run(run, fs, "inspect-evals-stereoset/runs/lint-1.run.json")
+    write_run(
+        run.model_copy(update={"id": "lint-1-2"}),
+        fs,
+        "inspect-evals-stereoset/runs/lint-1-2.run.json",
     )
-    other = write_run(
-        run.model_copy(update={"id": "dataset-1", "producer": "inspect_dataset"}),
-        eval_dir / "runs" / "dataset-1.run.json",
+    assert [r.id for r in read_current(fs)] == ["lint-1-2"]
+
+
+def test_findings_df_has_record_id_and_issue_columns(run: Run) -> None:
+    frame = findings_df([run])
+    assert frame.columns[0] == "id"
+    assert frame.iloc[0]["id"] == "lint-1/1"
+    assert "issue" in frame.columns and frame.iloc[0]["issue"] is None
+    linked = run.model_copy(
+        update={"findings": [run.findings[0].model_copy(update={"issue": "ISS-0001"})]}
     )
-    update_current(eval_dir, [read_run(first), read_run(other)])
-    update_current(eval_dir, [read_run(second)])  # a later partial sweep replaces only its producer
-    manifest = eval_dir / "current.json"
-    assert manifest.is_file()
-    current = read_current(tmp_path)
-    assert sorted(r.id for r in current) == ["dataset-1", "lint-2"]
-    assert sorted(r.id for r in read_runs(tmp_path)) == ["dataset-1", "lint-1", "lint-2"]
+    assert findings_df([linked]).iloc[0]["issue"] == "ISS-0001"

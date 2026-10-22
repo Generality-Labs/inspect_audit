@@ -227,6 +227,26 @@ def _stage_docs(docs: list[str], inputs: Path) -> list[str]:
     return staged
 
 
+def _stage_leads(leads: str, inputs: Path) -> str:
+    """Stage deterministic findings under inputs/findings/: a LEADS.md, or a bundle directory.
+
+    A bundle (`inspect-audit-findings leads --bundle DIR`) holds LEADS.md and the run files
+    its "and N more in runs/..." pointers name, so they resolve inside the box.
+    """
+    path = Path(leads).expanduser().resolve()
+    dest = inputs / "findings"
+    if path.is_dir():
+        if not (path / "LEADS.md").is_file():
+            raise ValueError(f"leads directory has no LEADS.md: {leads}")
+        shutil.copytree(path, dest)
+    elif path.is_file():
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, dest / "LEADS.md")
+    else:
+        raise ValueError(f"leads file or directory does not exist: {leads}")
+    return "/inputs/findings/LEADS.md"
+
+
 def _link_or_copy(src: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -474,6 +494,7 @@ def prepare_workspace(
     overview: str,
     target_task: str | None,
     output_dir: str,
+    leads: str | None = None,
 ) -> Path:
     """Stage the declared inputs on the host; the box gets a copy at the start."""
     from ._registry import fetch_logs
@@ -515,11 +536,13 @@ def prepare_workspace(
             )
     staged_paper = _fetch_paper(paper, inputs) if paper else None
     staged_docs = _stage_docs(docs, inputs)
+    staged_leads = _stage_leads(leads, inputs) if leads else None
     seed.update(
         task=target_task,
         overview=overview,
         paper=staged_paper,
         docs=staged_docs,
+        leads=staged_leads,
         logs=log_index,
     )
     (inputs / "seed.json").write_text(json.dumps(seed, indent=2))
@@ -1216,6 +1239,7 @@ def investigate(
     logs: list[str] | None = None,
     paper: str | None = None,
     docs: list[str] | None = None,
+    leads: str | None = None,
     overview: str | None = None,
     target_task: str | None = None,
     revision: str | None = None,
@@ -1260,6 +1284,9 @@ def investigate(
         paper: Local file or URL; a URL is downloaded now (arXiv abs -> pdf). Defaults to
             the paper the eval names in its own metadata.
         docs: Documentation directories to copy in read-only (inspect docs, Hawk docs).
+        leads: Local LEADS.md or bundle directory from inspect-audit-findings leads.
+            Copied under /inputs/findings; each lead is a hypothesis to investigate.
+            The path must exist on the host running this task.
         overview: Benchmark-specific context, supplied-evidence context and operator
             questions.
         target_task: The task under audit, e.g. `benchmark/task`. Defaults to the only
@@ -1311,6 +1338,7 @@ def investigate(
     logs = settings.get("logs", logs)
     paper = settings.get("paper", paper)
     docs = settings.get("docs", docs)
+    leads = settings.get("leads", leads)
     overview = settings.get("overview", overview)
     target_task = settings.get("target_task", target_task)
     revision = settings.get("revision", revision)
@@ -1421,6 +1449,7 @@ def investigate(
         overview or "",
         target_task,
         output_dir,
+        leads=leads,
     )
 
     seed_path = root / "inputs" / "seed.json"

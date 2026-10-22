@@ -20,9 +20,19 @@ from inspect_audit.findings.adapters import (
     subject_for,
     task_version_from_yaml,
 )
-from inspect_audit.findings.producers import DATASET_SPEC, LINT_SPEC, ProducerConfig
+from inspect_audit.findings.config import Config, EvalConfig, LogFilter
+from inspect_audit.findings.producers import (
+    DATASET_SPEC,
+    DATASET_TASK_SPEC,
+    LINT_SPEC,
+    ProducerConfig,
+)
 
 STUBS = Path(__file__).parent / "stubs"
+
+
+# the test logs are produced by mockllm/model, which the default filter excludes on purpose
+MOCK_OK = Config(defaults=EvalConfig(logs=LogFilter(include_mock=True)))
 
 
 def make_root(tmp_path: Path, *, version: str = "3-A", extra: str = "") -> Path:
@@ -64,14 +74,49 @@ def test_default_prefixes_pin_the_specs() -> None:
     config = ProducerConfig()
     assert config.lint == ("uvx", "--from", LINT_SPEC, "inspect-evals-lint")
     assert config.dataset == ("uvx", "--from", DATASET_SPEC, "inspect-dataset")
-    assert LINT_SPEC == "inspect-evals-lint==0.7.0"
-    assert DATASET_SPEC == "git+https://github.com/Generality-Labs/inspect_dataset@afbc94c0b509"
+    assert LINT_SPEC == "inspect-evals-lint==0.10.0"
+    assert DATASET_SPEC == "inspect-dataset==0.6.0"
 
 
 def test_env_overrides_are_shell_split() -> None:
     config = ProducerConfig.from_env({"INSPECT_AUDIT_LINT_CMD": "python '/tmp/my stub.py' --flag"})
     assert config.lint == ("python", "/tmp/my stub.py", "--flag")
     assert config.dataset == ProducerConfig().dataset
+
+
+def test_task_scans_dump_in_the_eval_project_and_scan_in_inspect_datasets_own_env() -> None:
+    config = ProducerConfig()
+    assert config.dataset_dump == (
+        "uv",
+        "run",
+        "--project",
+        "{ie_root}",
+        "--frozen",
+        "{eval_deps}",
+        "python",
+    )
+    assert config.dataset_task == (
+        "uvx",
+        "--from",
+        DATASET_TASK_SPEC,
+        "{inspect_ai}",
+        "inspect-dataset",
+    )
+    assert DATASET_TASK_SPEC == "inspect-dataset[inspect]==0.6.0"
+    assert config.eval_env is None
+
+
+def test_task_scan_commands_and_environment_can_be_overridden() -> None:
+    config = ProducerConfig.from_env(
+        {
+            "INSPECT_AUDIT_DATASET_DUMP_CMD": "python dump.py {ie_root}",
+            "INSPECT_AUDIT_DATASET_TASK_CMD": "python scan.py",
+            "INSPECT_AUDIT_EVAL_ENV": "/tmp/env",
+        }
+    )
+    assert config.dataset_dump == ("python", "dump.py", "{ie_root}")
+    assert config.dataset_task == ("python", "scan.py")
+    assert config.eval_env == "/tmp/env"
 
 
 def test_package_of_and_slug() -> None:

@@ -10,6 +10,7 @@ from test_adapters_common import STUBS, make_root
 
 from inspect_audit.findings.adapters import Context, subject_for
 from inspect_audit.findings.adapters.lint import LINT_RULES, PRODUCER, parse, run
+from inspect_audit.findings.io import runs_df
 from inspect_audit.findings.models import CodeLocation, Subject
 from inspect_audit.findings.producers import ProducerConfig
 
@@ -153,3 +154,91 @@ def test_run_with_malformed_output_is_a_skip(
     assert result.findings == []
     assert result.outcomes[0].status == "skip"
     assert "could not parse" in (result.outcomes[0].message or "")
+
+
+def test_parse_0_9_reads_per_rule_status_so_a_failing_rule_has_an_outcome(tmp_path: Path) -> None:
+    # lint 0.9.0 writes `outcomes` only for rules that passed or skipped; a rule with diagnostics
+    # appears only under `rules`. Read `rules` so failing rules are counted and a run whose other
+    # rules all skipped is not mistaken for a skipped run.
+    _, subject = _subject(tmp_path)
+    data = json.loads((FIXTURES / "lint_0_9.json").read_text())
+    result = parse(data, "inspect_evals/scicode", subject, timestamp=STAMP)
+    assert result.producer_version == "0.9.0"
+    statuses = {o.rule: o.status for o in result.outcomes}
+    assert len(statuses) == 28
+    assert statuses["IEBP007"] == "fail"
+    assert [o.status for o in result.outcomes].count("pass") == 19
+    assert [o.status for o in result.outcomes].count("skip") == 8
+    failing = next(o for o in result.outcomes if o.rule == "IEBP007")
+    assert failing.message is not None and "2 diagnostic" in failing.message
+    assert len(result.findings) == 2 and {f.rule for f in result.findings} == {"IEBP007"}
+    assert int(runs_df([result]).iloc[0]["outcomes_fail"]) == 1
+
+
+def test_parse_0_9_run_with_only_failing_and_skipped_rules_is_not_a_skip(tmp_path: Path) -> None:
+    _, subject = _subject(tmp_path)
+    data = json.loads((FIXTURES / "lint_0_9.json").read_text())
+    package = data["packages"][0]
+    package["rules"] = [r for r in package["rules"] if r["status"] != "pass"]
+    package["outcomes"] = [o for o in package["outcomes"] if o["status"] != "pass"]
+    result = parse(data, "inspect_evals/scicode", subject, timestamp=STAMP)
+    statuses = [o.status for o in result.outcomes]
+    assert "fail" in statuses and not all(status == "skip" for status in statuses)
+
+
+def test_parse_0_7_document_without_rules_still_uses_outcomes(tmp_path: Path) -> None:
+    _, subject = _subject(tmp_path)
+    data = json.loads((FIXTURES / "lint.json").read_text())
+    assert "rules" not in data["packages"][0]
+    result = parse(data, "inspect_evals/stereoset", subject, timestamp=STAMP)
+    assert len(result.outcomes) == 25 and len(result.findings) == 1
+
+
+def test_sandbox_and_shuffle_rules_are_classified() -> None:
+    assert LINT_RULES["IESC001"] == ("environment", "major")
+    assert LINT_RULES["IESC002"] == ("environment", "major")
+    assert LINT_RULES["IEBP010"] == LINT_RULES["IEBP011"] == ("environment", "minor")
+
+
+def test_parse_0_9_skipped_rules_keep_their_reason_from_outcomes(tmp_path: Path) -> None:
+    # `rules` rows carry no message; `outcomes` rows do for passed and skipped rules
+    _, subject = _subject(tmp_path)
+    data = json.loads((FIXTURES / "lint_0_9.json").read_text())
+    result = parse(data, "inspect_evals/scicode", subject, timestamp=STAMP)
+    skipped = {o.rule: o.message for o in result.outcomes if o.status == "skip"}
+    assert skipped and all(message for message in skipped.values())
+    assert skipped["IEBP008"] is not None and "filter_duplicate_ids" in skipped["IEBP008"]
+
+
+def test_parse_0_9_tolerates_null_outcomes(tmp_path: Path) -> None:
+    _, subject = _subject(tmp_path)
+    data = json.loads((FIXTURES / "lint_0_9.json").read_text())
+    data["packages"][0]["outcomes"] = None
+    result = parse(data, "inspect_evals/scicode", subject, timestamp=STAMP)
+    assert len(result.outcomes) == 28 and len(result.findings) == 2
+
+
+def test_parse_0_10_marks_diagnostics_lint_suppressed_in_source(tmp_path: Path) -> None:
+    # a real 0.10.0 run over abstention_bench: two diagnostics silenced by comments in the source,
+    # and one warning about a comment without a reason
+    _, subject = _subject(tmp_path)
+    data = json.loads((FIXTURES / "lint_0_10.json").read_text())
+    result = parse(data, "inspect_evals/abstention_bench", subject, timestamp=STAMP)
+    assert result.producer_version == "0.10.0"
+    suppressed = {f.rule: f.suppressions for f in result.findings if f.suppressions}
+    assert set(suppressed) == {"IECQ004", "IEBP008"}
+    suppression = suppressed["IECQ004"][0]
+    assert suppression.kind == "in_source"
+    assert suppression.provenance.author == PRODUCER
+    assert [f.rule for f in result.findings if not f.suppressions] == ["IECQ005"]
+
+
+def test_a_warning_diagnostic_is_at_most_minor(tmp_path: Path) -> None:
+    _, subject = _subject(tmp_path)
+    data = json.loads((FIXTURES / "lint_0_10.json").read_text())
+    error, warning, _ = data["packages"][0]["diagnostics"]
+    error.update(code="IESC002", status="fail")
+    warning.update(code="IESC002")
+    result = parse(data, "inspect_evals/abstention_bench", subject, timestamp=STAMP)
+    severities = [f.severity for f in result.findings if f.rule == "IESC002"]
+    assert severities == ["major", "minor"]

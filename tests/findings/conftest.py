@@ -57,3 +57,10 @@ def run(subject: Subject, finding: Finding) -> Run:
         subject=subject,
         findings=[finding],
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_store_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests name their stores and authors explicitly; the operator's environment must not leak in."""
+    monkeypatch.delenv("INSPECT_AUDIT_STORE", raising=False)
+    monkeypatch.delenv("INSPECT_AUDIT_AUTHOR", raising=False)

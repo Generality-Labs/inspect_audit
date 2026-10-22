@@ -1,15 +1,26 @@
-"""inspect-dataset: static scanners over the eval's HuggingFace dataset, one finding per row."""
+"""inspect-dataset: static scanners over the eval's dataset, one finding per row.
+
+By default the dataset is read through the eval's task, so the scan sees the samples the eval
+runs on. A pilot-config declaration with HuggingFace settings scans the HuggingFace dataset instead.
+"""
 
 from __future__ import annotations
 
 import json
+import os
+import re
+import shutil
 import tempfile
 import time
-from collections.abc import Mapping
+import tomllib
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import JsonValue
+
+from ..config import DatasetConfig, FieldRole
 from ..fingerprint import FINGERPRINT_VERSION, fingerprint
 from ..models import (
     DatasetRef,
@@ -23,30 +34,31 @@ from ..models import (
     utcnow,
 )
 from . import (
+    CommandResult,
     Context,
     ProducerError,
     eval_yaml,
     new_run_id,
+    package_of,
     run_command,
     skip_run,
+    slug,
     subject_for,
 )
 
 PRODUCER = "inspect_dataset"
 
-# per-eval scan arguments where auto-detection does not work. Keys are CLI option names without dashes.
-DATASET_OVERRIDES: dict[str, dict[str, str]] = {
-    "inspect_evals/stereoset": {
-        "config": "intersentence",
-        "split": "validation",
-        "question_field": "context",
-        "answer_field": "sentences",
-        "id_field": "id",
-    },
-}
-
 SEVERITY: dict[str, Severity] = {"low": "none", "medium": "minor", "high": "major"}
 _SUMMARY_CHARS = 200
+# Sample text a finding keeps: enough to recognise the sample, too little to reproduce it. Some
+# datasets are gated to keep their questions and answers out of training data, so the store and
+# the export hold a marker, and the sample id leads back to the full text.
+_MARKER_CHARS = 32
+# A string literal as repr() writes it, which is how every scanner quotes a sample's text. It
+# must open after a non-word character, so an apostrophe in the prose ("sample's") is not a quote.
+_LITERAL = re.compile(r"""(?<!\w)(?:'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")""")
+# Metadata keys naming samples rather than quoting them; ids and indices are kept whole.
+_ID_KEY = re.compile(r"(?:^|_)(?:ids?|indices|index)$")
 
 
 def hf_asset(data: Mapping[str, Any]) -> str | None:
@@ -57,10 +69,150 @@ def hf_asset(data: Mapping[str, Any]) -> str | None:
     return None
 
 
+_FIELD_OPTIONS: dict[FieldRole, str] = {
+    "question": "--question-field",
+    "answer": "--answer-field",
+    "id": "--id-field",
+}
+
+
+def yaml_tasks(data: Mapping[str, Any]) -> list[str]:
+    """Task names listed in eval.yaml, in order."""
+    return [
+        str(task["name"])
+        for task in data.get("tasks", []) or []
+        if isinstance(task, dict) and task.get("name")
+    ]
+
+
+def scan_arguments(
+    target: str, yaml_data: Mapping[str, Any], declared: DatasetConfig | None
+) -> tuple[str | None, list[str], dict[str, JsonValue]]:
+    """Dataset path, extra `inspect-dataset scan` options, and a record of what will be examined.
+
+    Without HuggingFace settings in the declaration, the path is the task spec
+    `inspect_evals/<task>`: the declared task, or the first one in eval.yaml. inspect-dataset then
+    loads the samples through the eval's own loader, with its split, config, revision and field
+    mapping. With HuggingFace settings, the declaration wins where it speaks and eval.yaml's
+    HuggingFace asset supplies the path otherwise. `declared` in the record says whether any
+    declaration was consulted, so a consumer can tell an inferred scan from a configured one;
+    `mode` says which kind of scan it was.
+    """
+    tasks = yaml_tasks(yaml_data)
+    task = (declared.task if declared else None) or (tasks[0] if tasks else None)
+    if task and not (declared and declared.selects_hf):
+        namespace = target.rsplit("/", 1)[0] if "/" in target else "inspect_evals"
+        spec = f"{namespace}/{task}"
+        return (
+            spec,
+            [],
+            {
+                "path": spec,
+                "config": None,
+                "split": None,
+                "revision": None,
+                "fields": {},
+                "declared": declared is not None,
+                "mode": "task",
+                "task": task,
+            },
+        )
+    asset = hf_asset(yaml_data)
+    path = (declared.path if declared and declared.path else None) or asset
+    options: list[str] = []
+    if declared:
+        for option, value in (
+            ("--config", declared.config),
+            ("--split", declared.split),
+            ("--revision", declared.revision),
+        ):
+            if value:
+                options += [option, value]
+        for role, name in declared.fields.items():
+            options += [_FIELD_OPTIONS[role], name]
+    examined: dict[str, JsonValue] = {
+        "path": path,
+        "config": declared.config if declared else None,
+        "split": declared.split if declared else None,
+        "revision": declared.revision if declared else None,
+        "fields": {str(role): name for role, name in declared.fields.items()} if declared else {},
+        "declared": declared is not None,
+        "mode": "hf",
+        "task": None,
+    }
+    return path, options, examined
+
+
+def _marker(text: str) -> str:
+    return text if len(text) <= _MARKER_CHARS else f"{text[:_MARKER_CHARS]}…"
+
+
+def _cut_quotes(text: str) -> str:
+    """Scanner prose with each quoted sample text cut to a marker; short quotes are the scanner's own."""
+
+    def cut(match: re.Match[str]) -> str:
+        literal = match.group(0)
+        quote, body = literal[0], literal[1:-1]
+        return literal if len(body) <= _MARKER_CHARS else f"{quote}{_marker(body)}{quote}"
+
+    return _LITERAL.sub(cut, text)
+
+
+def _cut_values(value: Any, key: str = "") -> Any:
+    if _ID_KEY.search(key):
+        return value
+    if isinstance(value, str):
+        return _marker(value)
+    if isinstance(value, Mapping):
+        return {k: _cut_values(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_cut_values(v, key) for v in value]
+    return value
+
+
+def _without_sample_text(row: Mapping[str, Any]) -> dict[str, Any]:
+    """The scanner's record with the sample text it quotes cut to markers: the prose and the metadata."""
+    record = dict(row)
+    if isinstance(record.get("explanation"), str):
+        record["explanation"] = _cut_quotes(record["explanation"])
+    if "metadata" in record:
+        record["metadata"] = _cut_values(record["metadata"])
+    return record
+
+
 def _rows(path: Path) -> list[dict[str, Any]]:
     loaded = json.loads(path.read_text())
     rows = loaded.get("findings", []) if isinstance(loaded, dict) else loaded
     return [row for row in rows if isinstance(row, dict)]
+
+
+def _scanner_outcomes(by_scanner: Mapping[str, Any], scanner_status: Any) -> list[Outcome]:
+    """One outcome per scanner: fail with findings, skip when not applicable, otherwise pass.
+
+    `by_scanner` names only scanners with findings. `scanner_status`, new in 0.5.0, names every
+    scanner as `ran` or `not_applicable`; without it a clean scanner has no outcome.
+    """
+    totals = {
+        scanner: int((counts or {}).get("total", 0)) for scanner, counts in by_scanner.items()
+    }
+    if not isinstance(scanner_status, Mapping):
+        return [
+            Outcome(rule=scanner, status="fail" if total else "pass", message=f"{total} finding(s)")
+            for scanner, total in sorted(totals.items())
+        ]
+    outcomes: list[Outcome] = []
+    for scanner in sorted(set(scanner_status) | set(totals)):
+        entry = scanner_status.get(scanner) or {}
+        total = totals.get(scanner, 0)
+        if entry.get("status") == "not_applicable" and not total:
+            outcomes.append(Outcome(rule=scanner, status="skip", message=entry.get("reason")))
+        else:
+            outcomes.append(
+                Outcome(
+                    rule=scanner, status="fail" if total else "pass", message=f"{total} finding(s)"
+                )
+            )
+    return outcomes
 
 
 def parse(
@@ -71,29 +223,32 @@ def parse(
     timestamp: datetime,
     duration_s: float | None = None,
     inputs: Mapping[str, Any] | None = None,
+    dataset: DatasetRef | None = None,
 ) -> Run:
-    """An inspect-dataset output directory as a Run. Scanners named in the summary without a file still get an outcome."""
+    """An inspect-dataset output directory as a Run. Scanners named in the summary without a file still get an outcome.
+
+    `dataset` replaces the one the summary describes. A task scan's summary names the task spec
+    and a `train` split whatever the task loads, so the caller supplies the eval's dataset instead.
+    """
     run_id = new_run_id(PRODUCER, target, timestamp)
     summary = json.loads((scan_dir / "scan_summary.json").read_text())
     version = str(summary.get("version") or "unknown")
-    dataset = DatasetRef(
-        path=summary.get("dataset_name"),
-        config=summary.get("config"),
-        split=summary.get("split"),
-        revision=summary.get("revision"),
-    )
-    subject = subject.model_copy(update={"dataset": dataset})
-    outcomes: list[Outcome] = []
-    findings: list[Finding] = []
-    for scanner, counts in sorted((summary.get("by_scanner") or {}).items()):
-        total = int((counts or {}).get("total", 0))
-        outcomes.append(
-            Outcome(rule=scanner, status="fail" if total else "pass", message=f"{total} finding(s)")
+    if dataset is None:
+        dataset = DatasetRef(
+            path=summary.get("dataset_name"),
+            config=summary.get("config"),
+            split=summary.get("split"),
+            revision=summary.get("revision"),
         )
+    subject = subject.model_copy(update={"dataset": dataset})
+    by_scanner = summary.get("by_scanner") or {}
+    outcomes = _scanner_outcomes(by_scanner, summary.get("scanner_status"))
+    findings: list[Finding] = []
+    for scanner in sorted(by_scanner):
         path = scan_dir / f"{scanner}.json"
         if not path.is_file():
             continue
-        for row in _rows(path):
+        for row in map(_without_sample_text, _rows(path)):
             sample_id = str(
                 row.get("sample_id")
                 if row.get("sample_id") is not None
@@ -132,38 +287,264 @@ def parse(
     )
 
 
+DUMP_SCRIPT = Path(__file__).with_name("_dump_task_samples.py")
+REPLAY_SCRIPT = Path(__file__).with_name("_replay_samples.py")
+
+
+def _discard_scan(scan_dir: Path, inputs: dict[str, Any]) -> None:
+    """A scan that failed leaves no directory behind and its run cites none; the output tail stays."""
+    shutil.rmtree(scan_dir, ignore_errors=True)
+    inputs.pop("scan_dir", None)
+
+
+def _staging_dir(out_dir: Path, target: str, run_id: str) -> Path:
+    """A scan directory no other run shares, even one started in the same second.
+
+    It is hidden and named after the run; `write_outputs` gives it its final key, `scan_key`,
+    once the run's file id is known.
+    """
+    parent = out_dir / slug(target) / "scans"
+    parent.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=f".{run_id}.", dir=parent))
+
+
+def scan_key(target: str, run_id: str) -> str:
+    """Where a dataset run's scan directory lives in the store: beside its run, named by it."""
+    return f"{slug(target)}/scans/{run_id}"
+
+
+# names the dumped samples for the replay task; _replay_samples.SAMPLES_ENV must match
+SAMPLES_ENV = "INSPECT_AUDIT_SAMPLES_FILE"
+SCORERS_ENV = "INSPECT_AUDIT_SCORERS"  # _replay_samples.SCORERS_ENV must match
+
+
+def eval_dependency_args(ie_root: Path, package: str) -> list[str]:
+    """`--extra`/`--group` flags for the eval's own dependencies, where the checkout declares them."""
+    path = ie_root / "pyproject.toml"
+    if not path.is_file():
+        return []
+    data = tomllib.loads(path.read_text())
+    args: list[str] = []
+    if package in data.get("project", {}).get("optional-dependencies", {}):
+        args += ["--extra", package]
+    if package in data.get("dependency-groups", {}):
+        args += ["--group", package]
+    return args
+
+
+def eval_env_dir(ctx: Context) -> Path:
+    """The scratch environment task dumps run in: never the checkout's own `.venv`."""
+    if ctx.producers.eval_env:
+        return Path(ctx.producers.eval_env)
+    cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    return cache / "inspect_audit" / "eval-envs" / f"ie-{slug(str(ctx.ie_root.resolve()))}"
+
+
+def locked_version(ie_root: Path, package: str) -> str | None:
+    """The version of `package` in the checkout's uv.lock, or None without a readable entry."""
+    try:
+        lock = tomllib.loads((ie_root / "uv.lock").read_text())
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None
+    for entry in lock.get("package", []):
+        if isinstance(entry, dict) and entry.get("name") == package:
+            version = entry.get("version")
+            return str(version) if version else None
+    return None
+
+
+def _expand(prefix: Sequence[str], ie_root: Path, lists: Mapping[str, list[str]]) -> list[str]:
+    """The command with `{ie_root}` substituted and each list placeholder replaced by its items."""
+    argv: list[str] = []
+    for part in prefix:
+        if part in lists:
+            argv += lists[part]
+        else:
+            argv.append(part.replace("{ie_root}", str(ie_root)))
+    return argv
+
+
+def _is_local_path(value: str) -> bool:
+    """A filesystem path, which differs per machine, rather than a hub id or URL."""
+    return (
+        value.startswith(("/", "~", ".", "file:", "\\"))
+        or re.match(r"^[A-Za-z]:[\\/]", value) is not None
+    )
+
+
+def dataset_identity(meta: Mapping[str, Any], spec: str) -> str:
+    """The dataset a task scan's findings belong to: Inspect's location unless it is a local path.
+
+    A file-backed dataset's location is this machine's copy (for inspect_evals, a cache path) and
+    its name only the file's stem, so neither identifies it across machines; the task spec does.
+    """
+    location = meta.get("dataset_location")
+    if isinstance(location, str) and location and not _is_local_path(location):
+        return location
+    return spec
+
+
+def _output_tail(result: CommandResult) -> str:
+    return (result.stderr or result.stdout)[-1500:]
+
+
+# The rich markup Inspect wraps prerequisite errors in: lowercase style names such as [bold] or
+# [/blue]. A bracketed upper-case word, such as a dataset's own [/ANSWER] tag, is left alone.
+_MARKUP = re.compile(r"\[/?[a-z][a-z ]*\]")
+_EXCEPTION_LINE = re.compile(r"^(?:\w+\.)*(\w+(?:Error|Exception|Exit|Interrupt)): ?(.*)$")
+
+
+def failure_reason(output: str) -> str:
+    """The line that says why a command failed: a traceback's last exception, else the last line.
+
+    The skip reason is what a reader sees beside the eval, so it is one line; the run's inputs
+    keep the output's tail for whoever needs the traceback.
+    """
+    lines = [line for line in (_MARKUP.sub("", raw).strip() for raw in output.splitlines()) if line]
+    for line in reversed(lines):
+        match = _EXCEPTION_LINE.match(line)
+        if match:
+            return f"{match.group(1)}: {match.group(2)}"
+    return lines[-1] if lines else "no output"
+
+
 def run(target: str, ctx: Context) -> Run:
-    """Scan the eval's HuggingFace dataset with static scanners into a temporary directory, then parse it."""
+    """Scan the eval's dataset with static scanners into a temporary directory, then parse it.
+
+    A task scan first dumps the task's samples in the eval's environment, then scans a replay of
+    them in inspect-dataset's, so neither sees the other's dependencies.
+    """
     timestamp = utcnow()
-    source = hf_asset(eval_yaml(ctx.ie_root, target))
-    if source is None:
+    run_id = new_run_id(PRODUCER, target, timestamp)
+    declared = ctx.config.for_eval(target).dataset
+    yaml_data = eval_yaml(ctx.ie_root, target)
+    path, options, examined = scan_arguments(target, yaml_data, declared)
+    if path is None:
+        reason = (
+            "HuggingFace settings are declared in the pilot config but there is no dataset path: declare `path`, or add a huggingface asset to eval.yaml external_assets"
+            if declared and declared.selects_hf
+            else "no dataset path: none declared in the pilot config, no huggingface asset in eval.yaml external_assets, and no tasks in eval.yaml"
+        )
+        return skip_run(PRODUCER, target, ctx, reason, timestamp=timestamp)
+    listed = yaml_tasks(yaml_data)
+    if declared and declared.task and listed and declared.task not in listed:
         return skip_run(
             PRODUCER,
             target,
             ctx,
-            "no huggingface asset in eval.yaml external_assets",
+            f"declared task {declared.task!r} is not among eval.yaml's tasks ({', '.join(listed)})",
             timestamp=timestamp,
         )
-    overrides = DATASET_OVERRIDES.get(target, {})
     ctx.out_dir.mkdir(parents=True, exist_ok=True)
-    scan_dir = Path(tempfile.mkdtemp(prefix="inspect_dataset_", dir=ctx.out_dir))
-    argv = [*ctx.producers.dataset, "scan", source]
-    for key, value in overrides.items():
-        argv += [f"--{key.replace('_', '-')}", value]
-    argv += ["-o", str(scan_dir)]
+    inputs: dict[str, JsonValue] = {"dataset": examined}
     started = time.monotonic()
-    try:
-        result = run_command(argv, timeout=ctx.producers.timeout_s)
-    except ProducerError as ex:
-        return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp)
+    with tempfile.TemporaryDirectory(prefix="inspect_dataset_samples_") as work:
+        if examined["mode"] == "task":
+            samples, meta_path = Path(work) / "samples.jsonl", Path(work) / "meta.json"
+            try:
+                eval_deps = eval_dependency_args(ctx.ie_root, package_of(target))
+            except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as ex:
+                return skip_run(
+                    PRODUCER,
+                    target,
+                    ctx,
+                    f"could not read {ctx.ie_root / 'pyproject.toml'} for the eval's dependencies: {ex}",
+                    timestamp=timestamp,
+                    inputs=inputs,
+                )
+            dump_argv = [
+                *_expand(ctx.producers.dataset_dump, ctx.ie_root, {"{eval_deps}": eval_deps}),
+                str(DUMP_SCRIPT),
+                path,
+                str(samples),
+                str(meta_path),
+            ]
+            inputs["dump_argv"] = list(dump_argv)
+            dump_env = {
+                "UV_PROJECT_ENVIRONMENT": str(eval_env_dir(ctx)),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+            try:
+                dumped = run_command(
+                    dump_argv, timeout=ctx.producers.timeout_s, cwd=ctx.ie_root, env=dump_env
+                )
+            except ProducerError as ex:
+                return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp, inputs=inputs)
+            if dumped.returncode != 0 or not meta_path.is_file():
+                inputs["dump_output"] = _output_tail(dumped)
+                return skip_run(
+                    PRODUCER,
+                    target,
+                    ctx,
+                    f"sample dump exit {dumped.returncode}: "
+                    f"{failure_reason(dumped.stderr or dumped.stdout)}",
+                    timestamp=timestamp,
+                    inputs=inputs,
+                )
+            try:
+                meta = json.loads(meta_path.read_text())
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as ex:
+                return skip_run(
+                    PRODUCER,
+                    target,
+                    ctx,
+                    f"sample dump wrote unreadable meta: {ex}",
+                    timestamp=timestamp,
+                    inputs=inputs,
+                )
+            meta = meta if isinstance(meta, dict) else {}
+            # the dataset as Inspect records it for this task, not whichever asset eval.yaml lists first
+            dataset: DatasetRef | None = DatasetRef(path=dataset_identity(meta, path))
+            inspect_ai = locked_version(ctx.ie_root, "inspect-ai")
+            scorers = [str(n) for n in meta.get("scorers") or []]
+            inputs["dataset"] = {
+                **examined,
+                "samples": meta.get("samples"),
+                "scorers": list[JsonValue](scorers),
+                "inspect_ai": inspect_ai,
+            }
+            pin = ["--with", f"inspect-ai=={inspect_ai}"] if inspect_ai else []
+            scan_dir = _staging_dir(ctx.out_dir, target, run_id)
+            argv = [
+                *_expand(ctx.producers.dataset_task, ctx.ie_root, {"{inspect_ai}": pin}),
+                "scan",
+                f"{REPLAY_SCRIPT}@replay_samples",
+                "-o",
+                str(scan_dir),
+            ]
+            scan_env: dict[str, str] | None = {
+                SAMPLES_ENV: str(samples),
+                SCORERS_ENV: ",".join(scorers),
+            }
+            # the replay needs nothing from the caller's directory, and must not pick up its .env
+            scan_cwd: Path | None = scan_dir
+        else:
+            scan_dir = _staging_dir(ctx.out_dir, target, run_id)
+            argv = [*ctx.producers.dataset, "scan", path, *options, "-o", str(scan_dir)]
+            dataset = None
+            scan_env = None
+            # inspect-dataset reads ./.env (an HF token for gated datasets, say) and resolves a
+            # relative dataset path from the caller's directory, as it did before task scans
+            scan_cwd = None
+        inputs["argv"] = list(argv)
+        inputs["scan_dir"] = scan_dir.relative_to(ctx.out_dir).as_posix()
+        try:
+            result = run_command(argv, timeout=ctx.producers.timeout_s, cwd=scan_cwd, env=scan_env)
+        except ProducerError as ex:
+            _discard_scan(scan_dir, inputs)
+            return skip_run(PRODUCER, target, ctx, str(ex), timestamp=timestamp, inputs=inputs)
     duration = time.monotonic() - started
     if result.returncode != 0 or not (scan_dir / "scan_summary.json").is_file():
+        inputs["scan_output"] = _output_tail(result)
+        _discard_scan(scan_dir, inputs)
         return skip_run(
             PRODUCER,
             target,
             ctx,
-            f"inspect-dataset exit {result.returncode}: {(result.stderr or result.stdout)[-1500:]}",
+            f"inspect-dataset exit {result.returncode}: "
+            f"{failure_reason(result.stderr or result.stdout)}",
             timestamp=timestamp,
+            inputs=inputs,
         )
     try:
         return parse(
@@ -172,15 +553,18 @@ def run(target: str, ctx: Context) -> Run:
             subject_for(target, ctx),
             timestamp=timestamp,
             duration_s=duration,
-            inputs={"argv": argv, "scan_dir": str(scan_dir)},
+            inputs=inputs,
+            dataset=dataset,
         )
     except (
         Exception
     ) as ex:  # a producer whose output we cannot read is a skipped producer, not a dead sweep
+        _discard_scan(scan_dir, inputs)
         return skip_run(
             PRODUCER,
             target,
             ctx,
             f"could not parse {PRODUCER} output: {type(ex).__name__}: {ex}",
             timestamp=timestamp,
+            inputs=inputs,
         )

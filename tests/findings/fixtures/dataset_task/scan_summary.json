@@ -1,0 +1,22 @@
+{
+  "dataset_name": "/site-packages/inspect_audit/findings/adapters/_replay_samples.py@replay_samples",
+  "split": "train",
+  "source_type": "inspect_task",
+  "revision": null,
+  "config": null,
+  "files_root": null,
+  "total_samples": 2123,
+  "total_findings": 18,
+  "by_scanner": {
+    "duplicate_questions": {
+      "total": 18,
+      "high": 6,
+      "medium": 0,
+      "low": 12
+    }
+  },
+  "by_severity": {
+    "high": 6,
+    "low": 12
+  }
+}

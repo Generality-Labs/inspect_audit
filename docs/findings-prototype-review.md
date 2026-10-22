@@ -68,7 +68,7 @@ For the maintainer pilot, record accepted issues, review time, recall, false pos
 
 ### 5. Reduce dependencies before publication
 
-The first maintainer view can group by producer and rule while retaining the original taxonomy identifiers. Confirmation of `gl-audit@2` can proceed separately. A later display mapping should preserve the original classification and identify any mapping that requires judgment.
+The first maintainer view can group by producer and rule while retaining the original taxonomy identifiers. Confirmation of `inspect-audit@2` can proceed separately. A later display mapping should preserve the original classification and identify any mapping that requires judgment.
 
 Publish a static index with reviewed findings, coverage, evidence links, and issue drafts. Use GitHub issue reactions for promoted issues initially. A custom voting service and a choice between GitHub Projects and a separate findings database can wait for experience with the pilot.
 

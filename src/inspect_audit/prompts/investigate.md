@@ -4,7 +4,8 @@ what the evidence establishes. Supported positive findings are welcome. Defect c
 report length and budget exhaustion are not objectives.
 
 Read /inputs/seed.json, then the investigating skill. The seed identifies the source,
-optional paper, documentation, logs, benchmark-specific operator context and available remote work.
+optional paper, documentation, logs, leads from deterministic checks, benchmark-specific
+operator context and available remote work.
 Execution configuration governs models, budgets and backends; the writing skill governs
 publication. Keep continuation and package-development notes out of the benchmark report.
 The seed names /inputs/policy.json, a readable snapshot of the fixed launch policy.

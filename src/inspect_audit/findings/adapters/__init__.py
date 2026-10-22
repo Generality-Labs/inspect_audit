@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import JsonValue
 
+from ..config import Config
 from ..models import Outcome, Revision, Run, Subject, TaskVersion, utcnow
 from ..producers import ProducerConfig
 
@@ -27,6 +29,7 @@ class Context:
     out_dir: Path = Path("findings-out")
     producers: ProducerConfig = field(default_factory=ProducerConfig)
     resolve: bool = False
+    config: Config = field(default_factory=Config)
 
 
 class ProducerError(Exception):
@@ -134,14 +137,24 @@ def new_run_id(producer: str, target: str, timestamp: datetime) -> str:
 
 
 def skip_run(
-    producer: str, target: str, ctx: Context, message: str, *, timestamp: datetime | None = None
+    producer: str,
+    target: str,
+    ctx: Context,
+    message: str,
+    *,
+    timestamp: datetime | None = None,
+    inputs: Mapping[str, JsonValue] | None = None,
 ) -> Run:
-    """A run that could not happen: one skip outcome carrying the reason, no findings."""
+    """A run that could not happen: one skip outcome carrying the reason, no findings.
+
+    `inputs` records what was looked at before giving up, such as the logs that were all excluded.
+    """
     stamp = timestamp or utcnow()
     return Run(
         id=new_run_id(producer, target, stamp),
         timestamp=stamp,
         producer=producer,
         subject=subject_for(target, ctx),
+        inputs=dict(inputs or {}),
         outcomes=[Outcome(rule=producer, status="skip", message=message[:2000])],
     )

@@ -1,0 +1,9 @@
+defaults:
+  logs:
+    include_mock: true
+evals:
+  inspect_evals/stereoset:
+    dataset:
+      config: intersentence
+      split: validation
+      fields: {question: context, answer: sentences, id: id}

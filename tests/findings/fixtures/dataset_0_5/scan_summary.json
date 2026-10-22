@@ -1,0 +1,106 @@
+{
+  "version": "0.5.0",
+  "dataset_name": "src/inspect_audit/findings/adapters/_replay_samples.py@replay_samples",
+  "split": null,
+  "source_type": "inspect_task",
+  "revision": null,
+  "config": null,
+  "group_by": "dataset_name",
+  "group_by_source": "auto",
+  "task": "src/inspect_audit/findings/adapters/_replay_samples.py@replay_samples",
+  "scorers": [],
+  "split_defaulted": null,
+  "config_defaulted": null,
+  "source": {
+    "field": "__source__",
+    "joined": 0,
+    "total": 6509,
+    "joined_by_record": 0,
+    "joined_by_id": 0,
+    "id_column": null,
+    "loads": []
+  },
+  "files_root": null,
+  "total_samples": 6509,
+  "total_findings": 261,
+  "by_scanner": {
+    "duplicate_questions": {
+      "total": 4,
+      "high": 2,
+      "medium": 0,
+      "low": 2
+    },
+    "forced_choice_leakage": {
+      "total": 250,
+      "high": 0,
+      "medium": 250,
+      "low": 0
+    },
+    "binary_question_ratio": {
+      "total": 4,
+      "high": 0,
+      "medium": 0,
+      "low": 4
+    },
+    "extraction_artifacts": {
+      "total": 3,
+      "high": 0,
+      "medium": 0,
+      "low": 3
+    }
+  },
+  "by_severity": {
+    "low": 9,
+    "high": 2,
+    "medium": 250
+  },
+  "scanner_status": {
+    "answer_length": {
+      "status": "not_applicable",
+      "reason": "answer_length assumes a scorer that compares answer text verbatim; this task has no scorer"
+    },
+    "duplicate_questions": {
+      "status": "ran"
+    },
+    "inconsistent_format": {
+      "status": "not_applicable",
+      "reason": "inconsistent_format assumes a scorer that compares answer text verbatim; this task has no scorer"
+    },
+    "answer_distribution": {
+      "status": "ran"
+    },
+    "forced_choice_leakage": {
+      "status": "ran"
+    },
+    "encoding_issues": {
+      "status": "ran"
+    },
+    "latex_escapes": {
+      "status": "ran"
+    },
+    "mojibake": {
+      "status": "ran"
+    },
+    "binary_question_ratio": {
+      "status": "ran"
+    },
+    "image_mime_type": {
+      "status": "not_applicable",
+      "reason": "no image field; no sample in the task has an image"
+    },
+    "markdown_integrity": {
+      "status": "ran"
+    },
+    "extraction_artifacts": {
+      "status": "ran"
+    },
+    "text_layer_recall": {
+      "status": "not_applicable",
+      "reason": "no extraction artifacts; pass --files-root with one directory per sample id"
+    },
+    "numeric_provenance": {
+      "status": "not_applicable",
+      "reason": "no extraction artifacts; pass --files-root with one directory per sample id"
+    }
+  }
+}

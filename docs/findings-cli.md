@@ -1,13 +1,71 @@
 # The findings CLI
 
-`inspect-audit-findings` runs the deterministic producers (inspect-evals-lint, inspect-dataset, `.eval` header checks) over named Inspect Evals evals and writes immutable run files, a `current.json` view per eval, parquet and markdown summaries. Producers run in their own `uvx` environments; override with `INSPECT_AUDIT_LINT_CMD`, `INSPECT_AUDIT_DATASET_CMD`, `INSPECT_AUDIT_HAWK_CMD`.
+Part of the findings store. This CLI never runs the agents (the sample auditor and investigator); it reads their published bundles with `import-investigation` and writes leads for them with `leads`. See [the docs index](README.md) for the two parts.
+
+`inspect-audit-findings` runs the deterministic producers (inspect-evals-lint, inspect-dataset, `.eval` header checks) over named Inspect Evals evals and writes immutable run files (the current view is the newest run per producer), parquet and markdown summaries. Producers run in their own `uvx` environments; override with `INSPECT_AUDIT_LINT_CMD`, `INSPECT_AUDIT_DATASET_CMD`, `INSPECT_AUDIT_HAWK_CMD`. A dataset scan through an eval's task has two steps, so the eval's dependencies and inspect-dataset's never mix. First a dump script loads the task with Inspect's own loader and writes its samples to a temporary file. It runs as `uv run --project <root> --frozen [--extra <eval>] [--group <eval>] python`, with the checkout's locked dependencies plus the eval's own extra and group. The environment is a scratch one, by default `~/.cache/inspect_audit/eval-envs/`, so the checkout's `.venv` is never touched; the only thing the editable install writes into the checkout is the gitignored `src/inspect_evals.egg-info`. The scratch environment is shared by every eval scanned from that checkout and synced without removing packages, so it accumulates each eval's extras; versions still come from the lock. The dump reads no `.env`, so a token for a gated dataset has to be in the environment. HF-mode scans run from the caller's directory, where inspect-dataset reads `.env` as it always has. Then inspect-dataset scans a replay of those samples in its own `uvx` environment, with the checkout's locked `inspect-ai` so the samples are read with the same `Sample` model they were written with. Override the steps with `INSPECT_AUDIT_DATASET_DUMP_CMD` (where `{ie_root}` stands for the checkout path and `{eval_deps}` for the eval's flags) and `INSPECT_AUDIT_DATASET_TASK_CMD` (where `{inspect_ai}` stands for the `--with inspect-ai==<version>` pin), and the scratch environment with `INSPECT_AUDIT_EVAL_ENV`.
 
 ```bash
-uv run inspect-audit-findings run --root ../inspect_evals --out out/ inspect_evals/stereoset
-uv run inspect-audit-findings run --root ../inspect_evals --out out/ --featured --logs hawk:<eval-set-id>
+uv run inspect-audit-findings run --root ../inspect_evals --store out/ inspect_evals/stereoset
+uv run inspect-audit-findings run --root ../inspect_evals --store out/ --featured --logs hawk:<eval-set-id>
 uv run inspect-audit-findings summary out/          # re-render from the current view
 uv run inspect-audit-findings hawk-sets inspect_evals/scicode
-uv run inspect-audit-findings hawk-pull             # fetch scripts/hawk-artefacts.yaml into artefacts/ (gitignored)
+uv run inspect-audit-findings hawk-pull --manifest <file>   # fetch the eval sets and bundles a manifest names
+uv run inspect-audit-findings leads --store out/ inspect_evals/stereoset   # LEADS.md for an agent
+uv run inspect-audit-findings review suppress --store out/ --rule answer_length --eval inspect_evals/stereoset --reason "struct answers"
+uv run inspect-audit-findings review accept --store out/ --eval inspect_evals/stereoset --rule duplicate_questions --title "StereoSet has duplicate contexts"
+uv run inspect-audit-findings review link --store out/ ISS-0001 https://github.com/UKGovernmentBEIS/inspect_evals/issues/1
+uv run inspect-audit-findings review status --store out/ --id <run id>/3 retracted --reason "fixed upstream"
+uv run inspect-audit-findings review retract --store out/ dec-20261009T041210Z-0412107f3 --reason "not noise"
+uv run inspect-audit-findings review migrate --store out/   # once, for a store with hand-written review files
+uv run inspect-audit-findings import-investigation --store out/ --eval inspect_evals/bfcl <investigation>/published/<id>/
 ```
 
-Limitations today: dataset scans need the eval's HuggingFace path from `eval.yaml` plus a per-eval override table, and skip otherwise; header checks compare against the checkout's `eval.yaml` and take each log at face value (mock and variant runs are not yet filtered); no suppressions or issue links are applied yet. See [roadmap.md](roadmap.md) and the [design spec](superpowers/specs/2026-09-25-findings-prototype-design.md).
+`--config PATH` names the per-eval declaration of what to scan and which logs count; the default is the store's `pilot.yaml`, else the packaged one. By default the dataset is scanned through the eval's first task in `eval.yaml` (`inspect-dataset scan inspect_evals/<task>`). That way the scan sees the split, config, revision, field mapping and sample ids the eval uses, and findings name the dataset by the location Inspect records for that task, such as `cais/mmlu`. When that location is a local file, as for datasets inspect_evals downloads to its cache, they use the task spec instead, so the same finding has the same fingerprint on every machine. Each entry can declare a different `task`, or HuggingFace settings (dataset path, config, split, revision and field roles) to scan the HuggingFace dataset directly, with `eval.yaml`'s HuggingFace asset as the default path. It can also declare a `task_args` filter for logs, and whether mock-model runs count (they do not by default). An eval without an entry uses every non-mock log it matches. Every run records what it examined under `inputs`, and each eval's `SUMMARY.md` has an Inputs section listing the dataset scanned, the scorers a task scan assumed (the eval's own scorer names, carried from the dump to the replay task so inspect-dataset's scorer-aware scanners judge applicability by them), the logs used and excluded with reasons, and the revision the header checks compared against.
+
+`--store LOCATOR` names the store on every command, default `$INSPECT_AUDIT_STORE`; `--out` is the same flag under its old name. A store is a directory or any fsspec locator: `s3://bucket/prefix`, R2 through `AWS_ENDPOINT_URL`, `memory://name` in tests. Credentials come from the environment the way an Inspect `--log-dir s3://` finds them. Every command works on any store. Producers write to a local work directory: the store itself when it is local, otherwise a scratch directory that is uploaded and removed. A dataset run's scan output lives at `<slug>/scans/<run id>/` and its `inputs.scan_dir` is that key; a scan that fails leaves no directory and cites none. On a remote store only `scan_summary.json` is uploaded: the rest of a scan directory holds raw dataset samples, gated datasets included, and the scanners' files quote sample text, so it never leaves the sweeping machine. The runs carry the findings with sample text cut to a short marker; rescan locally to see the full output. Review decisions are an append-only log under `review/`, written only through the `review` verbs; see [review-files.md](review-files.md). The author of a decision comes from `--author 'Name <email>'`, else `INSPECT_AUDIT_AUTHOR`, else git's `user.name` and `user.email` in the current directory; without any the command exits 2. A selection that matches nothing, an unknown record id, a finding another issue already owns, or a malformed decision object is exit 2 with the reason.
+
+A dataset finding keeps at most 32 characters of any sample text it quotes, in its summary and in the stored scanner record, followed by `…`; sample ids and indices are kept whole and lead back to the full text. Some datasets are gated to keep their questions and answers out of training data, and this keeps them out of the store and the export.
+
+Limitations today: a task scan covers one task per eval (the first, or the declared one), and it imports the eval's code on the host, as running the eval would; a dataset scan skips when there is no task, asset or declaration; the header checks compare against the checkout's `eval.yaml`. See [roadmap.md](roadmap.md) and the [design spec](superpowers/specs/2026-09-25-findings-prototype-design.md).
+
+## Importing an investigation
+
+`import-investigation BUNDLE --eval E` adds one published investigation bundle (the investigator's `published/<id>/` directory, GL format) to the store as one run of the producer `inspect_audit_investigate`. Its findings join the eval's table: each keeps its section as the `inspect-audit@1` dimension, its severity, status and claim, and its evidence as artifact locations as the bundle wrote them; a finding with no evidence is located at `findings.json`. Audit limitations are not benchmark defects, so they stay out of the table and are listed in the run's `inputs.limitations`. `assessments.json` becomes the run's assessments under `inspect-audit@1`, with `checked_ids` and `affected_ids` as a measure. Coverage counts, the bundle's id and path, and a hash of its `findings.json` go in the run's inputs; the bundle itself is not uploaded. Evidence quotes keep at most 32 characters, as dataset findings' sample text does; claims and evidence locations are kept as the investigator wrote them. The revision is the report's `\commitref`, else `--revision`. The run's timestamp is `findings.json`'s modification time, which a copy or download resets, so pass `--timestamp` for a bundle fetched later: the newest investigation of an eval is the current one.
+
+A supported or qualified finding that cites a lead (an evidence ref to `LEADS.md` or a bundled run file, with the lead's record id as its location) marks that lead with its status through one review status decision per lead, with reason `cited as evidence by <record ids>`; a lead cited twice takes the stronger status. A retracted or unconfirmed finding marks nothing, and a lead someone has already given a status keeps it. Marking needs an author (`--author`, `$INSPECT_AUDIT_AUTHOR`, then git config), checked with the store before anything is written. A lead no longer in the current view is a warning; a lead of a different eval than `--eval` is exit 2. Importing a bundle again writes no second run and adds only the lead decisions still missing, so an interrupted import is finished by running it again; a bundle whose `findings.json` changed under the same id is exit 2. Leads never carry an investigation forward: `leads` leaves investigator runs out and ignores statuses set by citations, so a re-audit starts from the deterministic observations.
+
+## A store's own configuration
+
+A store may carry `audit.toml` and `pilot.yaml` at its root; without them every default applies, and the package ships no values for either. `audit.toml` has one table today:
+
+```toml
+[evals]
+profile = "inspect_evals"   # how targets resolve; the only profile so far
+root = "../inspect_evals"   # default --root for run, relative to the current directory
+```
+
+`pilot.yaml` is the per-eval scan declaration described above. For each setting the command line wins, then the store's file, then the packaged default; a malformed file is exit 2 naming it, before anything runs. `--logs` takes local paths, `hawk:<eval-set-id>`, or any fsspec URL such as `s3://bucket/logs`, which is fetched once into `--log-cache` (default `~/.cache/inspect_audit/logs`) and reused while the files are unchanged in size. A URL may name one log or a prefix; only files Inspect itself would list as logs are fetched, and a source that cannot be listed or holds no logs is exit 2 naming it. A run has one S3 endpoint (`AWS_ENDPOINT_URL`), so an `s3://` log source must be on the same provider as an `s3://` store; fetch logs from elsewhere into a local directory first. The evals root must be an Inspect Evals checkout (it has `src/inspect_evals`), or `run` stops before sweeping; `audit.toml` tables this version does not know are ignored with a warning. `hawk-pull` needs `--manifest <file>`; a deployment keeps its own manifest.
+
+## Using an S3 or R2 bucket
+
+Pass `--store s3://<bucket>/<prefix>` or set `INSPECT_AUDIT_STORE`. Give the store its credentials through a named AWS profile, and set `INSPECT_AUDIT_STORE_PROFILE` to the profile's name, such as `inspect-audit-store`. Only the store's own S3 client uses the profile. Remote log sources (`--logs s3://…`) and the producers keep the default AWS credentials, so a sweep can read logs from AWS while it writes to R2. For Cloudflare R2:
+
+```ini
+# ~/.aws/credentials
+[inspect-audit-store]
+aws_access_key_id = <the R2 token's Access Key ID, not the account id>
+aws_secret_access_key = <its Secret Access Key>
+
+# ~/.aws/config
+[profile inspect-audit-store]
+endpoint_url = https://<account id>.r2.cloudflarestorage.com
+region = auto
+```
+
+The token needs object read and write on the bucket. Any profile name works; `inspect-audit-store` keeps it beside the variable that selects it. R2 rejects AWS region names, so `region = auto` is required whenever `~/.aws/config` sets a default region.
+
+Put `INSPECT_AUDIT_STORE` and `INSPECT_AUDIT_STORE_PROFILE` in a `.env` file. The CLI loads the nearest one from the working directory or a parent, as `inspect eval` does, and variables already set in the shell win.
+
+With no profile set, the store reads the environment, as an Inspect `--log-dir s3://` does: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, plus `AWS_ENDPOINT_URL` and `AWS_DEFAULT_REGION=auto` for R2 (`AWS_REGION` is not read by the botocore version inspect_ai pins). This suits CI and Hawk runners, where secrets arrive as environment variables. Those variables reach every S3 client in the process and its subprocesses, so scope them to the step that runs the CLI.
+
+R2 has no bucket versioning; the store does not need it, because runs and decisions are never overwritten. `INSPECT_AUDIT_TEST_STORE=s3://<bucket>/ci`, with either kind of credentials, runs the one test that talks to a real bucket.

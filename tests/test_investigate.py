@@ -1049,3 +1049,96 @@ def test_the_investigator_builds_from_a_directory_it_cannot_write(tmp_path: Path
             os.environ["HOME"] = old_home
         readonly.chmod(stat.S_IRWXU)
     assert Path(task.metadata["investigation_dir"]).is_relative_to(home)
+
+
+def _leads_file(tmp_path: Path) -> Path:
+    leads = tmp_path / "LEADS.md"
+    leads.write_text(
+        "# Leads for inspect_evals/x\n\n- `inspect_evals_lint-1/1` IEBP011 · shuffle without a seed\n"
+    )
+    return leads
+
+
+def test_leads_are_staged_read_only_and_named_in_the_seed(tmp_path: Path) -> None:
+    repo = git_repo(tmp_path / "repo")
+    leads = _leads_file(tmp_path)
+    target = investigate(
+        str(repo),
+        paths=["task.py"],
+        leads=str(leads),
+        output_dir=str(tmp_path / "runs"),
+    )
+    root = Path(target.metadata["investigation_dir"])
+    seed = json.loads((root / "inputs/seed.json").read_text())
+    assert seed["leads"] == "/inputs/findings/LEADS.md"
+    assert (root / "inputs/findings/LEADS.md").read_text() == leads.read_text()
+
+
+def test_without_leads_the_seed_says_there_are_none(tmp_path: Path) -> None:
+    repo = git_repo(tmp_path / "repo")
+    target = investigate(str(repo), paths=["task.py"], output_dir=str(tmp_path / "runs"))
+    seed = json.loads((Path(target.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
+    assert seed["leads"] is None
+    assert not (Path(target.metadata["investigation_dir"]) / "inputs/findings").exists()
+
+
+def test_a_missing_leads_file_is_an_error(tmp_path: Path) -> None:
+    repo = git_repo(tmp_path / "repo")
+    with pytest.raises(ValueError, match="leads"):
+        investigate(
+            str(repo),
+            paths=["task.py"],
+            leads=str(tmp_path / "nope.md"),
+            output_dir=str(tmp_path / "runs"),
+        )
+
+
+def test_leads_can_come_from_the_investigation_file(tmp_path: Path) -> None:
+    repo = git_repo(tmp_path / "repo")
+    leads = _leads_file(tmp_path)
+    config = tmp_path / "investigation.yaml"
+    config.write_text(f"repo: {repo}\npaths: [task.py]\nleads: {leads}\n")
+    target = investigate(config=str(config), output_dir=str(tmp_path / "runs"))
+    seed = json.loads((Path(target.metadata["investigation_dir"]) / "inputs/seed.json").read_text())
+    assert seed["leads"] == "/inputs/findings/LEADS.md"
+
+
+def test_the_investigating_skill_says_how_to_use_leads() -> None:
+    from inspect_audit._investigate import ASSETS
+
+    skill = (ASSETS / "skills" / "investigating" / "SKILL.md").read_text()
+    assert "/inputs/findings/LEADS.md" in skill and "record id" in skill
+    # a lead is a pointer, never the evidence: the skill's own rule for summaries
+    assert "alongside the source, data or transcript evidence" in skill
+    # LEADS.md lists three ids a group; the rest live only in the run files
+    assert "or the run file under /inputs/findings/runs/ that holds the record" in skill
+
+
+def test_a_leads_bundle_directory_is_staged_whole(tmp_path: Path) -> None:
+    repo = git_repo(tmp_path / "repo")
+    bundle = tmp_path / "bundle"
+    (bundle / "runs").mkdir(parents=True)
+    (bundle / "LEADS.md").write_text("# Leads\n- and 2 more in `runs/lint-1.run.json`\n")
+    (bundle / "runs" / "lint-1.run.json").write_text("{}")
+    target = investigate(
+        str(repo),
+        paths=["task.py"],
+        leads=str(bundle),
+        output_dir=str(tmp_path / "runs"),
+    )
+    root = Path(target.metadata["investigation_dir"])
+    seed = json.loads((root / "inputs/seed.json").read_text())
+    assert seed["leads"] == "/inputs/findings/LEADS.md"
+    assert (root / "inputs/findings/runs/lint-1.run.json").is_file()
+
+
+def test_a_leads_directory_without_leads_md_is_an_error(tmp_path: Path) -> None:
+    repo = git_repo(tmp_path / "repo")
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(ValueError, match=r"LEADS\.md"):
+        investigate(
+            str(repo),
+            paths=["task.py"],
+            leads=str(tmp_path / "empty"),
+            output_dir=str(tmp_path / "runs"),
+        )

@@ -1,0 +1,133 @@
+# Epoch AI's benchmark review rubric as a methodology, written from the public documentation
+# (https://epoch.ai/data/benchmark-reviews-documentation and /methodology, read 2026-10-12).
+# Illustrative: Epoch's wording is paraphrased, and the thresholds are the published defaults.
+id: epoch-rubric
+version: 1
+status: draft
+source: https://epoch.ai/data/benchmark-reviews-documentation/methodology
+
+verdict:
+  scale: [verified, flawed, not_enough_info]
+  rule: >
+    not_enough_info when reviewability is inadequate; flawed when any minimum check fails;
+    verified otherwise. Quality checks never change the verdict.
+  stop: a review may stop once a minimum check has failed and say so (partial review)
+
+sampling:
+  unit: task
+  population: every task in the benchmark version reviewed
+  sample: 50 when the benchmark has more than 50 tasks, else all
+  strategy: random, stratified by category when the benchmark has categories
+  expansion: extend to 100 when the sampled defect rate is between 15% and 25%
+  confirmation: agent-flagged defects are hand audited before they count
+  states: [defect, no_issue_found, unresolved, not_assessed]
+  defect_types: [impossible, false_negative, false_positive]
+
+checks:
+  - id: reviewability
+    section: 1. Reviewability
+    name: Reviewability
+    question: Can the tasks, scoring logic and harness settings used for each model be inspected?
+    guidance: >
+      Full means every task and the scoring logic are inspectable and the harness and API
+      settings per model are disclosed. Partial means representative tasks and the scoring
+      logic are inspectable with settings disclosed. Inadequate means little or nothing is
+      inspectable or settings are undisclosed.
+    scale: [full, partial, inadequate]
+    evidence: [source, documentation]
+    taxonomy: {inspect-audit@2: [practical_reproducibility]}
+
+  - id: scoring_integrity
+    section: 2. Scoring (minimum standard)
+    name: Scoring integrity
+    question: Are tasks clear, is the scorer accurate, and does the benchmark measure the claimed capability?
+    guidance: >
+      Sample tasks under the sampling policy. A task is defective when it cannot be answered
+      correctly as written, when the scorer rejects a correct answer, or when it accepts an
+      incorrect one. Report numerator, denominator and selection method.
+    scale: [pass, pass_with_flag, fail]
+    threshold: {measure: sampled_defect_rate, fail_when: ">= 0.20"}
+    evidence: [coverage, findings]
+    taxonomy: {inspect-audit@2: [implementation.task_specification, implementation.grading]}
+
+  - id: benchmark_consistency
+    section: 2. Scoring (minimum standard)
+    name: Benchmark consistency
+    question: Are versions controlled so that results are comparable over time?
+    guidance: >
+      Look for unversioned changes to tasks, answers, grader or prompts after publication,
+      and estimate their effect on scores.
+    scale: [pass, pass_with_flag, fail]
+    evidence: [source, documentation]
+    taxonomy: {inspect-audit@2: [comparability.identity]}
+
+  - id: elicitation_adequacy
+    section: 2. Scoring (minimum standard)
+    name: Elicitation adequacy
+    question: Do the resources and environment let a capable model show what it can do?
+    guidance: >
+      Token, turn and time budgets, tools and scaffolding, and whether limits cut off work
+      that was going well. A deliberately constrained design (single turn, no tools) passes
+      when the constraint is the point of the benchmark.
+    scale: [pass, pass_with_flag, fail]
+    evidence: [logs, source]
+    taxonomy: {inspect-audit@2: [sensitivity.token_limits, implementation.scaffolding]}
+
+  - id: evaluation_bias
+    section: 2. Scoring (minimum standard)
+    name: Evaluation bias
+    question: Does the setup give any model an advantage the others do not get?
+    guidance: >
+      Same prompts, tools, budgets, grader and termination for every model; model-specific
+      scaffolds or prompts are a flag or a failure depending on their effect.
+    scale: [pass, pass_with_flag, fail]
+    evidence: [logs, source]
+    taxonomy: {inspect-audit@2: [comparability.audited_implementation]}
+
+  - id: resource_adequacy
+    section: 3. Evaluation quality
+    name: Resource adequacy
+    question: Are resources sufficient for near-ceiling performance?
+    scale: [sufficient, insufficient, not_established]
+    evidence: [logs]
+  - id: scaffold_fairness
+    section: 3. Evaluation quality
+    name: Scaffold fairness
+    question: Do all models run under a common scaffold, or comparable ones?
+    scale: [common_scaffold, comparable, divergent, not_established]
+    evidence: [logs, source]
+  - id: contamination
+    section: 3. Evaluation quality
+    name: Contamination evidence
+    question: Are tasks or solutions public, and is there evidence of training exposure?
+    scale: [no_risk_identified, risk_identified, contaminated, not_established]
+    evidence: [documentation, findings]
+    taxonomy: {inspect-audit@2: [content.contamination]}
+  - id: human_completability
+    section: 3. Evaluation quality
+    name: Human task completability
+    question: Has a human baseline established that the tasks are completable?
+    scale: [established, not_established]
+    evidence: [documentation]
+  - id: score_range
+    section: 3. Evaluation quality
+    name: Score range
+    question: What are the floor and the ceiling, and what limits the ceiling?
+    scale: [stated]
+    evidence: [logs, findings]
+    taxonomy: {inspect-audit@2: [informativeness.floor_ceiling]}
+  - id: statistical_adequacy
+    section: 3. Evaluation quality
+    name: Statistical adequacy
+    question: How many runs per model, and what standard error does that give?
+    guidance: Five or more runs per model is the recommended standard.
+    scale: [adequate, marginal, inadequate, not_established]
+    evidence: [logs]
+    taxonomy: {inspect-audit@2: [sensitivity.rollouts]}
+  - id: construct_validity
+    section: 3. Evaluation quality
+    name: Construct validity
+    question: Does the score measure the capability the benchmark claims?
+    scale: [measures, partially_measures, does_not_measure, not_established]
+    evidence: [findings, documentation]
+    taxonomy: {inspect-audit@2: [construct]}

@@ -1440,6 +1440,8 @@ dependencies = [
     { name = "pandas" },
     { name = "pillow" },
     { name = "pyarrow" },
+    { name = "python-dotenv", version = "1.2.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
+    { name = "python-dotenv", version = "1.2.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "semver" },
 ]
 
@@ -1477,6 +1479,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.0.0" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "pyarrow", specifier = ">=10.0.1" },
+    { name = "python-dotenv", specifier = ">=1.0" },
     { name = "semver", specifier = ">=3.0,<3.1" },
 ]
 provides-extras = ["k8s", "remote"]

@@ -34,7 +34,11 @@ src/inspect_audit/findings/
   featured.py       the 35 Featured eval ids, copied from inspect_evals docs/_templates/evals.ejs
   hawk.py           find_eval_sets(task) via the hawk client; download_eval_set / download_artifacts / pull_manifest via the hawk CLI
   render.py         render_eval_summary(runs) and render_sweep_summary(runs) -> markdown
-  cli.py            inspect-audit-findings
+  leads.py          select_leads / render_leads / leads_markdown -> LEADS.md for an agent
+  export.py         index.json + evals/<slug>.json for the table site, from the reviewed current view
+  fs.py             StoreFS: one way to read and write a store on a directory or any fsspec backend
+  store.py          Store: resolve a selection; suppress / accept / link / status / retract as decision objects, re-rendered
+  cli.py            inspect-audit-findings (run, summary, hawk-sets, hawk-pull, leads, review)
   schema/
     finding.schema.json
     run.schema.json
@@ -52,7 +56,7 @@ All pydantic v2, `extra="forbid"` on envelope models.
 
 **Subject.** `eval: str` (registry name, `inspect_evals/stereoset`); `revision: Revision` with `commit: str | None`, `package_version: str | None`, `dirty: bool | None`, at least one of commit or package_version required; `task_version: TaskVersion | None` with `full: str`, `comparability: int | None`, `interface: str | None`; `dataset: DatasetRef | None` with `path`, `config`, `split`, `revision`, all `str | None`; `task_args: dict[str, JsonValue]` default empty.
 
-**Taxonomy, Dimension, Check.** Taxonomies are versioned data under `findings/taxonomies/` (`gl-audit@1` generated from `auditframework.sty`, `gl-audit@2` transcribed from the Audit Reports Strategy document as a draft, plus a v1-to-v2 mapping). `Finding.taxonomy` defaults to `gl-audit@1`; `dimension` and optional `check` are open strings validated against that taxonomy by a model validator. `test_taxonomy.py` asserts v1 equals what `_assessment.framework_definitions` parses from the `.sty`, so the two cannot drift; generating the `.sty` from the data file is a later change on the LaTeX side. Added 2026-09-28 after the strategy document made the nine-dimension list a moving target.
+**Taxonomy, Dimension, Check.** Taxonomies are versioned data under `findings/taxonomies/` (`inspect-audit@1` generated from `auditframework.sty`, `inspect-audit@2` transcribed from the Audit Reports Strategy document as a draft, plus a v1-to-v2 mapping). `Finding.taxonomy` defaults to `inspect-audit@1`; `dimension` and optional `check` are open strings validated against that taxonomy by a model validator. `test_taxonomy.py` asserts v1 equals what `_assessment.framework_definitions` parses from the `.sty`, so the two cannot drift; generating the `.sty` from the data file is a later change on the LaTeX side. Added 2026-09-28 after the strategy document made the nine-dimension list a moving target.
 
 **Severity.** `Literal["none", "minor", "major", "critical"]`.
 
@@ -105,10 +109,10 @@ Adapters call it once at write time and store the result with `fingerprint_versi
 
 `ProducerConfig` holds, per external producer, a command prefix as a list of strings and a pinned spec. Defaults:
 
-| producer | default prefix                                                                                                                                                        | override                    |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| lint     | `["uvx", "--from", "inspect-evals-lint==0.7.0", "inspect-evals-lint"]`                                                                                                | `INSPECT_AUDIT_LINT_CMD`    |
-| dataset  | `["uvx", "--from", "git+https://github.com/Generality-Labs/inspect_dataset@afbc94c0b509", "inspect-dataset"]` (origin/main on 2026-09-25; the package is not on PyPI) | `INSPECT_AUDIT_DATASET_CMD` |
+| producer | default prefix                                                          | override                    |
+| -------- | ----------------------------------------------------------------------- | --------------------------- |
+| lint     | `["uvx", "--from", "inspect-evals-lint==0.10.0", "inspect-evals-lint"]` | `INSPECT_AUDIT_LINT_CMD`    |
+| dataset  | `["uvx", "--from", "inspect-dataset==0.6.0", "inspect-dataset"]`        | `INSPECT_AUDIT_DATASET_CMD` |
 
 An override is a shell-split string. Each adapter exposes two functions: `parse(...) -> Run` which is pure and tested against fixtures, and `run(target, ctx) -> Run` which invokes the subprocess with a timeout, then calls `parse`. Any failure in `run` (non-zero exit, timeout, missing binary, unparseable output) returns a `Run` with a single `Outcome(rule="<producer>", status="skip", message=<error tail>)` and no findings. Nothing raises past the adapter.
 
@@ -132,18 +136,20 @@ Command: `<prefix> --root <ie_root> <package> --output-format json`, where `<pac
 
 ### Dataset
 
-Reads `eval.yaml`'s `external_assets[]` for the first entry with `type: huggingface`. If none, returns a skip run with reason `no huggingface asset`. Field names, config and split come from `DATASET_OVERRIDES: dict[str, dict[str, str]]` keyed by target, seeded with the StereoSet entry (`config: intersentence`, `split: validation`, `question_field: context`, `answer_field: sentences`, `id_field: id`). Without an entry the scan runs with auto-detection and a failure is a skip.
+By default the dataset is scanned through the eval's task: the path passed to `inspect-dataset scan` is `inspect_evals/<task>`, the declared `task` or the first one in `eval.yaml`, so the scan loads samples with the split, config, revision, field mapping and sample ids the eval itself uses (PR #16, 2026-09-30). That scan imports the eval, so it runs in the checkout's own environment (`uv run --project <root> --frozen --with <inspect-dataset> inspect-dataset`, overridable with `INSPECT_AUDIT_DATASET_TASK_CMD`). An entry in `pilot.yaml` (`findings/config.py`: `DatasetConfig`) that declares HuggingFace settings (path, config, split, revision, field roles) scans the HuggingFace dataset directly instead, with `eval.yaml`'s asset as the default path. `Run.inputs.dataset` records `mode` (`task` or `hf`), what was scanned, and whether a declaration was consulted. With no task, no asset and no declaration the producer skips, naming what it looked for. An eval's entry inherits every field it does not set from the file's `defaults`.
 
 Command: `<prefix> scan <source> [--config C] [--split S] [--question-field Q --answer-field A --id-field I] -o <tmpdir>`. Static scanners only. Parse:
 
-- `scan_summary.json` fills `subject.dataset` (`path`, `config`, `split`, `revision`) and one `Outcome(rule=scanner, status="pass" if total == 0 else "fail")` per scanner in `by_scanner`.
+- `scan_summary.json` fills `subject.dataset` (`path`, `config`, `split`, `revision`) and one `Outcome` per scanner: `fail` if it has findings in `by_scanner`, `skip` with the scanner's reason if `scanner_status` says `not_applicable`, otherwise `pass`. `by_scanner` has only ever listed scanners with findings, so before `scanner_status` arrived in inspect-dataset 0.5.0 a clean scanner had no outcome; a summary without it is still read from `by_scanner` alone (changed 2026-10-05).
 - Every row in every `<scanner>.json` becomes a `Finding`: primary `sample` location from `sample_id` (falling back to `sample_index`), `dimension` `dataset`, `severity` by `{"low": "none", "medium": "minor", "high": "major"}`, `summary` from `explanation` truncated to 200 characters, `source.record` the row verbatim, `source.format` `inspect_dataset.Finding@<version>` where the version comes from the summary if present else `unknown`.
 - `dataset.revision` stays `None` in the prototype. The gap is recorded under Open gaps.
-- The `answer_length` flood is expected and not filtered here. Suppression is an aggregator concern; the prototype makes the noise visible and the per-eval summary counts it separately so it does not hide the rest.
+- Noisy scanners are not filtered here. Suppression is an aggregator concern; the prototype makes the noise visible and the per-eval summary counts it separately so it does not hide the rest. The `answer_length` flood of the first pass is gone: from inspect-dataset 0.5.0 it runs only under a scorer that compares answer text verbatim, and the replay task a task scan uses carries no scorer, so on task scans it is a skip (updated 2026-10-05).
 
 ### Header
 
 Pure Python over `.eval` files in `ctx.logs`, reading headers only. Always runs. For each log, `read_eval_log(header_only=True)`; keep those whose `eval.task_registry_name` or `eval.task` matches the target on the unqualified name. If none match, the run has one `skip` outcome `no logs for target`.
+
+A qualified registry name must share the target's package: `audit/inspect_evals/scicode` is not a scicode log. Matched logs then pass the eval's `LogFilter`: mock-model runs are excluded unless `include_mock`, and a declared `task_args` excludes other configurations. Default versus variant is judged on `task_args_passed`, the arguments the operator gave, because resolved `task_args` carry defaults for every parameterised task. Logs with non-default passed arguments still join the drift, unscored and dirty checks but are not compared against the declared sample count. `Run.inputs.logs` records `used`, `excluded` and `count_excluded` with reasons; when every matched log is excluded the run is a skip that says why (changed 2026-09-30).
 
 Checks, each producing an `Outcome` and, when it fires, one `Finding` with `source.eval_spec` set to the header's `eval` dump minus `dataset.sample_ids`:
 
@@ -165,7 +171,7 @@ Console script `inspect-audit-findings`, registered in `pyproject.toml` under `[
 
 ```text
 inspect-audit-findings run --root <ie_root> --logs <source>... --out <dir>
-    [--producers lint,dataset] [--resolve] [--featured] [TARGET ...]
+    [--producers lint,dataset] [--resolve] [--config pilot.yaml] [--featured] [TARGET ...]
 inspect-audit-findings summary <out dir>
 ```
 
@@ -173,25 +179,33 @@ inspect-audit-findings summary <out dir>
 - `--logs` accepts, repeatedly, a directory, a `.eval` file, or a `hawk:<eval-set-id>` address. Local sources are listed with `list_eval_logs(recursive=True)`. `hawk:` sources are pulled with `hawk download` into `--hawk-cache` (default `~/.cache/inspect_audit/hawk/<set>`), where the CLI skips files already present. `--hawk-task <task>` resolves to every eval set whose `task_names` include the task, refusing above `--hawk-limit` (default 20) so a task with hundreds of sets is not pulled by accident; `hawk-sets <task>` lists them without pulling. Logs are then partitioned by target on the header's task name, so one corpus can serve a whole sweep.
 - `hawk-pull [--manifest scripts/hawk-artefacts.yaml] [--dest DIR]` fetches a declared working set instead of a per-run cache: the manifest names eval sets under `logs:` and investigator bundles under `artifacts:` (each `id` plus a free-text `note`), and they land in `<dest>/logs/<set>/` and `<dest>/artifacts/<set>/`. The default dest `artefacts/hawk` is gitignored, so anyone with `hawk login` can reproduce the same local inputs without anything private entering the repo. A failed entry is reported and the rest still pull; exit 1 if any failed. `hawk download-artifacts` needs `aiofiles`, which the 3.5.0 `hawk[cli]` extra omits, so the `remote` and `dev` extras add it.
 - `--producers` selects external producers, default `lint,dataset`. The header producer runs whenever `--logs` was supplied; without logs it is not requested, so a lint-and-dataset sweep can exit 0.
-- For each target, in order: header, then the selected producers. Each run is written to `<out>/<slug>/runs/<run id>.run.json` and never overwritten (a name collision within one second gets a `-2` suffix). The sweep then rewrites `<out>/<slug>/current.json`, a manifest from producer name to the run file that producer's current view uses; producers that did not run keep their previous entry. `findings.parquet`, `runs.parquet`, `<out>/SUMMARY.md` and each `<out>/<slug>/SUMMARY.md` are rendered from the runs the manifests select, so a partial sweep never mixes fresh and stale results by accident and history is never lost (changed 2026-09-29 after the prototype review).
+- `--config PATH` (default: the packaged `findings/pilot.yaml`) declares per eval what to scan and which logs count. A file that fails validation is a usage error naming the file.
+- `--store LOCATOR` (or `--out`, default `$INSPECT_AUDIT_STORE`) names the store; review decisions under `review/` are folded and applied to copies of the current runs before summaries, parquet and export are written, and a malformed decision object is a usage error naming it. Every `Finding` carries an `id` of the form `<run id>/<n>`, assigned by its run when the producer set none.
+- `leads --store LOCATOR [--sample ID] [--write PATH] EVAL` renders one eval's reviewed findings as `LEADS.md` for an agent: preamble, inputs, accepted issues, groups capped at three examples with record ids, skipped checks. No runs for the eval is exit 2 naming the eval and the directory. See `docs/leads.md` for the staging contract into the investigator and sample auditor, which is a separate PR.
+- For each target, in order: header, then the selected producers. Each run is written to `<out>/<slug>/runs/<run id>.run.json` and never overwritten (a name collision within one second gets a `-2` suffix). The current view is derived: per eval and producer, the newest run by timestamp, then run id. Producers that did not run keep their previous run current. Nothing shared is rewritten, so concurrent sweeps cannot conflict. `findings.parquet`, `runs.parquet`, `<out>/SUMMARY.md` and each `<out>/<slug>/SUMMARY.md` are rendered from the current view, so a partial sweep never mixes fresh and stale results by accident and history is never lost (changed 2026-09-29 after the prototype review).
 - Exit code 0 if every producer ran; 1 if any run was a skip; 2 on a usage error. Findings do not affect the exit code.
-- `summary` re-renders every `SUMMARY.md` and both parquet files from the runs `current.json` selects, without re-running producers. `read_runs` still walks every run file for history.
+- `summary` re-renders every `SUMMARY.md` and both parquet files from the current view, without re-running producers. `read_runs` still walks every run file for history.
 
 ## Outputs
 
 ```text
 <out>/
   <slug>/runs/<run id>.run.json   one per producer invocation, immutable
-  <slug>/current.json             producer -> runs/<run id>.run.json
+  export/index.json               active findings across evals + per-eval roll-ups (table site)
+  export/evals/<slug>.json        one eval's page data
   <slug>/SUMMARY.md
   findings.parquet
   runs.parquet
   SUMMARY.md
+  review/<at>-<id>.json           one review decision each, append-only; see docs/review-files.md
+  suppressions.yaml, issues.yaml  derived from review/ on every render, read-only
 ```
 
-`findings.parquet` has the envelope flattened to columns: identity (`fingerprint`, `fingerprint_version`, `schema_version`), the whole subject (`subject_eval`, revision commit, package version and dirty flag, task version full, comparability and interface, dataset path, config, split and revision, `subject_task_args` as JSON), taxonomy position, severity, status, summary, primary location kind and key, run and producer, and the review fields (`aliases`, `suppressions`, `suppressed`, `history`, `introduced`, `fixed`, `effect`) as JSON strings or null, plus `source` and `locations` as JSON strings. A consumer reading only the parquet has everything the envelope holds. `runs.parquet` has one row per run with outcome counts, duration and whether it was skipped.
+Review decisions live in the store's `review/` log; `suppressions.yaml` and `issues.yaml` are derived views of it. They are applied to copies of the current runs before summaries and parquet are written; run files are never edited. Summaries group findings by rule with a count and two examples, list suppressed observations with their reasons, and list accepted issues with the number of current observations linked to each.
 
-`render.py` produces both summaries from `Run` models with plain string templating and no model calls, which is why `summary` can regenerate them from the selected run files. Per-eval `SUMMARY.md`: subject block (eval, revision, task version, dataset); one table of outcomes across producers (rule, status, message); counts of findings by producer and by dimension and severity; then every finding as a line with severity, dimension, rule, primary location key and summary, grouped by producer, with a note on any rule that produced more than 100 findings so noise is visible at a glance. Sweep `SUMMARY.md`: one row per eval with per-producer status and finding counts.
+`findings.parquet` has the envelope flattened to columns: identity (`id`, the record id `<run id>/<n>`; `fingerprint`, `fingerprint_version`, `schema_version`), the whole subject (`subject_eval`, revision commit, package version and dirty flag, task version full, comparability and interface, dataset path, config, split and revision, `subject_task_args` as JSON), taxonomy position, severity, status, summary, primary location kind and key, run and producer, and the review fields (`aliases`, `suppressions`, `suppressed`, `issue`, `history`, `introduced`, `fixed`, `effect`) as JSON strings, booleans or null, plus `source` and `locations` as JSON strings. A consumer reading only the parquet has everything the envelope holds. `runs.parquet` has one row per run with outcome counts, duration and whether it was skipped.
+
+`render.py` produces both summaries from `Run` models with plain string templating and no model calls, which is why `summary` can regenerate them from the selected run files. Per-eval `SUMMARY.md`: subject block (eval, revision, task version, dataset); one table of outcomes across producers (rule, status, message); counts of findings by producer and by dimension and severity; then the active findings per producer grouped by severity, dimension and rule, a single line for a group of one and a count plus two example lines otherwise, with a note on any rule that produced more than 100 active findings so noise is visible at a glance; then a Suppressed section (rule, count, kind, author, reason) and an Issues section (id, title, current observation count, link) when there is anything to show. Sweep `SUMMARY.md`: one row per eval with per-producer status and finding counts. An Inputs section lists the dataset scanned and its origin, logs used and excluded with reasons, and the comparison revision; the sweep table shows log counts per header run.
 
 ## Testing
 

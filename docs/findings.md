@@ -43,7 +43,22 @@ Inspect checkpoints the submitted data, manifest and phase. A fresh host restore
 
 `latex` is the default for investigation and standalone publication. It fetches Laurence's template from `Generality-Labs/audit_reports` at revision `ad7de89658b6794112c2f65847991c7ed41d9e30`, with SHA-256 for every class, style, asset, build configuration and Example source recorded in `publishers/template.json`. Files are checked on every use in the host cache (`INSPECT_AUDIT_TEMPLATE_CACHE`, default `~/.cache/inspect-audit/templates`). There is no vendored template.
 
-The repository is private. Prefill the cache with `python -m inspect_audit.publishers._template`, using host-side `gh auth` or a read-only `GH_TOKEN`. The token is never passed to the agent sandbox. CI can use a read-only `AUDIT_REPORTS_TOKEN` secret in the `audit-template` environment; its PDF integration check reports a skip if no token/cache is supplied.
+The repository is private. Prefill the cache with `python -m inspect_audit.publishers._template`, using host-side `gh auth` or a read-only `GH_TOKEN`. The token is never passed to the agent sandbox. CI can use a read-only `AUDIT_REPORTS_TOKEN` secret in the `audit-template` environment; the dedicated LaTeX job fails at its access check if that secret is absent. It must run both full-registry regeneration and PDF compilation. Fork PRs without private access cannot pass this check until a trusted run has that access.
+
+For Hawk, a runtime GitHub token is avoidable: prefill the cache on a trusted machine, then layer it into the image that actually runs the Python publisher (the Hawk runner). The template compiler image alone is insufficient: Python reads the class, Example structure and rubric before invoking TeX. The named build context copies only the verified cache; no GitHub token is a build argument or an image layer:
+
+```sh
+export INSPECT_AUDIT_TEMPLATE_CACHE=/path/to/private-template-cache
+python -m inspect_audit.publishers._template
+docker build -f src/inspect_audit/containers/template-cache.Dockerfile \
+  --build-arg BASE_IMAGE=YOUR_PUBLISHING_RUNNER_IMAGE \
+  --build-context template-cache="$INSPECT_AUDIT_TEMPLATE_CACHE" \
+  -t YOUR_PRIVATE_REGISTRY/publishing-runner:PINNED_VERSION .
+```
+
+The underlying repository is private; keep this cache and the derived image private unless its owner authorizes public distribution. At runtime, the fetcher still checks every file against the pin and needs no network or GitHub credential when all files are present. A pin change requires rebuilding the cache image.
+
+To update analytical definitions after changing the template pin, run `python -m inspect_audit.publishers._template --update-registry`. The authenticated CI test regenerates the whole JSON registry from the verified `.sty` and scoring criteria and compares it for exact equality, including contribution numbering, descriptions, grades, assessment labels and provenance. Spot checks alone are not the drift guard.
 
 Install `latexmk`, `texlive-latex-extra`, `texlive-fonts-recommended`, `texlive-fonts-extra` (Carlito) and `texlive-science` on the publishing host, or build the separate image:
 
@@ -70,7 +85,7 @@ uv run inspect eval inspect_audit/publish \
 
 The adjacent manifest and evidence are required. A bundle directory is also accepted. No benchmark package, original investigator conversation or job credentials are required. The supplied model still needs its normal inference credentials.
 
-## Default GL publisher
+## Optional GL web publisher
 
 The publishing skill asks the agent to write `/workspace/report/report.md`. It can calculate from existing evidence but cannot launch new benchmark experiments.
 

@@ -57,11 +57,8 @@ def test_cached_template_is_verified_without_network(tmp_path: Path, monkeypatch
         _template.template()
 
 
-@pytest.mark.latex
-@pytest.mark.publishing
-def test_fixture_pdf_uses_bundle_scorecard_and_finding_boxes(tmp_path: Path, monkeypatch) -> None:
-    if not shutil.which("latexmk") and not os.environ.get("INSPECT_AUDIT_LATEX_IMAGE"):
-        pytest.skip("needs host latexmk or INSPECT_AUDIT_LATEX_IMAGE")
+@pytest.fixture
+def upstream() -> Path:
     pin = json.loads(_template.PIN.read_text())
     cache = (
         Path(
@@ -73,6 +70,24 @@ def test_fixture_pdf_uses_bundle_scorecard_and_finding_boxes(tmp_path: Path, mon
     )
     if not cache.is_dir() and not (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")):
         pytest.skip("private template needs GH_TOKEN or a verified cache")
+    return _template.template()
+
+
+@pytest.mark.latex
+def test_registry_is_regenerated_from_the_pinned_template(upstream: Path) -> None:
+    from inspect_audit._framework import REGISTRY
+
+    assert json.loads(REGISTRY.read_text()) == _template.regenerate(upstream)
+
+
+@pytest.mark.latex
+@pytest.mark.publishing
+def test_fixture_pdf_uses_bundle_scorecard_and_finding_boxes(
+    tmp_path: Path, monkeypatch, upstream: Path
+) -> None:
+    if not shutil.which("latexmk") and not os.environ.get("INSPECT_AUDIT_LATEX_IMAGE"):
+        pytest.skip("needs host latexmk or INSPECT_AUDIT_LATEX_IMAGE")
+    pin = json.loads(_template.PIN.read_text())
 
     class Box:
         async def read_file(self, path: str) -> str:
@@ -143,3 +158,58 @@ def test_invalid_report_grade_is_refused_before_findings_are_frozen(
         asyncio.run(_findings.submit_findings(tmp_path, validate=latex.validate)())
     assert store_as(_findings.FindingsState).phase == "investigating"
     assert not (tmp_path / "submitted").exists()
+
+
+@pytest.mark.docker
+@pytest.mark.latex
+def test_baked_cache_runs_without_network_or_github_credentials(
+    tmp_path: Path, upstream: Path
+) -> None:
+    """The Python publishing host can use a baked cache with no runtime secret."""
+    root = Path(__file__).parents[1]
+    cache = tmp_path / "cache"
+    shutil.copytree(upstream, cache / upstream.name)
+    image = "inspect-audit:template-cache-test"
+    subprocess.run(
+        [
+            "docker",
+            "build",
+            "--build-arg",
+            "BASE_IMAGE=python:3.13-slim",
+            "--build-context",
+            f"template-cache={cache}",
+            "-f",
+            str(root / "src/inspect_audit/containers/template-cache.Dockerfile"),
+            "-t",
+            image,
+            str(tmp_path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    try:
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network=none",
+                "-v",
+                f"{root / 'src/inspect_audit/publishers/_template.py'}:/template_reader.py:ro",
+                "-v",
+                f"{_template.PIN}:/template.json:ro",
+                "-v",
+                f"{root / 'src/inspect_audit/investigation/framework.json'}:/framework.json:ro",
+                image,
+                "python",
+                "-c",
+                "import json, os, runpy; from pathlib import Path; "
+                "assert not os.environ.get('GH_TOKEN') and not os.environ.get('GITHUB_TOKEN'); "
+                "reader = runpy.run_path('/template_reader.py'); "
+                "assert json.loads(Path('/framework.json').read_text()) == reader['regenerate'](reader['template']())",
+            ],
+            check=True,
+            capture_output=True,
+        )
+    finally:
+        subprocess.run(["docker", "image", "rm", image], check=True, capture_output=True)

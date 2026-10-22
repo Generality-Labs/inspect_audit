@@ -58,7 +58,7 @@ The current cases are SimpleQA, SimpleQA Verified, SciCode, GSM8K, BBH, AgentHar
 
 ## CI
 
-`ci.yml` runs the ordinary checks and a real-container PR gate. `nightly.yml` checks compatibility with Inspect's main branch. `compatibility.yml` supports manual Hawk runs and a weekly opt-in schedule.
+`ci.yml` type-checks the production package and compatibility driver/runner, runs the ordinary checks, and runs a real-container PR gate. `nightly.yml` checks compatibility with Inspect's main branch. `compatibility.yml` supports manual Hawk runs and a weekly opt-in schedule.
 
 Hawk CI needs the HAWK_API_URL repository variable and a valid HAWK_ACCESS_TOKEN secret supplied by the CI identity's credential lifecycle; gated cases need HF_TOKEN. The repository currently has no such secrets configured. Scheduled execution is disabled unless HAWK_COMPATIBILITY_ENABLED is `true`. A one-off access token is insufficient for a permanent weekly schedule: configure automated credential renewal before enabling it. Personal Hawk login credentials are not copied into GitHub by this setup.
 
@@ -84,14 +84,14 @@ The first external batches identified and led to fixes for:
 
 GPQA, SciCode and MirrorCode passed after their fixes. GSM8K, BBH and the selected AgentHarm case passed in the initial functional batch. SimpleQA and HLE were partial because their model judges were intentionally blocked. Every inspected probe log recorded no external model calls. Native logs and earlier failures remain under their original output directories.
 
-Harbor's case explicitly requests `inspect-ai==0.3.264` in its native Hawk `packages` list to satisfy the pinned Harbor dependency. Its actual remote execution result must still be checked; the earlier failure is tracked in [#58](https://github.com/Generality-Labs/inspect_audit/issues/58).
+Harbor passed its actual sandbox and verifier test on Hawk after explicitly requesting `inspect-ai==0.3.264`, omitting the unused `remote` extra, and selecting the namespaced task `terminal-bench/make-mips-interpreter`. The earlier dependency failure is tracked in [#58](https://github.com/Generality-Labs/inspect_audit/issues/58).
 
 CORE-Bench installs from the corrected source fork and loads one selected capsule, but Hawk refuses its native Compose requirements (`privileged` and `extra_hosts`) before execution. The probe uses the benchmark's own capsule filter and a positive dataset limit. It omits historical all-capsule logs because its task arguments differ; transcript compatibility is not claimed.
 
 The latest results span several pinned IA commits; they are debugging evidence, not a single-commit release certification. The next order of work is:
 
 1. Resolve CORE-Bench’s native Compose requirements on Hawk: its Kubernetes converter rejects `privileged` and `extra_hosts`, and the benchmark also needs a published image for its build-only service. Keep the environment semantics intact ([#59](https://github.com/Generality-Labs/inspect_audit/issues/59)).
-2. Unblock Harbor's runtime dependency and obtain an actual container/grader result.
+2. Keep Harbor’s pinned runtime and native verifier execution covered by the suite.
 3. Provision the renewable Hawk CI identity ([#57](https://github.com/Generality-Labs/inspect_audit/issues/57)), then enable the weekly suite.
 4. Repeat the complete external suite at one candidate commit before treating it as a release gate.
 5. Run paid investigator pilots and inspect their transcripts separately from this execution gate. Then measure recall against human labels.
@@ -126,3 +126,9 @@ mock_judges:
 The grader still builds its own prompt and validates the reply. Unknown tool names, malformed fixtures and unscored judgments fail the test. Mock fixtures are per model role, so different roles may use different reply formats.
 
 Run `uv run pytest tests/test_compatibility_cases.py` for cheap validation, then `uv run python tests/compatibility/run_suite.py --cases NAME --output out/NAME` for the real Hawk probe. The ordinary checks do not download every external benchmark. The heavy run is the package-installation and execution check.
+
+## Score validation
+
+The grade tool returns Inspect's complete `Score` record, including metadata and failure reasons. Compatibility checks validate that record with Inspect's `Score` model. A `grader_failed` or `scoring_failed` reason fails the grading stage. A wholly unscored result also fails. Optional empty metric groups may contain NaN when other groups have actual scores, as MirrorCode does; that is not itself a grading failure.
+
+Mocked grading is marked `passed_mock`, and the native log must contain the declared mock model call. An undeclared external model call fails the run. These checks test execution and parsing, not the correctness of the canned judgment.

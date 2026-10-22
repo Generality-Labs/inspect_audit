@@ -16,7 +16,7 @@ from inspect_ai.model import ChatMessage, ChatMessageAssistant, ModelName, Model
 from inspect_ai.scorer import Scorer, Target
 from inspect_ai.solver import TaskState
 from inspect_ai.tool import Tool, ToolError, tool
-from inspect_ai.util import LimitExceededError, registry_info, subtask
+from inspect_ai.util import LimitExceededError, message_limit, registry_info, subtask
 
 from ._logs import LogIndex
 
@@ -100,25 +100,34 @@ def grade_tool(
                 output = ModelOutput.from_content(model=AUTHORED, content=answer)
                 provenance = "authored"
 
-            graded = TaskState(
-                model=model,
-                sample_id=recorded.id if recorded is not None else state.sample_id,
-                epoch=recorded.epoch if recorded is not None else state.epoch,
-                input=deepcopy(recorded.input if recorded is not None else state.input),
-                messages=messages,
-                target=Target(recorded.target) if recorded is not None else deepcopy(state.target),
-                choices=(
-                    recorded.choices if recorded is not None else [c.value for c in state.choices]
-                ),
-                output=deepcopy(output),
-                completed=True,
-                metadata=deepcopy(recorded.metadata if recorded is not None else initial_metadata),
-                store=deepcopy(
-                    recorded.store if recorded is not None and not answer else initial_store
-                ),
-                scores={},
-                sample_uuid=recorded.uuid if recorded is not None else None,
-            )
+            # Loading historical messages is not a turn in the auditor's conversation.
+            # Exempt reconstruction only; scoring keeps the active cost/time limits.
+            with message_limit(None):
+                graded = TaskState(
+                    model=model,
+                    sample_id=recorded.id if recorded is not None else state.sample_id,
+                    epoch=recorded.epoch if recorded is not None else state.epoch,
+                    input=deepcopy(recorded.input if recorded is not None else state.input),
+                    messages=messages,
+                    target=Target(recorded.target)
+                    if recorded is not None
+                    else deepcopy(state.target),
+                    choices=(
+                        recorded.choices
+                        if recorded is not None
+                        else [c.value for c in state.choices]
+                    ),
+                    output=deepcopy(output),
+                    completed=True,
+                    metadata=deepcopy(
+                        recorded.metadata if recorded is not None else initial_metadata
+                    ),
+                    store=deepcopy(
+                        recorded.store if recorded is not None and not answer else initial_store
+                    ),
+                    scores={},
+                    sample_uuid=recorded.uuid if recorded is not None else None,
+                )
             if graded.choices:
                 if recorded is not None and not answer:
                     # Logs preserve choice text, not the solver's `correct` flags.

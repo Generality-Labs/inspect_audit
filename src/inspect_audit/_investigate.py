@@ -211,7 +211,7 @@ def _fetch_paper(paper: str, inputs: Path) -> str:
 
 
 def _stage_docs(docs: list[str], inputs: Path) -> list[str]:
-    """Copy documentation trees read-only into inputs/docs/<name>/."""
+    """Copy documentation trees into inputs/docs/<name>/."""
     staged: list[str] = []
     for source in docs:
         path = Path(source).expanduser().resolve()
@@ -1267,7 +1267,7 @@ def investigate(
         logs: Inspect log files or directories, or hawk:<eval set id> sources.
         paper: Local file or URL; a URL is downloaded now (arXiv abs -> pdf). Defaults to
             the paper the eval names in its own metadata.
-        docs: Documentation directories to copy in read-only (inspect docs, Hawk docs).
+        docs: Documentation directories to copy into /inputs (inspect docs, Hawk docs).
         overview: Benchmark-specific context, supplied-evidence context and operator
             questions.
         target_task: The task under audit, e.g. `benchmark/task`. Defaults to the only

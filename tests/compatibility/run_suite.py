@@ -96,7 +96,12 @@ def write_results(output: Path, rows: list[dict[str, Any]]) -> None:
     for row in rows:
         stages = "; ".join(
             f"{k}: {v}" for s in row.get("samples", []) for k, v in s.get("stages", {}).items()
-        ) or row.get("reason", "No sample result")
+        ) or row.get(
+            "reason",
+            "Sample failed before compatibility score; inspect native log"
+            if any(s.get("error") for s in row.get("samples", []))
+            else "No sample result",
+        )
         job = row.get("job")
         link = f"[run]({row['viewer']}/eval-set/{job})" if job else "—"
         lines.append(

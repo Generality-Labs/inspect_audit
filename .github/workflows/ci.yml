@@ -28,7 +28,8 @@ jobs:
   # One real-container lifecycle gate on PRs; the complete Docker suite on main.
   docker:
     name: Docker tests
-    timeout-minutes: 15
+    # Full report tests build TeX images from cold; keep the PR step bounded below.
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -42,6 +43,7 @@ jobs:
           uv sync --locked
           uv pip install --no-deps -e tests/compatibility
       - name: PR container and child-job lifecycle gate
+        timeout-minutes: 15
         if: github.event_name == 'pull_request'
         run: uv run pytest -m docker tests/test_audit.py::test_an_audit_runs_inside_the_benchmark tests/test_lifecycle.py
       - name: Pytest (docker)

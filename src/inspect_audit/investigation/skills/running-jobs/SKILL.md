@@ -20,8 +20,8 @@ record: bind that model under the same role, or the audit refuses.
 Start the register before collecting any audit: start_register(task_args, checks) with
 the arguments and checks your audits use. Each collected audit then adds its verdicts as
 auditor takes, with the job, eval and epoch they came from. Work the flagged cells with
-register(view="flagged"), and record your own take with review: agreeing marks a cell
-reviewed, disagreeing leaves both takes on the record. Empty cells are work not done.
+register(view="flagged"), and record your own reviews in findings.json under investigator.reviews.
+Keep the original auditor results unchanged. Empty cells are work not done.
 
 ## Sources
 
@@ -52,5 +52,8 @@ A missing credential, malformed request or broken audit image is an audit limita
 Record what it prevented, repair once if feasible, and avoid retry loops. Attribute a
 failure to the benchmark only after ruling out our configuration and reconstruction.
 
-Allocate the available budget yourself, including writing the report. You can run
-further experiments while writing if they are useful; there is no fixed reporting reserve.
+Allocate the available budget yourself, including subsequent publication. Run useful
+experiments before submitting findings; there is no fixed reporting reserve.
+
+Before submit_findings, finish or stop every job and collect its logs. Job tools
+disappear after submission; publishing uses only existing evidence and calculations.

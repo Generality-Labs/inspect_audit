@@ -1,0 +1,17 @@
+{
+  "files": {
+    "findings.json": {
+      "sha256": "ae7bbbc4de666cb46413af209dc91bd5175d44512ee9a855220535374e398b92",
+      "bytes": 3611
+    },
+    "evidence/reference.txt": {
+      "sha256": "e1c8c647f14e13ca2675838510e553c31dafee80021670f4221fba5b44890b5e",
+      "bytes": 34
+    }
+  },
+  "artifacts": {
+    "/workspace/reference.txt": "evidence/reference.txt"
+  },
+  "log_references": [],
+  "jobs": []
+}

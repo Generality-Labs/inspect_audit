@@ -1,0 +1,14 @@
+{
+  "repository": "Generality-Labs/audit_reports",
+  "revision": "ad7de89658b6794112c2f65847991c7ed41d9e30",
+  "files": {
+    ".latexmkrc": "fde749e4bc6d665909d51624f38a0e7c6d2705caeb224ed64f2a556eb651a360",
+    "template/auditframework.sty": "24e4c39156d9c578f8aa6dd5635d62f879b59736174621a4b82d913d8b1b4748",
+    "template/GLaudit.cls": "73346855e7869326a7d0b218bf2373f67978b345bb48f86da4f9a0173ca7d4cc",
+    "reports/Example/Content.tex": "e8d1dc7a10ba20593f2364121d1a7082dd55244b608f3f0ad16e874ce0720d8d",
+    "reports/Example/.latexmkrc": "c6423b178c6939b1ca82fa9100d25cfb8b4c5780c7ccc70027fb2f2071c957f1",
+    "reports/Example/Example_Audit.tex": "24b6356069bc510bbb88b53ca94e31b4e6ab908595d47f86db0ecd9e003415b9",
+    "template/sections/ScoringCriteria.tex": "d40ce921bdaf50af495471d5d2278b1737cc7779a00add9990f7dbeb244a45fd",
+    "template/assets/Generality_Labs.png": "5304d3127dcc12b680061fc74617f0bd2169fc9cfadb028896ea628441162f6a"
+  }
+}

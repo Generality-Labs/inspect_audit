@@ -15,6 +15,7 @@ from inspect_ai.tool import WebSearchProviders
 
 from ._investigate import investigate as investigate
 from ._prices import register_prices
+from ._publishing import publish as publish
 from ._task import audit_task
 
 

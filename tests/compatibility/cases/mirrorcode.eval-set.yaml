@@ -1,5 +1,6 @@
 name: ia-api-free-mirrorcode-20261021
 packages:
+- inspect-ai==0.3.266
 - inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
 - mc @ git+https://github.com/jrh-mann/MirrorCode@819db252edc4e72feed767cb92b04ac2a5bc6792
 tasks:

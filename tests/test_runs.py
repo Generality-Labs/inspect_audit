@@ -277,14 +277,29 @@ def test_an_audit_reads_logs_by_job_label_or_supplied_source(
         )
 
 
+@pytest.mark.parametrize(
+    ("model", "credential"),
+    [
+        ("mockllm/model", None),
+        ("openrouter/openai/gpt-4o-mini", "OPENROUTER_API_KEY"),
+        ("openai/gpt-4o-mini", "OPENAI_API_KEY"),
+    ],
+)
 def test_a_local_job_sees_only_the_environment_it_needs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model: str, credential: str | None
 ) -> None:
     """Benchmark code in a local job must not see the operator's other secrets."""
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "operator-secret")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-capped")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-direct")
+    monkeypatch.chdir(tmp_path)
     (tmp_path / "env.py").write_text(
         TASK_FILE.replace(
+            "@task\ndef tiny",
+            "from inspect_ai.solver import solver\n@solver\ndef no_calls():\n    async def solve(state, generate):\n        return state\n    return solve\n\n@task\ndef tiny",
+        )
+        .replace("scorer=match(),", "scorer=match(), solver=no_calls(),")
+        .replace(
             "    return Task(",
             "    import os, pathlib\n"
             "    pathlib.Path(__file__).with_name('seen.txt').write_text(','.join(sorted(os.environ)))\n"
@@ -292,7 +307,7 @@ def test_a_local_job_sees_only_the_environment_it_needs(
         )
     )
     runs = LocalRuns(tmp_path / "runs")
-    job = Job(label="env", task=f"{tmp_path / 'env.py'}@tiny", package="", models=["mockllm/model"])
+    job = Job(label="env", task=f"{tmp_path / 'env.py'}@tiny", package="", models=[model])
     job.environment = {"IA_BENCHMARK_SETTING": "configured"}
 
     async def run() -> str:
@@ -305,7 +320,8 @@ def test_a_local_job_sees_only_the_environment_it_needs(
 
     assert asyncio.run(run()) == COMPLETE
     seen = set((tmp_path / "seen.txt").read_text().split(","))
-    assert "OPENROUTER_API_KEY" in seen
+    assert ("OPENROUTER_API_KEY" in seen) == (credential == "OPENROUTER_API_KEY")
+    assert ("OPENAI_API_KEY" in seen) == (credential == "OPENAI_API_KEY")
     assert "IA_BENCHMARK_SETTING" in seen
     assert "AWS_SECRET_ACCESS_KEY" not in seen
 

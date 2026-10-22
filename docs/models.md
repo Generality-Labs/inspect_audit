@@ -1,6 +1,6 @@
 # Model configuration
 
-Model names use Inspect's full provider/model identity. For example, `openrouter/anthropic/claude-haiku-4-5` selects OpenRouter; `anthropic/claude-haiku-4-5` selects the native Anthropic provider. Names are passed unchanged to both local Inspect jobs and Hawk. Permissions match the entire name.
+Model names use Inspect's full provider/model identity. For example, `openrouter/anthropic/claude-haiku-4-5` selects OpenRouter; `anthropic/claude-haiku-4-5` selects the native Anthropic provider. Names are passed unchanged to both local Inspect jobs and Hawk. Permissions match the entire name. Hawk child configs explicitly select the tested Inspect 0.3.266 release, overriding the deployment's default Inspect pin.
 
 The supported shared-budget setup routes all model calls through one capped OpenRouter key. Local jobs use the configured environment credentials; Hawk jobs must route through the assigned key in Middleman. Merely declaring a model name does not ensure different providers share an allowance. `budget()` reads the configured key balance, not an attributed investigation spending total.
 

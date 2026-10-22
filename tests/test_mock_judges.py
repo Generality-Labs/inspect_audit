@@ -7,10 +7,12 @@ import pytest
 import yaml
 from compatibility.run_suite import summarize
 from ia_compatibility.judges import MOCK_JUDGE, mock_judge
+from ia_compatibility.probe_results import outcomes
 from inspect_ai import Task, eval
 from inspect_ai.dataset import Sample
 from inspect_ai.event import ModelEvent
 from inspect_ai.log import read_eval_log
+from inspect_ai.model import ChatMessageTool
 from inspect_ai.solver import Generate, TaskState, solver
 from inspect_evals.hle.judge import llm_grader
 from inspect_evals.simpleqa.scorer import simpleqa_schema_tool_scorer
@@ -68,3 +70,35 @@ def test_benchmark_grader_parses_mock_reply(case: str, tmp_path: Path) -> None:
 def test_invalid_mock_config_fails_before_running(response: dict) -> None:
     with pytest.raises(ValueError, match="mock judge needs"):
         mock_judge(response)
+
+
+def test_malformed_hle_judgment_preserves_failure_reason(tmp_path: Path) -> None:
+    @solver
+    def exercise():
+        async def solve(state: TaskState, generate: Generate) -> TaskState:
+            raw = await grade_tool(
+                state, list(state.messages), [llm_grader(max_grader_attempts=1)], None
+            )("candidate", "", 0)
+            score = json.loads(raw)["scores"][0]
+            assert score["reason"] == "grader_failed"
+            assert score["metadata"]["grader_failure_mode"] == "grader_schema_mismatch"
+            report = outcomes(
+                [ChatMessageTool(function="grade", content=raw)],
+                {"logs": False, "benchmark_box": False, "grader": True},
+            )
+            assert report["stages"]["grading"] == "failed"
+            return state
+
+        return solve
+
+    [log] = eval(
+        Task(
+            dataset=[Sample(input="Question", target="Gold")],
+            solver=exercise(),
+            model_roles={"grader": mock_judge({"content": "Not JSON"})},
+        ),
+        model="mockllm/model",
+        log_dir=str(tmp_path),
+        display="none",
+    )
+    assert log.status == "success", log.error

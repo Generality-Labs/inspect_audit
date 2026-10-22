@@ -89,8 +89,12 @@ def test_mocked_grading_is_visible_in_the_result() -> None:
     "score",
     [
         {"value": float("nan")},
-        {"value": {"score": float("nan"), "confidence": 100}},
+        {
+            "value": {"score": float("nan"), "confidence": 100},
+            "metadata": {"unscored_reason": "grader_failed"},
+        },
         {"value": "I", "reason": "grader_failed"},
+        {"value": "I", "reason": "scoring_failed"},
     ],
 )
 def test_unscored_judgments_are_not_successful_grader_execution(score: dict) -> None:
@@ -99,3 +103,15 @@ def test_unscored_judgments_are_not_successful_grader_execution(score: dict) -> 
         {"logs": False, "benchmark_box": False, "grader": True},
     )
     assert report["stages"]["grading"] == "failed"
+
+
+def test_empty_optional_metrics_do_not_hide_valid_scores() -> None:
+    score = {"value": {"all": 0.0, "visible": 0.0, "ablated": float("nan"), "hidden": 0.0}}
+    messages = [
+        result("auditor_bash"),
+        result("grade", json.dumps({"scores": [score]})),
+        result("record_verdict"),
+        result("submit"),
+    ]
+    report = outcomes(messages, {"logs": False, "benchmark_box": False, "grader": True})
+    assert report["status"] == "passed"

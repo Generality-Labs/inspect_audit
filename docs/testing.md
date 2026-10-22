@@ -54,7 +54,7 @@ The separate compatibility score derives from actual tool results:
 
 Results are `out/compatibility/summary.json` and `summary.md`; native Inspect logs are downloaded under each case. The Hawk links retain runner/sandbox diagnostics when no eval log was written. Cleanup of every remote resource is not yet independently asserted by the summary.
 
-The current cases are SimpleQA, SimpleQA Verified, SciCode, GSM8K, BBH, AgentHarm, GPQA, HLE, MirrorCode, CORE-Bench and Terminal-Bench through Inspect Harbor. Each is a small selection, not exhaustive coverage. HLE's environment probe deliberately omits the known mismatching historical log so environment startup and log compatibility remain distinguishable. The original log mismatch still needs investigation. The Harbor case covers one sample-level Compose environment, not arbitrary heterogeneous multi-sample Harbor jobs.
+The baseline cases are SimpleQA, SimpleQA Verified, SciCode, GSM8K, BBH, AgentHarm, GPQA, HLE, MirrorCode and Terminal-Bench through Inspect Harbor. Additional cases cover Cybench (`dynastic` and `delulu`), GDM in-house CTF (`spray`, `privesc_bash` and `privesc_7z`) and AgentDojo (one banking injection task). Each is a small selection, not exhaustive coverage. HLE's environment probe deliberately omits the known mismatching historical log so environment startup and log compatibility remain distinguishable. The original log mismatch still needs investigation. The Harbor case covers one sample-level Compose environment, not arbitrary heterogeneous multi-sample Harbor jobs.
 
 ## CI
 
@@ -86,15 +86,18 @@ GPQA, SciCode and MirrorCode passed after their fixes. GSM8K, BBH and the select
 
 Harbor passed its actual sandbox and verifier test on Hawk after explicitly requesting `inspect-ai==0.3.264`, omitting the unused `remote` extra, and selecting the namespaced task `terminal-bench/make-mips-interpreter`. The earlier dependency failure is tracked in [#58](https://github.com/Generality-Labs/inspect_audit/issues/58).
 
-CORE-Bench installs from the corrected source fork and loads one selected capsule, but Hawk refuses its native Compose requirements (`privileged` and `extra_hosts`) before execution. The probe uses the benchmark's own capsule filter and a positive dataset limit. It omits historical all-capsule logs because its task arguments differ; transcript compatibility is not claimed.
+CORE-Bench is excluded from the active suite. Its case is retained under `tests/compatibility/unsupported/` for reproduction: Hawk refuses its native Compose requirements (`privileged` and `extra_hosts`), and its build-only service needs a published image. Support is tracked in [#59](https://github.com/Generality-Labs/inspect_audit/issues/59).
 
-The latest results span several pinned IA commits; they are debugging evidence, not a single-commit release certification. The next order of work is:
+The complex-case expansion uses the unchanged probe runtime at `40c703d5f1ff968413ad79cd9b02733d14ed72cb` and inspect-evals at `49738b6412cf3215db7c9d3d4838fc58b6f422a2`. Both Cybench cases and AgentDojo passed on Hawk with only the scripted driver recorded in model events. Results and native logs are in `out/compatibility-complex-20261022/`.
 
-1. Resolve CORE-Bench’s native Compose requirements on Hawk: its Kubernetes converter rejects `privileged` and `extra_hosts`, and the benchmark also needs a published image for its build-only service. Keep the environment semantics intact ([#59](https://github.com/Generality-Labs/inspect_audit/issues/59)).
-2. Keep Harbor’s pinned runtime and native verifier execution covered by the suite.
-3. Provision the renewable Hawk CI identity ([#57](https://github.com/Generality-Labs/inspect_audit/issues/57)), then enable the weekly suite.
-4. Repeat the complete external suite at one candidate commit before treating it as a release gate.
-5. Run paid investigator pilots and inspect their transcripts separately from this execution gate. Then measure recall against human labels.
+GDM's `spray` case fails before execution: its attacker and target services use an `internal: true` network, while the added auditor service enables internet. Hawk grants internet per sandbox and refuses this combination because it cannot preserve the benchmark services' network isolation. This case remains in the active suite as an explicit failure; its isolation settings are not removed. `privesc_bash` independently fails because its Compose file declares `hostname: localhost`, while the converter accepts only the service name as hostname. It is retained as the `gdm-in-house-ctf-hostname` case. The separate `gdm-in-house-ctf-isolated` case uses native `privesc_7z`, which has `network_mode: none` and no custom hostname. Neither failure is worked around by rewriting benchmark settings. The hostname failure is recorded in `out/compatibility-complex-isolated-20261022/`; the 7z run is recorded separately in `out/compatibility-complex-isolated-7z-20261022/`. The first 7z attempt reached sandbox startup but failed when Docker Hub returned HTTP 500 while fetching an image layer; one identical retry is recorded in `out/compatibility-complex-isolated-7z-retry-20261022/`.
+
+The complete external baseline at runtime commit `24d92b25ed654285e32079175e9943680857b0ce` passed all ten remaining cases. SimpleQA, SimpleQA Verified and HLE used declared mock judges. These results establish the exercised execution paths, not audit quality. The next order of work is:
+
+1. Keep Harbor’s pinned runtime and native verifier execution covered by the suite.
+2. Provision the renewable Hawk CI identity ([#57](https://github.com/Generality-Labs/inspect_audit/issues/57)), then enable the weekly suite.
+3. Repeat the complete external suite when runtime code changes before treating it as a release gate.
+4. Run paid investigator pilots and inspect their transcripts separately from this execution gate. Then measure recall against human labels.
 
 Checkpoint resume remains separate ([#55](https://github.com/Generality-Labs/inspect_audit/issues/55)). The standalone deterministic findings package and its CLI have been removed. The investigation register remains in the core package. Findings/report redesign is the next phase after execution tests.
 

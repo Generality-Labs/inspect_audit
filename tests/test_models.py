@@ -102,7 +102,7 @@ def test_model_settings_are_frozen_and_applied_by_the_authorizer() -> None:
 def test_inspect_pricing_is_used_without_a_router_request(monkeypatch: pytest.MonkeyPatch) -> None:
     import inspect_ai.model
 
-    from inspect_audit import _openrouter
+    from inspect_audit import _prices
 
     monkeypatch.setattr(
         inspect_ai.model,
@@ -112,7 +112,7 @@ def test_inspect_pricing_is_used_without_a_router_request(monkeypatch: pytest.Mo
         ),
     )
     monkeypatch.setattr(
-        _openrouter, "openrouter_prices", lambda names: pytest.fail("unnecessary OpenRouter lookup")
+        _prices, "openrouter_prices", lambda names: pytest.fail("unnecessary OpenRouter lookup")
     )
     assert prices_for_models(["openai/native"])["openai/native"]["output"] == 2
 
@@ -122,12 +122,10 @@ def test_unknown_direct_models_do_not_fall_back_to_openrouter(
 ) -> None:
     import inspect_ai.model
 
-    from inspect_audit import _openrouter
+    from inspect_audit import _prices
 
     monkeypatch.setattr(inspect_ai.model, "get_model_info", lambda name: None)
-    monkeypatch.setattr(
-        _openrouter, "openrouter_prices", lambda names: pytest.fail("wrong provider")
-    )
+    monkeypatch.setattr(_prices, "openrouter_prices", lambda names: pytest.fail("wrong provider"))
     with pytest.raises(ValueError, match="model_prices"):
         prices_for_models(["anthropic/native"])
 
@@ -135,7 +133,7 @@ def test_unknown_direct_models_do_not_fall_back_to_openrouter(
 def test_only_router_models_use_the_router_price_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     import inspect_ai.model
 
-    from inspect_audit import _openrouter
+    from inspect_audit import _prices
 
     monkeypatch.setattr(inspect_ai.model, "get_model_info", lambda name: None)
     seen = []
@@ -144,7 +142,7 @@ def test_only_router_models_use_the_router_price_adapter(monkeypatch: pytest.Mon
         seen.extend(names)
         return {name: {"input": 1, "output": 2} for name in names}
 
-    monkeypatch.setattr(_openrouter, "openrouter_prices", prices)
+    monkeypatch.setattr(_prices, "openrouter_prices", prices)
     name = "openrouter/openai/model"
     assert set(prices_for_models([name, name])) == {name}
     assert seen == [name]

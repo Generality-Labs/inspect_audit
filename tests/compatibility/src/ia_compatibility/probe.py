@@ -28,8 +28,7 @@ from inspect_ai.solver import TaskState
 from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_ai.util import registry_create
 
-from inspect_audit._openrouter import openrouter_prices
-from inspect_audit._prices import register_prices
+from inspect_audit._prices import openrouter_prices, register_prices
 from inspect_audit._registry import log_files, resolve_source
 from inspect_audit._task import audit_task, numbered
 

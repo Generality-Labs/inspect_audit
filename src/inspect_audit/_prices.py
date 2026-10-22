@@ -1,8 +1,11 @@
-"""Model prices a job needs, registered with Inspect without the network."""
+"""Model prices a job needs: Inspect's own costs, else OpenRouter's published prices."""
 
+import json
+import urllib.request
 from typing import Any
 
 PRICE_KEYS = ("input", "output", "input_cache_read", "input_cache_write")
+OPENROUTER = "https://openrouter.ai/api/v1"
 
 
 def prices_for_models(models: list[str]) -> dict[str, dict[str, float]]:
@@ -22,8 +25,6 @@ def prices_for_models(models: list[str]) -> dict[str, dict[str, float]]:
                 f"No Inspect cost data for {model!r}; declare model_prices or configure Inspect model costs"
             )
     if router:
-        from ._openrouter import openrouter_prices
-
         prices.update(openrouter_prices(router))
     return prices
 
@@ -60,3 +61,34 @@ def register_prices(table: dict[str, dict[str, float]]) -> list[str]:
         set_model_info(name, info)
         registered.append(name)
     return registered
+
+
+def openrouter_prices(models: list[str]) -> dict[str, dict[str, float]]:
+    """OpenRouter's published per-million prices, by the name Inspect runs each under.
+
+    An audit job caps each item's spend with Inspect's cost limit, which needs a
+    price for the auditor; the job registers these itself.
+    """
+    request = urllib.request.Request(
+        f"{OPENROUTER}/models", headers={"User-Agent": "inspect_audit"}
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        listing = {str(m["id"]): m.get("pricing") or {} for m in json.load(response)["data"]}
+    prices: dict[str, dict[str, float]] = {}
+    for model in models:
+        pricing = listing.get(model.removeprefix("openrouter/"))
+        if pricing is None:
+            raise ValueError(f"OpenRouter does not list {model!r}")
+        price = {
+            key: float(pricing.get(field) or 0) * 1_000_000
+            for key, field in (
+                ("input", "prompt"),
+                ("output", "completion"),
+                ("input_cache_read", "input_cache_read"),
+                ("input_cache_write", "input_cache_write"),
+            )
+        }
+        if not valid_price(price):
+            raise ValueError(f"OpenRouter lists no usable price for {model!r}")
+        prices[model] = price
+    return prices

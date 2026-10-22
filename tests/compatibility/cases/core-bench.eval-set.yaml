@@ -23,7 +23,7 @@ tasks:
           capsule_ids:
           - capsule-7156696
           exclude_capsule_ids: null
-          limit: 0
+          limit: 45
           filter_out_gpu: false
           filter_out_vision: false
           vllm_model: null

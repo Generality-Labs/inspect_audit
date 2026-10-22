@@ -173,11 +173,17 @@ def test_an_audit_runs_inside_the_benchmark(tmp_path: Path) -> None:
         logs=[recorded.location],
         message_limit=50,
         cost_limit=1.0,
+        auditor_model=get_model("mockllm/model", custom_outputs=script),
     )
     toy.SCORER_CALLS.clear()
     [log] = eval(
         audit,
-        model=get_model("mockllm/model", custom_outputs=script),
+        # Like Hawk, the runner may supply a different model. The explicitly
+        # bound driver must still perform all of the scripted tool operations.
+        model=get_model(
+            "mockllm/model",
+            custom_outputs=[ModelOutput.from_content("mockllm/model", "wrong driver")],
+        ),
         log_dir=str(tmp_path / "audit"),
         display="none",
     )

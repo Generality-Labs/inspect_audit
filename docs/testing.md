@@ -6,7 +6,7 @@
 2. **Real containers:** `uv pip install --no-deps -e tests/compatibility`, then `uv run --no-sync pytest -m docker`. The PR gate runs the benchmark setup/grading/reset test and the child-job lifecycle test. Main and manual CI run the full Docker suite.
 3. **External benchmark compatibility:** the API-free suite below runs real benchmark packages and environments on Hawk. It tests execution, not whether an agent's scientific conclusions are correct.
 
-The ordinary suite still uses `mockllm` where scripted model outputs are useful. The external suite uses a registered `ModelAPI` driver that emits deterministic tool calls. Its judge model raises instead of fabricating answers.
+The ordinary suite still uses `mockllm` where scripted model outputs are useful. The external suite uses a registered `ModelAPI` driver that emits deterministic tool calls. Its judge model raises instead of fabricating answers. Hawk requires a model declaration and overrides `Task.model`, so the driver is bound directly to the agent. Public price metadata is fetched for the declaration; no completion is requested from it. An observed external model call fails the compatibility result.
 
 ## External suite
 

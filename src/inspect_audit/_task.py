@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from inspect_ai import Task, task_with
 from inspect_ai.dataset import Sample
-from inspect_ai.model import GenerateConfig
+from inspect_ai.model import GenerateConfig, Model
 from inspect_ai.scorer import Scorer
 from inspect_ai.solver import Solver
 from inspect_ai.tool import WebSearchProviders
@@ -143,6 +143,7 @@ def audit_task(
     message_limit: int | None = None,
     time_limit: int | None = None,
     working_limit: int | None = None,
+    auditor_model: Model | None = None,
 ) -> Task:
     """Build the audit of a benchmark task.
 
@@ -161,6 +162,9 @@ def audit_task(
             imports within its package are followed, with their folders' data files;
             see `_source`) or a directory copied whole. Required for tasks from an
             installed package; otherwise defaults to the task's own file.
+        auditor_model: Optional explicit agent model for programmatic drivers. The
+            CLI normally uses the evaluation model. Binding here also works when
+            an execution backend overrides Task.model after construction.
         compose: The benchmark's compose file, when its task names only `"docker"`.
         assessment_ids: Assessment-unit ids per sample for question labels.
         redact: Metadata keys withheld from the staged item.
@@ -238,6 +242,7 @@ def audit_task(
         confidential=confidential,
         notes=notes,
         search=search,
+        model=auditor_model,
     )
 
     # every setting of theirs that would govern the auditor is replaced, not inherited

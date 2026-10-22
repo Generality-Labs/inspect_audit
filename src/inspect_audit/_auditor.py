@@ -13,7 +13,7 @@ from typing import Any
 
 from inspect_ai.agent import AgentSubmit, as_solver, react
 from inspect_ai.dataset import Sample
-from inspect_ai.model import ChatMessage, ChatMessageUser, ContentImage
+from inspect_ai.model import ChatMessage, ChatMessageUser, ContentImage, Model
 from inspect_ai.scorer import Scorer
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import Tool, ToolDef, WebSearchProviders, bash, skill, web_search
@@ -122,6 +122,7 @@ def auditor(
     confidential: bool = False,
     notes: str | None = None,
     search: WebSearchProviders | None = None,
+    model: Model | None = None,
 ) -> Solver:
     """Audit the sample this solver runs in, in place of the benchmark's solver."""
     granted = {name for check in checks for name in check.tools}
@@ -176,6 +177,7 @@ def auditor(
             description="Audits one benchmark item and records a verdict per check.",
             prompt=system,
             tools=tools,
+            model=model,
             submit=AgentSubmit(tool=submit_audit(checks), name="submit", keep_in_messages=True),
         )
         prompt = ITEM_PROMPT if benchmark_box else ITEM_PROMPT + NO_BOX

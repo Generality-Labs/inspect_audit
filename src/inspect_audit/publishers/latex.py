@@ -153,7 +153,7 @@ def source(
         box("Revision History", "This publication preserves the submitted findings checksum."),
         r"\end{adjustwidth}\begin{maincontentstyled}",
     ]
-    # Preserve the Example's actual navigation and scorecard layout, not a reimplementation.
+    # Reuse the pinned Example's navigation and scorecard layout.
     example = (upstream / "reports/Example/Content.tex").read_text()
     parts.append(
         example[

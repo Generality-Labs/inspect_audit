@@ -1,12 +1,7 @@
-"""The benchmark's code for the investigator to read: the task's own package, followed by import.
+"""Copy the task package's imports and data files within size limits.
 
-Starting from the task's file, every import that resolves inside the same top-level
-package is followed, file by file -- including imports inside functions, which a
-scorer often makes lazily. Modules Python actually loaded from the package are added
-as a backstop for imports by computed name. Each copied module's folder brings its
-non-Python files (templates, data) and any data-only subfolders, under a size cap.
-Other packages are not copied: their exact install specs are recorded so the investigator,
-which has internet, can install and read precisely the versions that ran.
+Include loaded modules to cover dynamic imports. Record exact install specs
+for dependencies outside the copied package.
 """
 
 import ast

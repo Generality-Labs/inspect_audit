@@ -1,13 +1,4 @@
-"""Every prompt in the package, as markdown next to this file.
-
-Prose belongs in prose files. A system prompt is the most-read and most-edited text
-in an agent system, and it is reviewed by people who are not reading the code around
-it, so it lives in markdown that renders and diffs like prose rather than in a Python
-string that has to be escaped, indented and scrolled past.
-
-Each constant is one file. `{name}` placeholders are filled with `str.format`, so a
-literal brace in a prompt must be doubled; there are none today.
-"""
+"""Load Markdown prompts. str.format placeholders require doubled literal braces."""
 
 from pathlib import Path
 

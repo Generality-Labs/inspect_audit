@@ -1,10 +1,6 @@
-"""The investigation task: the benchmark's own task, with the investigator in place of its solver.
+"""Replace the benchmark solver with an investigator while retaining sample setup.
 
-Everything is declared: the task and its arguments, the samples, the checks, the
-logs. Inspect then sets up each sample exactly as it did for the evaluated agent.
-What the investigation replaces it replaces explicitly -- solver, scorers, sandbox (theirs
-plus ours), every limit and generation setting -- and what it cannot support it
-refuses, saying why.
+Task overrides are explicit; unsupported environments raise UnsupportedBenchmarkError.
 """
 
 import inspect as pyinspect

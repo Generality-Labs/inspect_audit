@@ -123,10 +123,8 @@ def investigation_compose(
             f"the benchmark already has a service named {INVESTIGATOR!r}"
         )
 
-    # egress through Docker's shared default bridge, not a named network: a named
-    # network takes a /24 per sample from Docker's ~31-subnet pool, exhausts it at
-    # concurrency and leaks on a hard kill (an earlier investigator hit this). Their box stays on its own
-    # network or none; the investigator reaches it through exec, never the network.
+    # Use the shared bridge to avoid allocating a subnet per sample.
+    # Benchmark access uses exec, independent of the investigator's network.
     investigator: dict[str, Any] = {
         "command": "tail -f /dev/null",
         "init": True,
@@ -144,21 +142,15 @@ def investigation_compose(
         else {"services": {}}
     )
     if benchmark_compose is None:
-        # a benchmark with no box of its own: Inspect needs a `default`, and marking
-        # ours default would have the k8s converter rename it. An idle, offline
-        # placeholder keeps every service name the same on Docker and k8s; no tool
-        # is given access to it.
+        # A separate default service prevents the k8s converter from renaming ours.
         merged["services"]["default"] = {
             "image": "python:3.12-slim",
             "command": "tail -f /dev/null",
             "init": True,
             "network_mode": "none",
         }
-    # Docker puts a service that names no network on the project's `default`. Hawk
-    # refuses a sandbox where one service sets network_mode while another names no
-    # network (hawk/runner/run_eval_set.py _patch_network_mode), so theirs are put
-    # there by name: the same network on Docker, and on k8s they still reach each
-    # other. The investigator needs no network to them; it reaches their box by exec.
+    # Name the implicit default network explicitly: Hawk rejects unnamed networks
+    # when another service sets network_mode.
     unnamed = [
         service
         for service in merged["services"].values()

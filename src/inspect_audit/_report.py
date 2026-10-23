@@ -18,12 +18,9 @@ from pydantic import Field
 
 
 async def operator_turn(state: AgentState) -> bool | str:
-    """Hand the floor to the operator whenever the model stops calling tools.
+    """Wait for an ACP operator reply when the agent stops calling tools.
 
-    react()'s default on_continue nudges the model to keep going, which makes
-    a conversational agent chatter to itself. Instead we block on an ACP
-    elicitation until the operator replies; their text becomes the next user
-    message. Declining or cancelling the form ends the agent.
+    An accepted reply continues the conversation; cancellation ends it.
     """
     if state.output.message.tool_calls:
         return True

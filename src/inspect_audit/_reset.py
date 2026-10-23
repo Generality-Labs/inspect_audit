@@ -1,10 +1,6 @@
-"""`reset`: rebuild the benchmark's boxes from their images, mid-sample.
+"""Rebuild Docker benchmark boxes using Inspect's sample-initialisation internals.
 
-Inspect sets a sample's boxes up once and offers no public way to do it again, so
-this is the one module allowed Inspect's private internals: the Docker project
-handle, and the same routines sample-init uses to lay files and run setup -- reused,
-not reimplemented, so a rebuilt box starts the way the first one did. Docker only;
-on any other provider it refuses.
+Inspect has no public reset API; private imports are confined to this module.
 """
 
 from copy import copy

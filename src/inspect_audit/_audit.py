@@ -1,12 +1,4 @@
-"""The auditor: a react agent in its own box, launching benchmark and investigation jobs.
-
-An audit is one Inspect task. Its agent works in one box, with the inputs
-the host staged there. Jobs it launches run through `dispatch`, on Hawk or locally,
-and, when configured to share one capped OpenRouter key, bill to that key. Its
-limit bounds model spending across those calls. Other provider routes have their
-own credentials and limits. Inspect's checkpointing carries
-the box and the store across a crash; the store holds the jobs launched.
-"""
+"""Top-level audit agent, staged inputs and checkpointed child-job records."""
 
 import asyncio
 import errno
@@ -70,8 +62,6 @@ logger = getLogger(__name__)
 
 ASSETS = Path(__file__).parent / "audit"
 
-# Ours first, then the vendored ones, adapted for a container with no user in it and no
-# `hawk` binary. See audit/skills/VENDORED.md for provenance and what changed.
 DEFAULT_INVESTIGATOR_IMAGE = INVESTIGATOR_IMAGE
 DEFAULT_AUDITOR_IMAGE = AUDITOR_IMAGE
 
@@ -126,8 +116,7 @@ def _snapshot_repo(
             ],
             text=True,
         ).strip()
-        # only the named paths when given: the task under investigation, not the whole
-        # collection it ships in -- other evals are noise the agent should not read
+        # Limit the snapshot to the declared paths.
         archive = inputs / "source.tar"
         subprocess.run(
             [
@@ -142,7 +131,6 @@ def _snapshot_repo(
             ],
             check=True,
         )
-        # unpacked here rather than in the box: the agent should find files, not a tar
         tree = inputs / "source"
         tree.mkdir()
         with tarfile.open(archive) as tar:
@@ -296,13 +284,7 @@ def _only_task(source: Path) -> str | None:
 
 
 def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | None:
-    """The task's own directory, plus what the package shares with it.
-
-    Investigating one eval out of a collection, the rest of the collection is noise: the
-    agent reads a hundred other tasks' code looking for the one it was asked about.
-    The eval's own metadata says which directory is its own; the shared modules next
-    to it are included because the task imports them.
-    """
+    """Select the task directory, its local imports and package metadata."""
     from ._source import collect_source
 
     directory = _task_directory(source, target_task)
@@ -325,15 +307,7 @@ def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | No
 
 
 def _task_directory(source: Path, target_task: str | None) -> Path | None:
-    """Where an eval's own code lives.
-
-    Two ways, because benchmarks are not all shaped like `inspect_evals`. Its evals
-    publish an `eval.yaml` naming their tasks, and that is the most reliable answer
-    where it exists. Everything else is found the way a person would: the file that
-    declares the task with `@task`. A benchmark that hides its task behind a factory
-    defeats both, and then the whole repository is snapshotted, which is the old
-    behaviour rather than a wrong answer.
-    """
+    """Find the task directory through eval.yaml or its @task declaration; return None if unknown."""
     if not target_task:
         return None
     name = target_task.split("/")[-1]

@@ -58,8 +58,8 @@ def test_exact_hawk_files_exclude_partial_runs(monkeypatch):
     presigned, downloaded = [], []
 
     class Client:
-        def __init__(self, token, api_url):
-            assert (token, api_url) == ("test-token", "https://hawk.test")
+        def __init__(self, token, api_url=None):
+            assert token == "test-token"
 
         async def __aenter__(self):
             return self
@@ -81,7 +81,8 @@ def test_exact_hawk_files_exclude_partial_runs(monkeypatch):
 
     monkeypatch.setattr(hawk.client, "HawkClient", Client)
     monkeypatch.setattr(hawk.cli.download, "download_file", download_file)
-    result = Path(fetch_logs("hawk:run/complete.eval"))
+    monkeypatch.setattr(hawk.cli.download, "_assert_server_supports_batch_download", lambda: None)
+    result = Path(fetch_logs("hawk:run/complete.eval")) / "run"
     assert (result / "complete.eval").read_bytes() == b"selected log"
     assert presigned == ["run/complete.eval"]
     assert downloaded == ["https://download.test/complete"]

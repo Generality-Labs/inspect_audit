@@ -220,18 +220,8 @@ class HawkRuns:
         return RUNNING
 
     async def logs(self, run_id: str, out_dir: Path) -> list[Path]:
-        from hawk.cli.download import download_file
-
-        out_dir.mkdir(parents=True, exist_ok=True)
-        files: list[Path] = []
-        async with self._client() as client:
-            names = [str(f["name"]) for f in await client.get_log_files(run_id)]
-            names = [n for n in names if n.endswith(".eval")]
-            async for url, filename in client.get_download_urls(names):
-                dest = out_dir / Path(filename).name
-                await download_file(url, dest)
-                files.append(dest)
-        return sorted(files)
+        await download(run_id, await self.login.access_token(), out_dir)
+        return sorted(out_dir.glob("*.eval"))
 
     async def runner_log(self, run_id: str) -> str:
         async with self._client() as client:
@@ -276,8 +266,14 @@ class HawkDelivery:
         path = f"/admin/secrets/provider-keys/{secret_name}"
         await middleman.request("put", path, operator_token, data={"value": key})
 
-    def auditor_access_token(self, refresh_token: str) -> str:
-        """Exchange the auditor user's refresh token at Hawk's identity provider."""
+    def auditor_tokens(self, refresh_token: str) -> tuple[str, str]:
+        """Exchange the auditor user's refresh token: (access token, refresh token to use).
+
+        An identity provider that rotates refresh tokens retires the one it was given,
+        so the job must be handed the new one, and the stored one no longer works.
+        """
+        from hawk.cli.util.auth import TokenResponse
+
         body = urllib.parse.urlencode(
             {
                 "grant_type": "refresh_token",
@@ -291,14 +287,22 @@ class HawkDelivery:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         with urllib.request.urlopen(request, timeout=60) as response:
-            return str(json.load(response)["access_token"])
+            reply = TokenResponse.model_validate(json.load(response))
+        current = reply.refresh_token or refresh_token
+        if current != refresh_token:
+            print(
+                "warning: the identity provider rotated the auditor user's refresh token; "
+                "the stored one no longer works: store the new one before the next launch",
+                file=sys.stderr,
+            )
+        return reply.access_token, current
 
     async def submit(self, config: dict[str, Any], refresh_token: str) -> str:
         """Submit the audit's eval set as the auditor user; Hawk's id back."""
         from hawk.client import HawkClient
         from hawk.core.types import EvalSetConfig
 
-        token = self.auditor_access_token(refresh_token)
+        token, refresh_token = self.auditor_tokens(refresh_token)
         async with HawkClient(token=token, api_url=self.api_url) as client:
             created = await client.create_eval_set(
                 EvalSetConfig.model_validate(config), refresh_token=refresh_token
@@ -314,8 +318,25 @@ class HawkDelivery:
         return status is not None and str(status.status) not in ("complete", "failed", "deleted")
 
 
+async def download(address: str, token: str, out_dir: Path) -> None:
+    """Hawk's own eval-set download into `out_dir`: `<eval set>` or `<eval set>/<file>`."""
+    from hawk.cli.download import download_eval
+    from hawk.client import HawkClient
+
+    eval_set, _, selected = address.partition("/")
+    eval_file = None
+    if selected:
+        async with HawkClient(token=token) as client:
+            names = [str(f["name"]) for f in await client.get_log_files(eval_set)]
+        matches = [n for n in names if Path(n).name == selected]
+        if len(matches) != 1:
+            raise ValueError(f"Expected exactly one Hawk log at {address!r}, found {len(matches)}")
+        eval_file = matches[0]
+    await download_eval(eval_set, token, out_dir, eval_file=eval_file)
+
+
 def fetch_eval_sets(eval_sets: str) -> str:
-    """Download eval logs from the Hawk warehouse to a temporary directory.
+    """Download eval sets from the Hawk warehouse to a temporary directory, one folder each.
 
     Hawk's API is HAWK_API_URL; the token is HAWK_ACCESS_TOKEN when set, else this
     process's own Hawk credentials (`HawkLogin`): the runner's hook, which a
@@ -323,36 +344,16 @@ def fetch_eval_sets(eval_sets: str) -> str:
     """
     import concurrent.futures
 
-    from hawk.cli.download import download_file
-    from hawk.client import HawkClient
-
-    fetched = Path(tempfile.mkdtemp(prefix="hawk_logs_"))
-    sets = eval_sets.split(",")
-
     api = os.environ.get("HAWK_API_URL")
     if not api:
         raise ValueError("fetching hawk: logs needs HAWK_API_URL, Hawk's API address")
+    fetched = Path(tempfile.mkdtemp(prefix="hawk_logs_"))
 
     async def fetch() -> None:
         token = os.environ.get("HAWK_ACCESS_TOKEN") or await HawkLogin(api).access_token()
-        async with HawkClient(token=token, api_url=api) as client:
-            for address in sets:
-                eval_set, _, selected_file = address.partition("/")
-                files = await client.get_log_files(eval_set)
-                names = [f["name"] for f in files if str(f.get("name", "")).endswith(".eval")]
-                if selected_file:
-                    names = [name for name in names if Path(name).name == selected_file]
-                    if len(names) != 1:
-                        raise ValueError(
-                            f"Expected exactly one Hawk log at {address!r}, found {len(names)}"
-                        )
-                if not names:
-                    raise ValueError(f"No .eval files found in Hawk eval set {eval_set!r}.")
-                # several sets share one flat directory: prefix so same-named files
-                # cannot silently overwrite each other
-                prefix = f"{eval_set}_" if len(sets) > 1 else ""
-                async for url, filename in client.get_download_urls(names):
-                    await download_file(url, fetched / f"{prefix}{Path(filename).name}")
+        for address in eval_sets.split(","):
+            # a folder per eval set: same-named files from two sets cannot collide
+            await download(address, token, fetched / address.partition("/")[0])
 
     # task construction may already be inside inspect's event loop
     with concurrent.futures.ThreadPoolExecutor(1) as pool:

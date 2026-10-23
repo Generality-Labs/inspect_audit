@@ -81,6 +81,6 @@ repos:
         # Formatting config (wrap, number, ...) lives in .mdformat.toml.
         # Prompts, templates and the investigator's skills are model-facing text;
         # keep them as written rather than reflowed.
-        exclude: ^src/inspect_audit/(prompts|templates|investigation/skills|publishers/skills)/
+        exclude: ^src/inspect_audit/(prompts|templates|audit/skills|publishers/skills)/
         additional_dependencies:
           - mdformat-gfm # padded/aligned tables + GFM extensions (task lists, strikethrough)

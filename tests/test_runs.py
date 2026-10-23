@@ -528,7 +528,7 @@ def test_hawk_logs_are_fetched_with_the_runners_own_credentials(
     used: list[str] = []
 
     class Client:
-        def __init__(self, token: str, api_url: str) -> None:
+        def __init__(self, token: str, api_url: str | None = None) -> None:
             used.append(token)
 
         async def __aenter__(self) -> "Client":
@@ -548,7 +548,8 @@ def test_hawk_logs_are_fetched_with_the_runners_own_credentials(
 
     monkeypatch.setattr(hawk.client, "HawkClient", Client)
     monkeypatch.setattr(hawk.cli.download, "download_file", download_file)
-    assert (Path(fetch_logs("hawk:run")) / "a.eval").read_bytes() == b"log"
+    monkeypatch.setattr(hawk.cli.download, "_assert_server_supports_batch_download", lambda: None)
+    assert (Path(fetch_logs("hawk:run")) / "run" / "a.eval").read_bytes() == b"log"
     assert used == ["runner-access"]
 
 

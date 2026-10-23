@@ -1,6 +1,7 @@
 """The launcher: a capped key per audit, revoked in every case."""
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -166,3 +167,26 @@ def test_secrets_come_from_a_command_else_a_warned_environment_variable(
     monkeypatch.setenv("INSPECT_AUDIT_MANAGEMENT_KEY_COMMAND", "false")
     with pytest.raises(secrets.SecretUnavailableError, match="failed"):
         secrets.management_key()
+
+
+def test_a_rotated_refresh_token_is_the_one_used_and_reported(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A rotating identity provider retires the old token: the job must get the new one."""
+    import io
+    import urllib.request
+    from types import SimpleNamespace
+
+    from inspect_audit.dispatch.hawk import HawkDelivery
+
+    reply = {"access_token": "access", "refresh_token": "rt-new", "expires_in": 3600}
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda *a, **k: io.BytesIO(json.dumps(reply).encode())
+    )
+    delivery = object.__new__(HawkDelivery)
+    delivery.server = SimpleNamespace(client_id="client", token_endpoint="https://idp/token")  # type: ignore[assignment]
+    assert delivery.auditor_tokens("rt-old") == ("access", "rt-new")
+    assert "rotated" in capsys.readouterr().err
+    reply.pop("refresh_token")
+    assert delivery.auditor_tokens("rt-old") == ("access", "rt-old")
+    assert capsys.readouterr().err == ""

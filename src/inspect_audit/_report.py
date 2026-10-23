@@ -18,12 +18,9 @@ from pydantic import Field
 
 
 async def operator_turn(state: AgentState) -> bool | str:
-    """Hand the floor to the operator whenever the model stops calling tools.
+    """Wait for an ACP operator reply when the agent stops calling tools.
 
-    react()'s default on_continue nudges the model to keep going, which makes
-    a conversational agent chatter to itself. Instead we block on an ACP
-    elicitation until the operator replies; their text becomes the next user
-    message. Declining or cancelling the form ends the agent.
+    An accepted reply continues the conversation; cancellation ends it.
     """
     if state.output.message.tool_calls:
         return True
@@ -47,19 +44,6 @@ class AuditState(StoreModel):
     # published_incomplete (short of the operator's required coverage), blocked
     outcome: str | None = None
     outcome_reasons: list[str] = Field(default_factory=list)
-
-
-def assessed_fraction(coverage_path: Path) -> tuple[float, str] | None:
-    """The share of the question population with a label, and a readable count."""
-    if not coverage_path.is_file():
-        return None
-    coverage = json.loads(coverage_path.read_text())
-    denominator = int(coverage.get("denominator") or 0)
-    if not denominator:
-        return 0.0, "0 questions"
-    counts = coverage.get("counts") or {}
-    assessed = denominator - int(counts.get("NOT_ASSESSED", denominator))
-    return assessed / denominator, f"{assessed}/{denominator} questions assessed"
 
 
 def log_address(root: Path, relative: Path, jobs: dict[str, str]) -> str:

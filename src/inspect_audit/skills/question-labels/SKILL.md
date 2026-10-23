@@ -12,7 +12,7 @@ metadata:
 
 # Classify the question, not the model's answer
 
-Examine the question, acceptance rule, source, and available attempts. Investigation the
+Examine the question, acceptance rule, source, and available attempts. Investigate the
 sample together so dependencies remain visible. The assessment units are listed
 under `assessment_ids` in /audit/item.json; their meaning comes from the operator notes and
 benchmark evidence, not a built-in dataset convention.

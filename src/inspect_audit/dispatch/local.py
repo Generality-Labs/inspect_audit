@@ -123,7 +123,12 @@ class LocalRuns:
         output = Path(self._launch(run_id).get("output_file") or "")
         if not output.is_file():
             return None
-        for line in reversed(output.read_text(errors="replace").splitlines()):
+        # Inspect ends its output with a small JSON done record.
+        with output.open("rb") as handle:
+            size = handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, size - 64 * 1024))
+            tail = handle.read().decode(errors="replace")
+        for line in reversed(tail.splitlines()):
             try:
                 record = json.loads(line)
             except ValueError:

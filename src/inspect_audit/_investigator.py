@@ -38,7 +38,7 @@ from ._verdicts import (
 
 INVESTIGATION_ROOT = "/audit"
 ITEM_PROMPT = (
-    "Investigation this benchmark item. It is described in /audit/item.json in your box; "
+    "Investigate this benchmark item. It is described in /audit/item.json in your box; "
     "the benchmark's source is under /audit/benchmark/."
 )
 NO_BOX = (

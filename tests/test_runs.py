@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from test_helpers.audit import make_audit
 
 from inspect_audit import _audit
 from inspect_audit._report import AuditRecord
@@ -167,10 +168,9 @@ def test_a_local_job_runs_detached_and_hands_back_its_logs(tmp_path: Path) -> No
 
 
 def _make_audit(tmp_path: Path, runs: Any) -> _audit.Audit:
-    return _audit.Audit(
+    audit = make_audit(
         root=tmp_path,
         runs=runs,
-        where="hawk",
         task="benchmark/task",
         task_package="benchmark",
         investigation_package="inspect_audit",
@@ -182,6 +182,13 @@ def _make_audit(tmp_path: Path, runs: Any) -> _audit.Audit:
         ),
         supplied=["hawk:supplied-logs"],
     )
+
+    from inspect_ai.util import store_as
+
+    from inspect_audit.dispatch.policy import PolicyStore, ensure_policy
+
+    ensure_policy(audit.authorizer.policy, store_as(PolicyStore), require_existing=False)
+    return audit
 
 
 class FakeRuns:
@@ -197,13 +204,12 @@ class FakeRuns:
 
 
 @pytest.fixture
-def record(monkeypatch: pytest.MonkeyPatch) -> AuditRecord:
-    from inspect_ai.util import Store
+def record() -> AuditRecord:
+    from inspect_ai.util import Store, store_as
+    from inspect_ai.util._store import init_subtask_store
 
-    # its own store: a bare StoreModel binds to a shared one, which leaks between tests
-    held = AuditRecord(store=Store())
-    monkeypatch.setattr(_audit, "store_as", lambda _: held)
-    return held
+    init_subtask_store(Store())
+    return store_as(AuditRecord)
 
 
 def test_launched_jobs_are_recorded_and_only_allowed_models_run(
@@ -604,3 +610,37 @@ def test_an_empty_judge_reaches_the_investigation_as_empty(
         )
     )
     assert runs.submitted[0].task_args["judge"] == {}
+
+
+def test_local_completion_reads_only_the_output_tail(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    runs = LocalRuns(tmp_path / "runs")
+    directory = runs.root / "child"
+    directory.mkdir()
+    output = tmp_path / "output.txt"
+    output.write_text("x" * 100_000 + "\n" + json.dumps({"event": "done", "success": True}) + "\n")
+    (directory / "launch.json").write_text(json.dumps({"output_file": str(output)}))
+    read_text = Path.read_text
+
+    def read_metadata(path, *args, **kwargs):
+        assert path != output, "runner output must not be loaded in full"
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_metadata)
+    assert asyncio.run(runs.status("child")) == COMPLETE
+
+
+def test_even_an_empty_configuration_requires_a_bound_policy(
+    tmp_path: Path, record: AuditRecord
+) -> None:
+    from inspect_ai.util import Store
+    from inspect_ai.util._store import init_subtask_store
+
+    runs = FakeRuns()
+    audit = _make_audit(tmp_path, runs)
+    init_subtask_store(Store())
+    job = Job(label="child", task="benchmark/task", package="benchmark", models=["openai/subject"])
+    with pytest.raises(RuntimeError, match="differs from its saved launch policy"):
+        asyncio.run(audit.launch(job, "benchmark", "unbound"))
+    assert not runs.submitted

@@ -58,6 +58,7 @@ def test_a_generated_investigation_config_is_complete_and_hawk_valid(tmp_path: P
 
     config = investigation_config(
         benchmark=f"{repo.as_uri()}@{commit}",
+        benchmark_name="different-distribution",
         extra="grader",
         task="bench/answers",
         task_args={"split": "test"},
@@ -75,7 +76,7 @@ def test_a_generated_investigation_config_is_complete_and_hawk_valid(tmp_path: P
     )
     EvalSetConfig.model_validate(config)
     packages = [p.split(";")[0].strip() for p in config["packages"]]
-    assert f"bench[grader] @ git+{repo.as_uri()}@{commit}" in packages
+    assert f"different-distribution[grader] @ git+{repo.as_uri()}@{commit}" in packages
     assert "idna==3.7" in packages and "six==1.16.0" not in packages  # the extra only
     assert f"inspect-ai=={INSPECT_VERSION}" in packages
     assert config["runner"]["environment"]["HAWK_API_URL"] == "https://hawk.example"

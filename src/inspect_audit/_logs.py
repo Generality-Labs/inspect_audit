@@ -1,9 +1,7 @@
-"""The declared logs: checked against the declared task, indexed, read on the host.
+"""Validate declared logs and index attempts by (eval_id, sample_id, epoch).
 
-Logs never enter a box. An attempt is addressed by (eval_id, sample_id, epoch); the
-same address in two files is refused rather than picked between. Every header must
-record the declared task, the declared arguments and the installed benchmark
-version -- a log of a different run is not evidence about this one.
+Reject duplicate attempts and mismatched task, arguments or benchmark versions.
+Read native logs on the host; export selected content through tools.
 """
 
 import re

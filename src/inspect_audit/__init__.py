@@ -1,4 +1,4 @@
-"""Benchmark validity investigating for Inspect AI evals."""
+"""Benchmark validity auditing for Inspect AI evals."""
 
 from ._audit import audit
 from ._publishing import Publisher, publish

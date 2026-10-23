@@ -263,3 +263,11 @@ def test_logs_with_different_judge_settings_are_refused(fixture_log: str, tmp_pa
         paths.append(str(path))
     with pytest.raises(LogMismatchError, match="different judge configurations"):
         index_logs(paths, task_name="fixture_task", task_args={}, package=None)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_model_prices_are_rejected(value: float) -> None:
+    from inspect_audit._prices import valid_price
+
+    assert not valid_price({"input": value, "output": 1.0})
+    assert not valid_price({"input": 1.0, "output": value})

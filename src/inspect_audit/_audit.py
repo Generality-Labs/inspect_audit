@@ -1,12 +1,4 @@
-"""The auditor: a react agent in its own box, launching benchmark and investigation jobs.
-
-An audit is one Inspect task. Its agent works in one box, with the inputs
-the host staged there. Jobs it launches run through `dispatch`, on Hawk or locally,
-and, when configured to share one capped OpenRouter key, bill to that key. Its
-limit bounds model spending across those calls. Other provider routes have their
-own credentials and limits. Inspect's checkpointing carries
-the box and the store across a crash; the store holds the jobs launched.
-"""
+"""Top-level audit agent, staged inputs and checkpointed child-job records."""
 
 import asyncio
 import errno
@@ -70,8 +62,6 @@ logger = getLogger(__name__)
 
 ASSETS = Path(__file__).parent / "audit"
 
-# Ours first, then the vendored ones, adapted for a container with no user in it and no
-# `hawk` binary. See audit/skills/VENDORED.md for provenance and what changed.
 DEFAULT_INVESTIGATOR_IMAGE = INVESTIGATOR_IMAGE
 DEFAULT_AUDITOR_IMAGE = AUDITOR_IMAGE
 
@@ -95,10 +85,6 @@ class ModelMenu:
     investigators: list[str]
     subjects: list[str]
     judges: list[str]
-
-    @property
-    def all(self) -> list[str]:
-        return list(dict.fromkeys([*self.investigators, *self.subjects, *self.judges]))
 
 
 DEFAULT_WORKERS = [
@@ -126,8 +112,7 @@ def _snapshot_repo(
             ],
             text=True,
         ).strip()
-        # only the named paths when given: the task under investigation, not the whole
-        # collection it ships in -- other evals are noise the agent should not read
+        # Limit the snapshot to the declared paths.
         archive = inputs / "source.tar"
         subprocess.run(
             [
@@ -142,7 +127,6 @@ def _snapshot_repo(
             ],
             check=True,
         )
-        # unpacked here rather than in the box: the agent should find files, not a tar
         tree = inputs / "source"
         tree.mkdir()
         with tarfile.open(archive) as tar:
@@ -296,13 +280,7 @@ def _only_task(source: Path) -> str | None:
 
 
 def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | None:
-    """The task's own directory, plus what the package shares with it.
-
-    Investigating one eval out of a collection, the rest of the collection is noise: the
-    agent reads a hundred other tasks' code looking for the one it was asked about.
-    The eval's own metadata says which directory is its own; the shared modules next
-    to it are included because the task imports them.
-    """
+    """Select the task directory, its local imports and package metadata."""
     from ._source import collect_source
 
     directory = _task_directory(source, target_task)
@@ -325,15 +303,7 @@ def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | No
 
 
 def _task_directory(source: Path, target_task: str | None) -> Path | None:
-    """Where an eval's own code lives.
-
-    Two ways, because benchmarks are not all shaped like `inspect_evals`. Its evals
-    publish an `eval.yaml` naming their tasks, and that is the most reliable answer
-    where it exists. Everything else is found the way a person would: the file that
-    declares the task with `@task`. A benchmark that hides its task behind a factory
-    defeats both, and then the whole repository is snapshotted, which is the old
-    behaviour rather than a wrong answer.
-    """
+    """Find the task directory through eval.yaml or its @task declaration; return None if unknown."""
     if not target_task:
         return None
     name = target_task.split("/")[-1]
@@ -411,7 +381,6 @@ def prepare_workspace(
     work = root / "work"
     inputs.mkdir(parents=True)
     work.mkdir()
-    shutil.copyfile(Path(__file__).with_name("_coverage.py"), inputs / "coverage.py")
     seed: dict[str, object] = dict(_snapshot_repo(repo, revision, inputs, paths))
     log_index = []
     for index, source in enumerate(logs):
@@ -505,36 +474,13 @@ class Audit:
 
     root: Path
     runs: Runs
-    where: str  # "hawk" or "local"
     task: str  # the investigated task's registry name
     task_package: str
     investigation_package: str
     investigator_image: str
-    menu: ModelMenu
     supplied: list[str]  # log sources the operator gave, as addresses a job can read
-    authorizer: AuditAuthorizer | None = None
+    authorizer: AuditAuthorizer
     launch_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        if self.authorizer is None:
-            from ._verdicts import investigation_items
-
-            self.authorizer = AuditAuthorizer(
-                LaunchPolicy(
-                    task=self.task,
-                    task_package=self.task_package,
-                    investigation_package=self.investigation_package,
-                    investigator_image=self.investigator_image,
-                    models=Models(
-                        investigators=tuple(self.menu.investigators),
-                        subjects=tuple(self.menu.subjects),
-                        judges=tuple(self.menu.judges),
-                    ),
-                    checks=tuple(s.name for s in investigation_items()),
-                    supplied_logs=tuple(self.supplied),
-                    configuration_json="{}",
-                )
-            )
 
     def record(self) -> AuditRecord:
         return store_as(AuditRecord)
@@ -553,15 +499,12 @@ class Audit:
             return await self._launch(job, kind, note)
 
     async def _launch(self, job: Job, kind: str, note: str) -> str:
-        if self.authorizer is None:
-            raise RuntimeError("audit has no launch authorizer")
         policy = self.authorizer.policy
         approved = self.authorizer.authorise(
             job, kind, {str(j["address"]) for j in self.record().jobs}
         )
         # This object is made at launch; sandbox policy files are never read here.
-        if policy.configuration_json != "{}":
-            ensure_policy(policy, store_as(PolicyStore), require_existing=True)
+        ensure_policy(policy, store_as(PolicyStore), require_existing=True)
         if any(j["label"] == job.label for j in self.record().jobs):
             raise ToolError(f"a job labelled {job.label!r} exists; choose another label")
         cap = policy.limits.max_concurrent_jobs
@@ -809,13 +752,13 @@ def jobs(inv: Audit) -> Tool:
                 host.mkdir(parents=True, exist_ok=True)
                 files = [Path(shutil.copy2(f, host / f.name)) for f in files]
             await copy_into_box(files, f"/inputs/jobs/{label}")
+            lines = [_log_line(f) for f in files]
+            if job["kind"] == "investigation":
+                lines.append(await _import_investigations(files, job["address"]))
             record = inv.record()
             record.jobs = [
                 {**j, "collected": True} if j["label"] == label else j for j in record.jobs
             ]
-            lines = [_log_line(f) for f in files]
-            if job["kind"] == "investigation":
-                lines.append(await _import_investigations(files, job["address"]))
             return f"{label}: {status}; collected to /inputs/jobs/{label}/\n" + "\n".join(lines)
         raise ToolError("action must be list, status, wait, collect, log or stop")
 
@@ -1004,7 +947,6 @@ def audit(
     auditor_image: str | None = None,
     artifact_dir: str | None = None,
     instructions: str | None = None,
-    required_coverage: float | None = None,
     policy: dict[str, Any] | None = None,
     task_args: dict[str, Any] | None = None,
     investigation_samples: list[str] | str | None = None,
@@ -1061,8 +1003,6 @@ def audit(
         artifact_dir: Where the published report is also saved, under this sample:
             on Hawk, the job's S3 artifacts directory. None keeps it on the host only.
         instructions: Operator instructions and scope, separate from benchmark background.
-        required_coverage: Fraction of the question population (0-1) the published
-            coverage.json must assess for the run to count as complete.
         policy: Frozen model permissions, declared log inputs and job limits.
             YAML also accepts benchmark, investigation and execution sections. Permission
             changes on resume are refused; start a new audit instead.
@@ -1089,7 +1029,7 @@ def audit(
     # the file is read before anything else is decided: an argument is "given" only
     # when it is not None, so a value equal to a default is still an override
     settings = _audit_file(config, locals()) if config else {}
-    from ._findings import Findings, FindingsState, encoded, submit_findings
+    from ._findings import Findings, encoded, submit_findings
     from ._publishing import PhaseTools, load_publisher
 
     publisher = settings.get("publisher", publisher) or "latex"
@@ -1124,7 +1064,6 @@ def audit(
     auditor_image = str(settings.get("auditor_image", auditor_image) or DEFAULT_AUDITOR_IMAGE)
     artifact_dir = settings.get("artifact_dir", artifact_dir)
     instructions = settings.get("instructions", instructions)
-    required_coverage = settings.get("required_coverage", required_coverage)
     policy = settings.get("policy", policy)
     permissions = Permissions.model_validate(policy or {})
     benchmark_environment = validate_environment(
@@ -1202,8 +1141,6 @@ def audit(
         raise ValueError("box must be 'docker' or 'k8s'")
     if "hawk" in (runs, "k8s" if box == "k8s" else None) and not hawk_api_url:
         raise ValueError("Hawk work needs hawk_api_url (or HAWK_API_URL)")
-    if required_coverage is not None and not (0 < float(required_coverage) <= 1):
-        raise ValueError("required_coverage must be a fraction in (0, 1]")
     if not repo:
         raise ValueError(
             "audit needs a repo: the benchmark to investigation, or a config naming one"
@@ -1310,8 +1247,6 @@ def audit(
         start_register(target_task, launch_policy),
         register_view(),
     ]
-    if required_coverage is not None:
-        seed["required_coverage"] = float(required_coverage)
     inv = None
     if runs:
         if task_package is None or investigation_package is None or target_task is None:
@@ -1326,12 +1261,10 @@ def audit(
             )
             if runs == "hawk"
             else LocalRuns(Path(output_dir).expanduser().resolve() / "runs"),
-            where=runs,
             task=target_task,
             task_package=task_package,
             investigation_package=investigation_package,
             investigator_image=investigator_image,
-            menu=menu,
             supplied=sorted(set(supplied)),
             authorizer=AuditAuthorizer(launch_policy),
         )
@@ -1375,7 +1308,6 @@ def audit(
     @solver
     def begin_findings() -> Solver:
         async def solve(state: TaskState, generate: Generate) -> TaskState:
-            state.store_as(FindingsState).required_coverage = required_coverage
             from ._register import Register, save
 
             await save(

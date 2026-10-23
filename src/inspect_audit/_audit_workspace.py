@@ -47,23 +47,16 @@ def configure(root: Path, image: str) -> tuple[str, str]:
 
 def _destination(root: Path, name: str) -> str:
     settings = json.loads((root / "artifacts.json").read_text())
-    # Hawk's viewer shows a sample's artifacts from artifacts/<sample uuid>/
-    # (hawk/api/sample_content_router.py); a resumed attempt publishes under its own
+    # Hawk indexes artifacts under the current sample UUID, including on resume.
     key = settings["sample_uuid"]
     return f"{settings['artifact_dir'].rstrip('/')}/{key}/{name}"
 
 
 def hawk_would_process(key: str) -> str | None:
-    """Why Hawk would act on an object created at this bucket key, else None.
+    """Return the reason Hawk would process an object at this key, or None.
 
-    Hawk runs a processor on every object created under `evals/` and `scans/`
-    (hawk 3.6.0: job_status_updated/index.py routes by prefix). Under `evals/`, any
-    key ending `.eval` (bar `.fast.eval`) is imported into the shared warehouse,
-    upserted by the eval id in its own header, so a copy of someone's log takes over
-    their record (processors/eval.py process_object); a file directly in
-    `evals/<eval set>/` is read as that eval set's own metadata, e.g. `.models.json`
-    access groups. Under `scans/`, `_summary.json` and `.parquet` are imported as scan
-    results (processors/scan.py). Only Hawk's own writers may create these.
+    Eval logs update warehouse records by eval ID; eval-set metadata and scan
+    results also trigger processors. Keep this routing aligned with Hawk.
     """
     if key.startswith("evals/"):
         # the same order as Hawk's own routing: .keep, then .eval (bar .fast.eval), then
@@ -85,13 +78,7 @@ def hawk_would_process(key: str) -> str | None:
 
 
 def _upload(files: dict[str, Path], destination: str) -> None:
-    """Every upload this package makes goes through here, and none may trigger Hawk.
-
-    2026-09-28: a published report carried copies of the logs it cited as evidence;
-    they landed under evals/<run>/artifacts/ and Hawk re-pointed three shared
-    warehouse records at them. The check is on the final object key, so no caller can
-    route around it.
-    """
+    """Upload artifacts, rejecting final object keys that trigger Hawk processors."""
     import fsspec  # type: ignore[import-untyped]
 
     fs, base = fsspec.core.url_to_fs(destination)
@@ -124,7 +111,7 @@ async def persist(root: Path, source: Path, name: str) -> str:
         try:
             await anyio.to_thread.run_sync(_upload, files, destination)
             return destination
-        except Exception as ex:  # storage errors are transient more often than not
+        except Exception as ex:
             last = ex
             await anyio.sleep(2**attempt)
     raise ToolError(f"Could not save {name} to {destination}: {last}. Try again.")

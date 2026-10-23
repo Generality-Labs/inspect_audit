@@ -52,13 +52,7 @@ _GRANTABLE_TOOLS = frozenset({"grade", "reset"})
 
 
 def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> InvestigationItemSkill:
-    """Read one item skill's frontmatter contract, loudly.
-
-    The frontmatter drives grade validation, evidence rules and tool grants, so
-    a malformed block must fail here at load. Coerced to an empty contract it
-    would instead surface at verdict time, as `record_verdict` rejecting every
-    grade forever -- a paid run burned against its limits with no verdict.
-    """
+    """Validate skill frontmatter before constructing checks and tool grants."""
 
     def str_list(key: str) -> list[str]:
         value = metadata.get(key, [])
@@ -217,21 +211,16 @@ def record_verdict(items: list[InvestigationItemSkill]) -> Tool:
             details: JSON-encoded object containing the required fields listed for
                 this item. Use "{}" when no fields are required.
         """
-        # a ToolError is fed back to the model as recoverable, so a submission that
-        # misses the contract becomes a retry rather than a lost verdict
+        # ToolError lets the agent repair an invalid verdict.
         skill = lookup.get(item)
         if skill is None:
             raise ToolError(f"Unknown item {item!r}. Expected one of {', '.join(lookup)}.")
-        # a string in the schema, not an object: OpenAI's validator (Azure, via
-        # OpenRouter) refuses an object property without a type, and the fields
-        # items declare are lists, strings and booleans. Python callers pass a dict
+        # JSON text supports heterogeneous skill fields on strict tool providers.
         try:
             recorded_details = json.loads(details) if isinstance(details, str) else details
         except ValueError:
             recorded_details = None
         if not isinstance(recorded_details, dict):
-            # 09-29 chess run: an investigator wrote prose summaries here 54 times against
-            # a bare "must encode a valid JSON object" and never recovered
             raise ToolError(_details_help(skill, details))
         if grade not in skill.grades:
             raise ToolError(f"Grade for {item} must be one of {', '.join(skill.grades)}.")
@@ -240,8 +229,6 @@ def record_verdict(items: list[InvestigationItemSkill]) -> Tool:
                 "Every verdict needs an explanation: why the evidence gives this grade."
             )
         if not evidence:
-            # an unresolved grade too: what was tried, observed and where, so a
-            # reviewer can see the attempt and pick it up
             raise ToolError(f"A grade of {grade} needs at least one observation with its source.")
         for entry in evidence:
             if not entry.observed.strip() or not entry.source.strip():
@@ -252,7 +239,7 @@ def record_verdict(items: list[InvestigationItemSkill]) -> Tool:
             raise ToolError(f"This item also requires details: {asks}.")
 
         if item == "question-labels":
-            from ._coverage import validate_labels
+            from ._labels import validate_labels
 
             expected = store_as(AssessmentUnits).ids
             if not expected:
@@ -365,11 +352,7 @@ def submit_investigation(items: list[InvestigationItemSkill]) -> Tool:
 
 
 def _no_verdict_reason(rejected: list[str]) -> str:
-    """Why an item has no verdict, from its refusals and the sample's limits.
-
-    09-29: two items came back NO_VERDICT with nothing but concordance metadata, and
-    the auditor blamed the wrong thing.
-    """
+    """Explain a missing verdict using recorded rejections and exhausted sample limits."""
     reasons = [
         f"record_verdict refused it {len(rejected)} time(s); last: {rejected[-1]}"
         if rejected
@@ -391,11 +374,8 @@ def _no_verdict_reason(rejected: list[str]) -> str:
 
 def item_scorer(item: InvestigationItemSkill) -> Scorer:
     """A scorer surfacing the investigator's verdict on one investigation item."""
-    # inspect's own categorical metric, with the skill's grades declared so a
-    # grade nobody earned still reports as 0.0 and the metric round-trips
-    # through recompute_metrics(). a dynamic registry name gives each item its
-    # own score column; the cost is that a cold `inspect score` cannot resolve
-    # these names to re-score a log
+    # Declared categories retain zero-count grades when metrics are recomputed.
+    # Dynamic scorer names require scorer registration before rescoring.
     distribution = frequency(categories=[*item.grades, "NO_VERDICT"])
 
     @scorer(metrics=[distribution], name=item.name)

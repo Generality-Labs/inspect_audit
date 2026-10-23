@@ -9,12 +9,12 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 
-# The auditor's own box, beside the benchmark's: analysis tools, no benchmark packages
+# The investigator's own box, beside the benchmark's: analysis tools, no benchmark packages
 # (the benchmark's code runs in its own task; its source is copied in to read).
-AUDITOR_DOCKERFILE = (HERE / "auditor.Dockerfile").read_text()
+INVESTIGATOR_DOCKERFILE = (HERE / "investigator.Dockerfile").read_text()
 
-# Appended to the Helm values for a k8s run: Cilium egress for the investigator's
+# Appended to the Helm values for a k8s run: Cilium egress for the auditor's
 # service, DNS plus world, so the "can verify" property holds off Docker.
 EGRESS_POLICY = (HERE / "egress.helm.yaml").read_text()
 
-__all__ = ["AUDITOR_DOCKERFILE", "EGRESS_POLICY"]
+__all__ = ["EGRESS_POLICY", "INVESTIGATOR_DOCKERFILE"]

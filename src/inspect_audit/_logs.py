@@ -24,7 +24,7 @@ from inspect_ai.model import ModelConfig
 from inspect_ai.tool import Tool, ToolError, tool
 from inspect_ai.util import sandbox
 
-from ._compose import AUDITOR
+from ._compose import INVESTIGATOR
 
 
 class LogMismatchError(ValueError):
@@ -129,7 +129,7 @@ def _check_header(
 ) -> None:
     spec = header.eval
     if spec.task_registry_name == WRAPPER:
-        # the investigator's `benchmark` wrapper: its header names the wrapper, and the
+        # the auditor's `benchmark` wrapper: its header names the wrapper, and the
         # wrapped run is recorded in the task metadata
         wrapped = (spec.metadata or {}).get(WRAPPED)
         if not isinstance(wrapped, dict):
@@ -157,7 +157,7 @@ def _check_header(
     undeclared = set(spec.task_args_passed) - set(task_args)
     if undeclared:
         raise LogMismatchError(
-            f"{path} passed task argument(s) the audit does not declare: "
+            f"{path} passed task argument(s) the investigation does not declare: "
             f"{', '.join(sorted(undeclared))}"
         )
     if package is not None:
@@ -256,7 +256,7 @@ def index_logs(
             except (IndexError, KeyError):
                 raise LogMismatchError(
                     f"{path} lists {len(summaries)} samples but holds none of them (a compacted "
-                    "log): it has no transcripts to audit"
+                    "log): it has no transcripts to investigation"
                 ) from None
     index.judges = roles_seen or {}
     return index
@@ -279,7 +279,7 @@ def log_tools(index: LogIndex | None, sample_id: str) -> list[Tool]:
         async def execute() -> str:
             """List every recorded attempt at this sample: eval_id, epoch, model, scores, error."""
             if index is None:
-                return "No logs were declared for this audit."
+                return "No logs were declared for this investigation."
             rows = [a.row() for a in index.for_sample(sample_id)]
             return json.dumps(rows, default=str) if rows else "No recorded attempts at this sample."
 
@@ -297,7 +297,7 @@ def log_tools(index: LogIndex | None, sample_id: str) -> list[Tool]:
                 count: How many messages to return (20 is a sensible window).
             """
             if index is None:
-                raise ToolError("No logs were declared for this audit.")
+                raise ToolError("No logs were declared for this investigation.")
             found = index.find(sample_id, eval_id, epoch)
             sample = read_eval_log_sample(
                 found.log, id=found.sample_id, epoch=epoch, resolve_attachments=True
@@ -320,7 +320,7 @@ def log_tools(index: LogIndex | None, sample_id: str) -> list[Tool]:
             completion and messages. For scripting over attempts with pandas.
             """
             if index is None:
-                raise ToolError("No logs were declared for this audit.")
+                raise ToolError("No logs were declared for this investigation.")
             lines = []
             for found in index.for_sample(sample_id):
                 sample = read_eval_log_sample(
@@ -336,7 +336,7 @@ def log_tools(index: LogIndex | None, sample_id: str) -> list[Tool]:
                         default=str,
                     )
                 )
-            await sandbox(AUDITOR).write_file("/audit/attempts.jsonl", "\n".join(lines) + "\n")
+            await sandbox(INVESTIGATOR).write_file("/audit/attempts.jsonl", "\n".join(lines) + "\n")
             return f"wrote {len(lines)} attempt(s) to /audit/attempts.jsonl"
 
         return execute

@@ -1,21 +1,14 @@
----
-name: read-eval-logs
-description: "The Inspect log API in reference form: EvalLog and EvalSample structure, common analysis patterns, and what to do with large logs. Read it alongside reading-logs when working with .eval files."
----
+______________________________________________________________________
+
+## name: read-eval-logs description: "The Inspect log API in reference form: EvalLog and EvalSample structure, common analysis patterns, and what to do with large logs. Read it alongside reading-logs when working with .eval files."
 
 # Analysing Eval Log Files
 
 This skill covers how to view and analyse Inspect evaluation log files using the Python API and CLI commands.
 
-
 ## In this container
-The API reference here is accurate and usable as written. Ignore the CLI viewer, which
-you have no browser for, and anything that assumes a repo checkout with a `logs/`
-directory in it. The log files you can read are the supplied ones under `/inputs/logs` and
-anything you collected from your own jobs under `/inputs/jobs/<label>/`. Read the
-`reading-logs` skill first: it carries the traps this one does not (never unzip an
-`.eval`, read headers before samples, `all_samples_required=False` for a log that
-errored or was cancelled).
+
+The API reference here is accurate and usable as written. Ignore the CLI viewer, which you have no browser for, and anything that assumes a repo checkout with a `logs/` directory in it. The log files you can read are the supplied ones under `/inputs/logs` and anything you collected from your own jobs under `/inputs/jobs/<label>/`. Read the `reading-logs` skill first: it carries the traps this one does not (never unzip an `.eval`, read headers before samples, `all_samples_required=False` for a log that errored or was cancelled).
 
 ## Quick Reference
 

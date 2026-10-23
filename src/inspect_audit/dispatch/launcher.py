@@ -1,12 +1,12 @@
-"""Start, check, finish and reap investigations: a key per investigation, always revoked.
+"""Start, check, finish and reap audits: a key per audit, always revoked.
 
-Each investigation has one record on this machine, written before its key exists and
+Each audit has one record on this machine, written before its key exists and
 updated after every step, so a crash at any point leaves enough to clean up. `finish`
 records what the key spent and disables it, and can be repeated. `reap` finishes every
-investigation that is no longer running, and disables any `inv-` key OpenRouter holds
-that no live investigation owns. The investigator user's key assignment is never
+audit that is no longer running, and disables any `inv-` key OpenRouter holds
+that no live audit owns. The auditor user's key assignment is never
 removed: removing it would hand that user the shared keys, so a disabled key stays
-installed until the next investigation replaces it.
+installed until the next audit replaces it.
 """
 
 import json
@@ -58,7 +58,7 @@ class Delivery(Protocol):
 
 
 class Records:
-    """One JSON file per investigation; written whole, atomically, after every step."""
+    """One JSON file per audit; written whole, atomically, after every step."""
 
     def __init__(self, root: Path = STATE_DIR) -> None:
         self.root = root
@@ -70,8 +70,8 @@ class Records:
         temporary.write_text(json.dumps(asdict(record), indent=1))
         temporary.replace(path)
 
-    def load(self, investigation: str) -> Record:
-        return Record(**json.loads((self.root / f"{investigation}.json").read_text()))
+    def load(self, audit: str) -> Record:
+        return Record(**json.loads((self.root / f"{audit}.json").read_text()))
 
     def all(self) -> list[Record]:
         return [
@@ -98,9 +98,9 @@ class Launcher:
         if not math.isfinite(cap_usd) or cap_usd <= 0:
             raise ValueError("the cap is a finite positive number of dollars")
         await self.reap()
-        # one investigator user holds one key: a second investigation would share it
+        # one auditor user holds one key: a second audit would share it
         if busy := self.active():
-            raise RuntimeError(f"investigation {busy[0].id} is still running; finish it first")
+            raise RuntimeError(f"audit {busy[0].id} is still running; finish it first")
         record = Record(id=f"{PREFIX}{label}-{random.token_hex(4)}", cap_usd=cap_usd)
         self.records.save(record)  # the plan exists before the key does
         try:
@@ -124,8 +124,8 @@ class Launcher:
             raise
         return record
 
-    async def status(self, investigation: str) -> dict[str, Any]:
-        record = self.records.load(investigation)
+    async def status(self, audit: str) -> dict[str, Any]:
+        record = self.records.load(audit)
         key = self.keys.get(record.key_hash) if record.key_hash else None
         return {
             **asdict(record),
@@ -133,9 +133,9 @@ class Launcher:
             "spent_usd": key.usage if key else record.usage_usd,
         }
 
-    async def finish(self, investigation: str, reason: str = "finished") -> Record:
+    async def finish(self, audit: str, reason: str = "finished") -> Record:
         """Record the key's spend and disable it. Safe to repeat, and after a crash."""
-        record = self.records.load(investigation)
+        record = self.records.load(audit)
         if record.key_hash:
             state: KeyState | None = None
             try:
@@ -159,7 +159,7 @@ class Launcher:
         return record
 
     async def reap(self) -> list[str]:
-        """Finish what is not running; disable every inv- key no live investigation owns."""
+        """Finish what is not running; disable every inv- key no live audit owns."""
         reaped: list[str] = []
         token: str | None = None
 
@@ -182,7 +182,7 @@ class Launcher:
         for state in self.keys.list(PREFIX):
             if state.name not in live and not state.disabled:
                 self.keys.disable(state.hash)
-                reaped.append(f"{state.name} (key had no live investigation)")
+                reaped.append(f"{state.name} (key had no live audit)")
         return reaped
 
 

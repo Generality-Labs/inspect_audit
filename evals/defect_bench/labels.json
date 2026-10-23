@@ -1,5 +1,5 @@
 {
-  "about": "What each audit check should conclude about each item of benchmark/short_answers.py. Kept outside the benchmark folder: the auditor is given that folder's code and each sample's metadata, and neither may carry the answers.",
+  "about": "What each investigation check should conclude about each item of benchmark/short_answers.py. Kept outside the benchmark folder: the investigator is given that folder's code and each sample's metadata, and neither may carry the answers.",
   "clean": {
     "gold-answer": "CORRECT",
     "answer-format": "SOUND",

@@ -17,7 +17,7 @@ from pydantic import TypeAdapter
 
 from ._findings import Findings, FindingsState, encoded, read_bundle, restore_bundle
 from ._image import view_image
-from ._report import InvestigationState, investigation_outcome, report_blocker
+from ._report import AuditState, audit_outcome, report_blocker
 
 
 @dataclass(frozen=True)
@@ -58,7 +58,7 @@ def load_publisher(name: str) -> Publisher:
 def publish_document(root: Path, publisher: Publisher) -> Tool:
     async def execute() -> str:
         """Build the report from final findings and preserve its output bundle."""
-        from ._investigation_workspace import persist
+        from ._audit_workspace import persist
 
         bundle = await restore_bundle(root)
         try:
@@ -85,19 +85,21 @@ def publish_document(root: Path, publisher: Publisher) -> Tool:
         location = str(destination)
         if (root / "artifacts.json").exists():
             location = await persist(root, destination, f"published/{destination.name}")
-        state = store_as(InvestigationState)
+        state = store_as(AuditState)
         state.published = location
         # Submission preserves missing work explicitly. A report does not turn it into coverage.
         from ._findings import Findings
         from ._register import Register, apply_reviews, select
-        from ._verdicts import AuditItemSkill
+        from ._verdicts import InvestigationItemSkill
 
         findings = Findings.model_validate(store_as(FindingsState).findings)
-        checks = TypeAdapter(dict[str, AuditItemSkill]).validate_python(findings.auditors["checks"])
-        register = Register.model_validate(
-            {"checks": list(checks), "samples": findings.auditors["samples"]}
+        checks = TypeAdapter(dict[str, InvestigationItemSkill]).validate_python(
+            findings.investigators["checks"]
         )
-        apply_reviews(register, findings.investigator.reviews, checks)
+        register = Register.model_validate(
+            {"checks": list(checks), "samples": findings.investigators["samples"]}
+        )
+        apply_reviews(register, findings.auditor.reviews, checks)
         unresolved = select(register, "missing", checks, None) or select(
             register, "unresolved", checks, None
         )
@@ -128,20 +130,20 @@ def publish_document(root: Path, publisher: Publisher) -> Tool:
 
 
 class PhaseTools:
-    """Expose investigation or publishing capabilities according to checkpointed phase."""
+    """Expose audit or publishing capabilities according to checkpointed phase."""
 
     def __init__(
-        self, root: Path, common: list[Tool], investigation: list[Tool], publisher: Publisher
+        self, root: Path, common: list[Tool], audit: list[Tool], publisher: Publisher
     ) -> None:
         self.root = root
         self.common = common
-        self.investigation = investigation
+        self.audit = audit
         self.publisher = publisher
         self.publishing: list[Tool] | None = None
 
     async def tools(self) -> list[Tool]:
-        if store_as(FindingsState).phase == "investigating":
-            return [*self.common, *self.investigation]
+        if store_as(FindingsState).phase == "auditing":
+            return [*self.common, *self.audit]
         if self.publishing is None:
             # Neither these skill descriptions nor their files enter the model's
             # workspace before submission. Resume resolves the same declared package.
@@ -160,7 +162,7 @@ def publish(
     output_dir: str = "./publications",
     instructions: str = "",
     box: str = "docker",
-    investigator_image: str | None = None,
+    auditor_image: str | None = None,
     token_limit: int | None = None,
 ) -> Task:
     """Publish an existing findings bundle, without loading the benchmark or launching jobs.
@@ -170,12 +172,12 @@ def publish(
         publisher: 'latex', 'gl' or an installed module:factory returning a Publisher.
         output_dir: Where immutable report bundles are saved.
         instructions: Presentation instructions for the publishing agent.
-        box: docker or k8s, independently of where the original investigation ran.
-        investigator_image: Optional published image for the Kubernetes workspace.
+        box: docker or k8s, independently of where the original audit ran.
+        auditor_image: Optional published image for the Kubernetes workspace.
         token_limit: Inspect token limit for this publishing run.
     """
-    from ._investigate import DEFAULT_INVESTIGATOR_IMAGE, docker_box
-    from ._investigation_workspace import configure, stage_inputs
+    from ._audit import DEFAULT_AUDITOR_IMAGE, docker_box
+    from ._audit_workspace import configure, stage_inputs
 
     source = Path(bundle).expanduser().resolve()
     if source.name == "findings.json" and source.is_file():
@@ -210,7 +212,7 @@ def publish(
         return solve
 
     async def continuing(state: AgentState) -> bool | str:
-        saved = store_as(InvestigationState)
+        saved = store_as(AuditState)
         if saved.published or saved.outcome == "blocked":
             return False
         return (
@@ -224,7 +226,7 @@ def publish(
     environment = (
         docker_box(root)
         if box == "docker"
-        else configure(root, investigator_image or DEFAULT_INVESTIGATOR_IMAGE)
+        else configure(root, auditor_image or DEFAULT_AUDITOR_IMAGE)
     )
     return Task(
         dataset=[
@@ -241,8 +243,8 @@ def publish(
             on_continue=continuing,
         ),
         sandbox=environment,
-        scorer=investigation_outcome(),
+        scorer=audit_outcome(),
         checkpoint=CheckpointConfig(sandbox_paths={"default": ["/workspace", "/inputs"]}),
         token_limit=token_limit,
-        metadata={"investigation_dir": str(root), "publisher": publisher},
+        metadata={"audit_dir": str(root), "publisher": publisher},
     )

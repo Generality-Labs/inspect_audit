@@ -59,19 +59,19 @@ def test_recorded_question_verdicts_round_trip_into_coverage(tmp_path, units):
     from inspect_audit._verdicts import (
         AssessmentUnits,
         Evidence,
-        audit_items,
+        investigation_items,
         item_scorer,
         record_verdict,
     )
 
     expected = units if units is not None else ["1"]
-    item = audit_items(["question-labels"])[0]
+    item = investigation_items(["question-labels"])[0]
     record = record_verdict([item])
 
     @solver
     def review():
         async def solve(state, generate):
-            store_as(AssessmentUnits).ids = expected  # what the auditor sets at sample start
+            store_as(AssessmentUnits).ids = expected  # what the investigator sets at sample start
             args = {
                 "item": "question-labels",
                 "grade": "NO_ISSUE_FOUND",

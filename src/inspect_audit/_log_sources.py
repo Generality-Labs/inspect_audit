@@ -48,7 +48,7 @@ def fetch_logs(logs: str | list[str]) -> str:
     anything else (a path, an `s3://` dir inspect reads natively) passes through.
     """
     if isinstance(logs, list):
-        combined = Path(tempfile.mkdtemp(prefix="audit_corpus_"))
+        combined = Path(tempfile.mkdtemp(prefix="investigation_corpus_"))
         for index, source in enumerate(logs):
             resolved = fetch_logs(source)
             files = (

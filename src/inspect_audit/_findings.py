@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from ._verdicts import Evidence
 
 if TYPE_CHECKING:
-    from ._investigate import Investigation
+    from ._audit import Audit
     from ._register import Register
 
 DRAFT = "/workspace/findings.json"
@@ -46,7 +46,7 @@ class Rating(BaseModel):
     evidence: list[Evidence] = Field(min_length=1)
 
 
-class InvestigatorFindings(BaseModel):
+class AuditorFindings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     summary: str = ""
     findings: list[Finding] = Field(default_factory=list)
@@ -59,23 +59,25 @@ class InvestigatorFindings(BaseModel):
 class Findings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     subject: dict[str, JsonValue] = Field(default_factory=dict)
-    auditors: dict[str, JsonValue] = Field(default_factory=lambda: {"checks": {}, "samples": {}})
-    investigator: InvestigatorFindings = Field(default_factory=InvestigatorFindings)
+    investigators: dict[str, JsonValue] = Field(
+        default_factory=lambda: {"checks": {}, "samples": {}}
+    )
+    auditor: AuditorFindings = Field(default_factory=AuditorFindings)
 
 
 class FindingsState(StoreModel):
     """Authoritative submission and manifest, carried by Inspect checkpoints."""
 
-    phase: Literal["investigating", "publishing"] = "investigating"
+    phase: Literal["auditing", "publishing"] = "auditing"
     findings: dict[str, Any] = Field(default_factory=dict)
     manifest: dict[str, Any] = Field(default_factory=dict)
     destination: str | None = None
     required_coverage: float | None = None
 
 
-def require_investigation() -> None:
-    if store_as(FindingsState).phase != "investigating":
-        raise ToolError("Findings are final. Investigation and experiment tools are disabled.")
+def require_audit() -> None:
+    if store_as(FindingsState).phase != "auditing":
+        raise ToolError("Findings are final. Audit and experiment tools are disabled.")
 
 
 def encoded(value: Any) -> bytes:
@@ -86,17 +88,17 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def auditor_results(register: "Register") -> dict[str, Any]:
-    from ._verdicts import audit_items
+def investigator_results(register: "Register") -> dict[str, Any]:
+    from ._verdicts import investigation_items
 
     return {
-        "checks": {s.name: s.model_dump(mode="json") for s in audit_items(register.checks)},
+        "checks": {s.name: s.model_dump(mode="json") for s in investigation_items(register.checks)},
         "samples": {
             sample: {
                 check: [
                     take.model_dump(mode="json", exclude_none=True)
                     for take in takes
-                    if take.by == "auditor"
+                    if take.by == "investigator"
                 ]
                 for check, takes in checks.items()
             }
@@ -106,8 +108,8 @@ def auditor_results(register: "Register") -> dict[str, Any]:
 
 
 async def sync_draft(register: "Register") -> None:
-    """Refresh collected auditor records without replacing the investigator's draft."""
-    require_investigation()
+    """Refresh collected investigator records without replacing the auditor's draft."""
+    require_audit()
     try:
         data = json.loads(await sandbox().read_file(DRAFT))
     except FileNotFoundError:
@@ -119,39 +121,39 @@ async def sync_draft(register: "Register") -> None:
     if not isinstance(data, dict):
         raise ToolError("findings.json must be an object")
     data["subject"] = register.subject
-    data["auditors"] = auditor_results(register)
+    data["investigators"] = investigator_results(register)
     await sandbox().write_file(DRAFT, encoded(data))
 
 
 def validate_draft(data: Any, register: "Register") -> Findings:
     draft = Findings.model_validate(data)
-    if not draft.investigator.summary.strip():
-        raise ValueError("The investigator summary must explain what the investigation established")
-    if draft.auditors != auditor_results(register) or draft.subject != register.subject:
+    if not draft.auditor.summary.strip():
+        raise ValueError("The auditor summary must explain what the audit established")
+    if draft.investigators != investigator_results(register) or draft.subject != register.subject:
         raise ValueError(
-            "Auditor records and subject must match the collected results; collect again to refresh them"
+            "Investigator records and subject must match the collected results; collect again to refresh them"
         )
     samples = set(register.samples)
-    for finding in draft.investigator.findings:
+    for finding in draft.auditor.findings:
         if set(finding.sample_ids) - samples:
             raise ValueError("A finding references samples outside the declared population")
         if not finding.issue.strip() or not finding.explanation.strip():
             raise ValueError("Findings need an issue and explanation")
-    from ._verdicts import audit_items
+    from ._verdicts import investigation_items
 
-    checks = {s.name: s for s in audit_items(register.checks)}
+    checks = {s.name: s for s in investigation_items(register.checks)}
     from ._register import apply_reviews
 
-    apply_reviews(register.model_copy(deep=True), draft.investigator.reviews, checks)
-    for review in draft.investigator.reviews:
+    apply_reviews(register.model_copy(deep=True), draft.auditor.reviews, checks)
+    for review in draft.auditor.reviews:
         if not review.explanation.strip():
             raise ValueError("Reviews need an explanation")
-    for rating in draft.investigator.ratings.values():
+    for rating in draft.auditor.ratings.values():
         if not rating.label.strip() or not rating.explanation.strip():
             raise ValueError("Ratings need a label and explanation")
-    observations = [e for finding in draft.investigator.findings for e in finding.evidence]
-    observations += [e for review in draft.investigator.reviews for e in review.evidence]
-    observations += [e for rating in draft.investigator.ratings.values() for e in rating.evidence]
+    observations = [e for finding in draft.auditor.findings for e in finding.evidence]
+    observations += [e for review in draft.auditor.reviews for e in review.evidence]
+    observations += [e for rating in draft.auditor.ratings.values() for e in rating.evidence]
     for evidence in observations:
         if not evidence.observed.strip() or not evidence.source.strip():
             raise ValueError("Evidence needs an observation and its source")
@@ -199,7 +201,7 @@ async def _artifact(root: Path, path: str) -> tuple[str, bytes]:
 
 async def freeze(root: Path, draft: Findings) -> Path:
     """Save primary observations, declared artifacts and a content manifest."""
-    from ._report import InvestigationRecord, job_addresses, log_address
+    from ._report import AuditRecord, job_addresses, log_address
 
     files: dict[str, bytes] = {"findings.json": encoded(draft.model_dump(mode="json"))}
     refs: list[dict[str, Any]] = []
@@ -226,7 +228,7 @@ async def freeze(root: Path, draft: Findings) -> Path:
                 "bytes": path.stat().st_size,
             }
         )
-    for path in dict.fromkeys(draft.investigator.artifacts):
+    for path in dict.fromkeys(draft.auditor.artifacts):
         if any(ref["source"] == path for ref in refs):
             continue
         name, content = await _artifact(root, path)
@@ -264,11 +266,11 @@ async def freeze(root: Path, draft: Findings) -> Path:
                 if path.startswith("/inputs/")
                 else "workspace/" + path.removeprefix("/workspace/")
             )
-            for path in draft.investigator.artifacts
+            for path in draft.auditor.artifacts
             if not any(ref["source"] == path for ref in refs)
         },
         "log_references": refs,
-        "jobs": store_as(InvestigationRecord).model_dump(mode="json")["jobs"],
+        "jobs": store_as(AuditRecord).model_dump(mode="json")["jobs"],
         "required_coverage": store_as(FindingsState).required_coverage,
     }
     destination = root / "submitted" / uuid4().hex
@@ -279,7 +281,7 @@ async def freeze(root: Path, draft: Findings) -> Path:
         target.write_bytes(content)
     await stage_bundle(destination)
     if (root / "artifacts.json").exists():
-        from ._investigation_workspace import persist
+        from ._audit_workspace import persist
 
         await persist(root, destination, "findings")
     state = store_as(FindingsState)
@@ -294,7 +296,7 @@ async def stage_bundle(bundle: Path) -> None:
     import io
     import tarfile
 
-    from ._investigation_workspace import write_into
+    from ._audit_workspace import write_into
 
     stream = io.BytesIO()
     with tarfile.open(fileobj=stream, mode="w:gz") as archive:
@@ -303,7 +305,7 @@ async def stage_bundle(bundle: Path) -> None:
 
 
 def read_bundle(bundle: Path) -> tuple[Findings, dict[str, Any]]:
-    """Validate a saved handoff without consulting an investigation's conversation."""
+    """Validate a saved handoff without consulting an audit's conversation."""
     manifest = json.loads((bundle / "manifest.json").read_text())
     if not isinstance(manifest, dict) or not isinstance(manifest.get("files"), dict):
         raise ValueError("Manifest must contain a files mapping")
@@ -371,7 +373,7 @@ async def restore_bundle(root: Path) -> Path:
 @tool(parallel=False)
 def submit_findings(
     root: Path,
-    investigation: "Investigation | None" = None,
+    audit: "Audit | None" = None,
     task: str | None = None,
     validate: Callable[[Findings], None] | None = None,
 ) -> Tool:
@@ -379,19 +381,19 @@ def submit_findings(
         """Validate and freeze /workspace/findings.json, then enter publishing.
 
         Finish and collect all child jobs first. Include the files needed for a
-        fresh publisher in investigator.artifacts. Submission cannot be reopened.
+        fresh publisher in auditor.artifacts. Submission cannot be reopened.
         """
         from ._register import load
         from .dispatch import FINISHED
 
-        lock = investigation.launch_lock if investigation else asyncio.Lock()
+        lock = audit.launch_lock if audit else asyncio.Lock()
         async with lock:
-            require_investigation()
-            if (task or (investigation and investigation.task)) and not load().checks:
+            require_audit()
+            if (task or (audit and audit.task)) and not load().checks:
                 raise ToolError("Start the sample population with start_register before submission")
-            if investigation:
-                for job in investigation.record().jobs:
-                    if await investigation.runs.status(job["run_id"]) not in FINISHED:
+            if audit:
+                for job in audit.record().jobs:
+                    if await audit.runs.status(job["run_id"]) not in FINISHED:
                         raise ToolError(
                             f"Finish or stop job {job['label']} before submitting findings"
                         )

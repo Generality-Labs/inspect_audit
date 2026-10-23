@@ -18,4 +18,4 @@ Missing metadata is shown as not recorded. Do not invent approvals or measuremen
 Call preview_report to compile, inspect report.pdf (rasterise its pages with pdftoppm
 if available), and revise prose as needed. Call publish_document to preserve the PDF,
 generated sources, template provenance and original findings bundle. TeX runs on the
-publishing host or its separate publishing image, never in this investigation box.
+publishing host or its separate publishing image, never in this audit box.

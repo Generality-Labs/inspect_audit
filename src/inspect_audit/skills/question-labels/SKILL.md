@@ -12,11 +12,11 @@ metadata:
 
 # Classify the question, not the model's answer
 
-Examine the question, acceptance rule, source, and available attempts. Audit the
+Examine the question, acceptance rule, source, and available attempts. Investigation the
 sample together so dependencies remain visible. The assessment units are listed
 under `assessment_ids` in /audit/item.json; their meaning comes from the operator notes and
 benchmark evidence, not a built-in dataset convention.
-Consult the other selected skills to investigate task specification, grading and
+Consult the other selected skills to audit task specification, grading and
 failure attribution. Reproduce consequential claims where the tools permit it.
 
 NO_ISSUE_FOUND means specified checks completed without finding a validity defect;
@@ -50,5 +50,5 @@ Explain the actual missing requirement or contradiction, not just its category.
 In scoring_effect distinguish a demonstrated effect on a recorded submission from
 an unmeasured consequence. A bad test does not prove every failed answer was correct.
 For unresolved work, name the next useful check or the specific blocker in next_check.
-Early labels preserve progress; continue investigating unresolved units even if another
+Early labels preserve progress; continue auditing unresolved units even if another
 unit already makes the sample's overall verdict DEFECT. Update labels as evidence improves.

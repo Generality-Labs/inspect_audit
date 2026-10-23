@@ -1,7 +1,6 @@
----
-name: eval-validity-review
-description: "Four dimensions of validity for one benchmark: whether its claims hold up, whether its name is accurate, whether a model can both succeed and fail at each sample, and whether the scorer measures ground truth rather than a proxy. Read it when you have the source in front of you and are deciding what to check."
----
+______________________________________________________________________
+
+## name: eval-validity-review description: "Four dimensions of validity for one benchmark: whether its claims hold up, whether its name is accurate, whether a model can both succeed and fail at each sample, and whether the scorer measures ground truth rather than a proxy. Read it when you have the source in front of you and are deciding what to check."
 
 # Evaluation Validity Review
 
@@ -12,40 +11,23 @@ This skill assesses whether an evaluation measures what it claims to measure. It
 3. **Dataset Validity** — Can models both succeed and fail at each sample given the available affordances?
 4. **Scoring Validity** — Does the scorer measure ground truth rather than proxies?
 
-Check the measurement claim early, then investigate the relevant mechanisms across the framework dimensions.
+Check the measurement claim early, then audit the relevant mechanisms across the framework dimensions.
 
 This review is read-only. It produces a report with findings and recommendations but does not modify evaluation code.
 
-**Important**: The phases below are guidelines, not a rigid checklist. Use your judgement throughout. If something feels off at any point — an explanation that doesn't quite add up, a mechanism that seems more complex than it needs to be, samples that feel generic rather than sourced — investigate it, even if no specific step tells you to. The goal is to determine whether the evaluation is sound, not to mechanically complete every listed check.
-
+**Important**: The phases below are guidelines, not a rigid checklist. Use your judgement throughout. If something feels off at any point — an explanation that doesn't quite add up, a mechanism that seems more complex than it needs to be, samples that feel generic rather than sourced — audit it, even if no specific step tells you to. The goal is to determine whether the evaluation is sound, not to mechanically complete every listed check.
 
 ## In this container
 
-This skill was written for people working inside a checkout of `inspect_evals`, with a
-user in the room to answer questions. You are in a container, on your own, and the
-source you are auditing is the read-only snapshot at the seed's `snapshot` path,
-`/inputs/source` when there is one (the seed also names the task and the commit; when
-`snapshot` is null, clone the repository the seed names into /workspace first). So:
+This skill was written for people working inside a checkout of `inspect_evals`, with a user in the room to answer questions. You are in a container, on your own, and the source you are investigating is the read-only snapshot at the seed's `snapshot` path, `/inputs/source` when there is one (the seed also names the task and the commit; when `snapshot` is null, clone the repository the seed names into /workspace first). So:
 
-- Wherever it says `src/inspect_evals/<eval_name>/`, read the task's own directory
-  inside `/inputs/source`, the unpacked snapshot of the repository at the audited
-  commit. `eval.yaml`, `report_config.yaml` and a per-eval README may or may not be in
-  it; use what is there and note what is missing.
-- Wherever it says to record something in `NOTES.md`, use `/workspace/journal.md`, and
-  put the claims inventory table there.
-- Wherever it says to ask the user, decide yourself and record the decision. There is
-  nobody to ask until you publish.
-- Ignore its output directory and its report format. Your report structure and your
-  findings register are fixed by the investigating skill and findings schema. The mapping is
-  at the end of this file.
-- You have something this skill assumes you do not: the recorded runs. It is written
-  for reviewing an eval before anyone runs it, so it reasons about what *could*
-  happen. When you can check the same question against the logs, do that as well; a
-  claim you can settle from 4,000 recorded attempts beats a claim you settle by
-  reading the scorer.
+- Wherever it says `src/inspect_evals/<eval_name>/`, read the task's own directory inside `/inputs/source`, the unpacked snapshot of the repository at the investigated commit. `eval.yaml`, `report_config.yaml` and a per-eval README may or may not be in it; use what is there and note what is missing.
+- Wherever it says to record something in `NOTES.md`, use `/workspace/journal.md`, and put the claims inventory table there.
+- Wherever it says to ask the user, decide yourself and record the decision. There is nobody to ask until you publish.
+- Ignore its output directory and its report format. Your report structure and your findings register are fixed by the auditing skill and findings schema. The mapping is at the end of this file.
+- You have something this skill assumes you do not: the recorded runs. It is written for reviewing an eval before anyone runs it, so it reasons about what *could* happen. When you can check the same question against the logs, do that as well; a claim you can settle from 4,000 recorded attempts beats a claim you settle by reading the scorer.
 
-Use the framework's severity definitions and examples. Support each rating with the
-extent and consequence of the finding; no finding automatically sets an overall grade.
+Use the framework's severity definitions and examples. Support each rating with the extent and consequence of the finding; no finding automatically sets an overall grade.
 
 ## Phase 1: Gather Context
 
@@ -131,7 +113,7 @@ Do not skip claims that seem obviously true. A fabricated evaluation will contai
 
 ### 2.2 Verify Claims
 
-For each claim, check it against the code and data. The categories below are guidance on what to look for — not every claim will fit neatly into a category, and you should investigate anything that seems wrong.
+For each claim, check it against the code and data. The categories below are guidance on what to look for — not every claim will fit neatly into a category, and you should audit anything that seems wrong.
 
 **Data provenance**:
 
@@ -160,7 +142,7 @@ After checking individual claims, consider the evaluation as a whole:
 - Are there signs that the eval was assembled without adequate understanding of its own mechanisms — e.g., documentation that describes capabilities the code doesn't implement, or test data that doesn't exercise the claimed functionality?
 - Is the complexity of the implementation justified by the evaluation's purpose, or does it appear to exist for its own sake?
 
-Trust your judgement here. If something feels off — overly complex mechanisms for a simple task, impressive-sounding math that doesn't connect to the scoring logic, data that seems too clean or generic — it is worth investigating further even if you can't immediately articulate why.
+Trust your judgement here. If something feels off — overly complex mechanisms for a simple task, impressive-sounding math that doesn't connect to the scoring logic, data that seems too clean or generic — it is worth auditing further even if you can't immediately articulate why.
 
 ### 2.4 Record Findings
 
@@ -173,10 +155,9 @@ Create a claims inventory table in `/workspace/journal.md`:
 
 For each consequential claim, write a brief explanation of what the claim states, what the evidence shows, and why it matters for the eval's validity.
 
-
 ## Phase 3: Assess Name Validity
 
-Determine whether the evaluation's name accurately represents what it measures. The checks below are common patterns to look for — use your judgement and investigate anything that seems misleading, even if it doesn't fit a listed pattern.
+Determine whether the evaluation's name accurately represents what it measures. The checks below are common patterns to look for — use your judgement and audit anything that seems misleading, even if it doesn't fit a listed pattern.
 
 ### 3.1 Identify the Claimed Scope
 
@@ -264,7 +245,7 @@ For each issue found, note:
 
 ## Phase 5: Assess Scoring Validity
 
-Determine whether the scorer measures actual task completion rather than proxies. As with other phases, the checks below are guidelines — investigate any aspect of the scoring that seems like it could produce misleading results.
+Determine whether the scorer measures actual task completion rather than proxies. As with other phases, the checks below are guidelines — audit any aspect of the scoring that seems like it could produce misleading results.
 
 ### 5.1 Identify the Ground Truth
 
@@ -296,10 +277,4 @@ For each issue found, note:
 
 ## Recording findings
 
-Use the canonical nine dimensions and check definitions in /workspace/analysis/framework.
-Claims and scope inform construct/content validity; question defects inform task
-specification; scorer defects inform grading; implementation defects inform harness
-or environment. Scaffolding and resource limits require their own assessment.
-Record evidence-backed findings in report/findings.json. Publication structure and
-severity definitions belong to the supplied framework. No alternate
-validity rating or automatic overall verdict follows from one finding.
+Use the canonical nine dimensions and check definitions in /workspace/analysis/framework. Claims and scope inform construct/content validity; question defects inform task specification; scorer defects inform grading; implementation defects inform harness or environment. Scaffolding and resource limits require their own assessment. Record evidence-backed findings in report/findings.json. Publication structure and severity definitions belong to the supplied framework. No alternate validity rating or automatic overall verdict follows from one finding.

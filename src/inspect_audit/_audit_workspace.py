@@ -1,4 +1,4 @@
-"""The investigator's box and the host's trusted copy of what is in it.
+"""The auditor's box and the host's trusted copy of what is in it.
 
 The box is the agent's only workspace, on Docker locally and on Kubernetes on Hawk
 alike. The host keeps the inputs it staged and the logs its tools collected, and
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def configure(root: Path, image: str) -> tuple[str, str]:
-    """The investigator's box as a Kubernetes pod: no mounts, no service account."""
+    """The auditor's box as a Kubernetes pod: no mounts, no service account."""
     values = {
         "services": {
             "default": {
@@ -40,7 +40,7 @@ def configure(root: Path, image: str) -> tuple[str, str]:
         },
         "automountServiceAccountToken": False,
     }
-    path = root / "investigator.values.yaml"
+    path = root / "auditor.values.yaml"
     path.write_text(yaml.safe_dump(values) + EGRESS_POLICY)
     return "k8s", str(path)
 

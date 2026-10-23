@@ -1,4 +1,4 @@
-"""The package's Inspect tasks, `audit` and `investigate`."""
+"""The package's Inspect tasks, `investigation` and `audit`."""
 
 import importlib
 import importlib.util
@@ -8,12 +8,12 @@ from typing import Any
 from inspect_ai import Task, task
 from inspect_ai.tool import WebSearchProviders
 
-from ._investigate import investigate as investigate
+from ._audit import audit as audit
 from ._log_sources import fetch_logs as fetch_logs
 from ._log_sources import log_files as log_files
 from ._prices import register_prices
 from ._publishing import publish as publish
-from ._task import audit_task
+from ._task import investigation_task
 
 
 def resolve_source(source: str | None) -> str | None:
@@ -27,7 +27,7 @@ def resolve_source(source: str | None) -> str | None:
 
 
 @task
-def audit(
+def investigation(
     task: str,
     samples: list[str] | str,
     checks: list[str],
@@ -43,24 +43,24 @@ def audit(
     confidential: bool = False,
     notes: str | None = None,
     search: WebSearchProviders | None = None,
-    auditor_image: str | None = None,
+    investigator_image: str | None = None,
     message_limit: int | None = None,
     time_limit: int | None = None,
     working_limit: int | None = None,
     model_prices: dict[str, dict[str, float]] | None = None,
 ) -> Task:
-    """Audit a benchmark task from inside its own samples (see `audit_task` in `_task`).
+    """Investigation a benchmark task from inside its own samples (see `investigation_task` in `_task`).
 
     Everything is declared: `samples` is a list of ids or the literal "all"; `logs` are
     `.eval` files or `hawk:<eval set id>`; `source` is the task's file, a directory, or
-    a module name. The auditor is the eval's own `--model`; `model_prices` registers
+    a module name. The investigator is the eval's own `--model`; `model_prices` registers
     prices for a job whose models Inspect does not price.
     """
     if isinstance(samples, str) and samples != "all":
         raise ValueError('samples must be a list of sample ids or the literal "all"')
     if model_prices:
         register_prices(model_prices)
-    return audit_task(
+    return investigation_task(
         task,
         samples=samples if samples == "all" else list(samples),
         checks=checks,
@@ -75,7 +75,7 @@ def audit(
         confidential=confidential,
         notes=notes,
         search=search,
-        auditor_image=auditor_image,
+        investigator_image=investigator_image,
         cost_limit=cost_limit,
         message_limit=message_limit,
         time_limit=time_limit,

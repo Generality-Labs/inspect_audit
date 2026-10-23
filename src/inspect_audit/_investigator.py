@@ -1,6 +1,6 @@
-"""The auditor: a solver run in place of the benchmark's own, inside its sample.
+"""The investigator: a solver run in place of the benchmark's own, inside its sample.
 
-Per sample it stages the item and the benchmark's source into the auditor's box,
+Per sample it stages the item and the benchmark's source into the investigator's box,
 binds the tools to this sample's live state -- their scorers, their boxes, the
 recorded attempts at this item -- and runs a react agent with the checks in scope.
 """
@@ -20,7 +20,7 @@ from inspect_ai.tool import Tool, ToolDef, WebSearchProviders, bash, skill, web_
 from inspect_ai.util import sample_limits, sandbox, store_as
 
 from . import prompts
-from ._compose import AUDITOR
+from ._compose import INVESTIGATOR
 from ._grade import grade_tool
 from ._image import view_image
 from ._logs import LogIndex, log_tools
@@ -30,14 +30,14 @@ from ._verdicts import (
     SKILLS,
     SUPPORT_SKILLS,
     AssessmentUnits,
-    AuditItemSkill,
+    InvestigationItemSkill,
     record_verdict,
-    submit_audit,
+    submit_investigation,
 )
 
-AUDIT_ROOT = "/audit"
+INVESTIGATION_ROOT = "/audit"
 ITEM_PROMPT = (
-    "Audit this benchmark item. It is described in /audit/item.json in your box; "
+    "Investigation this benchmark item. It is described in /audit/item.json in your box; "
     "the benchmark's source is under /audit/benchmark/."
 )
 NO_BOX = (
@@ -47,7 +47,7 @@ NO_BOX = (
 
 
 async def _write_media(messages: Sequence[ChatMessage]) -> list[Any]:
-    """The item's messages as text, images written into the auditor's box."""
+    """The item's messages as text, images written into the investigator's box."""
     rendered: list[Any] = []
     count = 0
     for message in messages:
@@ -59,8 +59,8 @@ async def _write_media(messages: Sequence[ChatMessage]) -> list[Any]:
             if isinstance(content, ContentImage) and content.image.startswith("data:"):
                 header, _, payload = content.image.partition(",")
                 extension = header.split("/")[-1].split(";")[0] or "png"
-                path = f"{AUDIT_ROOT}/media/{count}.{extension}"
-                await sandbox(AUDITOR).write_file(path, base64.b64decode(payload))
+                path = f"{INVESTIGATION_ROOT}/media/{count}.{extension}"
+                await sandbox(INVESTIGATOR).write_file(path, base64.b64decode(payload))
                 parts.append({"image": path})
                 count += 1
             elif isinstance(content, ContentImage):
@@ -77,8 +77,8 @@ async def stage_item(
     source: SourceCopy | None,
     redact: Sequence[str],
 ) -> None:
-    """Write the item and the benchmark's source into the auditor's box."""
-    box = sandbox(AUDITOR)
+    """Write the item and the benchmark's source into the investigator's box."""
+    box = sandbox(INVESTIGATOR)
     item = {
         "sample_id": str(state.sample_id),
         "input": await _write_media(state.messages),
@@ -91,11 +91,11 @@ async def stage_item(
         "assessment_ids": store_as(AssessmentUnits).ids,
         "benchmark_source": source.manifest() if source is not None else None,
     }
-    await box.write_file(f"{AUDIT_ROOT}/item.json", json.dumps(item, indent=2, default=str))
+    await box.write_file(f"{INVESTIGATION_ROOT}/item.json", json.dumps(item, indent=2, default=str))
     if source is not None:
-        await box.write_file(f"{AUDIT_ROOT}/benchmark.tar.gz", source.archive())
+        await box.write_file(f"{INVESTIGATION_ROOT}/benchmark.tar.gz", source.archive())
         unpacked = await box.exec(
-            ["tar", "-xzf", f"{AUDIT_ROOT}/benchmark.tar.gz", "-C", AUDIT_ROOT]
+            ["tar", "-xzf", f"{INVESTIGATION_ROOT}/benchmark.tar.gz", "-C", INVESTIGATION_ROOT]
         )
         if not unpacked.success:
             raise RuntimeError(f"could not unpack the benchmark source: {unpacked.stderr}")
@@ -108,9 +108,9 @@ def _bash(name: str, service: str | None, description: str, timeout: int) -> Too
 
 
 @solver
-def auditor(
+def investigator(
     *,
-    checks: list[AuditItemSkill],
+    checks: list[InvestigationItemSkill],
     their_scorers: list[Scorer],
     their_setup: list[Solver],
     their_samples: dict[str, Sample],
@@ -124,7 +124,7 @@ def auditor(
     search: WebSearchProviders | None = None,
     model: Model | None = None,
 ) -> Solver:
-    """Audit the sample this solver runs in, in place of the benchmark's solver."""
+    """Investigation the sample this solver runs in, in place of the benchmark's solver."""
     granted = {name for check in checks for name in check.tools}
     skill_dirs = [
         str(path)
@@ -132,16 +132,18 @@ def auditor(
         if path.is_dir() and path.name in ({c.name for c in checks} | set(SUPPORT_SKILLS))
     ]
     named = "\n".join(f"- `{c.name}`: {c.description}" for c in checks)
-    system = prompts.AUDITOR.format(
+    system = prompts.INVESTIGATOR.format(
         items=named,
-        confidential=prompts.AUDIT_CONFIDENTIAL.format(root=AUDIT_ROOT) if confidential else "",
-        notes=prompts.AUDIT_NOTES.format(notes=notes) if notes else "",
+        confidential=prompts.INVESTIGATION_CONFIDENTIAL.format(root=INVESTIGATION_ROOT)
+        if confidential
+        else "",
+        notes=prompts.INVESTIGATION_NOTES.format(notes=notes) if notes else "",
     )
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         if sample_limits().cost.limit is None:
             raise RuntimeError(
-                "the audit is capped in dollars: set cost_limit on the task or the eval"
+                "the investigation is capped in dollars: set cost_limit on the task or the eval"
             )
         sample_id = str(state.sample_id)
         their_sample = their_samples[sample_id]
@@ -150,10 +152,15 @@ def auditor(
         await stage_item(state, their_sample, source, redact)
 
         tools: list[Tool] = [
-            _bash("auditor_bash", AUDITOR, "Run bash in your own box (internet, /audit).", 300),
+            _bash(
+                "investigator_bash",
+                INVESTIGATOR,
+                "Run bash in your own box (internet, /audit).",
+                300,
+            ),
             skill(skill_dirs),
             record_verdict(checks),
-            view_image(AUDITOR),
+            view_image(INVESTIGATOR),
             *log_tools(index, sample_id),
         ]
         if search is not None:
@@ -173,12 +180,14 @@ def auditor(
                 tools.append(reset_tool(their_sample, their_setup, copy(state), generate))
 
         agent = react(
-            name="auditor",
-            description="Audits one benchmark item and records a verdict per check.",
+            name="investigator",
+            description="Investigations one benchmark item and records a verdict per check.",
             prompt=system,
             tools=tools,
             model=model,
-            submit=AgentSubmit(tool=submit_audit(checks), name="submit", keep_in_messages=True),
+            submit=AgentSubmit(
+                tool=submit_investigation(checks), name="submit", keep_in_messages=True
+            ),
         )
         prompt = ITEM_PROMPT if benchmark_box else ITEM_PROMPT + NO_BOX
         state.messages = [ChatMessageUser(content=prompt)]

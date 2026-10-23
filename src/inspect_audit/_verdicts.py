@@ -1,4 +1,4 @@
-"""Audit checks and their verdicts: skills as checks, `record_verdict`, `submit`, scorers.
+"""Investigation checks and their verdicts: skills as checks, `record_verdict`, `submit`, scorers.
 
 A check is a skill whose frontmatter declares the grades it can return, which of
 them need no evidence, the detail fields a verdict must carry and the benchmark
@@ -18,30 +18,30 @@ from pydantic import BaseModel, Field, JsonValue
 
 SKILLS = Path(__file__).parent / "skills"
 
-# support skills help with the work rather than defining it; an auditor is never
-# asked to investigate one of these
+# support skills help with the work rather than defining it; an investigator is never
+# asked to audit one of these
 SUPPORT_SKILLS = ("map-inspect-packages", "audit-framework")
 
-# skills for reading .eval files in a box: the investigator's, never the auditor's (the
-# auditor reads logs host-side), and never checks
+# skills for reading .eval files in a box: the auditor's, never the investigator's (the
+# investigator reads logs host-side), and never checks
 LOG_SKILLS = ("reading-logs", "analyzing-logs")
 
 
-class AuditItemSkill(BaseModel):
-    """One audit item, read from its skill's frontmatter."""
+class InvestigationItemSkill(BaseModel):
+    """One investigation item, read from its skill's frontmatter."""
 
     name: str
     description: str
     grades: list[str]
     flags: list[str] = Field(default_factory=list)
-    """Grades that mark a problem for the investigator to review."""
+    """Grades that mark a problem for the auditor to review."""
     unresolved: list[str] = Field(default_factory=list)
     """Grades that mean the check could not be settled. A descriptive check declares
     neither: its grades describe, they do not judge."""
     details: dict[str, str] = Field(default_factory=dict)
     """Detail fields this item requires with a verdict, as name -> description."""
     tools: list[str] = Field(default_factory=list)
-    """Benchmark tools this check grants the auditor: `reset` (rebuild the
+    """Benchmark tools this check grants the investigator: `reset` (rebuild the
     benchmark's boxes). `grade` needs no grant: it is granted whenever the
     benchmark has a grader."""
 
@@ -51,7 +51,7 @@ class AuditItemSkill(BaseModel):
 _GRANTABLE_TOOLS = frozenset({"grade", "reset"})
 
 
-def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> AuditItemSkill:
+def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> InvestigationItemSkill:
     """Read one item skill's frontmatter contract, loudly.
 
     The frontmatter drives grade validation, evidence rules and tool grants, so
@@ -64,7 +64,7 @@ def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> AuditI
         value = metadata.get(key, [])
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             raise ValueError(
-                f"audit skill {name!r}: frontmatter `{key}` must be a list of "
+                f"investigation skill {name!r}: frontmatter `{key}` must be a list of "
                 f"strings, got {value!r}"
             )
         return value
@@ -72,32 +72,34 @@ def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> AuditI
     grades = str_list("grades")
     if not grades:
         raise ValueError(
-            f"audit skill {name!r} declares no grades: its frontmatter needs "
+            f"investigation skill {name!r} declares no grades: its frontmatter needs "
             "`metadata.grades`, the exhaustive list of verdicts it can produce"
         )
     flags, unresolved = str_list("flags"), str_list("unresolved")
     for key, named in (("flags", flags), ("unresolved", unresolved)):
         if rogue := set(named) - set(grades):
             raise ValueError(
-                f"audit skill {name!r}: `{key}` names grades it does not "
+                f"investigation skill {name!r}: `{key}` names grades it does not "
                 f"declare: {', '.join(sorted(rogue))}"
             )
     if both := set(flags) & set(unresolved):
-        raise ValueError(f"audit skill {name!r}: {', '.join(sorted(both))} both flag and unresolve")
+        raise ValueError(
+            f"investigation skill {name!r}: {', '.join(sorted(both))} both flag and unresolve"
+        )
     tools = str_list("tools")
     if unknown := set(tools) - _GRANTABLE_TOOLS:
         raise ValueError(
-            f"audit skill {name!r}: `tools` grants unknown tools "
+            f"investigation skill {name!r}: `tools` grants unknown tools "
             f"{', '.join(sorted(unknown))} "
             f"(grantable: {', '.join(sorted(_GRANTABLE_TOOLS))})"
         )
     declared = metadata.get("details", {})
     if not isinstance(declared, dict):
         raise ValueError(
-            f"audit skill {name!r}: frontmatter `details` must be a mapping of "
+            f"investigation skill {name!r}: frontmatter `details` must be a mapping of "
             f"field name to description, got {declared!r}"
         )
-    return AuditItemSkill(
+    return InvestigationItemSkill(
         name=name,
         description=description,
         grades=grades,
@@ -109,7 +111,7 @@ def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> AuditI
 
 
 def effort_problem(model: object, reasoning_effort: object) -> str | None:
-    """Why an auditor's reasoning effort cannot apply, if it cannot.
+    """Why an investigator's reasoning effort cannot apply, if it cannot.
 
     There is nothing to bind it to without an explicit model (the eval's model is not
     resolved at task-construction time), and dropping the knob silently corrupts
@@ -123,8 +125,8 @@ def effort_problem(model: object, reasoning_effort: object) -> str | None:
     return None
 
 
-def audit_items(items: list[str] | None = None) -> list[AuditItemSkill]:
-    """The audit items an auditor can investigate, one skill each.
+def investigation_items(items: list[str] | None = None) -> list[InvestigationItemSkill]:
+    """The investigation items an investigator can audit, one skill each.
 
     Args:
         items: Restrict to these item names (defaults to all of them).
@@ -147,7 +149,7 @@ def audit_items(items: list[str] | None = None) -> list[AuditItemSkill]:
         unknown = set(items) - known
         if unknown:
             raise ValueError(
-                f"Unknown audit item(s) {', '.join(sorted(unknown))}. "
+                f"Unknown investigation item(s) {', '.join(sorted(unknown))}. "
                 f"Available: {', '.join(sorted(known))}."
             )
         read = [s for s in read if s.name in items]
@@ -162,7 +164,7 @@ class Evidence(BaseModel):
 
 
 class Verdict(BaseModel):
-    """An auditor's verdict on one audit item."""
+    """An investigator's verdict on one investigation item."""
 
     grade: str
     explanation: str = ""
@@ -180,7 +182,7 @@ class AssessmentUnits(StoreModel):
 
 
 class Verdicts(StoreModel):
-    """Recorded verdicts, keyed by audit item name."""
+    """Recorded verdicts, keyed by investigation item name."""
 
     verdicts: dict[str, Verdict] = Field(default_factory=dict)
     debrief: dict[str, list[Evidence]] = Field(default_factory=dict)
@@ -188,7 +190,7 @@ class Verdicts(StoreModel):
     rejected: dict[str, list[str]] = Field(default_factory=dict)
 
 
-def _details_help(skill: AuditItemSkill, sent: object) -> str:
+def _details_help(skill: InvestigationItemSkill, sent: object) -> str:
     """What record_verdict needs in `details`, said so a model can correct itself."""
     fields = "; ".join(f"{key}: {description}" for key, description in skill.details.items())
     shape = json.dumps(dict.fromkeys(skill.details, "..."))
@@ -201,7 +203,7 @@ def _details_help(skill: AuditItemSkill, sent: object) -> str:
 
 
 @tool
-def record_verdict(items: list[AuditItemSkill]) -> Tool:
+def record_verdict(items: list[InvestigationItemSkill]) -> Tool:
     lookup = {item.name: item for item in items}
 
     async def execute(
@@ -214,7 +216,7 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
         remarks: str,
         details: str,
     ) -> str:
-        """Record your verdict on one audit item.
+        """Record your verdict on one investigation item.
 
         Args:
             item: The check name, such as gold-answer, not the sample ID.
@@ -243,7 +245,7 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
         except ValueError:
             recorded_details = None
         if not isinstance(recorded_details, dict):
-            # 09-29 chess run: an auditor wrote prose summaries here 54 times against
+            # 09-29 chess run: an investigator wrote prose summaries here 54 times against
             # a bare "must encode a valid JSON object" and never recovered
             raise ToolError(_details_help(skill, details))
         if grade not in skill.grades:
@@ -348,19 +350,19 @@ def record_verdict(items: list[AuditItemSkill]) -> Tool:
 
 
 @tool
-def submit_audit(items: list[AuditItemSkill]) -> Tool:
+def submit_investigation(items: list[InvestigationItemSkill]) -> Tool:
     async def execute(
         environment_issues: list[Evidence],
         unresolved: list[Evidence],
         improvements: list[Evidence],
     ) -> str:
-        """Submit your audit, once every item has a recorded verdict.
+        """Submit your investigation, once every item has a recorded verdict.
 
         Args:
             environment_issues: Audit setup or tool failures, with tool-event sources.
             unresolved: Blocked or unreviewed checks and their evidence references.
             improvements: Suggested changes with supporting observations; distinguish
-                audit repairs from benchmark changes and state whether the intended
+                investigation repairs from benchmark changes and state whether the intended
                 task is preserved. These are proposals, not benchmark findings.
         """
         recorded = store_as(Verdicts).verdicts
@@ -381,12 +383,12 @@ def _no_verdict_reason(rejected: list[str]) -> str:
     """Why an item has no verdict, from its refusals and the sample's limits.
 
     09-29: two items came back NO_VERDICT with nothing but concordance metadata, and
-    the investigator blamed the wrong thing.
+    the auditor blamed the wrong thing.
     """
     reasons = [
         f"record_verdict refused it {len(rejected)} time(s); last: {rejected[-1]}"
         if rejected
-        else "the auditor never called record_verdict for this item"
+        else "the investigator never called record_verdict for this item"
     ]
     try:
         limits = sample_limits()
@@ -402,8 +404,8 @@ def _no_verdict_reason(rejected: list[str]) -> str:
     return "; ".join(reasons)
 
 
-def item_scorer(item: AuditItemSkill) -> Scorer:
-    """A scorer surfacing the auditor's verdict on one audit item."""
+def item_scorer(item: InvestigationItemSkill) -> Scorer:
+    """A scorer surfacing the investigator's verdict on one investigation item."""
     # inspect's own categorical metric, with the skill's grades declared so a
     # grade nobody earned still reports as 0.0 and the metric round-trips
     # through recompute_metrics(). a dynamic registry name gives each item its

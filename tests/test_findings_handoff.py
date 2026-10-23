@@ -11,12 +11,12 @@ from inspect_ai.util import Store, store_as
 from inspect_ai.util._store import init_subtask_store
 
 from inspect_audit._findings import (
+    AuditorFindings,
     Findings,
     FindingsState,
-    InvestigatorFindings,
-    auditor_results,
+    investigator_results,
     read_bundle,
-    require_investigation,
+    require_audit,
     validate_draft,
 )
 from inspect_audit._publishing import PhaseTools, Publisher, publish
@@ -25,7 +25,7 @@ from inspect_audit._verdicts import Evidence
 from inspect_audit.publishers.gl import validate_rows
 
 
-def test_draft_keeps_auditors_and_requires_explained_findings() -> None:
+def test_draft_keeps_investigators_and_requires_explained_findings() -> None:
     register = Register(
         subject={"task": "bench"},
         checks=["gold-answer"],
@@ -33,7 +33,7 @@ def test_draft_keeps_auditors_and_requires_explained_findings() -> None:
             "a": {
                 "gold-answer": [
                     Take(
-                        by="auditor",
+                        by="investigator",
                         label="UNVERIFIABLE",
                         explanation="No reference",
                         evidence=[Evidence(observed="reference missing", source="task.py")],
@@ -44,16 +44,16 @@ def test_draft_keeps_auditors_and_requires_explained_findings() -> None:
     )
     draft = Findings(
         subject=register.subject,
-        auditors=auditor_results(register),
-        investigator=InvestigatorFindings(summary="Reference missing"),
+        investigators=investigator_results(register),
+        auditor=AuditorFindings(summary="Reference missing"),
     )
     assert validate_draft(draft.model_dump(mode="json"), register) == draft
     data = draft.model_dump(mode="json")
-    data["auditors"]["samples"]["a"]["gold-answer"] = []
+    data["investigators"]["samples"]["a"]["gold-answer"] = []
     with pytest.raises(ValueError, match="collected results"):
         validate_draft(data, register)
     data = draft.model_dump(mode="json")
-    data["investigator"]["findings"] = [
+    data["auditor"]["findings"] = [
         {
             "issue": "missing reference",
             "explanation": "read source",
@@ -79,7 +79,7 @@ def test_phase_tools_are_not_advertised_before_submission() -> None:
     store_as(FindingsState).phase = "publishing"
     assert [ToolDef(t).name for t in asyncio.run(tools.tools())] == ["skill", "publish_document"]
     with pytest.raises(ToolError, match="final"):
-        require_investigation()
+        require_audit()
 
 
 @pytest.mark.parametrize(
@@ -99,13 +99,13 @@ def test_figure_values_are_actual_finite_numbers(rows) -> None:
 @pytest.mark.docker
 @pytest.mark.publishing
 def test_agent_submits_then_publishes_and_a_fresh_agent_reuses_the_bundle(tmp_path: Path) -> None:
-    from test_investigate import git_repo
+    from test_audit import git_repo
 
-    from inspect_audit._investigate import investigate
+    from inspect_audit._audit import audit
 
     repo = git_repo(tmp_path / "repo")
-    target = investigate(str(repo), output_dir=str(tmp_path / "runs"), publisher="gl")
-    root = Path(target.metadata["investigation_dir"])
+    target = audit(str(repo), output_dir=str(tmp_path / "runs"), publisher="gl")
+    root = Path(target.metadata["audit_dir"])
     assert not list((root / "work/report").iterdir())
     compose = tmp_path / "box.yaml"
     compose.write_text(
@@ -116,8 +116,8 @@ import json
 from pathlib import Path
 p=Path('/workspace/findings.json')
 d=json.loads(p.read_text())
-d['investigator']['summary']='The scripted investigation completed; these are synthetic test results.'
-d['investigator']['artifacts']=['/workspace/analysis/counts.json','/workspace/analysis/stacked.json','/workspace/analysis/histogram.json']
+d['auditor']['summary']='The scripted audit completed; these are synthetic test results.'
+d['auditor']['artifacts']=['/workspace/analysis/counts.json','/workspace/analysis/stacked.json','/workspace/analysis/histogram.json']
 Path('/workspace/analysis').mkdir(exist_ok=True)
 Path('/workspace/analysis/counts.json').write_text('[{"label":"Reviewed","value":1,"group":"Samples"}]')
 Path('/workspace/analysis/stacked.json').write_text(json.dumps([{'label':'Synthetic','segments':[{'name':'Reviewed','value':1,'tone':'good'}]}]))
@@ -128,7 +128,7 @@ PYCODE"""
 from pathlib import Path
 p=Path('/inputs/findings/findings.json')
 assert p.exists()
-Path('/workspace/report/report.md').write_text('# Synthetic audit\\n\\nThe submitted result is synthetic.\\n\\n{{figure:coverage}}\\n\\n{{figure:composition}}\\n\\n{{figure:distribution}}\\n')
+Path('/workspace/report/report.md').write_text('# Synthetic investigation\\n\\nThe submitted result is synthetic.\\n\\n{{figure:coverage}}\\n\\n{{figure:composition}}\\n\\n{{figure:distribution}}\\n')
 PYCODE"""
     model = get_model(
         "mockllm/model",
@@ -191,7 +191,7 @@ PYCODE"""
     assert not errors
     [bundle] = (root / "submitted").iterdir()
     findings, _manifest = read_bundle(bundle)
-    assert findings.investigator.summary.startswith("The scripted")
+    assert findings.auditor.summary.startswith("The scripted")
     [publication] = (root / "published").iterdir()
     assert (publication / "report.pdf").read_bytes().startswith(b"%PDF")
     assert "<svg" in (publication / "report.html").read_text()
@@ -205,7 +205,7 @@ PYCODE"""
     fresh = publish(
         str(bundle / "findings.json"), output_dir=str(tmp_path / "fresh"), publisher="gl"
     )
-    fresh_root = Path(fresh.metadata["investigation_dir"])
+    fresh_root = Path(fresh.metadata["audit_dir"])
     model = get_model(
         "mockllm/model",
         custom_outputs=[
@@ -236,20 +236,20 @@ PYCODE"""
 
 
 def test_submitted_phase_blocks_direct_job_launches(tmp_path: Path) -> None:
-    from inspect_audit._investigate import Investigation, ModelMenu
+    from inspect_audit._audit import Audit, ModelMenu
     from inspect_audit.dispatch import Job, LocalRuns
 
     init_subtask_store(Store())
     runs = LocalRuns(tmp_path / "children")
-    inv = Investigation(
+    inv = Audit(
         root=tmp_path,
         runs=runs,
         where="local",
         task="bench/task",
         task_package="bench",
-        audit_package="audit",
-        auditor_image="image",
-        menu=ModelMenu(auditors=[], subjects=["mockllm/model"], judges=[]),
+        investigation_package="investigation",
+        investigator_image="image",
+        menu=ModelMenu(investigators=[], subjects=["mockllm/model"], judges=[]),
         supplied=[],
     )
     store_as(FindingsState).phase = "publishing"
@@ -296,13 +296,13 @@ def test_bundle_rejects_unlisted_files_and_directory_symlinks(tmp_path: Path) ->
 def test_publishers_are_actual_inspect_skills(publisher: str, skill_name: str) -> None:
     from inspect_ai.tool import read_skills
 
-    from inspect_audit._investigate import INVESTIGATION_SKILLS
+    from inspect_audit._audit import AUDIT_SKILLS
     from inspect_audit._publishing import load_publisher
 
     skills = read_skills(load_publisher(publisher).skills)
     assert [skill.name for skill in skills] == [skill_name]
-    assert "writing" not in INVESTIGATION_SKILLS
-    assert "eval-report-workflow" not in INVESTIGATION_SKILLS
+    assert "writing" not in AUDIT_SKILLS
+    assert "eval-report-workflow" not in AUDIT_SKILLS
 
 
 @pytest.mark.docker
@@ -331,7 +331,7 @@ def test_submitted_bundle_restores_on_a_fresh_host_and_rejects_changed_evidence(
             await freeze(
                 root,
                 Findings(
-                    investigator=InvestigatorFindings(
+                    auditor=AuditorFindings(
                         summary="Synthetic", artifacts=["/workspace/table.json"]
                     )
                 ),
@@ -340,7 +340,7 @@ def test_submitted_bundle_restores_on_a_fresh_host_and_rejects_changed_evidence(
             saved.destination = None
             reconstructed = await restore_bundle(tmp_path / "fresh-host")
             findings, manifest = read_bundle(reconstructed)
-            assert findings.investigator.summary == "Synthetic"
+            assert findings.auditor.summary == "Synthetic"
             assert (
                 reconstructed / manifest["artifacts"]["/workspace/table.json"]
             ).read_text() == "[1, 2, 3]"
@@ -371,8 +371,8 @@ def test_ratings_require_explanations_and_primary_observations(change) -> None:
         "evidence": [{"observed": "observation", "source": "source"}],
         **change,
     }
-    data = Findings(investigator=InvestigatorFindings(summary="Summary")).model_dump(mode="json")
-    data["investigator"]["ratings"] = {"grading": rating}
+    data = Findings(auditor=AuditorFindings(summary="Summary")).model_dump(mode="json")
+    data["auditor"]["ratings"] = {"grading": rating}
     with pytest.raises(ValueError):
         validate_draft(data, register)
 
@@ -387,19 +387,19 @@ def test_progress_and_publication_agree_on_outstanding_work(
     from inspect_audit._findings import Review, encoded, sha256
     from inspect_audit._publishing import publish_document
     from inspect_audit._register import apply_reviews, select
-    from inspect_audit._report import InvestigationState
-    from inspect_audit._verdicts import audit_items
+    from inspect_audit._report import AuditState
+    from inspect_audit._verdicts import investigation_items
 
     init_subtask_store(Store())
     takes = (
-        [Take(by="auditor", label=grade, explanation="Observed in the worker log")]
+        [Take(by="investigator", label=grade, explanation="Observed in the worker log")]
         if grade is not None
         else []
     )
     register = Register(checks=["gold-answer"], samples={"a": {"gold-answer": takes}})
-    draft = Findings(auditors=auditor_results(register))
+    draft = Findings(investigators=investigator_results(register))
     if review_grade is not None:
-        draft.investigator.reviews = [
+        draft.auditor.reviews = [
             Review(
                 sample_id="a",
                 check="gold-answer",
@@ -408,10 +408,10 @@ def test_progress_and_publication_agree_on_outstanding_work(
                 evidence=[Evidence(observed="reference", source="source.py")],
             )
         ]
-    checks = {s.name: s for s in audit_items(register.checks)}
+    checks = {s.name: s for s in investigation_items(register.checks)}
     original = register.model_dump()
     reviewed = register.model_copy(deep=True)
-    apply_reviews(reviewed, draft.investigator.reviews, checks)
+    apply_reviews(reviewed, draft.auditor.reviews, checks)
     top = review_grade or grade
     expected_incomplete = top in (None, "UNVERIFIABLE", "NO_VERDICT")
     rows = select(reviewed, "missing", checks, None) or select(reviewed, "unresolved", checks, None)
@@ -446,7 +446,7 @@ def test_progress_and_publication_agree_on_outstanding_work(
         return output
 
     asyncio.run(publish_document(tmp_path, Publisher(skills=[], build=build))())
-    assert store_as(InvestigationState).outcome == (
+    assert store_as(AuditState).outcome == (
         "published_incomplete"
         if expected_incomplete or (coverage_requirement is not None and coverage_requirement > 0.75)
         else "published_complete"
@@ -456,10 +456,10 @@ def test_progress_and_publication_agree_on_outstanding_work(
 
 def test_whitespace_only_review_explanation_cannot_be_submitted() -> None:
     register = Register(checks=["gold-answer"], samples={"a": {"gold-answer": []}})
-    draft = Findings(auditors=auditor_results(register))
+    draft = Findings(investigators=investigator_results(register))
     data = draft.model_dump(mode="json")
-    data["investigator"]["summary"] = "Reference checked"
-    data["investigator"]["reviews"] = [
+    data["auditor"]["summary"] = "Reference checked"
+    data["auditor"]["reviews"] = [
         {
             "sample_id": "a",
             "check": "gold-answer",

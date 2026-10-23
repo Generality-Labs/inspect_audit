@@ -27,7 +27,7 @@ uv run python tests/compatibility/run_suite.py --output out/compatibility
 
 The commit must be pushed so Hawk can install it. Use `--ref FULL_SHA` to select another published commit. `--cases mirrorcode,harbor` selects cases. No additional concurrency limit is imposed; Hawk schedules the jobs.
 
-Gated cases need the token names declared in their specification. Locally, HF_TOKEN can come from the Hugging Face token cache. Values pass through Hawk's secrets API, not the checked-in YAML. The case's non-secret runner environment is explicit. In investigations, declare the same settings under `benchmark.environment` and on the investigator runner; the frozen launch policy applies them to every child job. An undeclared host variable is not forwarded.
+Gated cases need the token names declared in their specification. Locally, HF_TOKEN can come from the Hugging Face token cache. Values pass through Hawk's secrets API, not the checked-in YAML. The case's non-secret runner environment is explicit. In audits, declare the same settings under `benchmark.environment` and on the auditor runner; the frozen launch policy applies them to every child job. An undeclared host variable is not forwarded.
 
 For a non-blocking launch:
 
@@ -40,7 +40,7 @@ The suite saves job IDs immediately and resumes monitoring existing jobs rather 
 
 ## What a result means
 
-Each probe exercises the production auditor's staging, source access, attempt tools, benchmark shell where present, grading, verdict recording and submission. The single validity verdict is deliberately UNVERIFIABLE: these probes do not establish benchmark correctness.
+Each probe exercises the production investigator's staging, source access, attempt tools, benchmark shell where present, grading, verdict recording and submission. The single validity verdict is deliberately UNVERIFIABLE: these probes do not establish benchmark correctness.
 
 The separate compatibility score derives from actual tool results:
 
@@ -54,7 +54,7 @@ The separate compatibility score derives from actual tool results:
 
 Results are `out/compatibility/summary.json` and `summary.md`; native Inspect logs are downloaded under each case. The Hawk links retain runner/sandbox diagnostics when no eval log was written. Cleanup of every remote resource is not yet independently asserted by the summary.
 
-The baseline cases are SimpleQA, SimpleQA Verified, SciCode, GSM8K, BBH, AgentHarm, GPQA, HLE, MirrorCode and Terminal-Bench through Inspect Harbor. Additional cases cover Cybench (`dynastic` and `delulu`) and AgentDojo (one banking injection task). Each is a small selection, not exhaustive coverage. HLE's environment probe deliberately omits the known mismatching historical log so environment startup and log compatibility remain distinguishable. The original log mismatch still needs investigation. The Harbor case covers one sample-level Compose environment, not arbitrary heterogeneous multi-sample Harbor jobs.
+The baseline cases are SimpleQA, SimpleQA Verified, SciCode, GSM8K, BBH, AgentHarm, GPQA, HLE, MirrorCode and Terminal-Bench through Inspect Harbor. Additional cases cover Cybench (`dynastic` and `delulu`) and AgentDojo (one banking injection task). Each is a small selection, not exhaustive coverage. HLE's environment probe deliberately omits the known mismatching historical log so environment startup and log compatibility remain distinguishable. The original log mismatch still needs audit. The Harbor case covers one sample-level Compose environment, not arbitrary heterogeneous multi-sample Harbor jobs.
 
 ## CI
 
@@ -66,20 +66,20 @@ CI publishes the operational Markdown summary. Benchmark transcripts and gated d
 
 ## Before release
 
-Run the ordinary and Docker suites, then the external suite at the release candidate's exact commit. Review partial results and known failures individually. Passing functionality probes does not establish audit recall, false-positive rates, or report quality; those require separate labelled and paid agent evaluations.
+Run the ordinary and Docker suites, then the external suite at the release candidate's exact commit. Review partial results and known failures individually. Passing functionality probes does not establish investigation recall, false-positive rates, or report quality; those require separate labelled and paid agent evaluations.
 
 ## Initial validation and follow-up order (2026-10-22)
 
-The local suite completed with **275 tests passed**, including the Docker tests. A separate regression also verifies that a recorded conversation longer than the auditor's message limit can be reconstructed without changing that limit. Both PR CI gates passed at `b36e32c`.
+The local suite completed with **275 tests passed**, including the Docker tests. A separate regression also verifies that a recorded conversation longer than the investigator's message limit can be reconstructed without changing that limit. Both PR CI gates passed at `b36e32c`.
 
 The first external batches identified and led to fixes for:
 
 - Declared benchmark environment variables being lost in child jobs.
 - Hawk overriding the task model and displacing the scripted compatibility driver.
 - Recorded multiple-choice reasoning being treated as a bare answer letter.
-- A sample sandbox overriding the merged task sandbox and removing the auditor service.
+- A sample sandbox overriding the merged task sandbox and removing the investigator service.
 - Long grader JSON being truncated before the compatibility parser could read it.
-- Historical transcript reconstruction incorrectly hitting the auditor's message limit.
+- Historical transcript reconstruction incorrectly hitting the investigator's message limit.
 - Concurrent Hawk CLI authentication refreshes racing over the same local keyring records.
 
 GPQA, SciCode and MirrorCode passed after their fixes. GSM8K, BBH and the selected AgentHarm case passed in the initial functional batch. SimpleQA and HLE were partial because their model judges were intentionally blocked. Every inspected probe log recorded no external model calls. Native logs and earlier failures remain under their original output directories.
@@ -90,16 +90,16 @@ CORE-Bench is excluded from the active suite. Its case is retained under `tests/
 
 The complex-case expansion uses the unchanged probe runtime at `40c703d5f1ff968413ad79cd9b02733d14ed72cb` and inspect-evals at `49738b6412cf3215db7c9d3d4838fc58b6f422a2`. Both Cybench cases and AgentDojo passed on Hawk with only the scripted driver recorded in model events. Results and native logs are in `out/compatibility-complex-20261022/`.
 
-All three GDM in-house CTF cases are excluded from the active suite and retained under `tests/compatibility/unsupported/`. Their recorded failures follow. The `spray` case fails before execution: its attacker and target services use an `internal: true` network, while the added auditor service enables internet. Hawk grants internet per sandbox and refuses this combination because it cannot preserve the benchmark services' network isolation. Its isolation settings are not removed. `privesc_bash` independently fails because its Compose file declares `hostname: localhost`, while the converter accepts only the service name as hostname. It is retained as the `gdm-in-house-ctf-hostname` case. The separate `gdm-in-house-ctf-isolated` case uses native `privesc_7z`, which has `network_mode: none` and no custom hostname. Neither failure is worked around by rewriting benchmark settings. The hostname failure is recorded in `out/compatibility-complex-isolated-20261022/`; the 7z run is recorded separately in `out/compatibility-complex-isolated-7z-20261022/`. The first 7z attempt reached sandbox startup but failed when Docker Hub returned HTTP 500 while fetching an image layer; one identical retry is recorded in `out/compatibility-complex-isolated-7z-retry-20261022/`. That retry started the container and passed shell access, verdict recording and submission, but native grading failed: `SandboxEnvironment 'target_env' is not a recognized environment name`. The benchmark names `target_env` in its scorer and marks that service `x-default`; the Hawk/Kubernetes execution path does not expose it under the name the scorer requests. This remains a failing integration case, not a successful grading result.
+All three GDM in-house CTF cases are excluded from the active suite and retained under `tests/compatibility/unsupported/`. Their recorded failures follow. The `spray` case fails before execution: its attacker and target services use an `internal: true` network, while the added investigator service enables internet. Hawk grants internet per sandbox and refuses this combination because it cannot preserve the benchmark services' network isolation. Its isolation settings are not removed. `privesc_bash` independently fails because its Compose file declares `hostname: localhost`, while the converter accepts only the service name as hostname. It is retained as the `gdm-in-house-ctf-hostname` case. The separate `gdm-in-house-ctf-isolated` case uses native `privesc_7z`, which has `network_mode: none` and no custom hostname. Neither failure is worked around by rewriting benchmark settings. The hostname failure is recorded in `out/compatibility-complex-isolated-20261022/`; the 7z run is recorded separately in `out/compatibility-complex-isolated-7z-20261022/`. The first 7z attempt reached sandbox startup but failed when Docker Hub returned HTTP 500 while fetching an image layer; one identical retry is recorded in `out/compatibility-complex-isolated-7z-retry-20261022/`. That retry started the container and passed shell access, verdict recording and submission, but native grading failed: `SandboxEnvironment 'target_env' is not a recognized environment name`. The benchmark names `target_env` in its scorer and marks that service `x-default`; the Hawk/Kubernetes execution path does not expose it under the name the scorer requests. This remains a failing integration case, not a successful grading result.
 
-The complete external baseline at runtime commit `24d92b25ed654285e32079175e9943680857b0ce` passed all ten remaining cases. SimpleQA, SimpleQA Verified and HLE used declared mock judges. These results establish the exercised execution paths, not audit quality. The next order of work is:
+The complete external baseline at runtime commit `24d92b25ed654285e32079175e9943680857b0ce` passed all ten remaining cases. SimpleQA, SimpleQA Verified and HLE used declared mock judges. These results establish the exercised execution paths, not investigation quality. The next order of work is:
 
 1. Keep Harbor’s pinned runtime and native verifier execution covered by the suite.
 2. Provision the renewable Hawk CI identity ([#57](https://github.com/Generality-Labs/inspect_audit/issues/57)), then enable the weekly suite.
 3. Repeat the complete external suite when runtime code changes before treating it as a release gate.
-4. Run paid investigator pilots and inspect their transcripts separately from this execution gate. Then measure recall against human labels.
+4. Run paid auditor pilots and inspect their transcripts separately from this execution gate. Then measure recall against human labels.
 
-Checkpoint resume remains separate ([#55](https://github.com/Generality-Labs/inspect_audit/issues/55)). The standalone deterministic findings package and its CLI have been removed. The investigation register remains in the core package. Findings/report redesign is the next phase after execution tests.
+Checkpoint resume remains separate ([#55](https://github.com/Generality-Labs/inspect_audit/issues/55)). The standalone deterministic findings package and its CLI have been removed. The audit register remains in the core package. Findings/report redesign is the next phase after execution tests.
 
 ## Native Kubernetes fixture
 
@@ -107,13 +107,13 @@ Checkpoint resume remains separate ([#55](https://github.com/Generality-Labs/ins
 
 `tests/test_native_k8s.py` checks path and object configurations at task and sample level. It verifies that existing services, volumes, environment settings, resource limits, probes, extra resources and network grants are preserved. It also renders the resulting values with the real provider's Helm chart. Custom charts and other sandbox providers remain outside this adapter.
 
-At `1da184c9c6018d37794957f8153ad863444e9030`, the native fixture passed on Hawk ([run](https://viewer.hawk.hawk.generalitylabs.ai/eval-set/ia-api-free-native-k8s-20-1zjbdw4793cpfcj9)): staging, benchmark shell, real grading, verdict and submission all passed. The grade was `C`, and the only model recorded was `ia_probe/driver`. Native logs and the summary are under `out/compatibility-native-k8s-20261022/`. The ordinary suite passed 197 tests; both existing Docker audit lifecycle variants passed separately; type checking passed.
+At `1da184c9c6018d37794957f8153ad863444e9030`, the native fixture passed on Hawk ([run](https://viewer.hawk.hawk.generalitylabs.ai/eval-set/ia-api-free-native-k8s-20-1zjbdw4793cpfcj9)): staging, benchmark shell, real grading, verdict and submission all passed. The grade was `C`, and the only model recorded was `ia_probe/driver`. Native logs and the summary are under `out/compatibility-native-k8s-20261022/`. The ordinary suite passed 197 tests; both existing Docker investigation lifecycle variants passed separately; type checking passed.
 
 ## Add another eval
 
 Add a `*.eval-set.yaml` file under `tests/compatibility/cases`. There is no Python benchmark allowlist or fixed case count. Ordinary CI automatically validates every case against Hawk’s configuration model and checks its mock response fixtures. The heavy runner discovers the same directory and installs each case’s declared packages on Hawk.
 
-Declare the benchmark package at a pinned revision, its registered task, the source module to import, task arguments, sample selection, and any required environment or secrets. Copy an existing case with a similar environment. The probe runs the production auditor tools and the benchmark’s actual setup and scorer. An unsupported benchmark reports the stage that failed.
+Declare the benchmark package at a pinned revision, its registered task, the source module to import, task arguments, sample selection, and any required environment or secrets. Copy an existing case with a similar environment. The probe runs the production investigator tools and the benchmark’s actual setup and scorer. An unsupported benchmark reports the stage that failed.
 
 For a tool-calling judge, put its exact canned response in the case specification:
 

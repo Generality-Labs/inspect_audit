@@ -1,9 +1,9 @@
 """`grade`: the benchmark's own scorers on an edited transcript, against the live box.
 
-The audit runs inside the benchmark's own sample, so its target, its choices and its
+The investigation runs inside the benchmark's own sample, so its target, its choices and its
 sandbox are the real ones. Grading is a copy of that live state with the transcript
 swapped for the one under test, handed to each of the benchmark's scorers -- the
-same thing Inspect's `score()` does, against scorers the audit task does not itself
+same thing Inspect's `score()` does, against scorers the investigation task does not itself
 run (its own scorers report verdicts).
 """
 
@@ -41,7 +41,7 @@ def grade_tool(
     scorers: list[Scorer],
     index: LogIndex | None,
 ) -> Tool:
-    """`grade` bound to one audited sample."""
+    """`grade` bound to one investigated sample."""
     sample_id = str(state.sample_id)
     initial_store = deepcopy(dict(state.store.items()))
     initial_metadata = deepcopy(state.metadata)
@@ -72,7 +72,7 @@ def grade_tool(
             model = state.model
             if eval_id:
                 if index is None:
-                    raise ToolError("No logs were declared for this audit.")
+                    raise ToolError("No logs were declared for this investigation.")
                 found = index.find(sample_id, eval_id, epoch)
                 model = ModelName(found.model)
                 recorded = read_eval_log_sample(
@@ -100,7 +100,7 @@ def grade_tool(
                 output = ModelOutput.from_content(model=AUTHORED, content=answer)
                 provenance = "authored"
 
-            # Loading historical messages is not a turn in the auditor's conversation.
+            # Loading historical messages is not a turn in the investigator's conversation.
             # Exempt reconstruction only; scoring keeps the active cost/time limits.
             with message_limit(None):
                 graded = TaskState(

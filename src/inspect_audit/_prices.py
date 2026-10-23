@@ -66,8 +66,8 @@ def register_prices(table: dict[str, dict[str, float]]) -> list[str]:
 def openrouter_prices(models: list[str]) -> dict[str, dict[str, float]]:
     """OpenRouter's published per-million prices, by the name Inspect runs each under.
 
-    An audit job caps each item's spend with Inspect's cost limit, which needs a
-    price for the auditor; the job registers these itself.
+    An investigation job caps each item's spend with Inspect's cost limit, which needs a
+    price for the investigator; the job registers these itself.
     """
     request = urllib.request.Request(
         f"{OPENROUTER}/models", headers={"User-Agent": "inspect_audit"}

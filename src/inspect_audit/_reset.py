@@ -21,7 +21,7 @@ from inspect_ai.util._sandbox.context import (
 )
 from inspect_ai.util._sandbox.docker.docker import DockerSandboxEnvironment
 
-from ._compose import AUDITOR
+from ._compose import INVESTIGATOR
 
 RECREATE_TIMEOUT = 900
 
@@ -42,7 +42,7 @@ async def rebuild(
     listed = await async_subprocess([*base, "config", "--services"], timeout=120)
     if not listed.success:
         raise ToolError(f"could not list the benchmark's services: {listed.stderr.strip()}")
-    services = [s for s in listed.stdout.split() if s and s != AUDITOR]
+    services = [s for s in listed.stdout.split() if s and s != INVESTIGATOR]
     recreated = await async_subprocess(
         [*base, "up", "-d", "--force-recreate", "--no-deps", "--wait", *services],
         timeout=RECREATE_TIMEOUT,
@@ -66,7 +66,7 @@ async def rebuild(
             script = f"#!/usr/bin/env bash\n\n{script}"
         await setup_sandbox_environment(script.encode("utf-8"), environments)
     # their setup solvers may prepare the box too; run them on a copy so whatever
-    # they do to the conversation stays off the audit's state
+    # they do to the conversation stays off the investigation's state
     for solver in setup_solvers:
         await solver(copy(state), generate)
     return services
@@ -75,7 +75,7 @@ async def rebuild(
 def reset_tool(
     their_sample: Sample, setup_solvers: list[Solver], state: TaskState, generate: Generate
 ) -> Tool:
-    """`reset` bound to one audited sample."""
+    """`reset` bound to one investigated sample."""
 
     @tool
     def reset() -> Tool:

@@ -1,4 +1,4 @@
-"""Derisker for the port: run the benchmark's own task with the auditor as its solver.
+"""Derisker for the port: run the benchmark's own task with the investigator as its solver.
 
 Proves, against a real Docker sandbox and with no model calls, the four things the
 port rests on:
@@ -9,9 +9,9 @@ port rests on:
 3. `grade` -- a copy of the live state with an edited transcript, handed to their
    scorer -- uses their real grader against their live box;
 4. a full rebuild of their box (force-recreate, re-lay files, re-run setup)
-   restores a box the auditor broke, and leaves ours untouched.
+   restores a box the investigator broke, and leaves ours untouched.
 
-Their scorer must never grade the auditor itself: Inspect's end-of-sample scoring
+Their scorer must never grade the investigator itself: Inspect's end-of-sample scoring
 runs our scorer only.
 """
 
@@ -34,7 +34,7 @@ import toy
 
 pytestmark = pytest.mark.docker
 
-AUDITOR = "auditor"
+INVESTIGATOR = "investigator"
 INTERNET = [
     "python",
     "-c",
@@ -43,10 +43,10 @@ INTERNET = [
 
 
 def wrap_compose(their_compose: Path, out: Path) -> Path:
-    """The package's own audit sandbox: their compose plus the auditor's box."""
-    from inspect_audit._compose import audit_compose
+    """The package's own investigation sandbox: their compose plus the investigator's box."""
+    from inspect_audit._compose import investigation_compose
 
-    spec = audit_compose(their_compose, stage=out)
+    spec = investigation_compose(their_compose, stage=out)
     assert isinstance(spec.config, str)
     return Path(spec.config)
 
@@ -55,7 +55,7 @@ async def grade(state: TaskState, scorers: list[Scorer], answer: str) -> list[Sc
     """Their scorers on a copy of the live state with the answer as the completion."""
     graded = copy(state)
     graded.messages = [*state.messages, ChatMessageAssistant(content=answer)]
-    graded.output = ModelOutput.from_content(model="auditor/authored", content=answer)
+    graded.output = ModelOutput.from_content(model="investigator/authored", content=answer)
     return [await s(graded, state.target) for s in scorers]
 
 
@@ -107,13 +107,15 @@ def derisk(scorers: list[Scorer], samples: dict[str, Sample]):
         seeded = await box.exec(["cat", "/work/input.txt", "/work/setup_done"])
         checks["files_and_setup"] = seeded.success and "ready" in seeded.stdout
         checks["their_setup_solver"] = bool(state.store.get("their_setup_ran"))
-        theirs, ours = await container_id("default"), await container_id(AUDITOR)
+        theirs, ours = await container_id("default"), await container_id(INVESTIGATOR)
         checks["two_boxes"] = theirs != ours
         default_name = (await box.connection()).container or ""
         checks["their_default_is_default"] = "default" in default_name
 
         # 2. network: ours has internet, theirs does not
-        checks["auditor_internet"] = (await sandbox(AUDITOR).exec(INTERNET, timeout=30)).success
+        checks["investigator_internet"] = (
+            await sandbox(INVESTIGATOR).exec(INTERNET, timeout=30)
+        ).success
         checks["their_box_offline"] = not (await box.exec(INTERNET, timeout=30)).success
 
         # 3. grade with their real grader against their live box
@@ -131,7 +133,7 @@ def derisk(scorers: list[Scorer], samples: dict[str, Sample]):
         # 4. full rebuild restores it; ours untouched
         await rebuild(samples[str(state.sample_id)])
         checks["rebuilt_new_container"] = await container_id("default") != theirs
-        checks["auditor_untouched"] = await container_id(AUDITOR) == ours
+        checks["investigator_untouched"] = await container_id(INVESTIGATOR) == ours
         checks["grade_after_rebuild_is_C"] = (await grade(state, scorers, state.target.text))[
             0
         ].value == "C"
@@ -155,18 +157,18 @@ def test_the_flattened_compose_converts_for_k8s(tmp_path: Path) -> None:
     from k8s_sandbox.compose import convert_compose_to_helm_values
 
     values = convert_compose_to_helm_values(wrap_compose(toy.COMPOSE, tmp_path))
-    assert set(values["services"]) == {"default", AUDITOR}
+    assert set(values["services"]) == {"default", INVESTIGATOR}
     assert values["services"]["default"]["networkIsolated"] is True
 
 
-def test_auditor_runs_inside_the_benchmark_task(tmp_path: Path) -> None:
+def test_investigator_runs_inside_the_benchmark_task(tmp_path: Path) -> None:
     their = toy.toy()
     assert isinstance(their.scorer, list)
     their_scorers = list(their.scorer)
     samples = {str(s.id): s for s in toy.samples()}
     flat = wrap_compose(toy.COMPOSE, tmp_path)
 
-    audit: Task = task_with(
+    investigation: Task = task_with(
         their,
         solver=derisk(their_scorers, samples),
         scorer=checks_scorer(),
@@ -180,7 +182,9 @@ def test_auditor_runs_inside_the_benchmark_task(tmp_path: Path) -> None:
         epochs=1,
     )
     toy.SCORER_CALLS.clear()
-    [log] = eval(audit, model="mockllm/model", log_dir=str(tmp_path / "logs"), display="none")
+    [log] = eval(
+        investigation, model="mockllm/model", log_dir=str(tmp_path / "logs"), display="none"
+    )
 
     assert log.status == "success", log.error
     assert log.samples is not None and len(log.samples) == 2
@@ -189,5 +193,5 @@ def test_auditor_runs_inside_the_benchmark_task(tmp_path: Path) -> None:
         score = next(iter((sample.scores or {}).values()))
         failed = [k for k, v in (score.metadata or {}).items() if not v]
         assert score.value == "PASS", f"sample {sample.id} failed: {failed} ({score.metadata})"
-    # their grader ran only for our four grade calls per sample, never on the auditor
+    # their grader ran only for our four grade calls per sample, never on the investigator
     assert sorted(toy.SCORER_CALLS) == sorted(["a"] * 4 + ["b"] * 4)

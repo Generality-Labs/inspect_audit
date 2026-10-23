@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "inspect_audit"
 dynamic = ["version"]
-description = "Benchmark validity auditing for Inspect AI evals"
+description = "Benchmark validity investigating for Inspect AI evals"
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "James Mann", email = "james.mann@generality.org" }]
@@ -17,7 +17,7 @@ dependencies = [
     "pillow>=10.0",
     "openai>=1.0",
     # k8s_sandbox passes newline-terminated Helm output to Version.parse;
-    # semver 3.1 rejects that output before any audit sample can start.
+    # semver 3.1 rejects that output before any investigation sample can start.
     "semver>=3.0,<3.1",
 ]
 

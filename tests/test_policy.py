@@ -10,7 +10,7 @@ from inspect_audit.dispatch import (
     hawk_supports_restricted,
     validate_environment,
 )
-from inspect_audit.dispatch.policy import Execution, InvestigationAuthorizer, LaunchPolicy, Models
+from inspect_audit.dispatch.policy import AuditAuthorizer, Execution, LaunchPolicy, Models
 
 
 def test_execution_declares_its_credentials_by_backend() -> None:
@@ -26,13 +26,13 @@ def test_restricted_mode_on_a_hawk_without_it_is_refused_at_construction() -> No
         HawkRuns("https://hawk.test", credential_mode="restricted")
 
 
-def _authoriser() -> InvestigationAuthorizer:
-    return InvestigationAuthorizer(
+def _authoriser() -> AuditAuthorizer:
+    return AuditAuthorizer(
         LaunchPolicy(
             task="bench",
             task_package="bench-pkg",
-            audit_package="audit-pkg",
-            auditor_image="img",
+            investigation_package="investigation-pkg",
+            investigator_image="img",
             models=Models(subjects=("m",)),
             checks=("c",),
             configuration_json="{}",
@@ -58,14 +58,14 @@ def test_declared_environment_is_frozen_and_applied_to_child_configs() -> None:
         update={"environment_json": '{"MC_IMAGE_NAME":"ghcr.io/jrh-mann/mirrorcode"}'}
     )
     job = Job(label="probe", task="bench", package="bench-pkg", models=["m"])
-    approved = InvestigationAuthorizer(policy).authorise(job, "benchmark", set())
+    approved = AuditAuthorizer(policy).authorise(job, "benchmark", set())
     assert approved.environment == {"MC_IMAGE_NAME": "ghcr.io/jrh-mann/mirrorcode"}
     assert hawk_config(approved)["runner"]["environment"] == approved.environment
     approved.environment["MC_IMAGE_NAME"] = "changed"
     assert "changed" not in policy.environment_json
     job.environment = {"MC_IMAGE_NAME": "changed"}
     with pytest.raises(ToolError, match="environment must match"):
-        InvestigationAuthorizer(policy).authorise(job, "benchmark", set())
+        AuditAuthorizer(policy).authorise(job, "benchmark", set())
 
 
 @pytest.mark.parametrize(

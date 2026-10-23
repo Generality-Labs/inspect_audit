@@ -1,9 +1,8 @@
----
-name: investigate-dataset
-description: "How to look at the items themselves rather than the code that loads them: raw schema, missing fields, duplicates, distributions, and what record_to_sample does to each record on the way to a sample. Read it when a question is about the data."
----
+______________________________________________________________________
 
-# Investigate Dataset
+## name: investigate-dataset description: "How to look at the items themselves rather than the code that loads them: raw schema, missing fields, duplicates, distributions, and what record_to_sample does to each record on the way to a sample. Read it when a question is about the data."
+
+# Audit Dataset
 
 This workflow helps you explore and understand datasets used in evaluations. It covers HuggingFace datasets, CSV files, and JSON/JSONL files.
 
@@ -11,13 +10,7 @@ This workflow helps you explore and understand datasets used in evaluations. It 
 
 ## In this container
 
-The dataset loading code is in the read-only snapshot at the seed's `snapshot` path,
-`/inputs/source` when there is one. Downloading
-the dataset itself needs network access, which the box may not have; if it fails, work
-from the items recorded in the supplied logs instead, and say in the report that you
-read the items as run rather than as published. The two are not always the same thing,
-and the difference is worth a check either way: an item's text in the log is what the
-model saw, and an item's text on HuggingFace is what the benchmark claims to be.
+The dataset loading code is in the read-only snapshot at the seed's `snapshot` path, `/inputs/source` when there is one. Downloading the dataset itself needs network access, which the box may not have; if it fails, work from the items recorded in the supplied logs instead, and say in the report that you read the items as run rather than as published. The two are not always the same thing, and the difference is worth a check either way: an item's text in the log is what the model saw, and an item's text on HuggingFace is what the benchmark claims to be.
 
 Ignore `uv run`, `tests/utils/`, and anything that assumes an `inspect_evals` checkout.
 
@@ -59,7 +52,7 @@ load_json_dataset("https://example.com/file.jsonl", eval_name="myeval", ...)
 
 ### 2. Load the Raw Dataset
 
-For investigation, load the raw data directly (not through Inspect's `sample_fields` transformation). Use standard `datasets.load_dataset()` for HuggingFace, `pd.read_csv()` for CSV, or `pd.read_json()` for JSON/JSONL. For gated datasets, ensure `HF_TOKEN` is set or run `huggingface-cli login`.
+For audit, load the raw data directly (not through Inspect's `sample_fields` transformation). Use standard `datasets.load_dataset()` for HuggingFace, `pd.read_csv()` for CSV, or `pd.read_json()` for JSON/JSONL. For gated datasets, ensure `HF_TOKEN` is set or run `huggingface-cli login`.
 
 ### 3. Explore Structure and Quality
 

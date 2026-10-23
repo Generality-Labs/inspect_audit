@@ -12,11 +12,11 @@ OPENROUTER = "https://openrouter.ai/api/v1"
 
 
 async def key_balance(hawk_api_url: str | None, openrouter: bool) -> list[str]:
-    """What the model keys this investigation spends on have left, as their owners say.
+    """What the model keys this audit spends on have left, as their owners say.
 
-    Calls made as a Hawk user (the investigator in a Hawk pod, jobs run on Hawk)
+    Calls made as a Hawk user (the auditor in a Hawk pod, jobs run on Hawk)
     bill to that user's key, which Hawk reports. Calls made on OPENROUTER_API_KEY
-    (the investigator in a local box, local jobs) bill to that key, which OpenRouter
+    (the auditor in a local box, local jobs) bill to that key, which OpenRouter
     reports. Which applies is declared by the caller; nothing is computed here.
     """
 

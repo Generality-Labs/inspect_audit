@@ -1,4 +1,4 @@
-"""Log sources an audit can be pointed at, resolved before anything reads them."""
+"""Log sources an investigation can be pointed at, resolved before anything reads them."""
 
 import urllib.request
 from pathlib import Path

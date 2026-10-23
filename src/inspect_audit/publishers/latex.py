@@ -58,7 +58,7 @@ def tex(value: object) -> str:
 
 def validate(findings: Findings) -> None:
     definitions = json.loads(REGISTRY.read_text())["dimensions"]
-    ratings = findings.investigator.ratings
+    ratings = findings.auditor.ratings
     if (
         "overall" not in ratings
         or ratings["overall"].label not in "ABCD"
@@ -70,7 +70,7 @@ def validate(findings: Findings) -> None:
     for key, rating in ratings.items():
         if key != "overall" and (key not in definitions or rating.label not in ASSESSMENTS):
             raise ValueError(f"Unknown framework criterion or assessment: {key}={rating.label}")
-    for finding in findings.investigator.findings:
+    for finding in findings.auditor.findings:
         if finding.criterion not in definitions:
             raise ValueError(
                 "Each LaTeX finding needs a framework criterion, e.g. C or C.1, before submission"
@@ -86,12 +86,12 @@ def source(
     dimensions = {k: v for k, v in definitions.items() if "." not in k}
     if set(prose.dimensions) - set(dimensions):
         raise ValueError("Prose dimension keys must be A-I")
-    ratings = findings.investigator.ratings
+    ratings = findings.auditor.ratings
     rows = TypeAdapter(dict[str, dict[str, list[dict[str, Any]]]]).validate_python(
-        findings.auditors["samples"]
+        findings.investigators["samples"]
     )
     samples = len(rows)
-    audited = sum(any(takes for takes in checks.values()) for checks in rows.values())
+    investigated = sum(any(takes for takes in checks.values()) for checks in rows.values())
 
     def assessment(key: str) -> str:
         return ASSESSMENTS[ratings[key].label] if key in ratings else ASSESSMENTS["Not assessed"]
@@ -142,7 +142,7 @@ def source(
             field("Title", findings.subject.get("task", "Evaluation audit"))
             + field("Report no.", manifest["files"]["findings.json"]["sha256"][:12]),
         ),
-        box("Executive Summary", tex(findings.investigator.summary)),
+        box("Executive Summary", tex(findings.auditor.summary)),
         box(
             "Traceability",
             field("Prepared by", "Automated audit")
@@ -205,7 +205,7 @@ def source(
         box("Scope of Report", tex(prose.setup)),
         box(
             "Run Setup",
-            field("Samples", f"{audited}/{samples} selected samples have auditor results")
+            field("Samples", f"{investigated}/{samples} selected samples have investigator results")
             + field("Jobs", len(manifest.get("jobs", []))),
         ),
         box(
@@ -225,7 +225,7 @@ def source(
                 or "Not recorded"
             ),
         ),
-        box("Limitations", tex("\n\n".join(findings.investigator.limitations) or "None recorded.")),
+        box("Limitations", tex("\n\n".join(findings.auditor.limitations) or "None recorded.")),
         box(
             "Log references",
             r"\par ".join(
@@ -258,7 +258,7 @@ def source(
             r"\dimensionoverview{" + key + "}{" + explanation(letter) + "}{" + contributions + "}",
             tex(prose.dimensions.get(letter, "")),
         ]
-        for finding in findings.investigator.findings:
+        for finding in findings.auditor.findings:
             if finding.criterion.split(".")[0] != letter:
                 continue
             # Contribution findings use A.n; holistic findings retain sequential F-n.

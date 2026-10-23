@@ -14,7 +14,7 @@ def outcomes(messages: Sequence[ChatMessage], expected: dict[str, bool]) -> dict
     stages: dict[str, str] = {}
     errors: dict[str, str] = {}
     for stage, tool, applicable in [
-        ("sample_and_source", "auditor_bash", True),
+        ("sample_and_source", "investigator_bash", True),
         ("attempt_index", "attempts", expected["logs"]),
         ("transcript", "read_attempt", expected["logs"]),
         ("benchmark_shell", "benchmark_bash", expected["benchmark_box"]),

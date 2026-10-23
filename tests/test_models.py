@@ -13,7 +13,7 @@ from inspect_ai.util import Store
 from inspect_audit._prices import prices_for_models
 from inspect_audit.dispatch import COMPLETE, FINISHED, Job, LocalRuns, hawk_config
 from inspect_audit.dispatch.policy import (
-    InvestigationAuthorizer,
+    AuditAuthorizer,
     LaunchPolicy,
     Models,
     PolicyStore,
@@ -62,9 +62,9 @@ def test_direct_and_router_routes_are_distinct_permissions() -> None:
     policy = LaunchPolicy(
         task=None,
         task_package=None,
-        audit_package=None,
-        auditor_image="image",
-        models=Models(investigator=("openrouter/openai/model",)),
+        investigation_package=None,
+        investigator_image="image",
+        models=Models(auditor=("openrouter/openai/model",)),
         checks=(),
         configuration_json="{}",
     )
@@ -79,14 +79,14 @@ def test_model_settings_are_frozen_and_applied_by_the_authorizer() -> None:
     policy = LaunchPolicy(
         task="bench",
         task_package="bench",
-        audit_package="audit",
-        auditor_image="image",
+        investigation_package="investigation",
+        investigator_image="image",
         models=Models(subjects=(name,)),
         checks=(),
         model_configs_json=canonical({name: configured.model_dump(mode="json", exclude_none=True)}),
         configuration_json="{}",
     )
-    authorizer = InvestigationAuthorizer(policy)
+    authorizer = AuditAuthorizer(policy)
     job = Job(label="native", task="bench", package="bench", models=[name])
     approved = authorizer.authorise(job, "benchmark", set())
     assert approved.model_configs == {name: configured}
@@ -204,29 +204,29 @@ def test_recorded_judge_settings_are_kept(fixture_log: str, tmp_path: Path) -> N
     assert indexed.judge_configs == {"grader": configured}
 
 
-def test_audit_judge_configuration_is_applied_and_cannot_be_supplied_by_the_agent() -> None:
+def test_investigation_judge_configuration_is_applied_and_cannot_be_supplied_by_the_agent() -> None:
     name = "mockllm/grader"
     configured = ModelConfig(model=name, config=GenerateConfig(temperature=0.4))
     policy = LaunchPolicy(
         task="bench/task",
         task_package="bench-pkg",
-        audit_package="audit-pkg",
-        auditor_image="image",
-        models=Models(auditors=("mockllm/auditor",), judges=(name,)),
+        investigation_package="investigation-pkg",
+        investigator_image="image",
+        models=Models(investigators=("mockllm/investigator",), judges=(name,)),
         checks=("gold-answer",),
         model_configs_json=canonical({name: configured.model_dump(mode="json", exclude_none=True)}),
         configuration_json="{}",
     )
-    authorizer = InvestigationAuthorizer(policy)
+    authorizer = AuditAuthorizer(policy)
     job = Job(
-        label="audit",
-        task="inspect_audit/audit",
-        package="audit-pkg",
+        label="investigation",
+        task="inspect_audit/investigation",
+        package="investigation-pkg",
         extra_packages=["bench-pkg"],
-        models=["mockllm/auditor"],
+        models=["mockllm/investigator"],
         task_args={
             "task": "bench/task",
-            "auditor_image": "image",
+            "investigator_image": "image",
             "source": "bench.task",
             "checks": ["gold-answer"],
             "samples": ["1"],
@@ -234,14 +234,14 @@ def test_audit_judge_configuration_is_applied_and_cannot_be_supplied_by_the_agen
             "cost_limit": 0.1,
         },
     )
-    approved = authorizer.authorise(job, "audit", set())
+    approved = authorizer.authorise(job, "investigation", set())
     assert approved.task_args["judge_configs"] == {
         "grader": configured.model_dump(mode="json", exclude_none=True)
     }
     assert "judge_configs" not in job.task_args
     job.task_args["judge_configs"] = {"grader": {"model": name}}
     with pytest.raises(ToolError, match="outside the launch contract"):
-        authorizer.authorise(job, "audit", set())
+        authorizer.authorise(job, "investigation", set())
 
 
 def test_logs_with_different_judge_settings_are_refused(fixture_log: str, tmp_path: Path) -> None:

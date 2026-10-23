@@ -48,7 +48,7 @@ jobs:
       - name: PR container and child-job lifecycle gate
         timeout-minutes: 15
         if: github.event_name == 'pull_request'
-        run: uv run pytest -m docker tests/test_audit.py::test_an_audit_runs_inside_the_benchmark tests/test_lifecycle.py
+        run: uv run pytest -m docker tests/test_investigation.py::test_an_investigation_runs_inside_the_benchmark tests/test_lifecycle.py
       - name: Pytest (docker)
         if: github.event_name != 'pull_request'
         run: uv run pytest -m docker

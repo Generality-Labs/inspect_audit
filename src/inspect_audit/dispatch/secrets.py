@@ -47,10 +47,10 @@ def management_key() -> str:
     )
 
 
-def investigator_refresh_token() -> str:
-    """The investigator user's Hawk refresh token, from a `hawk login` as that user."""
+def auditor_refresh_token() -> str:
+    """The auditor user's Hawk refresh token, from a `hawk login` as that user."""
     return fetch(
-        "investigator refresh token",
-        command_var="INSPECT_AUDIT_INVESTIGATOR_TOKEN_COMMAND",
-        env_var="INSPECT_AUDIT_INVESTIGATOR_REFRESH_TOKEN",
+        "auditor refresh token",
+        command_var="INSPECT_AUDIT_AUDITOR_TOKEN_COMMAND",
+        env_var="INSPECT_AUDIT_AUDITOR_REFRESH_TOKEN",
     )

@@ -1,4 +1,4 @@
-"""The investigator's box, and the host's trusted copy of what is in it."""
+"""The auditor's box, and the host's trusted copy of what is in it."""
 
 import asyncio
 import json
@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from inspect_audit import _investigation_workspace as workspace
-from inspect_audit._investigate import investigate
+from inspect_audit import _audit_workspace as workspace
+from inspect_audit._audit import audit
 
 
-def _remote_root(tmp_path, base="memory://audit-test/artifacts"):
+def _remote_root(tmp_path, base="memory://investigation-test/artifacts"):
     workspace.configure(tmp_path, "image@sha256:abc")
     (tmp_path / "artifacts.json").write_text(
         json.dumps({"artifact_dir": base, "sample_uuid": "sample"})
@@ -29,18 +29,21 @@ def test_persistence_keeps_nested_files_and_versions_publications(tmp_path):
         (source / "nested/evidence.json").write_text("{}")
         (source / name).write_text(version)
         destination = asyncio.run(workspace.persist(root, source, f"published/{version}"))
-        assert destination == f"memory://audit-test/artifacts/sample/published/{version}"
+        assert destination == f"memory://investigation-test/artifacts/sample/published/{version}"
         with fsspec.open(destination + "/nested/evidence.json") as file:
             assert file.read() == b"{}"
     fs = fsspec.filesystem("memory")
-    assert not fs.exists("/audit-test/artifacts/sample/published/v2/fig-old.png")
+    assert not fs.exists("/investigation-test/artifacts/sample/published/v2/fig-old.png")
 
 
 @pytest.mark.parametrize(
     ("key", "acted_on"),
     [
         # hawk 3.6.0 job_status_updated processors: what Hawk acts on when it appears
-        ("evals/chess-audit-sol6-20260925/artifacts/s/published/p/_inputs/logs/gemini.eval", True),
+        (
+            "evals/chess-investigation-sol6-20260925/artifacts/s/published/p/_inputs/logs/gemini.eval",
+            True,
+        ),
         ("evals/run/artifacts/s/state/jobs/downloads/pilot/run.eval", True),
         ("evals/run/.models.json", True),
         ("evals/run/eval-set.json", True),
@@ -50,7 +53,7 @@ def test_persistence_keeps_nested_files_and_versions_publications(tmp_path):
         ("scans/run/scanner/_summary.json", True),
         ("scans/run/scanner/results.parquet", True),
         ("scans/run/scanner/notes.md", False),
-        ("audit-inputs/anything.eval", False),
+        ("investigation-inputs/anything.eval", False),
     ],
 )
 def test_the_upload_guard_matches_what_hawk_acts_on(key, acted_on):
@@ -86,27 +89,27 @@ def test_an_upload_hawk_would_act_on_writes_nothing(tmp_path, monkeypatch):
 def test_a_k8s_box_is_a_pod_with_nothing_mounted(monkeypatch, tmp_path):
     """The box is declared; nothing about where this process runs decides it."""
     monkeypatch.setenv("HAWK_JOB_ID", "set-but-irrelevant")
-    assert investigate(repo="https://example.org/b.git", output_dir=str(tmp_path)).sandbox.type == (
+    assert audit(repo="https://example.org/b.git", output_dir=str(tmp_path)).sandbox.type == (
         "docker"
     )
-    task = investigate(
+    task = audit(
         repo="https://example.org/benchmark.git",
         revision="abc123",
         output_dir=str(tmp_path),
         box="k8s",
         hawk_api_url="https://hawk.example",
-        artifact_dir="s3://bucket/test-investigation/artifacts",
+        artifact_dir="s3://bucket/test-audit/artifacts",
     )
     assert task.sandbox.type == "k8s"
     values = yaml.safe_load(Path(task.sandbox.config).read_text())
     assert "volumes" not in values["services"]["default"]
     assert values["automountServiceAccountToken"] is False
-    root = Path(task.metadata["investigation_dir"])
+    root = Path(task.metadata["audit_dir"])
     assert json.loads((root / "artifacts.json").read_text())["artifact_dir"].startswith("s3://")
 
 
 def test_a_docker_box_is_a_container_with_nothing_mounted(tmp_path):
-    task = investigate(repo="https://example.org/benchmark.git", output_dir=str(tmp_path))
+    task = audit(repo="https://example.org/benchmark.git", output_dir=str(tmp_path))
     assert task.sandbox.type == "docker"
     compose = yaml.safe_load(Path(task.sandbox.config).read_text())
     assert "volumes" not in compose["services"]["default"]

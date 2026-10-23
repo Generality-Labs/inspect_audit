@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-REGISTRY = Path(__file__).parent / "investigation/framework.json"
+REGISTRY = Path(__file__).parent / "audit/framework.json"
 
 
 def framework_definitions(analysis: Path) -> dict[str, dict[str, str]]:

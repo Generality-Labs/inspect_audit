@@ -47,18 +47,22 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
         "models": [group(m) for m in job.models],
         "model_roles": {role: group(m) for role, m in job.model_roles.items()} or None,
         "epochs": job.epochs,
-        # a failed child is reported, not retried behind the investigator's back
+        # a failed child is reported, not retried behind the auditor's back
         "retry_attempts": 0,
         "runner": {"environment": validate_environment(job.environment)},
     }
     if restricted:
         # Judges selected through task arguments are outside the eval model grid.
-        judges = (job.task_args.get("judge") or {}) if job.task == "inspect_audit/audit" else {}
+        judges = (
+            (job.task_args.get("judge") or {}) if job.task == "inspect_audit/investigation" else {}
+        )
         if judges:
             config["additional_models"] = [group(str(m)) for m in dict.fromkeys(judges.values())]
-        sources = (job.task_args.get("logs") or []) if job.task == "inspect_audit/audit" else []
+        sources = (
+            (job.task_args.get("logs") or []) if job.task == "inspect_audit/investigation" else []
+        )
         if any(not str(source).startswith("hawk:") for source in sources):
-            raise ValueError("restricted audit jobs require Hawk transcript sources")
+            raise ValueError("restricted investigation jobs require Hawk transcript sources")
         ids = list(dict.fromkeys(s.removeprefix("hawk:") for s in sources))
         if any(not sid or "," in sid for sid in ids):
             raise ValueError("declare each Hawk transcript source as a separate hawk:<id>")
@@ -156,7 +160,7 @@ class HawkRuns:
         self.credential_mode = credential_mode
         self.secrets = dict(secrets or {})
         if credential_mode == "restricted" and not hawk_supports_restricted():
-            # refused now, not at the first child job an hour into an investigation
+            # refused now, not at the first child job an hour into an audit
             raise RuntimeError(
                 "restricted credentials need Hawk 4 (restricted children, declared "
                 "transcripts); this Hawk client predates them: declare credential_mode: user"
@@ -177,7 +181,7 @@ class HawkRuns:
 
         restricted = self.credential_mode == "restricted"
         settings = hawk_config(job, restricted=restricted)
-        # the job's own code may read Hawk (an audit fetching hawk: logs); Hawk does
+        # the job's own code may read Hawk (an investigation fetching hawk: logs); Hawk does
         # not tell a runner where its API is
         settings["runner"]["environment"]["HAWK_API_URL"] = self.login.api_url
         config = EvalSetConfig.model_validate(settings)
@@ -243,9 +247,9 @@ class HawkRuns:
             await client.stop_eval_set(run_id)
 
 
-# Launcher delivery: installing an investigation's key and submitting as the investigator user
+# Launcher delivery: installing an audit's key and submitting as the auditor user
 
-SECRET_NAME = "INVESTIGATOR_OPENROUTER_KEY"
+SECRET_NAME = "AUDITOR_OPENROUTER_KEY"
 
 
 class HawkDelivery:
@@ -266,14 +270,14 @@ class HawkDelivery:
         return await HawkLogin(self.api_url).access_token()
 
     async def install(self, operator_token: str, key: str, secret_name: str = SECRET_NAME) -> None:
-        """Make `key` the investigator user's provider key: middleman's admin secret store."""
+        """Make `key` the auditor user's provider key: middleman's admin secret store."""
         from hawk.cli import middleman
 
         path = f"/admin/secrets/provider-keys/{secret_name}"
         await middleman.request("put", path, operator_token, data={"value": key})
 
-    def investigator_access_token(self, refresh_token: str) -> str:
-        """Exchange the investigator user's refresh token at Hawk's identity provider."""
+    def auditor_access_token(self, refresh_token: str) -> str:
+        """Exchange the auditor user's refresh token at Hawk's identity provider."""
         body = urllib.parse.urlencode(
             {
                 "grant_type": "refresh_token",
@@ -290,11 +294,11 @@ class HawkDelivery:
             return str(json.load(response)["access_token"])
 
     async def submit(self, config: dict[str, Any], refresh_token: str) -> str:
-        """Submit the investigation's eval set as the investigator user; Hawk's id back."""
+        """Submit the audit's eval set as the auditor user; Hawk's id back."""
         from hawk.client import HawkClient
         from hawk.core.types import EvalSetConfig
 
-        token = self.investigator_access_token(refresh_token)
+        token = self.auditor_access_token(refresh_token)
         async with HawkClient(token=token, api_url=self.api_url) as client:
             created = await client.create_eval_set(
                 EvalSetConfig.model_validate(config), refresh_token=refresh_token
@@ -302,7 +306,7 @@ class HawkDelivery:
         return created["eval_set_id"]
 
     async def running(self, eval_set_id: str, operator_token: str) -> bool:
-        """Whether Hawk still runs this investigation: unknown to Hawk counts as not."""
+        """Whether Hawk still runs this audit: unknown to Hawk counts as not."""
         from hawk.client import HawkClient
 
         async with HawkClient(token=operator_token, api_url=self.api_url) as client:

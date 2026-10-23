@@ -1,6 +1,6 @@
-# The auditor's image for Kubernetes sandboxes, where images must be pullable rather
-# than built in place. Mirrors the generated docker sandbox, minus the audited task's
-# pinned packages (those vary per task; the auditor reads them from the staged files).
+# The investigator's image for Kubernetes sandboxes, where images must be pullable rather
+# than built in place. Mirrors the generated docker sandbox, minus the investigated task's
+# pinned packages (those vary per task; the investigator reads them from the staged files).
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -11,5 +11,5 @@ RUN pip install --no-cache-dir inspect-ai==0.3.266 pandas pyarrow pillow scipy s
 # Fail the image build if the standard log-analysis stack is incomplete.
 RUN python -c "import pandas, pyarrow, PIL, scipy, sympy; from inspect_ai.analysis import samples_df"
 
-WORKDIR /audit
+WORKDIR /investigation
 CMD ["sleep", "infinity"]

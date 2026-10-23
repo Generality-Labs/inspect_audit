@@ -1,4 +1,4 @@
-"""The launcher: a capped key per investigation, revoked in every case."""
+"""The launcher: a capped key per audit, revoked in every case."""
 
 import asyncio
 from pathlib import Path
@@ -55,7 +55,7 @@ class FakeHawk:
     async def submit(self, config: dict[str, Any], refresh_token: str) -> str:
         if self.fail_at == "submit":
             raise RuntimeError("hawk refused the config")
-        assert refresh_token == "investigator-refresh"
+        assert refresh_token == "auditor-refresh"
         self.submitted.append(config)
         self.live.add(config["eval_set_id"])
         return str(config["eval_set_id"])
@@ -66,11 +66,11 @@ class FakeHawk:
 
 def _launcher(tmp_path: Path, hawk: FakeHawk | None = None) -> tuple[Launcher, FakeKeys, FakeHawk]:
     keys, hawk = FakeKeys(), hawk or FakeHawk()
-    launcher = Launcher(keys, hawk, Records(tmp_path), lambda: "investigator-refresh")
+    launcher = Launcher(keys, hawk, Records(tmp_path), lambda: "auditor-refresh")
     return launcher, keys, hawk
 
 
-def test_an_investigation_gets_its_own_capped_key_installed_then_launched(tmp_path: Path) -> None:
+def test_an_audit_gets_its_own_capped_key_installed_then_launched(tmp_path: Path) -> None:
     launcher, keys, hawk = _launcher(tmp_path)
     record = asyncio.run(launcher.start({"name": "inv"}, 20.0, "simpleqa"))
     assert record.id.startswith("inv-simpleqa-") and record.stage == "running"
@@ -122,7 +122,7 @@ def test_finish_records_the_spend_and_can_be_repeated(tmp_path: Path) -> None:
 def test_reap_finishes_what_has_stopped_and_disables_keys_nobody_owns(tmp_path: Path) -> None:
     launcher, keys, hawk = _launcher(tmp_path)
     alive = asyncio.run(launcher.start({}, 10.0, "alive"))
-    # an investigation that ended while the launcher was away
+    # an audit that ended while the launcher was away
     hawk.live.clear()
     # a key minted elsewhere, or left by a lost record
     keys.create("inv-orphan-9999", 2.0)
@@ -132,15 +132,15 @@ def test_reap_finishes_what_has_stopped_and_disables_keys_nobody_owns(tmp_path: 
     assert Records(tmp_path).load(alive.id).stage == "finished"
 
 
-def test_reap_leaves_a_running_investigation_alone(tmp_path: Path) -> None:
+def test_reap_leaves_a_running_audit_alone(tmp_path: Path) -> None:
     launcher, keys, _ = _launcher(tmp_path)
     record = asyncio.run(launcher.start({}, 10.0, "busy"))
     assert asyncio.run(launcher.reap()) == []
     assert not keys.get(record.key_hash).disabled  # type: ignore[arg-type]
 
 
-def test_one_investigation_at_a_time(tmp_path: Path) -> None:
-    """One investigator user holds one key; a second launch would share it."""
+def test_one_audit_at_a_time(tmp_path: Path) -> None:
+    """One auditor user holds one key; a second launch would share it."""
     launcher, _, _ = _launcher(tmp_path)
     first = asyncio.run(launcher.start({}, 10.0, "one"))
     with pytest.raises(RuntimeError, match=f"{first.id} is still running"):

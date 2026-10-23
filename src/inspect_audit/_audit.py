@@ -1,6 +1,6 @@
-"""The investigator: a react agent in its own box, launching benchmark and audit jobs.
+"""The auditor: a react agent in its own box, launching benchmark and investigation jobs.
 
-An investigation is one Inspect task. Its agent works in one box, with the inputs
+An audit is one Inspect task. Its agent works in one box, with the inputs
 the host staged there. Jobs it launches run through `dispatch`, on Hawk or locally,
 and, when configured to share one capped OpenRouter key, bill to that key. Its
 limit bounds model spending across those calls. Other provider routes have their
@@ -40,9 +40,9 @@ from ._image import view_image
 from ._log_sources import fetch_logs, is_remote_logs
 from ._prices import prices_for_models, register_prices
 from ._report import (
-    InvestigationRecord,
-    InvestigationState,
-    investigation_outcome,
+    AuditRecord,
+    AuditState,
+    audit_outcome,
     operator_turn,
     report_blocker,
 )
@@ -50,10 +50,10 @@ from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS
 from .dispatch import FINISHED, STUCK, HawkRuns, Job, LocalRuns, Runs, validate_environment
 from .dispatch.packages import git_package_spec, own_package_spec
 from .dispatch.policy import (
-    AuditScope,
+    AuditAuthorizer,
     Benchmark,
     Execution,
-    InvestigationAuthorizer,
+    InvestigationScope,
     LaunchPolicy,
     Models,
     Permissions,
@@ -67,21 +67,21 @@ from .dispatch.spend import key_balance
 
 logger = getLogger(__name__)
 
-ASSETS = Path(__file__).parent / "investigation"
+ASSETS = Path(__file__).parent / "audit"
 
 # Ours first, then the vendored ones, adapted for a container with no user in it and no
-# `hawk` binary. See investigation/skills/VENDORED.md for provenance and what changed.
-DEFAULT_AUDITOR_IMAGE = (
+# `hawk` binary. See audit/skills/VENDORED.md for provenance and what changed.
+DEFAULT_INVESTIGATOR_IMAGE = (
     "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
     "63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa"
 )
-DEFAULT_INVESTIGATOR_IMAGE = (
+DEFAULT_AUDITOR_IMAGE = (
     "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
     "d21b285bc4ce2f2d34084c2ae382ab5a6996704dbb8d58d1199a1d1925fa71fa"
 )
 
-INVESTIGATION_SKILLS = (
-    "investigating",
+AUDIT_SKILLS = (
+    "auditing",
     "running-jobs",
     "eval-validity-review",
     "investigate-dataset",
@@ -89,21 +89,21 @@ INVESTIGATION_SKILLS = (
     "check-trajectories-workflow",
     "read-eval-logs",
 )
-# compact the investigator's context once it passes this many tokens
+# compact the auditor's context once it passes this many tokens
 COMPACTION_TOKENS = 200_000
 
 
 @dataclass(frozen=True)
 class ModelMenu:
-    """The models an investigation may use, by the part each plays."""
+    """The models an audit may use, by the part each plays."""
 
-    auditors: list[str]
+    investigators: list[str]
     subjects: list[str]
     judges: list[str]
 
     @property
     def all(self) -> list[str]:
-        return list(dict.fromkeys([*self.auditors, *self.subjects, *self.judges]))
+        return list(dict.fromkeys([*self.investigators, *self.subjects, *self.judges]))
 
 
 DEFAULT_WORKERS = [
@@ -131,7 +131,7 @@ def _snapshot_repo(
             ],
             text=True,
         ).strip()
-        # only the named paths when given: the task under audit, not the whole
+        # only the named paths when given: the task under investigation, not the whole
         # collection it ships in -- other evals are noise the agent should not read
         archive = inputs / "source.tar"
         subprocess.run(
@@ -226,15 +226,15 @@ def _link_or_copy(src: Path, dest: Path) -> None:
         shutil.copyfile(src, dest)
 
 
-def _investigation_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
-    """Task settings from a YAML file, so an investigation is a document, not a command.
+def _audit_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
+    """Task settings from a YAML file, so an audit is a document, not a command.
 
     Every key is a parameter of this task, and an argument given on the command line
-    wins over the file, so a saved investigation can be re-run with one thing changed.
+    wins over the file, so a saved audit can be re-run with one thing changed.
     """
     path = Path(config).expanduser()
     if not path.is_file():
-        raise ValueError(f"no such investigation file: {config}")
+        raise ValueError(f"no such audit file: {config}")
     loaded = yaml.safe_load(path.read_text()) or {}
     if not isinstance(loaded, dict):
         raise ValueError(f"{config} must be a mapping of task settings")
@@ -248,7 +248,10 @@ def _investigation_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
                 "environment": "benchmark_environment",
             },
         ),
-        "audit": (AuditScope, {"samples": "audit_samples", "checks": "checks"}),
+        "investigation": (
+            InvestigationScope,
+            {"samples": "investigation_samples", "checks": "checks"},
+        ),
         "execution": (Execution, {"backend": "runs"}),
     }
     for section, (model, names) in sections.items():
@@ -262,7 +265,7 @@ def _investigation_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
             if target in loaded:
                 raise ValueError(f"{config} declares {target} both directly and under {section}")
             loaded[target] = value
-    signature = inspect_module.signature(investigate)
+    signature = inspect_module.signature(audit)
     unknown = set(loaded) - set(signature.parameters) - {"config"}
     if unknown:
         raise ValueError(
@@ -292,7 +295,7 @@ def _only_task(source: Path) -> str | None:
             declared.add(named.group(1) if named else match.group(1))
     if len(declared) == 1:
         only = declared.pop()
-        logger.info(f"auditing {only}: the only task {source} declares")
+        logger.info(f"investigating {only}: the only task {source} declares")
         return only
     return None
 
@@ -300,7 +303,7 @@ def _only_task(source: Path) -> str | None:
 def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | None:
     """The task's own directory, plus what the package shares with it.
 
-    Auditing one eval out of a collection, the rest of the collection is noise: the
+    Investigating one eval out of a collection, the rest of the collection is noise: the
     agent reads a hundred other tasks' code looking for the one it was asked about.
     The eval's own metadata says which directory is its own; the shared modules next
     to it are included because the task imports them.
@@ -310,7 +313,7 @@ def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | No
     directory = _task_directory(source, target_task)
     if directory is None:
         return None
-    # what the task's code imports, followed the way the auditor's source copy is
+    # what the task's code imports, followed the way the investigator's source copy is
     base = source.resolve()
     chosen = {str(directory.relative_to(source))}
     starts = sorted(directory.rglob("*.py")) if directory.is_dir() else [directory]
@@ -464,7 +467,7 @@ def prepare_workspace(
 
 
 def docker_box(root: Path) -> tuple[str, str]:
-    """The investigator's box on local Docker: built here, nothing mounted."""
+    """The auditor's box on local Docker: built here, nothing mounted."""
     (root / "Dockerfile").write_text(
         (ASSETS / "Dockerfile").read_text().replace("INSPECT_VERSION", version("inspect-ai"))
     )
@@ -488,8 +491,8 @@ def budget(hawk_api_url: str | None, openrouter: bool) -> Tool:
     async def execute() -> str:
         """Read the configured model key's remaining allowance.
 
-        This covers all calls only when the investigator and jobs share that key.
-        It is not an attributed investigation spend total. Calls using the key fail
+        This covers all calls only when the auditor and jobs share that key.
+        It is not an attributed audit spend total. Calls using the key fail
         when its provider-enforced allowance is exhausted.
         """
         return "\n".join(
@@ -502,44 +505,44 @@ def budget(hawk_api_url: str | None, openrouter: bool) -> Tool:
 
 
 @dataclass
-class Investigation:
+class Audit:
     """What the job tools need that the agent does not hold."""
 
     root: Path
     runs: Runs
     where: str  # "hawk" or "local"
-    task: str  # the audited task's registry name
+    task: str  # the investigated task's registry name
     task_package: str
-    audit_package: str
-    auditor_image: str
+    investigation_package: str
+    investigator_image: str
     menu: ModelMenu
     supplied: list[str]  # log sources the operator gave, as addresses a job can read
-    authorizer: InvestigationAuthorizer | None = None
+    authorizer: AuditAuthorizer | None = None
     launch_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.authorizer is None:
-            from ._verdicts import audit_items
+            from ._verdicts import investigation_items
 
-            self.authorizer = InvestigationAuthorizer(
+            self.authorizer = AuditAuthorizer(
                 LaunchPolicy(
                     task=self.task,
                     task_package=self.task_package,
-                    audit_package=self.audit_package,
-                    auditor_image=self.auditor_image,
+                    investigation_package=self.investigation_package,
+                    investigator_image=self.investigator_image,
                     models=Models(
-                        auditors=tuple(self.menu.auditors),
+                        investigators=tuple(self.menu.investigators),
                         subjects=tuple(self.menu.subjects),
                         judges=tuple(self.menu.judges),
                     ),
-                    checks=tuple(s.name for s in audit_items()),
+                    checks=tuple(s.name for s in investigation_items()),
                     supplied_logs=tuple(self.supplied),
                     configuration_json="{}",
                 )
             )
 
-    def record(self) -> InvestigationRecord:
-        return store_as(InvestigationRecord)
+    def record(self) -> AuditRecord:
+        return store_as(AuditRecord)
 
     def job(self, label: str) -> dict[str, Any]:
         found = [j for j in self.record().jobs if j["label"] == label]
@@ -549,14 +552,14 @@ class Investigation:
 
     async def launch(self, job: Job, kind: str, note: str) -> str:
         async with self.launch_lock:
-            from ._findings import require_investigation
+            from ._findings import require_audit
 
-            require_investigation()
+            require_audit()
             return await self._launch(job, kind, note)
 
     async def _launch(self, job: Job, kind: str, note: str) -> str:
         if self.authorizer is None:
-            raise RuntimeError("investigation has no launch authorizer")
+            raise RuntimeError("audit has no launch authorizer")
         policy = self.authorizer.policy
         approved = self.authorizer.authorise(
             job, kind, {str(j["address"]) for j in self.record().jobs}
@@ -610,7 +613,7 @@ def json_object(text: str, name: str) -> dict[str, Any]:
 
 
 @tool
-def run_benchmark(inv: Investigation) -> Tool:
+def run_benchmark(inv: Audit) -> Tool:
     async def execute(
         label: str,
         models: list[str],
@@ -621,10 +624,10 @@ def run_benchmark(inv: Investigation) -> Tool:
         model_roles: str,
         note: str,
     ) -> str:
-        """Run the audited benchmark: fresh attempts by the models you name.
+        """Run the investigated benchmark: fresh attempts by the models you name.
 
         Args:
-            label: A short name for this job, unique in the investigation.
+            label: A short name for this job, unique in the audit.
             models: Full Inspect model names from the subject list.
             sample_ids: The benchmark's own sample ids to run, when its samples have
                 ids; null for none.
@@ -666,31 +669,31 @@ def run_benchmark(inv: Investigation) -> Tool:
 
 
 @tool
-def run_audit(inv: Investigation) -> Tool:
+def run_investigation(inv: Audit) -> Tool:
     async def execute(
         label: str,
         samples: list[str],
         checks: list[str],
         logs: list[str],
-        auditor_model: str,
+        investigator_model: str,
         source: str,
         item_cost_limit: float,
         task_args: str,
         judge: str,
         note: str,
     ) -> str:
-        """Audit benchmark items with inspect_audit's auditor, one sample per item.
+        """Investigation benchmark items with inspect_audit's investigator, one sample per item.
 
         Args:
-            label: A short name for this job, unique in the investigation.
-            samples: The benchmark's sample ids to audit.
+            label: A short name for this job, unique in the audit.
+            samples: The benchmark's sample ids to investigation.
             checks: Checks to run, e.g. ["gold-answer", "red-teaming"].
-            logs: Recorded attempts to audit against: labels of benchmark jobs you
+            logs: Recorded attempts to investigation against: labels of benchmark jobs you
                 ran, or supplied log sources from the seed; [] for none.
-            auditor_model: The auditor, a full Inspect model name from the auditor list.
+            investigator_model: The investigator, a full Inspect model name from the investigator list.
             source: The Python module that defines the benchmark's task, e.g.
-                inspect_evals.simpleqa.simpleqa: its code is what the auditor reads.
-            item_cost_limit: Dollars one audited item may spend.
+                inspect_evals.simpleqa.simpleqa: its code is what the investigator reads.
+            item_cost_limit: Dollars one investigated item may spend.
             task_args: The benchmark's arguments as a JSON object, exactly as the logs
                 ran it, under the same rules as run_benchmark's.
             judge: Role name to model for the benchmark's judge, as a JSON object, from
@@ -715,15 +718,15 @@ def run_audit(inv: Investigation) -> Tool:
                     f"({', '.join(inv.supplied) or 'none supplied'})"
                 )
         try:
-            prices = prices_for_models([auditor_model, *judges.values()])
+            prices = prices_for_models([investigator_model, *judges.values()])
         except Exception as ex:
-            raise ToolError(f"cannot price the auditor for its cost limit: {ex}") from ex
+            raise ToolError(f"cannot price the investigator for its cost limit: {ex}") from ex
         job = Job(
             label=label,
-            task="inspect_audit/audit",
-            package=inv.audit_package,
+            task="inspect_audit/investigation",
+            package=inv.investigation_package,
             extra_packages=[inv.task_package],
-            models=[auditor_model],
+            models=[investigator_model],
             task_args={
                 "task": inv.task,
                 "task_args": args,
@@ -733,20 +736,20 @@ def run_audit(inv: Investigation) -> Tool:
                 "logs": addresses or None,
                 # {} is "their grader calls no model", not "unknown": pass it as given
                 "judge": judges,
-                "auditor_image": inv.auditor_image,
+                "investigator_image": inv.investigator_image,
                 "cost_limit": item_cost_limit,
                 "model_prices": prices,
             },
         )
-        return await inv.launch(job, "audit", note)
+        return await inv.launch(job, "investigation", note)
 
     return execute
 
 
 @tool
-def jobs(inv: Investigation) -> Tool:
+def jobs(inv: Audit) -> Tool:
     async def execute(action: str, label: str | None, wait_minutes: float | None) -> str:
-        """See and manage the jobs this investigation launched.
+        """See and manage the jobs this audit launched.
 
         Args:
             action: "list" every job; "status" of one; "wait" until one finishes
@@ -756,9 +759,9 @@ def jobs(inv: Investigation) -> Tool:
             label: Which job, for every action but "list".
             wait_minutes: How long "wait" may block; null means twenty.
         """
-        from ._findings import require_investigation
+        from ._findings import require_audit
 
-        require_investigation()
+        require_audit()
         if action == "list":
             rows = inv.record().jobs
             return (
@@ -791,7 +794,7 @@ def jobs(inv: Investigation) -> Tool:
                 "Completed samples remain in its logs."
             )
         if action == "collect":
-            from ._investigation_workspace import copy_into_box
+            from ._audit_workspace import copy_into_box
 
             status = await inv.runs.status(run_id)
             if status not in FINISHED:
@@ -816,8 +819,8 @@ def jobs(inv: Investigation) -> Tool:
                 {**j, "collected": True} if j["label"] == label else j for j in record.jobs
             ]
             lines = [_log_line(f) for f in files]
-            if job["kind"] == "audit":
-                lines.append(await _import_audits(files, job["address"]))
+            if job["kind"] == "investigation":
+                lines.append(await _import_investigations(files, job["address"]))
             return f"{label}: {status}; collected to /inputs/jobs/{label}/\n" + "\n".join(lines)
         raise ToolError("action must be list, status, wait, collect, log or stop")
 
@@ -830,22 +833,24 @@ def start_register(task: str | None, policy: LaunchPolicy | None = None) -> Tool
         """Start the register: every item of the benchmark, against the checks you will run.
 
         Lays out the population: the benchmark's own items, numbered as an eval numbers
-        them, each with an empty cell per check. A cell fills as audit jobs are
+        them, each with an empty cell per check. A cell fills as investigation jobs are
         collected and as you review; an empty one is work not yet done. Start it once,
-        before collecting audits, with the task arguments your audits will use.
+        before collecting investigations, with the task arguments your investigations will use.
 
         Args:
-            task_args: The benchmark's arguments as a JSON object, as the audits run it.
-            checks: The audit checks to track, e.g. ["gold-answer", "answer-format"].
+            task_args: The benchmark's arguments as a JSON object, as the investigations run it.
+            checks: The investigation checks to track, e.g. ["gold-answer", "answer-format"].
         """
         from inspect_ai.util import registry_create
 
         from ._register import Register, load, save, started
         from ._task import numbered
-        from ._verdicts import audit_items
+        from ._verdicts import investigation_items
 
         if not task:
-            raise ToolError("the register needs the audited task: the operator sets target_task")
+            raise ToolError(
+                "the register needs the investigated task: the operator sets target_task"
+            )
         if started(load()):
             raise ToolError("the register is already started; it keeps one population")
         args = json_object(task_args, "task_args")
@@ -856,7 +861,7 @@ def start_register(task: str | None, policy: LaunchPolicy | None = None) -> Tool
         if policy is not None and set(checks) != set(policy.checks):
             raise ToolError("Start the register with all checks declared by the launch policy")
         try:
-            skills = audit_items(checks)
+            skills = investigation_items(checks)
         except ValueError as ex:
             raise ToolError(str(ex)) from ex
         try:
@@ -898,26 +903,26 @@ def register_view() -> Tool:
         """What the register holds, by state: the cells to work through next.
 
         Args:
-            view: "summary" (counts per check), "flagged" (an auditor flagged a
+            view: "summary" (counts per check), "flagged" (an investigator flagged a
                 problem you have not reviewed), "unresolved" (the standing take is
                 unresolved), "missing" (no take yet) or "disputed" (takes disagree).
             check: Only this check; null for all.
         """
         from ._register import load, select, started
-        from ._verdicts import audit_items
+        from ._verdicts import investigation_items
 
         current = load()
         if not started(current):
             raise ToolError("no register yet: start_register first")
         if view not in ("summary", "flagged", "unresolved", "missing", "disputed"):
             raise ToolError("view is summary, flagged, unresolved, missing or disputed")
-        skills = {s.name: s for s in audit_items(current.checks)}
+        skills = {s.name: s for s in investigation_items(current.checks)}
         from ._findings import DRAFT, Findings
         from ._register import apply_reviews
 
         try:
             draft = Findings.model_validate_json(await sandbox().read_file(DRAFT))
-            apply_reviews(current, draft.investigator.reviews, skills)
+            apply_reviews(current, draft.auditor.reviews, skills)
         except (ValueError, OSError) as ex:
             raise ToolError(f"Cannot read draft reviews: {ex}") from ex
         rows = select(current, view, skills, check)  # type: ignore[arg-type]
@@ -929,12 +934,12 @@ def register_view() -> Tool:
     return execute
 
 
-async def _import_audits(files: list[Path], address: str) -> str:
-    """An audit job's verdicts into the register, if one is started."""
+async def _import_investigations(files: list[Path], address: str) -> str:
+    """An investigation job's verdicts into the register, if one is started."""
     from inspect_ai.log import read_eval_log
 
-    from ._register import import_audit_log, load, save, started
-    from ._verdicts import audit_items
+    from ._register import import_investigation_log, load, save, started
+    from ._verdicts import investigation_items
 
     current = load()
     if not started(current):
@@ -942,17 +947,17 @@ async def _import_audits(files: list[Path], address: str) -> str:
             "  (no register started: these verdicts are not in it; "
             "start_register, then collect again)"
         )
-    skills = {s.name: s for s in audit_items()}
+    skills = {s.name: s for s in investigation_items()}
     flags = {g for s in skills.values() for g in s.flags}
     added: list[str] = []
     try:
         for file in files:
-            added += import_audit_log(current, read_eval_log(str(file)), address, skills)
+            added += import_investigation_log(current, read_eval_log(str(file)), address, skills)
     except ValueError as ex:
-        raise ToolError(f"cannot add this audit to the register: {ex}") from ex
+        raise ToolError(f"cannot add this investigation to the register: {ex}") from ex
     await save(current)
     flagged = sum(1 for a in added if a.split("=")[-1] in flags)
-    return f"  register: {len(added)} auditor take(s) added, {flagged} flagged"
+    return f"  register: {len(added)} investigator take(s) added, {flagged} flagged"
 
 
 def _log_line(path: Path) -> str:
@@ -964,13 +969,13 @@ def _log_line(path: Path) -> str:
 
 
 async def _continue(state: AgentState, interactive: bool) -> bool | str:
-    if store_as(InvestigationState).outcome == "blocked":
+    if store_as(AuditState).outcome == "blocked":
         return False
-    if not store_as(InvestigationState).published:
+    if not store_as(AuditState).published:
         return (
             True
             if state.output.message.tool_calls
-            else "Continue the current phase: investigate and submit findings, or use the publishing skill after submission."
+            else "Continue the current phase: audit and submit findings, or use the publishing skill after submission."
         )
     if not interactive:
         return False
@@ -978,7 +983,7 @@ async def _continue(state: AgentState, interactive: bool) -> bool | str:
 
 
 @task
-def investigate(
+def audit(
     repo: str | None = None,
     config: str | None = None,
     logs: list[str] | None = None,
@@ -995,19 +1000,19 @@ def investigate(
     token_limit: str | int | None = None,
     interactive: bool | None = None,
     extra_skills: list[str] | None = None,
-    audit_package: str | None = None,
+    investigation_package: str | None = None,
     task_package: str | None = None,
-    auditor_image: str | None = None,
-    auditor_models: list[str] | None = None,
+    investigator_image: str | None = None,
+    investigator_models: list[str] | None = None,
     subject_models: list[str] | None = None,
     judge_models: list[str] | None = None,
-    investigator_image: str | None = None,
+    auditor_image: str | None = None,
     artifact_dir: str | None = None,
     instructions: str | None = None,
     required_coverage: float | None = None,
     policy: dict[str, Any] | None = None,
     task_args: dict[str, Any] | None = None,
-    audit_samples: list[str] | str | None = None,
+    investigation_samples: list[str] | str | None = None,
     checks: list[str] | None = None,
     source: str | None = None,
     credential_mode: str | None = None,
@@ -1017,7 +1022,7 @@ def investigate(
     model_prices: dict[str, dict[str, float]] | None = None,
     publisher: str | None = None,
 ) -> Task:
-    """Investigate a benchmark, submit findings, then use the selected publisher.
+    """Audit a benchmark, submit findings, then use the selected publisher.
 
     Runs wherever Inspect runs it. The agent's box (`box`) and where its jobs run
     (`runs`) are declared, never inferred. Every model call bills to the key it is
@@ -1026,7 +1031,7 @@ def investigate(
 
     Args:
         repo: Local Git repository or HTTPS Git URL of the benchmark.
-        config: YAML file setting any of these arguments, so an investigation can be a
+        config: YAML file setting any of these arguments, so an audit can be a
             document rather than a command line. Anything also passed with -T wins.
         logs: Inspect log files or directories, or hawk:<eval set id> sources.
         paper: Local file or URL; a URL is downloaded now (arXiv abs -> pdf). Defaults to
@@ -1034,13 +1039,13 @@ def investigate(
         docs: Documentation directories to copy into /inputs (inspect docs, Hawk docs).
         overview: Benchmark-specific context, supplied-evidence context and operator
             questions.
-        target_task: The task under audit, e.g. `benchmark/task`. Defaults to the only
+        target_task: The task under investigation, e.g. `benchmark/task`. Defaults to the only
             task the repository declares, when there is one.
         revision: Commit to snapshot (default HEAD).
-        paths: Repository paths to include in the snapshot. Defaults to the audited
+        paths: Repository paths to include in the snapshot. Defaults to the investigated
             task's own directory and the modules its package shares.
-        output_dir: Where the host keeps the investigation's files, including the
-            published report. Defaults to ~/.inspect-audit/investigations.
+        output_dir: Where the host keeps the audit's files, including the
+            published report. Defaults to ~/.inspect-audit/audits.
         runs: Where the agent's jobs run: "hawk" or "local". None gives it no jobs.
         box: The agent's own box: "docker" (default), or "k8s" for a pod on Hawk.
         hawk_api_url: Hawk's API, for jobs and balances on Hawk. Defaults to
@@ -1048,28 +1053,28 @@ def investigate(
         token_limit: Optional Inspect token limit (e.g. "output:500k").
         interactive: Wait for the operator over ACP after publishing.
         extra_skills: Additional skill directories to load.
-        audit_package: pip spec of inspect_audit for audit jobs. Defaults to the
+        investigation_package: pip spec of inspect_audit for investigation jobs. Defaults to the
             commit this process is running.
         task_package: pip spec of the benchmark for jobs. Defaults to the source
             repository and revision.
-        auditor_image: Published auditor image for audit jobs on Kubernetes.
-        auditor_models: Full Inspect model names an audit job may use as its auditor.
+        investigator_image: Published investigator image for investigation jobs on Kubernetes.
+        investigator_models: Full Inspect model names an investigation job may use as its investigator.
         subject_models: Full Inspect model names a benchmark job may evaluate.
         judge_models: Full Inspect model names the benchmark's own judges may be. Declare the
-            judges the audited logs record; none by default.
-        investigator_image: Published investigator sandbox image for Hawk.
+            judges the investigated logs record; none by default.
+        auditor_image: Published auditor sandbox image for Hawk.
         artifact_dir: Where the published report is also saved, under this sample:
             on Hawk, the job's S3 artifacts directory. None keeps it on the host only.
         instructions: Operator instructions and scope, separate from benchmark background.
         required_coverage: Fraction of the question population (0-1) the published
             coverage.json must assess for the run to count as complete.
         policy: Frozen model permissions, declared log inputs and job limits.
-            YAML also accepts benchmark, audit and execution sections. Permission
-            changes on resume are refused; start a new investigation instead.
+            YAML also accepts benchmark, investigation and execution sections. Permission
+            changes on resume are refused; start a new audit instead.
         task_args: Fixed benchmark arguments for every child job and the register.
-        audit_samples: Permitted sample IDs, or "all". Subset requests are allowed.
-        checks: Permitted audit checks; defaults to the package's available checks.
-        source: Optional fixed benchmark source module for audit jobs.
+        investigation_samples: Permitted sample IDs, or "all". Subset requests are allowed.
+        checks: Permitted investigation checks; defaults to the package's available checks.
+        source: Optional fixed benchmark source module for investigation jobs.
         credential_mode: "restricted" or "user" for Hawk children. Structured
             execution configuration defaults to restricted; legacy calls use user.
         child_secrets: Environment variable names to pass through Hawk's secrets API
@@ -1088,7 +1093,7 @@ def investigate(
     """
     # the file is read before anything else is decided: an argument is "given" only
     # when it is not None, so a value equal to a default is still an override
-    settings = _investigation_file(config, locals()) if config else {}
+    settings = _audit_file(config, locals()) if config else {}
     from ._findings import Findings, FindingsState, encoded, submit_findings
     from ._publishing import PhaseTools, load_publisher
 
@@ -1109,17 +1114,19 @@ def investigate(
     token_limit = settings.get("token_limit", token_limit)
     interactive = bool(settings.get("interactive", interactive))
     extra_skills = settings.get("extra_skills", extra_skills)
-    audit_package = settings.get("audit_package", audit_package)
+    investigation_package = settings.get("investigation_package", investigation_package)
     task_package = settings.get("task_package", task_package)
-    auditor_image = str(settings.get("auditor_image", auditor_image) or DEFAULT_AUDITOR_IMAGE)
-    menu = ModelMenu(
-        auditors=list(settings.get("auditor_models", auditor_models) or DEFAULT_WORKERS),
-        subjects=list(settings.get("subject_models", subject_models) or DEFAULT_WORKERS),
-        judges=list(settings.get("judge_models", judge_models) or []),
-    )
     investigator_image = str(
         settings.get("investigator_image", investigator_image) or DEFAULT_INVESTIGATOR_IMAGE
     )
+    menu = ModelMenu(
+        investigators=list(
+            settings.get("investigator_models", investigator_models) or DEFAULT_WORKERS
+        ),
+        subjects=list(settings.get("subject_models", subject_models) or DEFAULT_WORKERS),
+        judges=list(settings.get("judge_models", judge_models) or []),
+    )
+    auditor_image = str(settings.get("auditor_image", auditor_image) or DEFAULT_AUDITOR_IMAGE)
     artifact_dir = settings.get("artifact_dir", artifact_dir)
     instructions = settings.get("instructions", instructions)
     required_coverage = settings.get("required_coverage", required_coverage)
@@ -1132,7 +1139,7 @@ def investigate(
         if os.environ.get(name) != value:
             raise ValueError(
                 f"benchmark_environment declares {name!r}; set the same value in the "
-                "investigator runner environment so task loading uses the child configuration"
+                "auditor runner environment so task loading uses the child configuration"
             )
     requested_configs: dict[str, dict[str, Any]] = (
         settings.get("model_configs", model_configs) or {}
@@ -1160,19 +1167,19 @@ def investigate(
                 f"declared child secret {name!r} is missing from the runner environment"
             )
     task_args = json.loads(canonical(settings.get("task_args", task_args) or {}))
-    audit_samples = settings.get("audit_samples", audit_samples)
+    investigation_samples = settings.get("investigation_samples", investigation_samples)
     checks = settings.get("checks", checks)
     source = settings.get("source", source)
     credential_mode = settings.get("credential_mode", credential_mode) or "user"
     if policy is not None:
-        if any(v is not None for v in (auditor_models, subject_models, judge_models)) or any(
-            key in settings for key in ("auditor_models", "subject_models", "judge_models")
+        if any(v is not None for v in (investigator_models, subject_models, judge_models)) or any(
+            key in settings for key in ("investigator_models", "subject_models", "judge_models")
         ):
             raise ValueError(
                 "declare models under policy.models or legacy model arguments, not both"
             )
         menu = ModelMenu(
-            auditors=list(permissions.models.auditors),
+            investigators=list(permissions.models.investigators),
             subjects=list(permissions.models.subjects),
             judges=list(permissions.models.judges),
         )
@@ -1184,15 +1191,15 @@ def investigate(
         raise ValueError("credential_mode must be 'restricted' or 'user'")
     if credential_mode == "restricted" and runs != "hawk":
         raise ValueError("restricted credentials require runs='hawk'")
-    if isinstance(audit_samples, str) and audit_samples != "all":
-        raise ValueError("audit_samples must be a list of IDs or 'all'")
-    if audit_samples is not None and not isinstance(audit_samples, (str, list)):
-        raise ValueError("audit_samples must be a list of IDs or 'all'")
-    from ._verdicts import audit_items
+    if isinstance(investigation_samples, str) and investigation_samples != "all":
+        raise ValueError("investigation_samples must be a list of IDs or 'all'")
+    if investigation_samples is not None and not isinstance(investigation_samples, (str, list)):
+        raise ValueError("investigation_samples must be a list of IDs or 'all'")
+    from ._verdicts import investigation_items
 
-    permitted_checks = tuple(s.name for s in audit_items(checks))
+    permitted_checks = tuple(s.name for s in investigation_items(checks))
     if not permitted_checks:
-        raise ValueError("an investigation needs at least one permitted check")
+        raise ValueError("an audit needs at least one permitted check")
 
     if runs not in (None, "hawk", "local"):
         raise ValueError("runs must be 'hawk', 'local' or None")
@@ -1203,8 +1210,10 @@ def investigate(
     if required_coverage is not None and not (0 < float(required_coverage) <= 1):
         raise ValueError("required_coverage must be a fraction in (0, 1]")
     if not repo:
-        raise ValueError("investigate needs a repo: the benchmark to audit, or a config naming one")
-    skill_paths = [str(ASSETS / "skills" / name) for name in INVESTIGATION_SKILLS] + [
+        raise ValueError(
+            "audit needs a repo: the benchmark to investigation, or a config naming one"
+        )
+    skill_paths = [str(ASSETS / "skills" / name) for name in AUDIT_SKILLS] + [
         str(SKILLS / name) for name in (*LOG_SKILLS, *SUPPORT_SKILLS)
     ]
     for path in extra_skills or []:
@@ -1213,7 +1222,7 @@ def investigate(
             raise ValueError(f"Expected a skill directory containing SKILL.md: {path}")
         skill_paths.append(str(resolved))
 
-    # what can be worked out is worked out: the audited repository already says which
+    # what can be worked out is worked out: the investigated repository already says which
     # commit it is, which directory the task lives in and which paper it comes from
     local_repo = Path(repo).expanduser()
     if local_repo.is_dir():
@@ -1221,7 +1230,7 @@ def investigate(
         paths = paths or paths_from_metadata(local_repo, target_task)
         paper = paper or paper_from_metadata(local_repo, target_task)
     # somewhere every machine running this can write, and a person can find
-    output_dir = output_dir or str(Path.home() / ".inspect-audit" / "investigations")
+    output_dir = output_dir or str(Path.home() / ".inspect-audit" / "audits")
     root = prepare_workspace(
         repo,
         revision,
@@ -1242,7 +1251,7 @@ def investigate(
     seed = json.loads(seed_path.read_text())
     if runs:
         if not target_task:
-            raise ValueError("jobs run the audited task: name it with target_task")
+            raise ValueError("jobs run the investigated task: name it with target_task")
         task_package = task_package or (
             git_package_spec(local_repo, revision)
             if local_repo.is_dir()
@@ -1250,34 +1259,32 @@ def investigate(
             if revision
             else None
         )
-        audit_package = audit_package or own_package_spec()
-        if not task_package or not audit_package:
-            raise ValueError("declare task_package and audit_package for child jobs")
+        investigation_package = investigation_package or own_package_spec()
+        if not task_package or not investigation_package:
+            raise ValueError("declare task_package and investigation_package for child jobs")
     supplied = [str(e["remote"]) for e in seed["logs"] if e.get("remote")]
     if runs == "local":
         supplied += [str(e["source"]) for e in seed["logs"] if not e.get("remote")]
     # Keep a value snapshot, never a reference to the caller's configuration dict.
     resolved = locals().copy()
     configuration = {
-        key: resolved[key]
-        for key in inspect_module.signature(investigate).parameters
-        if key != "config"
+        key: resolved[key] for key in inspect_module.signature(audit).parameters if key != "config"
     }
     configuration["resolved_source"] = {key: seed.get(key) for key in ("repo", "revision", "paths")}
     launch_policy = LaunchPolicy(
         task=target_task,
         task_package=task_package,
-        audit_package=audit_package,
-        auditor_image=auditor_image,
+        investigation_package=investigation_package,
+        investigator_image=investigator_image,
         model_configs_json=canonical(model_configs),
         model_prices_json=canonical(model_prices),
         models=Models(
-            investigator=permissions.models.investigator,
-            auditors=tuple(menu.auditors),
+            auditor=permissions.models.auditor,
+            investigators=tuple(menu.investigators),
             subjects=tuple(menu.subjects),
             judges=tuple(menu.judges),
         ),
-        samples=tuple(audit_samples) if isinstance(audit_samples, list) else None,
+        samples=tuple(investigation_samples) if isinstance(investigation_samples, list) else None,
         checks=permitted_checks,
         task_args_json=canonical(task_args),
         environment_json=canonical(benchmark_environment),
@@ -1312,9 +1319,9 @@ def investigate(
         seed["required_coverage"] = float(required_coverage)
     inv = None
     if runs:
-        if task_package is None or audit_package is None or target_task is None:
+        if task_package is None or investigation_package is None or target_task is None:
             raise RuntimeError("child-job packages and task were not resolved")
-        inv = Investigation(
+        inv = Audit(
             root=root,
             # local runs outside the per-construction folder: a resumed run must find them
             runs=HawkRuns(
@@ -1327,17 +1334,17 @@ def investigate(
             where=runs,
             task=target_task,
             task_package=task_package,
-            audit_package=audit_package,
-            auditor_image=auditor_image,
+            investigation_package=investigation_package,
+            investigator_image=investigator_image,
             menu=menu,
             supplied=sorted(set(supplied)),
-            authorizer=InvestigationAuthorizer(launch_policy),
+            authorizer=AuditAuthorizer(launch_policy),
         )
-        tools += [run_benchmark(inv), run_audit(inv), jobs(inv)]
+        tools += [run_benchmark(inv), run_investigation(inv), jobs(inv)]
         seed["jobs"] = {
             "runs": runs,
             "task": target_task,
-            "auditor_models": menu.auditors,
+            "investigator_models": menu.investigators,
             "subject_models": menu.subjects,
             "judge_models": menu.judges,
             "supplied_logs": inv.supplied,
@@ -1353,9 +1360,9 @@ def investigate(
     )
     seed_path.write_text(json.dumps(seed, indent=2))
 
-    from ._investigation_workspace import configure, stage_inputs
+    from ._audit_workspace import configure, stage_inputs
 
-    sandbox = configure(root, investigator_image) if box == "k8s" else docker_box(root)
+    sandbox = configure(root, auditor_image) if box == "k8s" else docker_box(root)
     if artifact_dir:
         (root / "artifacts.json").write_text(json.dumps({"artifact_dir": artifact_dir}))
     elif box == "k8s":
@@ -1400,21 +1407,21 @@ def investigate(
         on_resume=on_resume,
         dataset=[
             Sample(
-                id="investigation",
+                id="audit",
                 input=(
                     "Operator instructions, which take precedence over the default "
                     f"workflow below:\n{instructions}\n\n"
                     if instructions
                     else ""
                 )
-                + "Read /inputs/seed.json and invoke the investigating skill. Begin the "
-                "investigation autonomously.",
+                + "Read /inputs/seed.json and invoke the auditing skill. Begin the "
+                "audit autonomously.",
             )
         ],
-        scorer=investigation_outcome(),
+        scorer=audit_outcome(),
         solver=react(
-            name="investigator",
-            prompt=prompts.INVESTIGATE,
+            name="auditor",
+            prompt=prompts.AUDIT,
             submit=False,
             tools=[phase_tools],
             # an absolute threshold: 0.8 of a 1.05M-token context fired at ~840k,
@@ -1432,7 +1439,7 @@ def investigate(
         token_limit=token_limit,
         working_limit=4 * 3600,
         metadata={
-            "investigation_dir": str(root),
+            "audit_dir": str(root),
             "interactive": interactive,
             "runs": runs,
             "box": box,

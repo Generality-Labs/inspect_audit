@@ -1,24 +1,24 @@
 # Findings and publishing
 
-An investigation has two phases in the same Inspect agent conversation. Before submission it sees investigation skills and job tools. Publishing skills and tools are introduced only after `submit_findings` succeeds. Bash, calculations, images and the existing conversation remain available; job launch and collection tools are removed. Host submission code also refuses remembered experiment calls.
+An audit has two phases in the same Inspect agent conversation. Before submission it sees audit skills and job tools. Publishing skills and tools are introduced only after `submit_findings` succeeds. Bash, calculations, images and the existing conversation remain available; job launch and collection tools are removed. Host submission code also refuses remembered experiment calls.
 
 ## Draft
 
-The investigator edits `/workspace/findings.json` with Bash or Python. Its JSON schema is `/workspace/findings.schema.json`.
+The auditor edits `/workspace/findings.json` with Bash or Python. Its JSON schema is `/workspace/findings.schema.json`.
 
 - `subject` identifies the benchmark and task arguments.
-- `auditors.checks` snapshots each check's grades and their meanings.
-- `auditors.samples` contains every selected sample/check and its original worker verdicts, including explanations, observations, model, run, eval and epoch.
-- `investigator.summary` states what the investigation established.
-- `investigator.findings` contains `criterion` (framework ID such as C or C.1), `issue`, `explanation`, `sample_ids` and `evidence`. An evidence observation has `observed` and `source`.
-- `investigator.reviews` contains `sample_id`, `check`, `label`, `explanation` and `evidence`. Reviews accompany the original auditor verdicts.
-- `investigator.ratings` holds broader dimension judgments, each with a label, explanation and supporting evidence. Use framework dimension or check IDs as keys. The default LaTeX publisher also requires `ratings.overall`, with an A-D label, explanation and evidence, before submission.
-- `investigator.limitations` records gaps and blockers.
-- `investigator.artifacts` lists absolute `/workspace/...` or `/inputs/...` paths needed by a fresh publisher: tables, calculation scripts and evidence extracts.
+- `investigators.checks` snapshots each check's grades and their meanings.
+- `investigators.samples` contains every selected sample/check and its original worker verdicts, including explanations, observations, model, run, eval and epoch.
+- `auditor.summary` states what the audit established.
+- `auditor.findings` contains `criterion` (framework ID such as C or C.1), `issue`, `explanation`, `sample_ids` and `evidence`. An evidence observation has `observed` and `source`.
+- `auditor.reviews` contains `sample_id`, `check`, `label`, `explanation` and `evidence`. Reviews accompany the original investigator verdicts.
+- `auditor.ratings` holds broader dimension judgments, each with a label, explanation and supporting evidence. Use framework dimension or check IDs as keys. The default LaTeX publisher also requires `ratings.overall`, with an A-D label, explanation and evidence, before submission.
+- `auditor.limitations` records gaps and blockers.
+- `auditor.artifacts` lists absolute `/workspace/...` or `/inputs/...` paths needed by a fresh publisher: tables, calculation scripts and evidence extracts.
 
 The analytical registry is generated from the pinned upstream framework; no TeX template is packaged. It is staged under `/workspace/analysis/framework`; its definitions are reference material. Ratings live only in `findings.json`, with no separate `assessments.json` to maintain. Publication tables and graphs are derived from this submitted data.
 
-`start_register` establishes the population. Collection refreshes the draft's subject and auditor section without replacing the investigator's edits. The host retains the collection register; it is not a second publication format. Submission refuses edited auditor records or references to samples outside the population.
+`start_register` establishes the population. Collection refreshes the draft's subject and investigator section without replacing the auditor's edits. The host retains the collection register; it is not a second publication format. Submission refuses edited investigator records or references to samples outside the population.
 
 Empty cells and unresolved verdicts, including `NO_VERDICT`, remain visible. Progress queries and publication use the same interpretation of each sample/check. They do not prevent submitting a scoped result, but publication records missing or unresolved planned checks as incomplete. An explicit `required_coverage` continues to require submitted coverage at `/workspace/analysis/coverage.json`; include that file in artifacts.
 
@@ -41,7 +41,7 @@ Inspect checkpoints the submitted data, manifest and phase. A fresh host restore
 
 ## Default LaTeX publisher
 
-`latex` is the default for investigation and standalone publication. It fetches Laurence's template from `Generality-Labs/audit_reports` at revision `ad7de89658b6794112c2f65847991c7ed41d9e30`, with SHA-256 for every class, style, asset, build configuration and Example source recorded in `publishers/template.json`. Files are checked on every use in the host cache (`INSPECT_AUDIT_TEMPLATE_CACHE`, default `~/.cache/inspect-audit/templates`). There is no vendored template.
+`latex` is the default for audit and standalone publication. It fetches Laurence's template from `Generality-Labs/audit_reports` at revision `ad7de89658b6794112c2f65847991c7ed41d9e30`, with SHA-256 for every class, style, asset, build configuration and Example source recorded in `publishers/template.json`. Files are checked on every use in the host cache (`INSPECT_AUDIT_TEMPLATE_CACHE`, default `~/.cache/inspect-audit/templates`). There is no vendored template.
 
 The repository is private. Prefill the cache with `python -m inspect_audit.publishers._template`, using host-side `gh auth` or a read-only `GH_TOKEN`. The token is never passed to the agent sandbox. CI can use a read-only `AUDIT_REPORTS_TOKEN` secret in the `audit-template` environment; the dedicated LaTeX job fails at its access check if that secret is absent. It must run both full-registry regeneration and PDF compilation. Fork PRs without private access cannot pass this check until a trusted run has that access.
 
@@ -83,7 +83,7 @@ uv run inspect eval inspect_audit/publish \
   --model openrouter/anthropic/claude-haiku-4-5
 ```
 
-The adjacent manifest and evidence are required. A bundle directory is also accepted. No benchmark package, original investigator conversation or job credentials are required. The supplied model still needs its normal inference credentials.
+The adjacent manifest and evidence are required. A bundle directory is also accepted. No benchmark package, original auditor conversation or job credentials are required. The supplied model still needs its normal inference credentials.
 
 ## Optional GL web publisher
 
@@ -108,4 +108,4 @@ def factory():
     return Publisher(skills=["/path/to/publishing"], build=build, tools=tools)
 ```
 
-Skills follow Inspect's skill format. Optional `tools(root)` returns native Inspect tools. The package builds its own presentation; the common publication tool adds and preserves the submitted findings bundle. Package selection is fixed by the investigation's launch configuration. A standalone publish run can choose a new package for the same bundle.
+Skills follow Inspect's skill format. Optional `tools(root)` returns native Inspect tools. The package builds its own presentation; the common publication tool adds and preserves the submitted findings bundle. Package selection is fixed by the audit's launch configuration. A standalone publish run can choose a new package for the same bundle.

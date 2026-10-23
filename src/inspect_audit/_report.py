@@ -1,4 +1,4 @@
-"""Investigation outcomes, job provenance and shared ACP turn-taking."""
+"""Audit outcomes, job provenance and shared ACP turn-taking."""
 
 import json
 from pathlib import Path
@@ -39,11 +39,11 @@ async def operator_turn(state: AgentState) -> bool | str:
     return False
 
 
-class InvestigationState(StoreModel):
+class AuditState(StoreModel):
     """Publication state belongs to the sample, including across compaction."""
 
     published: str | None = None
-    # how the investigation ended, for the outcome scorer: published_complete,
+    # how the audit ended, for the outcome scorer: published_complete,
     # published_incomplete (short of the operator's required coverage), blocked
     outcome: str | None = None
     outcome_reasons: list[str] = Field(default_factory=list)
@@ -85,24 +85,24 @@ def log_address(root: Path, relative: Path, jobs: dict[str, str]) -> str:
 
 def job_addresses() -> dict[str, str]:
     """Each launched job's label and the address its logs live at, from the store."""
-    record = store_as(InvestigationRecord)
+    record = store_as(AuditRecord)
     return {job["label"]: job["address"] for job in record.jobs if job.get("address")}
 
 
-class InvestigationRecord(StoreModel):
-    """The jobs this investigation launched. The store is checkpointed, so they survive."""
+class AuditRecord(StoreModel):
+    """The jobs this audit launched. The store is checkpointed, so they survive."""
 
     jobs: list[dict[str, Any]] = Field(default_factory=list)
 
 
 @tool
 def report_blocker() -> Tool:
-    """End the investigation as blocked, when our own setup stops the operator's ask."""
+    """End the audit as blocked, when our own setup stops the operator's ask."""
 
     async def execute(reason: str) -> str:
-        """Stop the investigation because something outside the benchmark prevents the work.
+        """Stop the audit because something outside the benchmark prevents the work.
 
-        Use this when a deterministic failure in the audit setup (not in the benchmark)
+        Use this when a deterministic failure in the investigation setup (not in the benchmark)
         makes the operator's primary request impossible: child jobs cannot start, the
         evidence cannot be read, a required tool is missing. Publishing a polished
         report around that gap would record a failed run as a success. The run ends
@@ -112,11 +112,11 @@ def report_blocker() -> Tool:
             reason: What is broken, the evidence for it, and what would unblock it.
         """
         if not reason.strip():
-            raise ToolError("say what is blocking the investigation and what would unblock it")
-        investigation = store_as(InvestigationState)
-        investigation.outcome = "blocked"
-        investigation.outcome_reasons = [reason.strip()]
-        return "Recorded as blocked. The investigation ends now; the operator sees your reason."
+            raise ToolError("say what is blocking the audit and what would unblock it")
+        audit = store_as(AuditState)
+        audit.outcome = "blocked"
+        audit.outcome_reasons = [reason.strip()]
+        return "Recorded as blocked. The audit ends now; the operator sees your reason."
 
     return execute
 
@@ -125,20 +125,18 @@ OUTCOMES = ["published_complete", "published_incomplete", "blocked", "unpublishe
 
 
 @scorer(metrics=[frequency(categories=OUTCOMES)])
-def investigation_outcome() -> Scorer:
-    """How the investigation ended, so a run that delivered nothing does not read as success."""
+def audit_outcome() -> Scorer:
+    """How the audit ended, so a run that delivered nothing does not read as success."""
 
     async def score(state: TaskState, target: Target) -> Score:
-        investigation = state.store_as(InvestigationState)
-        outcome = investigation.outcome or (
-            "published_complete" if investigation.published else "unpublished"
-        )
+        audit = state.store_as(AuditState)
+        outcome = audit.outcome or ("published_complete" if audit.published else "unpublished")
         return Score(
             value=outcome,
-            explanation="; ".join(investigation.outcome_reasons) or None,
+            explanation="; ".join(audit.outcome_reasons) or None,
             metadata={
-                "published": investigation.published,
-                "reasons": investigation.outcome_reasons,
+                "published": audit.published,
+                "reasons": audit.outcome_reasons,
             },
         )
 

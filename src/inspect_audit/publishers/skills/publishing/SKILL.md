@@ -3,7 +3,7 @@ name: publishing
 description: Publish final findings with predefined GL components as HTML and PDF.
 ---
 
-Read /inputs/findings/findings.json and manifest.json. The findings are final. Do not change them or run new benchmark experiments. Use the manifest's artifact mapping to find evidence carried from the investigation. Native logs are external references with checksums; use included extracts and calculated tables for a portable report. No fact needed for publication should depend solely on the previous conversation.
+Read /inputs/findings/findings.json and manifest.json. The findings are final. Do not change them or run new benchmark experiments. Use the manifest's artifact mapping to find evidence carried from the audit. Native logs are external references with checksums; use included extracts and calculated tables for a portable report. No fact needed for publication should depend solely on the previous conversation.
 
 Write /workspace/report/report.md in Markdown. Explain the conclusions and their support, scope, denominators and limitations. Preserve disagreements and missing work. You can organise the narrative and calculate summaries from existing evidence. Never turn a calculation into a claim that a new experiment was run. There is no reopening workflow: if a submitted finding appears mistaken, state that limitation explicitly.
 

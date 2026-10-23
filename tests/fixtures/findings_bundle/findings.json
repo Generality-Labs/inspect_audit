@@ -4,7 +4,7 @@
     "revision": "abc123456789",
     "dataset": "three synthetic samples"
   },
-  "auditors": {
+  "investigators": {
     "checks": {
       "gold-answer": {
         "name": "gold-answer",
@@ -32,7 +32,7 @@
       "sample-a": {
         "gold-answer": [
           {
-            "by": "auditor",
+            "by": "investigator",
             "label": "INCORRECT",
             "explanation": "Reference disagrees",
             "evidence": [
@@ -54,8 +54,8 @@
       }
     }
   },
-  "investigator": {
-    "summary": "Synthetic audit: a wrong reference answer and a construct concern.",
+  "auditor": {
+    "summary": "Synthetic investigation: a wrong reference answer and a construct concern.",
     "findings": [
       {
         "criterion": "C.1",

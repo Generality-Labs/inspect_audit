@@ -1,9 +1,9 @@
 """A job and its lifecycle: one description, two places to run it (see local, hawk).
 
 A job is an Inspect eval set: one task, its arguments, the samples, the models. The
-investigator says what to run; a backend decides where. `HawkRuns` submits it
+auditor says what to run; a backend decides where. `HawkRuns` submits it
 through Hawk's own client, as whoever this process is logged in as, so its model
-calls bill to the same key as the investigator's. `LocalRuns` starts
+calls bill to the same key as the auditor's. `LocalRuns` starts
 `inspect eval-set` in a detached process on this machine, with this process's
 environment and so its key. Both hand back finished logs as local files.
 """

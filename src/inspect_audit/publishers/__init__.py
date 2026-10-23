@@ -1,1 +1,1 @@
-"""Publishing packages consume submitted findings independently of investigation."""
+"""Publishing packages consume submitted findings independently of audit."""

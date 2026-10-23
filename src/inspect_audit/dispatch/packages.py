@@ -13,7 +13,7 @@ def git_package_spec(repo: Path, revision: str | None = None) -> str | None:
 
     A Hawk runner is a fresh pod: it installs the benchmark to run it. That spec is
     the same repository the agent reads, at the same commit, so deriving it here
-    removes the chance of the agent auditing one commit while the jobs run another.
+    removes the chance of the agent investigating one commit while the jobs run another.
     """
     try:
         origin = subprocess.check_output(

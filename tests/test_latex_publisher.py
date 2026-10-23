@@ -21,11 +21,11 @@ FIXTURE = Path(__file__).parent / "fixtures/findings_bundle"
 def test_latex_requires_recorded_grade_and_criterion() -> None:
     findings, _ = read_bundle(FIXTURE)
     latex.validate(findings)
-    findings.investigator.findings[0].criterion = ""
+    findings.auditor.findings[0].criterion = ""
     with pytest.raises(ValueError, match="criterion"):
         latex.validate(findings)
-    findings.investigator.findings.clear()
-    findings.investigator.ratings.pop("overall")
+    findings.auditor.findings.clear()
+    findings.auditor.ratings.pop("overall")
     with pytest.raises(ValueError, match="A-D"):
         latex.validate(findings)
     with pytest.raises(ValidationError):
@@ -125,7 +125,7 @@ def test_fixture_pdf_uses_bundle_scorecard_and_finding_boxes(
     assert r"\begin{finding}[C.1]" in generated
     assert "Finding C.1" in text and "Finding F-1" in text
     assert "1/3 selected samples" in text
-    for finding in findings.investigator.findings:
+    for finding in findings.auditor.findings:
         assert finding.issue in text
         assert finding.evidence[0].source in text
     assert (output / "report.pdf").read_bytes().startswith(b"%PDF")
@@ -144,9 +144,7 @@ def test_invalid_report_grade_is_refused_before_findings_are_frozen(
     from inspect_audit._register import Register, RegisterStore
 
     init_subtask_store(Store())
-    draft = _findings.Findings(
-        investigator=_findings.InvestigatorFindings(summary="Scope established")
-    )
+    draft = _findings.Findings(auditor=_findings.AuditorFindings(summary="Scope established"))
     store_as(RegisterStore).data = Register().model_dump(mode="json")
 
     class Box:
@@ -156,7 +154,7 @@ def test_invalid_report_grade_is_refused_before_findings_are_frozen(
     monkeypatch.setattr(_findings, "sandbox", Box)
     with pytest.raises(ToolError, match=r"ratings\.overall"):
         asyncio.run(_findings.submit_findings(tmp_path, validate=latex.validate)())
-    assert store_as(_findings.FindingsState).phase == "investigating"
+    assert store_as(_findings.FindingsState).phase == "auditing"
     assert not (tmp_path / "submitted").exists()
 
 
@@ -199,7 +197,7 @@ def test_baked_cache_runs_without_network_or_github_credentials(
                 "-v",
                 f"{_template.PIN}:/template.json:ro",
                 "-v",
-                f"{root / 'src/inspect_audit/investigation/framework.json'}:/framework.json:ro",
+                f"{root / 'src/inspect_audit/audit/framework.json'}:/framework.json:ro",
                 image,
                 "python",
                 "-c",

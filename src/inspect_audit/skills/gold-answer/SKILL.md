@@ -17,11 +17,11 @@ metadata:
 `metadata` may hold more of the gold. Some benchmarks store none: correctness is a
 predicate the grader computes over the submission — it executes the submitted
 program, runs the tests, checks the end state. There an empty `target` is not a missing
-or wrong answer. The gold is any submission the grader accepts, so what you audit is
+or wrong answer. The gold is any submission the grader accepts, so what you investigation is
 whether a valid solution exists and whether that acceptance predicate is sound —
 never whether the empty string is correct. The logs hold every recorded attempt at it.
 
-The gold is the claim under audit, not the reference. Establish what the answer
+The gold is the claim under investigation, not the reference. Establish what the answer
 is from sources, then compare.
 
 The benchmark's own machinery is not such a source. Its grader, its generation

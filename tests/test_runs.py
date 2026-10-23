@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from inspect_audit import _investigate
-from inspect_audit._report import InvestigationRecord
+from inspect_audit import _audit
+from inspect_audit._report import AuditRecord
 from inspect_audit.dispatch import (
     COMPLETE,
     FINISHED,
@@ -166,17 +166,19 @@ def test_a_local_job_runs_detached_and_hands_back_its_logs(tmp_path: Path) -> No
     assert sorted(str(s.id) for s in log.samples or []) == ["1", "2"]
 
 
-def _investigation(tmp_path: Path, runs: Any) -> _investigate.Investigation:
-    return _investigate.Investigation(
+def _make_audit(tmp_path: Path, runs: Any) -> _audit.Audit:
+    return _audit.Audit(
         root=tmp_path,
         runs=runs,
         where="hawk",
         task="benchmark/task",
         task_package="benchmark",
-        audit_package="inspect_audit",
-        auditor_image="image",
-        menu=_investigate.ModelMenu(
-            auditors=["openai/auditor"], subjects=["openai/subject"], judges=["openai/judge"]
+        investigation_package="inspect_audit",
+        investigator_image="image",
+        menu=_audit.ModelMenu(
+            investigators=["openai/investigator"],
+            subjects=["openai/subject"],
+            judges=["openai/judge"],
         ),
         supplied=["hawk:supplied-logs"],
     )
@@ -195,21 +197,21 @@ class FakeRuns:
 
 
 @pytest.fixture
-def record(monkeypatch: pytest.MonkeyPatch) -> InvestigationRecord:
+def record(monkeypatch: pytest.MonkeyPatch) -> AuditRecord:
     from inspect_ai.util import Store
 
     # its own store: a bare StoreModel binds to a shared one, which leaks between tests
-    held = InvestigationRecord(store=Store())
-    monkeypatch.setattr(_investigate, "store_as", lambda _: held)
+    held = AuditRecord(store=Store())
+    monkeypatch.setattr(_audit, "store_as", lambda _: held)
     return held
 
 
 def test_launched_jobs_are_recorded_and_only_allowed_models_run(
-    tmp_path: Path, record: InvestigationRecord
+    tmp_path: Path, record: AuditRecord
 ) -> None:
     runs = FakeRuns()
-    inv = _investigation(tmp_path, runs)
-    benchmark = _investigate.run_benchmark(inv)
+    inv = _make_audit(tmp_path, runs)
+    benchmark = _audit.run_benchmark(inv)
     out = asyncio.run(benchmark("smoke", ["openai/subject"], ["1"], None, 1, "{}", "{}", "why"))  # type: ignore[arg-type]
     assert "hawk:run-1" in out
     assert record.jobs == [
@@ -225,32 +227,32 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
     from inspect_ai.tool import ToolError
 
     with pytest.raises(ToolError, match="may not be evaluated"):
-        asyncio.run(benchmark("other", ["openai/auditor"], None, None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
+        asyncio.run(benchmark("other", ["openai/investigator"], None, None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
     with pytest.raises(ToolError, match="exists"):
         asyncio.run(benchmark("smoke", ["openai/subject"], None, None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
 
 
-def test_an_audit_reads_logs_by_job_label_or_supplied_source(
-    tmp_path: Path, record: InvestigationRecord, monkeypatch: pytest.MonkeyPatch
+def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
+    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from inspect_ai.tool import ToolError
 
     runs = FakeRuns()
-    inv = _investigation(tmp_path, runs)
+    inv = _make_audit(tmp_path, runs)
     record.jobs.append({"label": "smoke", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})
     monkeypatch.setattr(
-        _investigate,
+        _audit,
         "prices_for_models",
         lambda models: {m: {"input": 1.0, "output": 2.0} for m in models},
     )
-    audit = _investigate.run_audit(inv)
+    investigation = _audit.run_investigation(inv)
     asyncio.run(
-        audit(  # type: ignore[arg-type]
+        investigation(  # type: ignore[arg-type]
             "a1",
             ["1"],
             ["gold-answer"],
             ["smoke", "hawk:supplied-logs"],
-            "openai/auditor",
+            "openai/investigator",
             "benchmark.task",
             0.5,
             "{}",
@@ -259,23 +261,23 @@ def test_an_audit_reads_logs_by_job_label_or_supplied_source(
         )
     )
     [job] = runs.submitted
-    assert job.task == "inspect_audit/audit" and job.extra_packages == ["benchmark"]
+    assert job.task == "inspect_audit/investigation" and job.extra_packages == ["benchmark"]
     assert job.task_args["logs"] == ["hawk:r", "hawk:supplied-logs"]
     assert job.task_args["judge"] == {"grader": "openai/judge"}
     assert job.task_args["cost_limit"] == 0.5
     assert job.task_args["source"] == "benchmark.task"
     assert set(job.task_args["model_prices"]) == {
-        "openai/auditor",
+        "openai/investigator",
         "openai/judge",
     }
     with pytest.raises(ToolError, match="neither a job of yours nor a supplied source"):
         asyncio.run(
-            audit(
+            investigation(
                 "a2",
                 ["1"],
                 ["gold-answer"],
                 ["/etc/passwd"],
-                "openai/auditor",
+                "openai/investigator",
                 "b.t",
                 0.5,
                 "{}",
@@ -334,12 +336,12 @@ def test_a_local_job_sees_only_the_environment_it_needs(
     assert "AWS_SECRET_ACCESS_KEY" not in seen
 
 
-@pytest.mark.parametrize("kind", ["benchmark", "audit"])
+@pytest.mark.parametrize("kind", ["benchmark", "investigation"])
 def test_task_arguments_cannot_place_code_or_name_other_models(kind: str) -> None:
     from inspect_ai.tool import ToolError
 
     from inspect_audit.dispatch.policy import (
-        InvestigationAuthorizer,
+        AuditAuthorizer,
         LaunchPolicy,
         Models,
         canonical,
@@ -359,32 +361,34 @@ def test_task_arguments_cannot_place_code_or_name_other_models(kind: str) -> Non
         policy = LaunchPolicy(
             task="bench",
             task_package="bench",
-            audit_package="audit",
-            auditor_image="img",
-            models=Models(subjects=("subject",), auditors=("auditor",), judges=("openai/judge",)),
+            investigation_package="investigation",
+            investigator_image="img",
+            models=Models(
+                subjects=("subject",), investigators=("investigator",), judges=("openai/judge",)
+            ),
             checks=("gold-answer",),
             task_args_json=canonical(args),
             configuration_json="{}",
         )
         job = Job(label="probe", task="bench", package="bench", models=["subject"], task_args=args)
-        if kind == "audit":
+        if kind == "investigation":
             job = Job(
                 label="probe",
-                task="inspect_audit/audit",
-                package="audit",
-                models=["auditor"],
+                task="inspect_audit/investigation",
+                package="investigation",
+                models=["investigator"],
                 extra_packages=["bench"],
                 task_args={
                     "task": "bench",
                     "task_args": args,
                     "source": "bench",
-                    "auditor_image": "img",
+                    "investigator_image": "img",
                     "checks": ["gold-answer"],
                     "samples": ["1"],
                     "cost_limit": 0.1,
                 },
             )
-        authorizer = InvestigationAuthorizer(policy)
+        authorizer = AuditAuthorizer(policy)
         if "judge_prompt" in args:
             assert authorizer.authorise(job, kind, set()).task_args == job.task_args
         else:
@@ -499,7 +503,7 @@ def test_a_local_job_receives_string_arguments_exactly(tmp_path: Path) -> None:
 def test_hawk_logs_are_fetched_with_the_runners_own_credentials(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A child audit fetching hawk: logs on a runner uses Hawk's real hook."""
+    """A child investigation fetching hawk: logs on a runner uses Hawk's real hook."""
     import hawk.cli.download
     import hawk.client
     from hawk.runner import refresh_token as hawk_hook
@@ -548,7 +552,7 @@ def test_hawk_logs_are_fetched_with_the_runners_own_credentials(
     assert used == ["runner-access"]
 
 
-def test_an_audit_reads_a_log_directory(tmp_path: Path) -> None:
+def test_an_investigation_reads_a_log_directory(tmp_path: Path) -> None:
     """A local job's address is its log directory; operator sources may be URLs."""
     from test_helpers.logs import run_fixture_eval
 
@@ -582,20 +586,20 @@ def test_a_balance_without_a_number_is_unknown_not_zero(monkeypatch: pytest.Monk
     monkeypatch.setattr(
         urllib.request, "urlopen", lambda request, timeout=None: Response({"data": {"limit": 5}})
     )
-    [line] = asyncio.run(_investigate.key_balance(None, openrouter=True))
+    [line] = asyncio.run(_audit.key_balance(None, openrouter=True))
     assert "unknown" in line and "$0.00" not in line
 
 
-def test_an_empty_judge_reaches_the_audit_as_empty(
-    tmp_path: Path, record: InvestigationRecord, monkeypatch: pytest.MonkeyPatch
+def test_an_empty_judge_reaches_the_investigation_as_empty(
+    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """{} means "their grader calls no model"; None means "infer it from the logs"."""
     runs = FakeRuns()
-    inv = _investigation(tmp_path, runs)
-    monkeypatch.setattr(_investigate, "prices_for_models", lambda models: {m: {} for m in models})
+    inv = _make_audit(tmp_path, runs)
+    monkeypatch.setattr(_audit, "prices_for_models", lambda models: {m: {} for m in models})
     asyncio.run(
-        _investigate.run_audit(inv)(  # type: ignore[arg-type]
-            "a", ["1"], ["gold-answer"], [], "openai/auditor", "b.t", 0.5, "{}", "{}", ""
+        _audit.run_investigation(inv)(  # type: ignore[arg-type]
+            "a", ["1"], ["gold-answer"], [], "openai/investigator", "b.t", 0.5, "{}", "{}", ""
         )
     )
     assert runs.submitted[0].task_args["judge"] == {}

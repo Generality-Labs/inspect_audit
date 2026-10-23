@@ -1,4 +1,4 @@
-"""Validated question labels and deterministic audit coverage summaries."""
+"""Validated question labels and deterministic investigation coverage summaries."""
 
 import json
 from collections import Counter

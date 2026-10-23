@@ -2,11 +2,11 @@
 
 Model names use Inspect's full provider/model identity. For example, `openrouter/anthropic/claude-haiku-4-5` selects OpenRouter; `anthropic/claude-haiku-4-5` selects the native Anthropic provider. Names are passed unchanged to both local Inspect jobs and Hawk. Permissions match the entire name. Hawk child configs explicitly select the tested Inspect 0.3.266 release, overriding the deployment's default Inspect pin.
 
-The supported shared-budget setup routes all model calls through one capped OpenRouter key. Local jobs use the configured environment credentials; Hawk jobs must route through the assigned key in Middleman. Merely declaring a model name does not ensure different providers share an allowance. `budget()` reads the configured key balance, not an attributed investigation spending total.
+The supported shared-budget setup routes all model calls through one capped OpenRouter key. Local jobs use the configured environment credentials; Hawk jobs must route through the assigned key in Middleman. Merely declaring a model name does not ensure different providers share an allowance. `budget()` reads the configured key balance, not an attributed audit spending total.
 
 ## Fixed child model settings
 
-An investigation config can declare native Inspect `ModelConfig` records, keyed by full model name:
+An audit config can declare native Inspect `ModelConfig` records, keyed by full model name:
 
 ```yaml
 model_configs:
@@ -17,13 +17,13 @@ model_configs:
     args: {}
 ```
 
-`base_url` can also be declared. Keep credentials in the environment or Hawk `child_secrets`, rather than model configuration. These settings are frozen in the launch policy and applied to child subject models, auditors and judge roles. The investigator's own model settings are supplied through Inspect's evaluation options.
+`base_url` can also be declared. Keep credentials in the environment or Hawk `child_secrets`, rather than model configuration. These settings are frozen in the launch policy and applied to child subject models, investigators and judge roles. The auditor's own model settings are supplied through Inspect's evaluation options.
 
-When audit inputs contain recorded judge settings, the audit preserves them and refuses conflicting declared settings. Multi-model judge roles are not supported.
+When investigation inputs contain recorded judge settings, the investigation preserves them and refuses conflicting declared settings. Multi-model judge roles are not supported.
 
 ## Prices and allocation
 
-Audit cost limits use Inspect cost metadata when available. OpenRouter routes can look up published prices. For a model without cost metadata, declare per-million rates under `model_prices`:
+Investigation cost limits use Inspect cost metadata when available. OpenRouter routes can look up published prices. For a model without cost metadata, declare per-million rates under `model_prices`:
 
 ```yaml
 model_prices:
@@ -32,7 +32,7 @@ model_prices:
     output: 3.0
 ```
 
-Inspect sample cost limits are additional controls, not one allowance shared across independent jobs. The investigator decides how to allocate its available budget, including reporting. The same investigator retains its context during publication. Experiments finish before findings are submitted. There is no fixed reporting reserve or automatic key minting requirement.
+Inspect sample cost limits are additional controls, not one allowance shared across independent jobs. The auditor decides how to allocate its available budget, including reporting. The same auditor retains its context during publication. Experiments finish before findings are submitted. There is no fixed reporting reserve or automatic key minting requirement.
 
 ## Hawk installations
 

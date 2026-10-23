@@ -6,7 +6,7 @@ Keep ordinary tests, real-container tests and external Hawk compatibility probes
 
 ## 2. Trim the package
 
-Remove the standalone deterministic findings pipeline and its CLI, schemas, tests and obsolete documentation. Keep the live investigation register, auditor tools and launch policy. Remove dependencies only when the retained package does not use them.
+Remove the standalone deterministic findings pipeline and its CLI, schemas, tests and obsolete documentation. Keep the live audit register, investigator tools and launch policy. Remove dependencies only when the retained package does not use them.
 
 ## 3. Iterate until the execution tests pass
 
@@ -14,7 +14,7 @@ Use Inspect primitives, fix general integration failures, and rerun the affected
 
 ## 4. Redo findings
 
-Review the actual auditor verdicts, investigator reviews and report authoring flow. Settle one structured findings contract before changing storage or report generation. Explanations, supporting evidence and review history must survive.
+Review the actual investigator verdicts, auditor reviews and report authoring flow. Settle one structured findings contract before changing storage or report generation. Explanations, supporting evidence and review history must survive.
 
 ## 5. Clear old branches, PRs and issues
 
@@ -22,7 +22,7 @@ Delete branches only once their work is preserved in main or explicitly retired.
 
 ## 6. Take stock
 
-Record the package size, module ownership, documentation, test coverage and known unsupported inputs. Distinguish execution compatibility from audit accuracy.
+Record the package size, module ownership, documentation, test coverage and known unsupported inputs. Distinguish execution compatibility from investigation accuracy.
 
 ## 7. Review use of Inspect primitives
 
@@ -30,4 +30,4 @@ Have subagents read the Inspect skills first, then review the implementation for
 
 ## 8. Examine skills and live behaviour
 
-Read the auditor and investigator skills, run small investigations, and inspect transcripts for experiments, confusion and useful findings. Review Laurence's PRs and branches to identify the changes that belong in this workflow. Measure accuracy against human labels after execution is reliable.
+Read the investigator and auditor skills, run small audits, and inspect transcripts for experiments, confusion and useful findings. Review Laurence's PRs and branches to identify the changes that belong in this workflow. Measure accuracy against human labels after execution is reliable.

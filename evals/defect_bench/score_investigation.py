@@ -1,6 +1,6 @@
-"""Score an audit of defect_bench against labels.json; write a CSV beside the log.
+"""Score an investigation of defect_bench against labels.json; write a CSV beside the log.
 
-  uv run python evals/defect_bench/score_audit.py <audit .eval log>
+  uv run python evals/defect_bench/score_investigation.py <investigation .eval log>
 
 The population is every (item, check) the labels define, not what the log holds:
 a missing sample or verdict is counted as MISSING, never dropped from the

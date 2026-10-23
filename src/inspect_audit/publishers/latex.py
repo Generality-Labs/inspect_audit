@@ -53,7 +53,15 @@ def tex(value: object) -> str:
         "~": r"\textasciitilde{}",
         "^": r"\textasciicircum{}",
     }
-    return "".join(substitutions.get(c, c) for c in str(value)).replace("\n\n", "\\par ")
+
+    def word(w: str) -> str:
+        # names, paths and hashes have no hyphenation points: they may break after a
+        # separator, and a long one anywhere, rather than run off the page
+        if len(w) > 30:
+            return r"\allowbreak{}".join(substitutions.get(c, c) for c in w)
+        return "".join(substitutions.get(c, c) + (r"\allowbreak{}" if c in "/_" else "") for c in w)
+
+    return "".join(word(w) for w in re.split(r"(\s+)", str(value))).replace("\n\n", "\\par ")
 
 
 def validate(findings: Findings) -> None:
@@ -112,6 +120,11 @@ def source(
     def box(title: str, content: str) -> str:
         return r"\begin{dsbox}[breakable]{" + title + "}\n" + content + "\n" + r"\end{dsbox}" + "\n"
 
+    def gist(text: str) -> str:
+        # the scorecard row is the template's "[one-line description]", in a box that
+        # cannot break across pages; the full explanation is in the dimension's part
+        return tex(re.split(r"(?<=\.)\s", text.strip(), maxsplit=1)[0])
+
     parts = []
     for letter, definition in dimensions.items():
         contributions = " ".join(
@@ -120,11 +133,11 @@ def source(
             + "}{"
             + tex(definitions[key]["name"])
             + "}{"
-            + tex(rating.explanation)
+            + gist(rating.explanation)
             + "}"
             for key, rating in ratings.items()
             if key.startswith(letter + ".") and rating.label in ("Minor", "Major", "Critical")
-        ) or explanation(letter)
+        ) or (gist(ratings[letter].explanation) if letter in ratings else explanation(letter))
         parts.append(
             r"\setdimension{"
             + definition["dimension"]

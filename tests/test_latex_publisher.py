@@ -147,3 +147,15 @@ def test_source_preserves_bracketed_findings_and_benchmark_wide_scope(tmp_path: 
     assert "reference [v2]" in content
     assert "science [physics]" in content
     assert "Benchmark-wide finding; no individual sample count claimed." in content
+
+
+def test_unbreakable_text_may_break_rather_than_run_off_the_page() -> None:
+    from inspect_audit.publishers.latex import tex
+
+    assert (
+        tex("inspect_evals/swe_bench")
+        == r"inspect\_\allowbreak{}evals/\allowbreak{}swe\_\allowbreak{}bench"
+    )
+    digest = "3c0882717ba75ae0b0ac68d3b55e515d19766b90bd5ec50b16e0158605fd1fc"
+    assert tex(digest).count(r"\allowbreak{}") == len(digest) - 1
+    assert tex("plain words stay as they are") == "plain words stay as they are"

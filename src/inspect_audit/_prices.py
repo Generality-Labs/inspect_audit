@@ -19,7 +19,7 @@ def prices_for_models(models: list[str]) -> dict[str, dict[str, float]]:
         info = get_model_info(model)
         if info is not None and info.cost is not None:
             prices[model] = info.cost.model_dump()
-        elif model.startswith("openrouter/"):
+        elif model.startswith(("openrouter/", "openai-api/openrouter/")):
             router.append(model)
         else:
             raise ValueError(

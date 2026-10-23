@@ -337,3 +337,8 @@ def test_hawk_style_openrouter_names_find_their_catalog_price(
     assert prices["openrouter/openrouter/anthropic/claude-x"]["input"] == pytest.approx(4.0)
     assert prices["openrouter/anthropic/claude-x"]["output"] == pytest.approx(20.0)
     assert prices["openrouter/openrouter/auto"]["input"] == pytest.approx(1.0)
+    # Hawk's documented route for an aggregator public name
+    routed = _prices.prices_for_models(["openai-api/openrouter/openrouter/anthropic/claude-x"])
+    assert routed["openai-api/openrouter/openrouter/anthropic/claude-x"]["input"] == pytest.approx(
+        4.0
+    )

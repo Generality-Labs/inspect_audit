@@ -480,6 +480,8 @@ class Audit:
     investigator_image: str
     supplied: list[str]  # log sources the operator gave, as addresses a job can read
     authorizer: AuditAuthorizer
+    # exact pins installed beside the benchmark in every child job (its lockfile's)
+    task_pins: list[str] = field(default_factory=list)
     launch_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     def record(self) -> AuditRecord:
@@ -594,6 +596,7 @@ def run_benchmark(inv: Audit) -> Tool:
             label=label,
             task=inv.task,
             package=inv.task_package,
+            extra_packages=list(inv.task_pins),
             models=models,
             task_args=args,
             model_roles=roles,
@@ -663,7 +666,7 @@ def run_investigation(inv: Audit) -> Tool:
             label=label,
             task="inspect_audit/investigation",
             package=inv.investigation_package,
-            extra_packages=[inv.task_package],
+            extra_packages=[inv.task_package, *inv.task_pins],
             models=[investigator_model],
             task_args={
                 "task": inv.task,
@@ -940,6 +943,7 @@ def audit(
     extra_skills: list[str] | None = None,
     investigation_package: str | None = None,
     task_package: str | None = None,
+    task_package_pins: list[str] | None = None,
     investigator_image: str | None = None,
     investigator_models: list[str] | None = None,
     subject_models: list[str] | None = None,
@@ -994,6 +998,9 @@ def audit(
             commit this process is running.
         task_package: pip spec of the benchmark for jobs. Defaults to the source
             repository and revision.
+        task_package_pins: exact pins installed beside the benchmark in every child
+            job, e.g. its extra's packages from its own uv.lock at that commit
+            (`python -m inspect_audit.dispatch.packages REPO COMMIT EXTRA`).
         investigator_image: Published investigator image for investigation jobs on Kubernetes.
         investigator_models: Full Inspect model names an investigation job may use as its investigator.
         subject_models: Full Inspect model names a benchmark job may evaluate.
@@ -1051,6 +1058,7 @@ def audit(
     extra_skills = settings.get("extra_skills", extra_skills)
     investigation_package = settings.get("investigation_package", investigation_package)
     task_package = settings.get("task_package", task_package)
+    task_package_pins = list(settings.get("task_package_pins", task_package_pins) or [])
     investigator_image = str(
         settings.get("investigator_image", investigator_image) or DEFAULT_INVESTIGATOR_IMAGE
     )
@@ -1206,6 +1214,7 @@ def audit(
     launch_policy = LaunchPolicy(
         task=target_task,
         task_package=task_package,
+        task_pins=tuple(task_package_pins),
         investigation_package=investigation_package,
         investigator_image=investigator_image,
         model_configs_json=canonical(model_configs),
@@ -1267,6 +1276,7 @@ def audit(
             investigator_image=investigator_image,
             supplied=sorted(set(supplied)),
             authorizer=AuditAuthorizer(launch_policy),
+            task_pins=task_package_pins,
         )
         tools += [run_benchmark(inv), run_investigation(inv), jobs(inv)]
         seed["jobs"] = {

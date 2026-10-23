@@ -90,6 +90,7 @@ class LaunchPolicy(FrozenModel):
 
     task: str | None
     task_package: str | None
+    task_pins: tuple[str, ...] = ()
     investigation_package: str | None
     investigator_image: str
     models: Models
@@ -215,7 +216,8 @@ class AuditAuthorizer:
         expected_package = p.investigation_package if kind == "investigation" else p.task_package
         if job.task != expected_task or job.package != expected_package:
             raise ToolError("job task and package must match the launch policy")
-        if job.extra_packages != ([p.task_package] if kind == "investigation" else []):
+        pins = list(p.task_pins)
+        if job.extra_packages != ([p.task_package, *pins] if kind == "investigation" else pins):
             raise ToolError("job dependencies must match the launch policy")
         allowed = p.models.investigators if kind == "investigation" else p.models.subjects
         if not job.models:

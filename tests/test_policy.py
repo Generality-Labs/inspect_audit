@@ -74,3 +74,31 @@ def test_declared_environment_is_frozen_and_applied_to_child_configs() -> None:
 def test_invalid_runner_settings_are_refused(environment) -> None:
     with pytest.raises(ValueError):
         validate_environment(environment)
+
+
+def test_declared_benchmark_pins_travel_with_every_child_job_and_nothing_else() -> None:
+    """The benchmark's lockfile pins are part of the policy: present, exact, or refused."""
+    from inspect_audit.dispatch.policy import AuditAuthorizer, LaunchPolicy, Models
+
+    policy = LaunchPolicy(
+        task="bench",
+        task_package="bench[x] @ git+https://e/b@abc1234",
+        task_pins=("swebench==4.1.0",),
+        investigation_package="ia",
+        investigator_image="img",
+        models=Models(subjects=("m",), investigators=("i",)),
+        checks=("gold-answer",),
+        configuration_json="{}",
+    )
+    auth = AuditAuthorizer(policy)
+    benchmark = Job(
+        label="b",
+        task="bench",
+        package=policy.task_package or "",
+        models=["m"],
+        extra_packages=["swebench==4.1.0"],
+    )
+    assert auth.authorise(benchmark, "benchmark", set()).extra_packages == ["swebench==4.1.0"]
+    unpinned = Job(label="b", task="bench", package=policy.task_package or "", models=["m"])
+    with pytest.raises(ToolError, match="dependencies"):
+        auth.authorise(unpinned, "benchmark", set())

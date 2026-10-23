@@ -135,7 +135,9 @@ class PhaseTools:
             # Neither these skill descriptions nor their files enter the model's
             # workspace before submission. Resume resolves the same declared package.
             self.publishing = [
-                skill(self.publisher.skills),
+                # its own instance: the audit skill tool's installed list is
+                # stored per instance and would otherwise answer for this one
+                skill(self.publisher.skills, instance="publishing"),
                 *self.publisher.tools(self.root),
                 publish_document(self.root, self.publisher),
             ]

@@ -134,6 +134,8 @@ PYCODE"""
     model = get_model(
         "mockllm/model",
         custom_outputs=[
+            # an audit skill installed first must not hide the publishing skill
+            ModelOutput.for_tool_call("mockllm/model", "skill", {"command": "auditing"}),
             ModelOutput.for_tool_call("mockllm/model", "bash", {"command": script}),
             ModelOutput.for_tool_call("mockllm/model", "submit_findings", {}),
             ModelOutput.for_tool_call("mockllm/model", "skill", {"command": "publishing"}),

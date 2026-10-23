@@ -1,0 +1,100 @@
+% ==================================================================
+% SCORING CRITERIA (one page, shared by all audit documents)
+% Explains the overall eval grade and the dimension assessment
+% scale, with an example of each level. Eval-independent: edit here
+% and every audit document picks up the change.
+% ==================================================================
+\phantomsection
+\addcontentsline{toc}{section}{Scoring Criteria}
+\label{sec:criteria}
+
+\begin{adjustwidth}{-10mm}{0mm}
+
+% --- Title row -----------------------------------------------------
+\noindent
+{\LARGE\itshape \textbf{Scoring Criteria}}
+
+\smallskip
+
+% --- Overall grade + dimension scale, side by side ------------------
+\noindent
+\begin{minipage}[t]{0.42\linewidth}
+\vspace{0pt}%
+\begin{dsbox}[top=1mm, bottom=1mm, before skip=3pt, after skip=3pt, equal height group=scalerow]{Eval Quality Assessment}
+\renewcommand{\arraystretch}{1.05}%
+\footnotesize
+\noindent\begin{tabularx}{\linewidth}{|C{0.35}|L{1.65}|}
+\hline
+\textbf{Grade} & \textbf{Description} \\
+\hline
+\gradeA & \gradetextA \\ \hline
+\gradeB & \gradetextB \\ \hline
+\gradeC & \gradetextC \\ \hline
+\gradeD & \gradetextD \\ \hline
+\end{tabularx}
+\end{dsbox}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.555\linewidth}
+\vspace{0pt}%
+\begin{dsbox}[top=1mm, bottom=1mm, before skip=3pt, after skip=3pt, equal height group=scalerow]{Dimension assessment scale}
+\renewcommand{\arraystretch}{1.05}%
+\footnotesize
+\noindent\begin{tabularx}{\linewidth}{|C{0.55}|L{1.45}|}
+\hline
+\textbf{Assessment} & \textbf{Description} \\
+\hline
+\assessNone &
+No material issues found. \\ \hline
+\assessMinor &
+Contains issues that add undesired noise but do not change the headline
+conclusions. \\ \hline
+\assessMajor &
+Contains issues that distort results or their interpretation. \\ \hline
+\assessCritical &
+Contains issues that severely affect the dimension. \\ \hline
+\assessNotAssessed &
+Applicable to this evaluation, but assessment is beyond the scope of the audit. \\ \hline
+\assessNA &
+Not applicable to this evaluation. \\ \hline
+\end{tabularx}
+\end{dsbox}
+\end{minipage}
+
+\smallskip
+
+% --- Audit dimensions --------------------------------------------------
+% One box per dimension, generated from the registry in
+% auditframework.sty. Contributions carry issue codes (A.1, B.3, ...)
+% that the Audit Findings reference.
+\smallskip
+
+% Table version: one longtable row per dimension (letter, name and
+% guiding question on the left; coded contributions on the right).
+% longtable so the table breaks across pages; the header row repeats.
+\newcommand{\dimcell}[1]{%
+  \leavevmode{\bfseries\color{brandTeal}\dimletter{#1}}~\textbf{\dimtitle{#1}}\newline
+  {\footnotesize\itshape\dimdesc{#1}}}
+\newcommand{\dimsubcell}[1]{{\footnotesize\dimsubdescribed{#1}}}
+\setlength{\LTleft}{\fill}\setlength{\LTright}{\fill}
+\renewcommand{\arraystretch}{1.15}%
+\footnotesize
+\begin{longtable}{|p{30mm}|p{\dimexpr\linewidth-30mm-4\tabcolsep-3\arrayrulewidth\relax}|}
+\multicolumn{2}{|>{\columncolor{brandTeal}}l|}{{\normalsize\bfseries\textcolor{white}{\rule[-1.4mm]{0pt}{5.6mm}AUDIT DIMENSIONS}}} \\
+\hline
+\textbf{Dimension} & \textbf{Contributions} \\ \hline
+\endfirsthead
+\hline
+\textbf{Dimension} & \textbf{Contributions} \\ \hline
+\endhead
+\dimcell{construct} & \dimsubcell{construct} \\ \hline
+\dimcell{contentvalidity} & \dimsubcell{contentvalidity} \\ \hline
+\dimcell{dataset} & \dimsubcell{dataset} \\ \hline
+\dimcell{scaffold} & \dimsubcell{scaffold} \\ \hline
+\dimcell{harness} & \dimsubcell{harness} \\ \hline
+\dimcell{environment} & \dimsubcell{environment} \\ \hline
+\dimcell{grading} & \dimsubcell{grading} \\ \hline
+\dimcell{resources} & \dimsubcell{resources} \\ \hline
+\dimcell{informativeness} & \dimsubcell{informativeness} \\ \hline
+\end{longtable}
+
+\end{adjustwidth}

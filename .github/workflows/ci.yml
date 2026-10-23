@@ -59,7 +59,6 @@ jobs:
 
   latex:
     name: LaTeX fixture
-    environment: audit-template
     timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
@@ -73,13 +72,8 @@ jobs:
         run: uv sync --locked
       - name: Pinned LaTeX template fixture
         env:
-          GH_TOKEN: ${{ secrets.AUDIT_REPORTS_TOKEN }}
           INSPECT_AUDIT_LATEX_IMAGE: inspect-audit:publishing
         run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::Set the read-only AUDIT_REPORTS_TOKEN secret in the audit-template environment; template verification and the PDF build must not be skipped."
-            exit 1
-          fi
           sudo apt-get update
           sudo apt-get install -y poppler-utils
           docker build -f src/inspect_audit/containers/publishing.Dockerfile -t "$INSPECT_AUDIT_LATEX_IMAGE" src/inspect_audit/containers

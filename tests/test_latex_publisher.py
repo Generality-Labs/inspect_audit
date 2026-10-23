@@ -1,7 +1,6 @@
 """Actual GL template compilation and structural provenance from a frozen fixture."""
 
 import asyncio
-import hashlib
 import json
 import os
 import shutil
@@ -34,42 +33,16 @@ def test_latex_requires_recorded_grade_and_criterion() -> None:
     assert load_publisher("gl").build is not latex.build
 
 
-def test_cached_template_is_verified_without_network(tmp_path: Path, monkeypatch) -> None:
-    data = b"pinned template test"
-    pin = tmp_path / "pin.json"
-    pin.write_text(
-        json.dumps(
-            {
-                "repository": "test/repo",
-                "revision": "abc",
-                "files": {"template/test.cls": hashlib.sha256(data).hexdigest()},
-            }
-        )
-    )
-    cached = tmp_path / "abc/template/test.cls"
-    cached.parent.mkdir(parents=True)
-    cached.write_bytes(data)
-    monkeypatch.setenv("INSPECT_AUDIT_TEMPLATE_CACHE", str(tmp_path))
-    monkeypatch.setattr(_template, "PIN", pin)
-    assert _template.template() == tmp_path / "abc"
-    cached.write_text("changed")
-    with pytest.raises(ValueError, match="checksum"):
-        _template.template()
+def test_the_template_ships_every_file_the_publisher_needs() -> None:
+    """No download and no token: the pinned files are part of the package."""
+    pin = json.loads(_template.PIN.read_text())
+    assert pin["repository"] == "Generality-Labs/audit_reports" and len(pin["revision"]) == 40
+    missing = [n for n in pin["files"] if not (_template.template() / n).is_file()]
+    assert missing == []
 
 
 @pytest.fixture
 def upstream() -> Path:
-    pin = json.loads(_template.PIN.read_text())
-    cache = (
-        Path(
-            os.environ.get(
-                "INSPECT_AUDIT_TEMPLATE_CACHE", Path.home() / ".cache/inspect-audit/templates"
-            )
-        )
-        / pin["revision"]
-    )
-    if not cache.is_dir() and not (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")):
-        pytest.skip("private template needs GH_TOKEN or a verified cache")
     return _template.template()
 
 
@@ -156,58 +129,3 @@ def test_invalid_report_grade_is_refused_before_findings_are_frozen(
         asyncio.run(_findings.submit_findings(tmp_path, validate=latex.validate)())
     assert store_as(_findings.FindingsState).phase == "auditing"
     assert not (tmp_path / "submitted").exists()
-
-
-@pytest.mark.docker
-@pytest.mark.latex
-def test_baked_cache_runs_without_network_or_github_credentials(
-    tmp_path: Path, upstream: Path
-) -> None:
-    """The Python publishing host can use a baked cache with no runtime secret."""
-    root = Path(__file__).parents[1]
-    cache = tmp_path / "cache"
-    shutil.copytree(upstream, cache / upstream.name)
-    image = "inspect-audit:template-cache-test"
-    subprocess.run(
-        [
-            "docker",
-            "build",
-            "--build-arg",
-            "BASE_IMAGE=python:3.13-slim",
-            "--build-context",
-            f"template-cache={cache}",
-            "-f",
-            str(root / "src/inspect_audit/containers/template-cache.Dockerfile"),
-            "-t",
-            image,
-            str(tmp_path),
-        ],
-        check=True,
-        capture_output=True,
-    )
-    try:
-        subprocess.run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--network=none",
-                "-v",
-                f"{root / 'src/inspect_audit/publishers/_template.py'}:/template_reader.py:ro",
-                "-v",
-                f"{_template.PIN}:/template.json:ro",
-                "-v",
-                f"{root / 'src/inspect_audit/audit/framework.json'}:/framework.json:ro",
-                image,
-                "python",
-                "-c",
-                "import json, os, runpy; from pathlib import Path; "
-                "assert not os.environ.get('GH_TOKEN') and not os.environ.get('GITHUB_TOKEN'); "
-                "reader = runpy.run_path('/template_reader.py'); "
-                "assert json.loads(Path('/framework.json').read_text()) == reader['regenerate'](reader['template']())",
-            ],
-            check=True,
-            capture_output=True,
-        )
-    finally:
-        subprocess.run(["docker", "image", "rm", image], check=True, capture_output=True)

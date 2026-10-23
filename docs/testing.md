@@ -144,6 +144,6 @@ The grade tool returns Inspect's complete `Score` record, including metadata and
 
 Mocked grading is marked `passed_mock`, and the native log must contain the declared mock model call. An undeclared external model call fails the run. These checks test execution and parsing, not the correctness of the canned judgment.
 
-## Private-template publishing checks
+## Publishing checks
 
-The default pytest selection excludes both `docker` and `latex` tests. Heavy publishing checks run in CI, not on the operator's machine. The dedicated `LaTeX fixture` job requires the `audit-template` environment's read-only `AUDIT_REPORTS_TOKEN`; missing access fails the job rather than passing with skipped tests. It checks full registry regeneration, an actual PDF build, and a cache image running without networking or GitHub credentials. No model calls are made.
+The default pytest selection excludes both `docker` and `latex` tests. Heavy publishing checks run in CI, not on the operator's machine. The dedicated `LaTeX fixture` job checks full registry regeneration and an actual PDF build from the shipped template. No model calls are made.

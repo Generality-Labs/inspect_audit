@@ -1,63 +1,41 @@
-"""Download exact upstream template files into a verified host cache."""
+"""Laurence's GL audit template, shipped with this package.
+
+`template/` holds the files of `Generality-Labs/audit_reports` the LaTeX publisher
+builds from, copied at the revision named in `template.json`. Shipped rather than
+fetched: that repository is private, and fetching would need a GitHub token wherever
+a report is built. To move to a newer template: `--update-from <checkout>`, then
+`--update-registry`.
+"""
 
 import argparse
-import hashlib
 import json
-import os
 import re
-import shutil
 import subprocess
-import urllib.request
 from pathlib import Path
 from typing import Any
 
 PIN = Path(__file__).with_name("template.json")
+SHIPPED = Path(__file__).with_name("template")
 
 
 def template() -> Path:
-    """Fetch pinned files; private-repository credentials stay on the publishing host."""
+    """The shipped template."""
+    return SHIPPED
+
+
+def update_from(checkout: Path) -> None:
+    """Copy the template files from a checkout of audit_reports and record its revision."""
     pin = json.loads(PIN.read_text())
-    root = (
-        Path(
-            os.environ.get(
-                "INSPECT_AUDIT_TEMPLATE_CACHE", Path.home() / ".cache/inspect-audit/templates"
-            )
-        )
-        / pin["revision"]
-    )
-    for name, checksum in pin["files"].items():
-        path = root / name
-        if not path.exists():
-            endpoint = f"repos/{pin['repository']}/contents/{name}?ref={pin['revision']}"
-            token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
-            if not token and shutil.which("gh"):
-                result = subprocess.run(
-                    ["gh", "api", endpoint, "-H", "Accept: application/vnd.github.raw+json"],
-                    capture_output=True,
-                    check=False,
-                )
-                if result.returncode:
-                    raise ValueError(
-                        "Cannot fetch private audit template: configure gh auth, GH_TOKEN or a verified template cache"
-                    )
-                content = result.stdout
-            else:
-                request = urllib.request.Request(
-                    "https://api.github.com/" + endpoint,
-                    headers={
-                        "Accept": "application/vnd.github.raw+json",
-                        **({"Authorization": f"Bearer {token}"} if token else {}),
-                    },
-                )
-                with urllib.request.urlopen(request, timeout=60) as response:
-                    content = response.read()
-            if hashlib.sha256(content).hexdigest() != checksum:
-                raise ValueError(f"Template checksum mismatch: {name}")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content)
-        if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != checksum:
-            raise ValueError(f"Template checksum mismatch: {name}")
-    return root
+    for name in pin["files"]:
+        (SHIPPED / name).parent.mkdir(parents=True, exist_ok=True)
+        (SHIPPED / name).write_bytes((checkout / name).read_bytes())
+    revision = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    PIN.write_text(json.dumps({**pin, "revision": revision}, indent=2) + "\n")
 
 
 def regenerate(upstream: Path) -> dict[str, Any]:
@@ -119,8 +97,11 @@ def regenerate(upstream: Path) -> dict[str, Any]:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--update-from", type=Path, help="a checkout of audit_reports")
     parser.add_argument("--update-registry", action="store_true")
     args = parser.parse_args()
+    if args.update_from:
+        update_from(args.update_from)
     upstream = template()
     if args.update_registry:
         from .._framework import REGISTRY

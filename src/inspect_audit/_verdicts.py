@@ -110,21 +110,6 @@ def _item_skill(name: str, description: str, metadata: dict[str, Any]) -> Invest
     )
 
 
-def effort_problem(model: object, reasoning_effort: object) -> str | None:
-    """Why an investigator's reasoning effort cannot apply, if it cannot.
-
-    There is nothing to bind it to without an explicit model (the eval's model is not
-    resolved at task-construction time), and dropping the knob silently corrupts
-    effort comparisons.
-    """
-    if reasoning_effort is not None and model is None:
-        return (
-            "reasoning_effort needs an explicit model to bind to: pass "
-            "model= alongside it (the eval-level --model cannot carry it)"
-        )
-    return None
-
-
 def investigation_items(items: list[str] | None = None) -> list[InvestigationItemSkill]:
     """The investigation items an investigator can audit, one skill each.
 

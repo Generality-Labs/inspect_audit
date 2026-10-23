@@ -84,9 +84,10 @@ def locked_extra_pins(repo: str, commit: str, extra: str) -> list[str]:
         checkout = Path(tmp)
 
         def run(*args: str) -> str:
-            return subprocess.run(
-                args, cwd=checkout, capture_output=True, text=True, check=True
-            ).stdout
+            result = subprocess.run(args, check=False, cwd=checkout, capture_output=True, text=True)
+            if result.returncode:
+                raise RuntimeError(f"{' '.join(args[:2])} failed: {result.stderr.strip()[-800:]}")
+            return result.stdout
 
         run("git", "init", "-q")
         run("git", "fetch", "-q", "--depth", "1", "--filter=blob:none", repo, commit)

@@ -6,10 +6,19 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from test_helpers.audit import make_audit
 
-from inspect_audit import _investigate
-from inspect_audit._report import InvestigationRecord
-from inspect_audit._runs import COMPLETE, FINISHED, HawkLogin, HawkRuns, Job, LocalRuns, hawk_config
+from inspect_audit import _audit
+from inspect_audit._report import AuditRecord
+from inspect_audit.dispatch import (
+    COMPLETE,
+    FINISHED,
+    HawkLogin,
+    HawkRuns,
+    Job,
+    LocalRuns,
+    hawk_config,
+)
 
 TASK_FILE = """
 from inspect_ai import Task, task
@@ -33,9 +42,9 @@ def test_a_job_renders_as_a_config_hawk_accepts() -> None:
         label="smoke",
         task="inspect_evals/simpleqa_verified",
         package="inspect-evals@git+https://example.org/evals@abc",
-        models=["openai/gpt-5-mini"],
+        models=["openai/gpt-6-luna"],
         task_args={"scorer": "original"},
-        model_roles={"grader": "openai/gpt-5-mini"},
+        model_roles={"grader": "openai/gpt-6-luna"},
         sample_ids=["1", "2"],
         epochs=2,
     )
@@ -50,7 +59,7 @@ def test_a_job_renders_as_a_config_hawk_accepts() -> None:
     )
     # Hawk receives the full Inspect provider/model identity
     assert [(g.package, [i.name for i in g.items]) for g in config.models or []] == [
-        ("inspect-ai", ["openai/gpt-5-mini"])
+        ("inspect-ai", ["openai/gpt-6-luna"])
     ]
     assert config.retry_attempts == 0
 
@@ -158,20 +167,28 @@ def test_a_local_job_runs_detached_and_hands_back_its_logs(tmp_path: Path) -> No
     assert sorted(str(s.id) for s in log.samples or []) == ["1", "2"]
 
 
-def _investigation(tmp_path: Path, runs: Any) -> _investigate.Investigation:
-    return _investigate.Investigation(
+def _make_audit(tmp_path: Path, runs: Any) -> _audit.Audit:
+    audit = make_audit(
         root=tmp_path,
         runs=runs,
-        where="hawk",
         task="benchmark/task",
         task_package="benchmark",
-        audit_package="inspect_audit",
-        auditor_image="image",
-        menu=_investigate.ModelMenu(
-            auditors=["openai/auditor"], subjects=["openai/subject"], judges=["openai/judge"]
+        investigation_package="inspect_audit",
+        investigator_image="image",
+        menu=_audit.ModelMenu(
+            investigators=["openai/investigator"],
+            subjects=["openai/subject"],
+            judges=["openai/judge"],
         ),
         supplied=["hawk:supplied-logs"],
     )
+
+    from inspect_ai.util import store_as
+
+    from inspect_audit.dispatch.policy import PolicyStore, ensure_policy
+
+    ensure_policy(audit.authorizer.policy, store_as(PolicyStore), require_existing=False)
+    return audit
 
 
 class FakeRuns:
@@ -187,21 +204,20 @@ class FakeRuns:
 
 
 @pytest.fixture
-def record(monkeypatch: pytest.MonkeyPatch) -> InvestigationRecord:
-    from inspect_ai.util import Store
+def record() -> AuditRecord:
+    from inspect_ai.util import Store, store_as
+    from inspect_ai.util._store import init_subtask_store
 
-    # its own store: a bare StoreModel binds to a shared one, which leaks between tests
-    held = InvestigationRecord(store=Store())
-    monkeypatch.setattr(_investigate, "store_as", lambda _: held)
-    return held
+    init_subtask_store(Store())
+    return store_as(AuditRecord)
 
 
 def test_launched_jobs_are_recorded_and_only_allowed_models_run(
-    tmp_path: Path, record: InvestigationRecord
+    tmp_path: Path, record: AuditRecord
 ) -> None:
     runs = FakeRuns()
-    inv = _investigation(tmp_path, runs)
-    benchmark = _investigate.run_benchmark(inv)
+    inv = _make_audit(tmp_path, runs)
+    benchmark = _audit.run_benchmark(inv)
     out = asyncio.run(benchmark("smoke", ["openai/subject"], ["1"], None, 1, "{}", "{}", "why"))  # type: ignore[arg-type]
     assert "hawk:run-1" in out
     assert record.jobs == [
@@ -217,32 +233,32 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
     from inspect_ai.tool import ToolError
 
     with pytest.raises(ToolError, match="may not be evaluated"):
-        asyncio.run(benchmark("other", ["openai/auditor"], None, None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
+        asyncio.run(benchmark("other", ["openai/investigator"], None, None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
     with pytest.raises(ToolError, match="exists"):
         asyncio.run(benchmark("smoke", ["openai/subject"], None, None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
 
 
-def test_an_audit_reads_logs_by_job_label_or_supplied_source(
-    tmp_path: Path, record: InvestigationRecord, monkeypatch: pytest.MonkeyPatch
+def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
+    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from inspect_ai.tool import ToolError
 
     runs = FakeRuns()
-    inv = _investigation(tmp_path, runs)
+    inv = _make_audit(tmp_path, runs)
     record.jobs.append({"label": "smoke", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})
     monkeypatch.setattr(
-        _investigate,
+        _audit,
         "prices_for_models",
         lambda models: {m: {"input": 1.0, "output": 2.0} for m in models},
     )
-    audit = _investigate.run_audit(inv)
+    investigation = _audit.run_investigation(inv)
     asyncio.run(
-        audit(  # type: ignore[arg-type]
+        investigation(  # type: ignore[arg-type]
             "a1",
             ["1"],
             ["gold-answer"],
             ["smoke", "hawk:supplied-logs"],
-            "openai/auditor",
+            "openai/investigator",
             "benchmark.task",
             0.5,
             "{}",
@@ -251,23 +267,23 @@ def test_an_audit_reads_logs_by_job_label_or_supplied_source(
         )
     )
     [job] = runs.submitted
-    assert job.task == "inspect_audit/audit" and job.extra_packages == ["benchmark"]
+    assert job.task == "inspect_audit/investigation" and job.extra_packages == ["benchmark"]
     assert job.task_args["logs"] == ["hawk:r", "hawk:supplied-logs"]
     assert job.task_args["judge"] == {"grader": "openai/judge"}
     assert job.task_args["cost_limit"] == 0.5
     assert job.task_args["source"] == "benchmark.task"
     assert set(job.task_args["model_prices"]) == {
-        "openai/auditor",
+        "openai/investigator",
         "openai/judge",
     }
     with pytest.raises(ToolError, match="neither a job of yours nor a supplied source"):
         asyncio.run(
-            audit(
+            investigation(
                 "a2",
                 ["1"],
                 ["gold-answer"],
                 ["/etc/passwd"],
-                "openai/auditor",
+                "openai/investigator",
                 "b.t",
                 0.5,
                 "{}",
@@ -326,24 +342,80 @@ def test_a_local_job_sees_only_the_environment_it_needs(
     assert "AWS_SECRET_ACCESS_KEY" not in seen
 
 
-def test_task_arguments_cannot_place_code_or_name_other_models() -> None:
-    allowed = ["openai/judge"]
-    assert _investigate.argument_problems({"scorer": "original", "profile": "x"}, allowed) == []
-    assert _investigate.argument_problems({"grader_model": "openai/judge"}, allowed) == []
-    problems = _investigate.argument_problems(
-        {
-            "sandbox": "local",
-            "nested": {"data_dir": "/etc", "judge": "openai/gpt-6-astra"},
-            "items": [{"docker_image": "evil:latest"}],
-        },
-        allowed,
+@pytest.mark.parametrize("kind", ["benchmark", "investigation"])
+def test_task_arguments_cannot_place_code_or_name_other_models(kind: str) -> None:
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit.dispatch.policy import (
+        AuditAuthorizer,
+        LaunchPolicy,
+        Models,
+        canonical,
     )
-    assert [p.split(":")[0] for p in problems] == [
-        "task_args.sandbox",
-        "task_args.nested.data_dir",
-        "task_args.nested.judge",
-        "task_args.items[0].docker_image",
-    ]
+
+    # the operator's own sandbox, image and path choices stand (SWE-bench needs them);
+    # running outside a sandbox and judges outside the policy do not
+    for args, allowed in [
+        (
+            {
+                "judge_prompt": "original",
+                "grader_model": "openai/judge",
+                "judges": ["openai/judge"],
+            },
+            True,
+        ),
+        (
+            {
+                "sandbox_type": "k8s",
+                "image_name_template": "sweb.{issue}:latest",
+                "sandbox_config": None,
+            },
+            True,
+        ),
+        ({"items": [{"docker_image": "theirs:1"}], "data_dir": "/data"}, True),
+        ({"sandbox": "local"}, False),
+        ({"sandbox_type": "LOCAL"}, False),
+        ({"nested": {"data_dir": "/etc", "judge": "openai/other"}}, False),
+        ({"grader_model": "openai/other"}, False),
+        ({"judges": ["openai/other"]}, False),
+        ({"models": {"reviewer": "openai/other"}}, False),
+    ]:
+        policy = LaunchPolicy(
+            task="bench",
+            task_package="bench",
+            investigation_package="investigation",
+            investigator_image="img",
+            models=Models(
+                subjects=("subject",), investigators=("investigator",), judges=("openai/judge",)
+            ),
+            checks=("gold-answer",),
+            task_args_json=canonical(args),
+            configuration_json="{}",
+        )
+        job = Job(label="probe", task="bench", package="bench", models=["subject"], task_args=args)
+        if kind == "investigation":
+            job = Job(
+                label="probe",
+                task="inspect_audit/investigation",
+                package="investigation",
+                models=["investigator"],
+                extra_packages=["bench"],
+                task_args={
+                    "task": "bench",
+                    "task_args": args,
+                    "source": "bench",
+                    "investigator_image": "img",
+                    "checks": ["gold-answer"],
+                    "samples": ["1"],
+                    "cost_limit": 0.1,
+                },
+            )
+        authorizer = AuditAuthorizer(policy)
+        if allowed:
+            assert authorizer.authorise(job, kind, set()).task_args == job.task_args
+        else:
+            with pytest.raises(ToolError, match="task_args"):
+                authorizer.authorise(job, kind, set())
 
 
 def test_the_runner_credentials_come_from_hawks_real_hook(
@@ -453,13 +525,13 @@ def test_a_local_job_receives_string_arguments_exactly(tmp_path: Path) -> None:
 def test_hawk_logs_are_fetched_with_the_runners_own_credentials(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A child audit fetching hawk: logs on a runner uses Hawk's real hook."""
+    """A child investigation fetching hawk: logs on a runner uses Hawk's real hook."""
     import hawk.cli.download
     import hawk.client
     from hawk.runner import refresh_token as hawk_hook
     from inspect_ai.hooks import _hooks
 
-    from inspect_audit._registry import fetch_logs
+    from inspect_audit._log_sources import fetch_logs
 
     monkeypatch.setattr(
         hawk_hook,
@@ -478,7 +550,7 @@ def test_hawk_logs_are_fetched_with_the_runners_own_credentials(
     used: list[str] = []
 
     class Client:
-        def __init__(self, token: str, api_url: str) -> None:
+        def __init__(self, token: str, api_url: str | None = None) -> None:
             used.append(token)
 
         async def __aenter__(self) -> "Client":
@@ -498,15 +570,16 @@ def test_hawk_logs_are_fetched_with_the_runners_own_credentials(
 
     monkeypatch.setattr(hawk.client, "HawkClient", Client)
     monkeypatch.setattr(hawk.cli.download, "download_file", download_file)
-    assert (Path(fetch_logs("hawk:run")) / "a.eval").read_bytes() == b"log"
+    monkeypatch.setattr(hawk.cli.download, "_assert_server_supports_batch_download", lambda: None)
+    assert (Path(fetch_logs("hawk:run")) / "run" / "a.eval").read_bytes() == b"log"
     assert used == ["runner-access"]
 
 
-def test_an_audit_reads_a_log_directory(tmp_path: Path) -> None:
+def test_an_investigation_reads_a_log_directory(tmp_path: Path) -> None:
     """A local job's address is its log directory; operator sources may be URLs."""
     from test_helpers.logs import run_fixture_eval
 
-    from inspect_audit._registry import log_files
+    from inspect_audit._log_sources import log_files
 
     log = Path(run_fixture_eval(str(tmp_path / "logs")))
     assert log_files([str(log.parent)]) == [str(log)]
@@ -536,20 +609,54 @@ def test_a_balance_without_a_number_is_unknown_not_zero(monkeypatch: pytest.Monk
     monkeypatch.setattr(
         urllib.request, "urlopen", lambda request, timeout=None: Response({"data": {"limit": 5}})
     )
-    [line] = asyncio.run(_investigate.key_balance(None, openrouter=True))
+    [line] = asyncio.run(_audit.key_balance(None, openrouter=True))
     assert "unknown" in line and "$0.00" not in line
 
 
-def test_an_empty_judge_reaches_the_audit_as_empty(
-    tmp_path: Path, record: InvestigationRecord, monkeypatch: pytest.MonkeyPatch
+def test_an_empty_judge_reaches_the_investigation_as_empty(
+    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """{} means "their grader calls no model"; None means "infer it from the logs"."""
     runs = FakeRuns()
-    inv = _investigation(tmp_path, runs)
-    monkeypatch.setattr(_investigate, "prices_for_models", lambda models: {m: {} for m in models})
+    inv = _make_audit(tmp_path, runs)
+    monkeypatch.setattr(_audit, "prices_for_models", lambda models: {m: {} for m in models})
     asyncio.run(
-        _investigate.run_audit(inv)(  # type: ignore[arg-type]
-            "a", ["1"], ["gold-answer"], [], "openai/auditor", "b.t", 0.5, "{}", "{}", ""
+        _audit.run_investigation(inv)(  # type: ignore[arg-type]
+            "a", ["1"], ["gold-answer"], [], "openai/investigator", "b.t", 0.5, "{}", "{}", ""
         )
     )
     assert runs.submitted[0].task_args["judge"] == {}
+
+
+def test_local_completion_reads_only_the_output_tail(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    runs = LocalRuns(tmp_path / "runs")
+    directory = runs.root / "child"
+    directory.mkdir()
+    output = tmp_path / "output.txt"
+    output.write_text("x" * 100_000 + "\n" + json.dumps({"event": "done", "success": True}) + "\n")
+    (directory / "launch.json").write_text(json.dumps({"output_file": str(output)}))
+    read_text = Path.read_text
+
+    def read_metadata(path, *args, **kwargs):
+        assert path != output, "runner output must not be loaded in full"
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_metadata)
+    assert asyncio.run(runs.status("child")) == COMPLETE
+
+
+def test_even_an_empty_configuration_requires_a_bound_policy(
+    tmp_path: Path, record: AuditRecord
+) -> None:
+    from inspect_ai.util import Store
+    from inspect_ai.util._store import init_subtask_store
+
+    runs = FakeRuns()
+    audit = _make_audit(tmp_path, runs)
+    init_subtask_store(Store())
+    job = Job(label="child", task="benchmark/task", package="benchmark", models=["openai/subject"])
+    with pytest.raises(RuntimeError, match="differs from its saved launch policy"):
+        asyncio.run(audit.launch(job, "benchmark", "unbound"))
+    assert not runs.submitted

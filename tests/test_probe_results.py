@@ -20,7 +20,7 @@ def result(name: str, text: str = "ok", error: str | None = None) -> ChatMessage
 
 def test_an_unresolved_verdict_does_not_hide_a_failed_grader() -> None:
     messages = [
-        result("auditor_bash"),
+        result("investigator_bash"),
         result("grade", error="sandbox unavailable"),
         result("record_verdict"),
         result("submit"),
@@ -32,7 +32,7 @@ def test_an_unresolved_verdict_does_not_hide_a_failed_grader() -> None:
 
 def test_a_disabled_judge_is_partial_not_a_pass() -> None:
     messages = [
-        result("auditor_bash"),
+        result("investigator_bash"),
         result("grade", error="API_FREE_PROBE: model-based grading is disabled"),
         result("record_verdict"),
         result("submit"),
@@ -44,7 +44,7 @@ def test_a_disabled_judge_is_partial_not_a_pass() -> None:
 
 def test_a_returned_incorrect_score_proves_grader_execution() -> None:
     messages = [
-        result("auditor_bash"),
+        result("investigator_bash"),
         result("grade", '{"scores":[{"value":"I"}]}'),
         result("record_verdict"),
         result("submit"),
@@ -73,7 +73,7 @@ def test_the_probe_cannot_generate_a_judge_response() -> None:
 
 def test_mocked_grading_is_visible_in_the_result() -> None:
     messages = [
-        result("auditor_bash"),
+        result("investigator_bash"),
         result("grade", '{"scores":[{"value":"I"}]}'),
         result("record_verdict"),
         result("submit"),
@@ -108,7 +108,7 @@ def test_unscored_judgments_are_not_successful_grader_execution(score: dict) -> 
 def test_empty_optional_metrics_do_not_hide_valid_scores() -> None:
     score = {"value": {"all": 0.0, "visible": 0.0, "ablated": float("nan"), "hidden": 0.0}}
     messages = [
-        result("auditor_bash"),
+        result("investigator_bash"),
         result("grade", json.dumps({"scores": [score]})),
         result("record_verdict"),
         result("submit"),

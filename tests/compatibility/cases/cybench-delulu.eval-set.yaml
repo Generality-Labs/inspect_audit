@@ -20,7 +20,7 @@ tasks:
           - hard
         logs: []
         judges: {}
-        auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+        investigator_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
         selection: CTF with attacker and victim containers, service health check and
           binary input files.
         repo: https://github.com/UKGovernmentBEIS/inspect_evals

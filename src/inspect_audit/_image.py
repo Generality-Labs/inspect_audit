@@ -18,7 +18,7 @@ def view_image(service: str | None = None) -> Tool:
         """Look at an image: an item's media, or a figure you have drawn.
 
         Reading the bytes with bash establishes nothing; call this to see the picture.
-        Auditing an item, the media is staged under `/audit/media/` and `sample.json`
+        Investigating an item, the media is staged under `/audit/media/` and `/audit/item.json`
         gives the path. Writing a report, this is how you check a figure before you
         publish it, from the file your script wrote under
         `/workspace/report/evidence/`.

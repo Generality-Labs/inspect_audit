@@ -6,26 +6,26 @@ tasks:
 - package: git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d#subdirectory=experiments/functionality_hawk
   name: ia_functionality
   items:
-  - name: investigation
+  - name: audit
     args:
       benchmark: scicode
-      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
-  - name: investigation
+      investigation_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
+  - name: audit
     args:
       benchmark: simpleqa
-      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
-  - name: investigation
+      investigation_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
+  - name: audit
     args:
       benchmark: gsm8k
-      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
-  - name: investigation
+      investigation_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
+  - name: audit
     args:
       benchmark: bbh
-      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
-  - name: investigation
+      investigation_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
+  - name: audit
     args:
       benchmark: agentharm
-      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
+      investigation_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@2df5d4c71bbd24378a53f713d9948b8de73a8a2d
 models:
 - package: openai
   name: openrouter

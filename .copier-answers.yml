@@ -6,7 +6,7 @@ author_email: james.mann@generality.org
 author_name: James Mann
 github_owner: Generality-Labs
 license: MIT
-project_description: Benchmark validity auditing for Inspect AI evals
+project_description: Benchmark validity investigating for Inspect AI evals
 project_kind: library
 project_name: inspect_audit
 publish_to_pypi: false

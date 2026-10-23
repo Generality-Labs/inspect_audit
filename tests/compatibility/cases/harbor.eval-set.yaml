@@ -21,7 +21,7 @@ tasks:
           n_tasks: 1
         logs: []
         judges: {}
-        auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+        investigator_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
       limit: 1
 models:
 - package: openai

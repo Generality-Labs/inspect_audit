@@ -4,7 +4,7 @@ Each declared log is re-scored with the benchmark's scorers through Inspect's pu
 `score_async` (append, on a copy), and every fresh grade is set beside the recorded
 one. A disagreement is re-scored again: varying regrades are judge noise; identical
 ones are a stable disagreement -- the grader as installed is not the grader that
-produced the log. Runs outside any audit, on the host, with no sandbox: a scorer
+produced the log. Runs outside any investigation, on the host, with no sandbox: a scorer
 that needs the benchmark's box is reported, not worked around.
 """
 
@@ -69,7 +69,7 @@ def _name(scorer: Scorer) -> str:
 
 
 async def _rescore(log: EvalLog, scorers: list[Scorer], roles: dict[str, str]) -> EvalLog:
-    # reducer named explicitly: the log's own may not resolve here, and the audit
+    # reducer named explicitly: the log's own may not resolve here, and the investigation
     # compares per-sample grades, never aggregates
     return await score_async(
         log,

@@ -1,0 +1,14 @@
+{
+  "repository": "Generality-Labs/audit_reports",
+  "revision": "ad7de89658b6794112c2f65847991c7ed41d9e30",
+  "files": [
+    ".latexmkrc",
+    "reports/Example/.latexmkrc",
+    "reports/Example/Content.tex",
+    "reports/Example/Example_Audit.tex",
+    "template/GLaudit.cls",
+    "template/assets/Generality_Labs.png",
+    "template/auditframework.sty",
+    "template/sections/ScoringCriteria.tex"
+  ]
+}

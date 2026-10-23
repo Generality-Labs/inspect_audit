@@ -10,16 +10,16 @@ from inspect_ai.model import GenerateConfig, ModelConfig, ModelCost, ModelInfo
 from inspect_ai.tool import ToolError
 from inspect_ai.util import Store
 
-from inspect_audit._policy import (
-    InvestigationAuthorizer,
+from inspect_audit._prices import prices_for_models
+from inspect_audit.dispatch import COMPLETE, FINISHED, Job, LocalRuns, hawk_config
+from inspect_audit.dispatch.policy import (
+    AuditAuthorizer,
     LaunchPolicy,
     Models,
     PolicyStore,
     canonical,
     ensure_model,
 )
-from inspect_audit._prices import prices_for_models
-from inspect_audit._runs import COMPLETE, FINISHED, Job, LocalRuns, hawk_config
 
 
 @pytest.mark.parametrize(
@@ -62,9 +62,9 @@ def test_direct_and_router_routes_are_distinct_permissions() -> None:
     policy = LaunchPolicy(
         task=None,
         task_package=None,
-        audit_package=None,
-        auditor_image="image",
-        models=Models(investigator=("openrouter/openai/model",)),
+        investigation_package=None,
+        investigator_image="image",
+        models=Models(auditor=("openrouter/openai/model",)),
         checks=(),
         configuration_json="{}",
     )
@@ -79,14 +79,14 @@ def test_model_settings_are_frozen_and_applied_by_the_authorizer() -> None:
     policy = LaunchPolicy(
         task="bench",
         task_package="bench",
-        audit_package="audit",
-        auditor_image="image",
+        investigation_package="investigation",
+        investigator_image="image",
         models=Models(subjects=(name,)),
         checks=(),
         model_configs_json=canonical({name: configured.model_dump(mode="json", exclude_none=True)}),
         configuration_json="{}",
     )
-    authorizer = InvestigationAuthorizer(policy)
+    authorizer = AuditAuthorizer(policy)
     job = Job(label="native", task="bench", package="bench", models=[name])
     approved = authorizer.authorise(job, "benchmark", set())
     assert approved.model_configs == {name: configured}
@@ -102,7 +102,7 @@ def test_model_settings_are_frozen_and_applied_by_the_authorizer() -> None:
 def test_inspect_pricing_is_used_without_a_router_request(monkeypatch: pytest.MonkeyPatch) -> None:
     import inspect_ai.model
 
-    from inspect_audit import _openrouter
+    from inspect_audit import _prices
 
     monkeypatch.setattr(
         inspect_ai.model,
@@ -112,7 +112,7 @@ def test_inspect_pricing_is_used_without_a_router_request(monkeypatch: pytest.Mo
         ),
     )
     monkeypatch.setattr(
-        _openrouter, "openrouter_prices", lambda names: pytest.fail("unnecessary OpenRouter lookup")
+        _prices, "openrouter_prices", lambda names: pytest.fail("unnecessary OpenRouter lookup")
     )
     assert prices_for_models(["openai/native"])["openai/native"]["output"] == 2
 
@@ -122,12 +122,10 @@ def test_unknown_direct_models_do_not_fall_back_to_openrouter(
 ) -> None:
     import inspect_ai.model
 
-    from inspect_audit import _openrouter
+    from inspect_audit import _prices
 
     monkeypatch.setattr(inspect_ai.model, "get_model_info", lambda name: None)
-    monkeypatch.setattr(
-        _openrouter, "openrouter_prices", lambda names: pytest.fail("wrong provider")
-    )
+    monkeypatch.setattr(_prices, "openrouter_prices", lambda names: pytest.fail("wrong provider"))
     with pytest.raises(ValueError, match="model_prices"):
         prices_for_models(["anthropic/native"])
 
@@ -135,7 +133,7 @@ def test_unknown_direct_models_do_not_fall_back_to_openrouter(
 def test_only_router_models_use_the_router_price_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     import inspect_ai.model
 
-    from inspect_audit import _openrouter
+    from inspect_audit import _prices
 
     monkeypatch.setattr(inspect_ai.model, "get_model_info", lambda name: None)
     seen = []
@@ -144,7 +142,7 @@ def test_only_router_models_use_the_router_price_adapter(monkeypatch: pytest.Mon
         seen.extend(names)
         return {name: {"input": 1, "output": 2} for name in names}
 
-    monkeypatch.setattr(_openrouter, "openrouter_prices", prices)
+    monkeypatch.setattr(_prices, "openrouter_prices", prices)
     name = "openrouter/openai/model"
     assert set(prices_for_models([name, name])) == {name}
     assert seen == [name]
@@ -206,29 +204,62 @@ def test_recorded_judge_settings_are_kept(fixture_log: str, tmp_path: Path) -> N
     assert indexed.judge_configs == {"grader": configured}
 
 
-def test_audit_judge_configuration_is_applied_and_cannot_be_supplied_by_the_agent() -> None:
+def test_a_recorded_judge_endpoint_is_not_replayed(fixture_log: str, tmp_path: Path) -> None:
+    """The logs' run called its judge at its own host's endpoint; this run uses its own.
+
+    A SimpleQA run recorded grader base_url https://openrouter.ai/api/v1; replayed on
+    Hawk it bypassed the gateway with the gateway's token and every grade got a 401.
+    """
+    from inspect_ai.log import write_eval_log
+    from test_helpers.logs import fixture_task
+
+    from inspect_audit._task import investigation_task
+
+    log = read_eval_log(fixture_log)
+    log.eval.model_roles = {
+        "grader": ModelConfig(
+            model="mockllm/grader",
+            config=GenerateConfig(temperature=0.3),
+            base_url="https://elsewhere.example/v1",
+        )
+    }
+    path = tmp_path / "roles.eval"
+    write_eval_log(log, str(path))
+    task = investigation_task(
+        fixture_task("fixture_task"),
+        samples=["1"],
+        checks=["gold-answer"],
+        logs=[str(path)],
+        source=str(tmp_path),
+    )
+    grader = task.model_roles["grader"]
+    assert grader.api.base_url != "https://elsewhere.example/v1"
+    assert grader.config.temperature == 0.3
+
+
+def test_investigation_judge_configuration_is_applied_and_cannot_be_supplied_by_the_agent() -> None:
     name = "mockllm/grader"
     configured = ModelConfig(model=name, config=GenerateConfig(temperature=0.4))
     policy = LaunchPolicy(
         task="bench/task",
         task_package="bench-pkg",
-        audit_package="audit-pkg",
-        auditor_image="image",
-        models=Models(auditors=("mockllm/auditor",), judges=(name,)),
+        investigation_package="investigation-pkg",
+        investigator_image="image",
+        models=Models(investigators=("mockllm/investigator",), judges=(name,)),
         checks=("gold-answer",),
         model_configs_json=canonical({name: configured.model_dump(mode="json", exclude_none=True)}),
         configuration_json="{}",
     )
-    authorizer = InvestigationAuthorizer(policy)
+    authorizer = AuditAuthorizer(policy)
     job = Job(
-        label="audit",
-        task="inspect_audit/audit",
-        package="audit-pkg",
+        label="investigation",
+        task="inspect_audit/investigation",
+        package="investigation-pkg",
         extra_packages=["bench-pkg"],
-        models=["mockllm/auditor"],
+        models=["mockllm/investigator"],
         task_args={
             "task": "bench/task",
-            "auditor_image": "image",
+            "investigator_image": "image",
             "source": "bench.task",
             "checks": ["gold-answer"],
             "samples": ["1"],
@@ -236,14 +267,14 @@ def test_audit_judge_configuration_is_applied_and_cannot_be_supplied_by_the_agen
             "cost_limit": 0.1,
         },
     )
-    approved = authorizer.authorise(job, "audit", set())
+    approved = authorizer.authorise(job, "investigation", set())
     assert approved.task_args["judge_configs"] == {
         "grader": configured.model_dump(mode="json", exclude_none=True)
     }
     assert "judge_configs" not in job.task_args
     job.task_args["judge_configs"] = {"grader": {"model": name}}
     with pytest.raises(ToolError, match="outside the launch contract"):
-        authorizer.authorise(job, "audit", set())
+        authorizer.authorise(job, "investigation", set())
 
 
 def test_logs_with_different_judge_settings_are_refused(fixture_log: str, tmp_path: Path) -> None:
@@ -265,3 +296,49 @@ def test_logs_with_different_judge_settings_are_refused(fixture_log: str, tmp_pa
         paths.append(str(path))
     with pytest.raises(LogMismatchError, match="different judge configurations"):
         index_logs(paths, task_name="fixture_task", task_args={}, package=None)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_model_prices_are_rejected(value: float) -> None:
+    from inspect_audit._prices import valid_price
+
+    assert not valid_price({"input": value, "output": 1.0})
+    assert not valid_price({"input": 1.0, "output": value})
+
+
+def test_hawk_style_openrouter_names_find_their_catalog_price(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On Hawk an OpenRouter model runs as openrouter/openrouter/{org}/{slug}."""
+    import io
+    import json as _json
+
+    from inspect_audit import _prices
+
+    listing = {
+        "data": [
+            {
+                "id": "anthropic/claude-x",
+                "pricing": {"prompt": "0.000004", "completion": "0.00002"},
+            },
+            {"id": "openrouter/auto", "pricing": {"prompt": "0.000001", "completion": "0.000002"}},
+        ]
+    }
+    monkeypatch.setattr(
+        _prices.urllib.request, "urlopen", lambda *a, **k: io.BytesIO(_json.dumps(listing).encode())
+    )
+    prices = _prices.openrouter_prices(
+        [
+            "openrouter/anthropic/claude-x",
+            "openrouter/openrouter/anthropic/claude-x",
+            "openrouter/openrouter/auto",
+        ]
+    )
+    assert prices["openrouter/openrouter/anthropic/claude-x"]["input"] == pytest.approx(4.0)
+    assert prices["openrouter/anthropic/claude-x"]["output"] == pytest.approx(20.0)
+    assert prices["openrouter/openrouter/auto"]["input"] == pytest.approx(1.0)
+    # Hawk's documented route for an aggregator public name
+    routed = _prices.prices_for_models(["openai-api/openrouter/openrouter/anthropic/claude-x"])
+    assert routed["openai-api/openrouter/openrouter/anthropic/claude-x"]["input"] == pytest.approx(
+        4.0
+    )

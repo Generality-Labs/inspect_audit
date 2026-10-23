@@ -1,0 +1,38 @@
+# Launch with: inspect eval inspect_audit/audit -T config=examples/audit-policy.yaml --model openrouter/<auditor-model>
+# Replace the example task, repository, full commit, models and source run ID.
+# Configuration is read once. Resume must use the same resolved configuration;
+# permission changes require a new audit.
+benchmark:
+  repo: https://github.com/example/benchmarks
+  revision: "<full-commit-sha>"
+  task: example_benchmarks/task
+  source: example_benchmarks.task
+  task_args: {}
+  # Non-secret settings, also set on the auditor runner. Applied to every child.
+  environment: {}
+
+investigation:
+  samples: all
+  checks: [gold-answer, answer-format]
+
+policy:
+  models:
+    auditor: ["openrouter/<auditor-model>"]
+    investigators: ["openrouter/<investigator-model>"]
+    subjects: ["openrouter/<subject-model>"]
+    judges: []
+  inputs:
+    logs: ["hawk:<source-run-id>"]
+  limits:
+    investigation_sample_cost_usd: 0.25
+    max_concurrent_jobs: 4
+    # A shared total-dollar cap is enforced by the model key, not a policy ledger.
+    # Unsupported fields such as total_cost_usd are rejected.
+
+execution:
+  backend: hawk
+  credential_mode: restricted
+
+# The auditor's own sandbox; independent of the child-job backend.
+box: docker
+# investigation_package defaults to this checkout's published commit. Override only at launch.

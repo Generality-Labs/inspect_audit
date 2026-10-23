@@ -1,10 +1,6 @@
-"""`reset`: rebuild the benchmark's boxes from their images, mid-sample.
+"""Rebuild Docker benchmark boxes using Inspect's sample-initialisation internals.
 
-Inspect sets a sample's boxes up once and offers no public way to do it again, so
-this is the one module allowed Inspect's private internals: the Docker project
-handle, and the same routines sample-init uses to lay files and run setup -- reused,
-not reimplemented, so a rebuilt box starts the way the first one did. Docker only;
-on any other provider it refuses.
+Inspect has no public reset API; private imports are confined to this module.
 """
 
 from copy import copy
@@ -21,7 +17,7 @@ from inspect_ai.util._sandbox.context import (
 )
 from inspect_ai.util._sandbox.docker.docker import DockerSandboxEnvironment
 
-from ._compose import AUDITOR
+from ._compose import INVESTIGATOR
 
 RECREATE_TIMEOUT = 900
 
@@ -42,7 +38,7 @@ async def rebuild(
     listed = await async_subprocess([*base, "config", "--services"], timeout=120)
     if not listed.success:
         raise ToolError(f"could not list the benchmark's services: {listed.stderr.strip()}")
-    services = [s for s in listed.stdout.split() if s and s != AUDITOR]
+    services = [s for s in listed.stdout.split() if s and s != INVESTIGATOR]
     recreated = await async_subprocess(
         [*base, "up", "-d", "--force-recreate", "--no-deps", "--wait", *services],
         timeout=RECREATE_TIMEOUT,
@@ -66,7 +62,7 @@ async def rebuild(
             script = f"#!/usr/bin/env bash\n\n{script}"
         await setup_sandbox_environment(script.encode("utf-8"), environments)
     # their setup solvers may prepare the box too; run them on a copy so whatever
-    # they do to the conversation stays off the audit's state
+    # they do to the conversation stays off the investigation's state
     for solver in setup_solvers:
         await solver(copy(state), generate)
     return services
@@ -75,7 +71,7 @@ async def rebuild(
 def reset_tool(
     their_sample: Sample, setup_solvers: list[Solver], state: TaskState, generate: Generate
 ) -> Tool:
-    """`reset` bound to one audited sample."""
+    """`reset` bound to one investigated sample."""
 
     @tool
     def reset() -> Tool:

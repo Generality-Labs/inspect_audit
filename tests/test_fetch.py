@@ -1,9 +1,9 @@
-"""Log sources an audit can be pointed at, resolved before anything reads them."""
+"""Log sources an investigation can be pointed at, resolved before anything reads them."""
 
 import urllib.request
 from pathlib import Path
 
-from inspect_audit._registry import fetch_logs
+from inspect_audit._log_sources import fetch_logs
 
 
 def _serve(monkeypatch, pages: dict[str, bytes]) -> None:
@@ -58,8 +58,8 @@ def test_exact_hawk_files_exclude_partial_runs(monkeypatch):
     presigned, downloaded = [], []
 
     class Client:
-        def __init__(self, token, api_url):
-            assert (token, api_url) == ("test-token", "https://hawk.test")
+        def __init__(self, token, api_url=None):
+            assert token == "test-token"
 
         async def __aenter__(self):
             return self
@@ -81,7 +81,8 @@ def test_exact_hawk_files_exclude_partial_runs(monkeypatch):
 
     monkeypatch.setattr(hawk.client, "HawkClient", Client)
     monkeypatch.setattr(hawk.cli.download, "download_file", download_file)
-    result = Path(fetch_logs("hawk:run/complete.eval"))
+    monkeypatch.setattr(hawk.cli.download, "_assert_server_supports_batch_download", lambda: None)
+    result = Path(fetch_logs("hawk:run/complete.eval")) / "run"
     assert (result / "complete.eval").read_bytes() == b"selected log"
     assert presigned == ["run/complete.eval"]
     assert downloaded == ["https://download.test/complete"]
@@ -108,3 +109,47 @@ def test_directory_sources_accept_inspect_file_uris(tmp_path):
     originals = list(folder.glob("*.eval"))
     assert len(originals) == 1
     assert (copied / f"0_{originals[0].name}").read_bytes() == originals[0].read_bytes()
+
+
+def test_a_remote_log_is_fetched_once_per_process(tmp_path, monkeypatch):
+    """A hundred job items naming one Hawk log must not download it a hundred times."""
+    from inspect_audit import _log_sources
+
+    calls = []
+
+    def fetch(address):
+        calls.append(address)
+        folder = tmp_path / f"fetch{len(calls)}"
+        folder.mkdir()
+        return str(folder)
+
+    monkeypatch.setattr(_log_sources, "fetch_eval_sets", fetch)
+    monkeypatch.setattr(_log_sources, "declared_transcripts", lambda: None)
+    monkeypatch.setattr(_log_sources, "_FETCHED", {})
+    first = _log_sources.fetch_logs("hawk:run")
+    assert [_log_sources.fetch_logs("hawk:run") for _ in range(3)] == [first] * 3
+    assert calls == ["run"]
+
+
+def test_hawk_downloads_use_the_given_address_and_an_empty_set_is_no_logs(tmp_path, monkeypatch):
+    """Hawk's downloader reads its address from settings; ours must reach it, and a run
+    that wrote no logs is recorded as such rather than crashing collection."""
+    import asyncio
+    import os
+
+    import click
+    import hawk.cli.download
+
+    from inspect_audit.dispatch.hawk import download
+
+    seen = []
+
+    async def empty(eval_set, token, out_dir, eval_file=None):
+        seen.append(os.environ.get("HAWK_API_URL"))
+        raise click.ClickException(f"No log files found in eval set: {eval_set}")
+
+    monkeypatch.setenv("HAWK_API_URL", "https://elsewhere.example")
+    monkeypatch.setattr(hawk.cli.download, "download_eval", empty)
+    assert asyncio.run(download("run", "t", tmp_path, "https://ours.example")) == []
+    assert seen == ["https://ours.example"]
+    assert os.environ["HAWK_API_URL"] == "https://elsewhere.example"  # restored

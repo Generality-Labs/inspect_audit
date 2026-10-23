@@ -1,8 +1,12 @@
-"""Model prices a job needs, registered with Inspect without the network."""
+"""Model prices a job needs: Inspect's own costs, else OpenRouter's published prices."""
 
+import json
+import math
+import urllib.request
 from typing import Any
 
 PRICE_KEYS = ("input", "output", "input_cache_read", "input_cache_write")
+OPENROUTER = "https://openrouter.ai/api/v1"
 
 
 def prices_for_models(models: list[str]) -> dict[str, dict[str, float]]:
@@ -15,15 +19,13 @@ def prices_for_models(models: list[str]) -> dict[str, dict[str, float]]:
         info = get_model_info(model)
         if info is not None and info.cost is not None:
             prices[model] = info.cost.model_dump()
-        elif model.startswith("openrouter/"):
+        elif model.startswith(("openrouter/", "openai-api/openrouter/")):
             router.append(model)
         else:
             raise ValueError(
                 f"No Inspect cost data for {model!r}; declare model_prices or configure Inspect model costs"
             )
     if router:
-        from ._openrouter import openrouter_prices
-
         prices.update(openrouter_prices(router))
     return prices
 
@@ -37,7 +39,10 @@ def valid_price(price: Any) -> bool:
     if not isinstance(price, dict):
         return False
     values = [price.get(k, 0) for k in PRICE_KEYS]
-    if any(not isinstance(v, (int, float)) or isinstance(v, bool) or v < 0 for v in values):
+    if any(
+        not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v < 0
+        for v in values
+    ):
         return False
     return bool(price.get("input") or price.get("output"))
 
@@ -60,3 +65,36 @@ def register_prices(table: dict[str, dict[str, float]]) -> list[str]:
         set_model_info(name, info)
         registered.append(name)
     return registered
+
+
+def openrouter_prices(models: list[str]) -> dict[str, dict[str, float]]:
+    """OpenRouter's published per-million prices, by the name Inspect runs each under.
+
+    An investigation job caps each item's spend with Inspect's cost limit, which needs a
+    price for the investigator; the job registers these itself.
+    """
+    request = urllib.request.Request(
+        f"{OPENROUTER}/models", headers={"User-Agent": "inspect_audit"}
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        listing = {str(m["id"]): m.get("pricing") or {} for m in json.load(response)["data"]}
+    prices: dict[str, dict[str, float]] = {}
+    for model in models:
+        # the catalog id is the trailing {org}/{slug}; on Hawk the Inspect name is
+        # openrouter/openrouter/{org}/{slug}, since Middleman's public names keep a prefix
+        pricing = listing.get("/".join(model.split("/")[-2:]))
+        if pricing is None:
+            raise ValueError(f"OpenRouter does not list {model!r}")
+        price = {
+            key: float(pricing.get(field) or 0) * 1_000_000
+            for key, field in (
+                ("input", "prompt"),
+                ("output", "completion"),
+                ("input_cache_read", "input_cache_read"),
+                ("input_cache_write", "input_cache_write"),
+            )
+        }
+        if not valid_price(price):
+            raise ValueError(f"OpenRouter lists no usable price for {model!r}")
+        prices[model] = price
+    return prices

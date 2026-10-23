@@ -9,6 +9,7 @@ from inspect_ai.model import ChatMessageTool, ModelOutput, get_model
 from inspect_ai.tool import ToolDef, ToolError
 from inspect_ai.util import Store, store_as
 from inspect_ai.util._store import init_subtask_store
+from test_helpers.audit import make_audit
 
 from inspect_audit._findings import (
     AuditorFindings,
@@ -236,15 +237,14 @@ PYCODE"""
 
 
 def test_submitted_phase_blocks_direct_job_launches(tmp_path: Path) -> None:
-    from inspect_audit._audit import Audit, ModelMenu
+    from inspect_audit._audit import ModelMenu
     from inspect_audit.dispatch import Job, LocalRuns
 
     init_subtask_store(Store())
     runs = LocalRuns(tmp_path / "children")
-    inv = Audit(
+    inv = make_audit(
         root=tmp_path,
         runs=runs,
-        where="local",
         task="bench/task",
         task_package="bench",
         investigation_package="investigation",
@@ -459,6 +459,12 @@ def test_whitespace_only_review_explanation_cannot_be_submitted() -> None:
     ]
     with pytest.raises(ValueError, match="Reviews need an explanation"):
         validate_draft(data, register)
+
+
+@pytest.mark.parametrize("segment", [None, 1, "segment", []])
+def test_stacked_bar_segments_must_be_objects(segment) -> None:
+    with pytest.raises(ValueError, match="Segments require names"):
+        validate_rows("stacked-bars", [{"label": "group", "segments": [segment]}])
 
 
 def test_duplicate_finding_samples_are_refused() -> None:

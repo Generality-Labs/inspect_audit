@@ -37,7 +37,7 @@ from ._verdicts import (
 
 INVESTIGATION_ROOT = "/audit"
 ITEM_PROMPT = (
-    "Investigation this benchmark item. It is described in /audit/item.json in your box; "
+    "Investigate this benchmark item. It is described in /audit/item.json in your box; "
     "the benchmark's source is under /audit/benchmark/."
 )
 NO_BOX = (
@@ -124,7 +124,7 @@ def investigator(
     search: WebSearchProviders | None = None,
     model: Model | None = None,
 ) -> Solver:
-    """Investigation the sample this solver runs in, in place of the benchmark's solver."""
+    """Investigate the sample this solver runs in, in place of the benchmark's solver."""
     granted = {name for check in checks for name in check.tools}
     skill_dirs = [
         str(path)

@@ -43,7 +43,7 @@ def validate_rows(component: str, rows: Any) -> None:
             ):
                 raise ValueError("Stacked bars require label and nonempty segments")
             for segment in row["segments"]:
-                if not isinstance(segment.get("name"), str):
+                if not isinstance(segment, dict) or not isinstance(segment.get("name"), str):
                     raise ValueError("Segments require names")
                 value = segment.get("value")
                 if (

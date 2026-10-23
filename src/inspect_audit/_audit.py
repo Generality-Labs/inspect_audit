@@ -86,10 +86,6 @@ class ModelMenu:
     subjects: list[str]
     judges: list[str]
 
-    @property
-    def all(self) -> list[str]:
-        return list(dict.fromkeys([*self.investigators, *self.subjects, *self.judges]))
-
 
 DEFAULT_WORKERS = [
     "openrouter/openai/gpt-5.6-luna",
@@ -478,36 +474,13 @@ class Audit:
 
     root: Path
     runs: Runs
-    where: str  # "hawk" or "local"
     task: str  # the investigated task's registry name
     task_package: str
     investigation_package: str
     investigator_image: str
-    menu: ModelMenu
     supplied: list[str]  # log sources the operator gave, as addresses a job can read
-    authorizer: AuditAuthorizer | None = None
+    authorizer: AuditAuthorizer
     launch_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        if self.authorizer is None:
-            from ._verdicts import investigation_items
-
-            self.authorizer = AuditAuthorizer(
-                LaunchPolicy(
-                    task=self.task,
-                    task_package=self.task_package,
-                    investigation_package=self.investigation_package,
-                    investigator_image=self.investigator_image,
-                    models=Models(
-                        investigators=tuple(self.menu.investigators),
-                        subjects=tuple(self.menu.subjects),
-                        judges=tuple(self.menu.judges),
-                    ),
-                    checks=tuple(s.name for s in investigation_items()),
-                    supplied_logs=tuple(self.supplied),
-                    configuration_json="{}",
-                )
-            )
 
     def record(self) -> AuditRecord:
         return store_as(AuditRecord)
@@ -526,15 +499,12 @@ class Audit:
             return await self._launch(job, kind, note)
 
     async def _launch(self, job: Job, kind: str, note: str) -> str:
-        if self.authorizer is None:
-            raise RuntimeError("audit has no launch authorizer")
         policy = self.authorizer.policy
         approved = self.authorizer.authorise(
             job, kind, {str(j["address"]) for j in self.record().jobs}
         )
         # This object is made at launch; sandbox policy files are never read here.
-        if policy.configuration_json != "{}":
-            ensure_policy(policy, store_as(PolicyStore), require_existing=True)
+        ensure_policy(policy, store_as(PolicyStore), require_existing=True)
         if any(j["label"] == job.label for j in self.record().jobs):
             raise ToolError(f"a job labelled {job.label!r} exists; choose another label")
         cap = policy.limits.max_concurrent_jobs
@@ -1291,12 +1261,10 @@ def audit(
             )
             if runs == "hawk"
             else LocalRuns(Path(output_dir).expanduser().resolve() / "runs"),
-            where=runs,
             task=target_task,
             task_package=task_package,
             investigation_package=investigation_package,
             investigator_image=investigator_image,
-            menu=menu,
             supplied=sorted(set(supplied)),
             authorizer=AuditAuthorizer(launch_policy),
         )

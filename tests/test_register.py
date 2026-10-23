@@ -11,6 +11,7 @@ from inspect_ai import Task, task
 from inspect_ai.dataset import Sample
 from inspect_ai.tool import ToolError
 from inspect_ai.util._store import Store, init_subtask_store
+from test_helpers.audit import make_audit
 
 from inspect_audit import _audit, _register
 from inspect_audit._verdicts import investigation_items
@@ -191,10 +192,9 @@ def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
         pass
 
     monkeypatch.setattr(_audit_workspace, "copy_into_box", nowhere)
-    inv = _audit.Audit(
+    inv = make_audit(
         root=tmp_path,
         runs=Runs(),  # type: ignore[arg-type]
-        where="hawk",
         task="register_fixture",
         task_package="p",
         investigation_package="a",
@@ -250,10 +250,9 @@ def test_failed_verdict_import_does_not_mark_job_collected(
     monkeypatch.setattr(_audit_workspace, "copy_into_box", copy)
     monkeypatch.setattr(_audit, "_log_line", lambda path: "worker")
     monkeypatch.setattr(_audit, "_import_investigations", import_results)
-    inv = _audit.Audit(
+    inv = make_audit(
         root=tmp_path,
         runs=Runs(),
-        where="local",
         task="task",
         task_package="p",
         investigation_package="a",

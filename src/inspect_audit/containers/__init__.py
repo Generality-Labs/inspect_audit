@@ -1,9 +1,4 @@
-"""The container templates the package writes, as the files they will become.
-
-A Dockerfile is a Dockerfile. Kept as text in a Python module it is escaped, indented
-inside a string, and invisible to every tool that understands the format; kept here it
-is a file you can lint, build and diff.
-"""
+"""Container build files, published images and Kubernetes egress policy."""
 
 from pathlib import Path
 

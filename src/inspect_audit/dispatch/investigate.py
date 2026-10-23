@@ -1,7 +1,7 @@
 r"""A Hawk eval-set config for investigating samples of a benchmark run, written for you.
 
   python -m inspect_audit.dispatch.investigate \\
-      --benchmark https://github.com/UKGovernmentBEIS/inspect_evals@<commit> --extra swe_bench \\
+      --benchmark https://github.com/UKGovernmentBEIS/inspect_evals@<commit> --benchmark-name inspect-evals --extra swe_bench \\
       --task inspect_evals/swe_bench --task-args args.yaml --source inspect_evals.swe_bench.swe_bench \\
       --samples django__django-10880 django__django-10097 --checks insufficiently-specified \\
       --logs hawk:<eval set id> --model openrouter/openai/gpt-6-luna --cost-limit 0.3 \\
@@ -30,6 +30,7 @@ from .packages import locked_extra_pins, own_package_spec
 def investigation_config(
     *,
     benchmark: str,
+    benchmark_name: str,
     extra: str | None,
     task: str,
     task_args: dict[str, Any],
@@ -49,7 +50,7 @@ def investigation_config(
     repo, at, commit = benchmark.rpartition("@")
     if not at or not ("://" in repo or repo.startswith("git@")) or len(commit) < 7:
         raise ValueError("--benchmark is REPO@COMMIT, e.g. https://github.com/org/evals@<sha>")
-    name = task.partition("/")[0].replace("_", "-")
+    name = benchmark_name
     spec = f"{name}[{extra}] @ git+{repo}@{commit}" if extra else f"{name} @ git+{repo}@{commit}"
     pins = locked_extra_pins(repo, commit, extra) if extra else []
     ours = package or own_package_spec()
@@ -100,6 +101,9 @@ def _hawk_api_url() -> str | None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("--benchmark", required=True, help="REPO@COMMIT the logs were made with")
+    parser.add_argument(
+        "--benchmark-name", required=True, help="benchmark distribution name, e.g. inspect-evals"
+    )
     parser.add_argument("--extra", help="the benchmark package's extra, e.g. swe_bench")
     parser.add_argument("--task", required=True, help="registry name, e.g. inspect_evals/gpqa")
     parser.add_argument("--task-args", help="YAML file of the run's task arguments")
@@ -118,6 +122,7 @@ def main(argv: list[str] | None = None) -> None:
     judges = dict(j.split("=", 1) for j in a.judge)
     config = investigation_config(
         benchmark=a.benchmark,
+        benchmark_name=a.benchmark_name,
         extra=a.extra,
         task=a.task,
         task_args=task_args or {},

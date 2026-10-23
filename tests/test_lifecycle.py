@@ -9,10 +9,16 @@ from inspect_ai import Task, eval
 from inspect_ai.dataset import Sample
 from inspect_ai.solver import Generate, TaskState, solver
 
-from inspect_audit._audit import Audit, ModelMenu, jobs
+from inspect_audit._audit import Audit, jobs
 from inspect_audit._register import Register, load, save
 from inspect_audit.dispatch import Job, LocalRuns
-from inspect_audit.dispatch.policy import AuditAuthorizer, LaunchPolicy, Models, canonical
+from inspect_audit.dispatch.policy import (
+    AuditAuthorizer,
+    LaunchPolicy,
+    Models,
+    bind_policy,
+    canonical,
+)
 
 
 @pytest.mark.docker
@@ -38,12 +44,10 @@ def test_child_investigation_is_collected_once_into_the_register(tmp_path: Path)
     inv = Audit(
         root=root,
         runs=LocalRuns(tmp_path / "children"),
-        where="local",
         task="toy",
         task_package="fixture",
         investigation_package="inspect_audit",
         investigator_image="python:3.12-slim",
-        menu=ModelMenu(investigators=["ia_probe/driver"], subjects=[], judges=[]),
         supplied=[],
         authorizer=AuditAuthorizer(policy),
     )
@@ -137,6 +141,7 @@ def test_child_investigation_is_collected_once_into_the_register(tmp_path: Path)
     [log] = eval(
         Task(
             dataset=[Sample(input="coordinate")],
+            setup=bind_policy(policy),
             solver=coordinate(),
             sandbox=("docker", str(compose)),
         ),

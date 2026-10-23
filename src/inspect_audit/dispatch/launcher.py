@@ -12,7 +12,7 @@ installed until the next audit replaces it.
 import json
 import math
 import secrets as random
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -184,6 +184,3 @@ class Launcher:
                 self.keys.disable(state.hash)
                 reaped.append(f"{state.name} (key had no live audit)")
         return reaped
-
-
-Runner = Callable[..., Awaitable[Any]]

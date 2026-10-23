@@ -13,6 +13,7 @@ from inspect_ai.model import (
     get_model,
 )
 from inspect_ai.solver import TaskState
+from test_helpers.audit import make_audit
 from test_helpers.logs import run_fixture_eval
 
 from inspect_audit._audit import audit
@@ -449,10 +450,9 @@ def test_every_tool_schema_survives_a_strict_provider(tmp_path: Path) -> None:
     from inspect_audit._image import view_image
     from inspect_audit._publishing import load_publisher, publish_document
 
-    inv = _audit.Audit(
+    inv = make_audit(
         root=tmp_path,
         runs=None,
-        where="local",
         task="b/t",
         task_package="b",  # type: ignore[arg-type]
         investigation_package="a",
@@ -599,10 +599,9 @@ def test_every_agent_tool_schema_meets_openais_strict_rules(tmp_path: Path) -> N
     from inspect_audit._report import report_blocker
     from inspect_audit.publishers.gl import figure, preview_report
 
-    inv = _audit.Audit(
+    inv = make_audit(
         root=tmp_path,
         runs=None,
-        where="local",
         task="b/t",
         task_package="b",  # type: ignore[arg-type]
         investigation_package="a",

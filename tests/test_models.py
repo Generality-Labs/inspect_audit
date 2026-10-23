@@ -304,3 +304,36 @@ def test_nonfinite_model_prices_are_rejected(value: float) -> None:
 
     assert not valid_price({"input": value, "output": 1.0})
     assert not valid_price({"input": 1.0, "output": value})
+
+
+def test_hawk_style_openrouter_names_find_their_catalog_price(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On Hawk an OpenRouter model runs as openrouter/openrouter/{org}/{slug}."""
+    import io
+    import json as _json
+
+    from inspect_audit import _prices
+
+    listing = {
+        "data": [
+            {
+                "id": "anthropic/claude-x",
+                "pricing": {"prompt": "0.000004", "completion": "0.00002"},
+            },
+            {"id": "openrouter/auto", "pricing": {"prompt": "0.000001", "completion": "0.000002"}},
+        ]
+    }
+    monkeypatch.setattr(
+        _prices.urllib.request, "urlopen", lambda *a, **k: io.BytesIO(_json.dumps(listing).encode())
+    )
+    prices = _prices.openrouter_prices(
+        [
+            "openrouter/anthropic/claude-x",
+            "openrouter/openrouter/anthropic/claude-x",
+            "openrouter/openrouter/auto",
+        ]
+    )
+    assert prices["openrouter/openrouter/anthropic/claude-x"]["input"] == pytest.approx(4.0)
+    assert prices["openrouter/anthropic/claude-x"]["output"] == pytest.approx(20.0)
+    assert prices["openrouter/openrouter/auto"]["input"] == pytest.approx(1.0)

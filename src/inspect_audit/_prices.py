@@ -80,7 +80,9 @@ def openrouter_prices(models: list[str]) -> dict[str, dict[str, float]]:
         listing = {str(m["id"]): m.get("pricing") or {} for m in json.load(response)["data"]}
     prices: dict[str, dict[str, float]] = {}
     for model in models:
-        pricing = listing.get(model.removeprefix("openrouter/"))
+        # the catalog id is the trailing {org}/{slug}; on Hawk the Inspect name is
+        # openrouter/openrouter/{org}/{slug}, since Middleman's public names keep a prefix
+        pricing = listing.get("/".join(model.split("/")[-2:]))
         if pricing is None:
             raise ValueError(f"OpenRouter does not list {model!r}")
         price = {

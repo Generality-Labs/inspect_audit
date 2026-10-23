@@ -109,3 +109,23 @@ def test_directory_sources_accept_inspect_file_uris(tmp_path):
     originals = list(folder.glob("*.eval"))
     assert len(originals) == 1
     assert (copied / f"0_{originals[0].name}").read_bytes() == originals[0].read_bytes()
+
+
+def test_a_remote_log_is_fetched_once_per_process(tmp_path, monkeypatch):
+    """A hundred job items naming one Hawk log must not download it a hundred times."""
+    from inspect_audit import _log_sources
+
+    calls = []
+
+    def fetch(address):
+        calls.append(address)
+        folder = tmp_path / f"fetch{len(calls)}"
+        folder.mkdir()
+        return str(folder)
+
+    monkeypatch.setattr(_log_sources, "fetch_eval_sets", fetch)
+    monkeypatch.setattr(_log_sources, "declared_transcripts", lambda: None)
+    monkeypatch.setattr(_log_sources, "_FETCHED", {})
+    first = _log_sources.fetch_logs("hawk:run")
+    assert [_log_sources.fetch_logs("hawk:run") for _ in range(3)] == [first] * 3
+    assert calls == ["run"]

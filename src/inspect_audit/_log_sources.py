@@ -41,6 +41,12 @@ def log_files(logs: list[str]) -> list[str]:
     return files
 
 
+# Remote logs already fetched in this process, by address. An eval set builds one task
+# per job item, and a hundred items naming the same Hawk log must not download it a
+# hundred times into one runner.
+_FETCHED: dict[str, str] = {}
+
+
 def fetch_logs(logs: str | list[str]) -> str:
     """Resolve a `logs` argument to something inspect can read locally.
 
@@ -67,10 +73,17 @@ def fetch_logs(logs: str | list[str]) -> str:
             if source_id not in declared:
                 raise ValueError(f"Hawk input {source_id!r} was not declared for this execution")
             return declared[source_id]
-        return fetch_eval_sets(logs.removeprefix("hawk:"))
-    if logs.startswith(("s3://", "gs://", "http://", "https://")):
-        return _download(logs)
-    return logs
+    if not logs.startswith(("hawk:", "s3://", "gs://", "http://", "https://")):
+        return logs
+    cached = _FETCHED.get(logs)
+    if cached is None or not Path(cached).exists():
+        cached = (
+            fetch_eval_sets(logs.removeprefix("hawk:"))
+            if logs.startswith("hawk:")
+            else _download(logs)
+        )
+        _FETCHED[logs] = cached
+    return cached
 
 
 def _download(url: str) -> str:

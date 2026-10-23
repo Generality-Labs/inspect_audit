@@ -1,6 +1,7 @@
 """Model prices a job needs: Inspect's own costs, else OpenRouter's published prices."""
 
 import json
+import math
 import urllib.request
 from typing import Any
 
@@ -38,7 +39,10 @@ def valid_price(price: Any) -> bool:
     if not isinstance(price, dict):
         return False
     values = [price.get(k, 0) for k in PRICE_KEYS]
-    if any(not isinstance(v, (int, float)) or isinstance(v, bool) or v < 0 for v in values):
+    if any(
+        not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v < 0
+        for v in values
+    ):
         return False
     return bool(price.get("input") or price.get("output"))
 

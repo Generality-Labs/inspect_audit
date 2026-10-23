@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -215,3 +216,56 @@ def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
         "the source says 9",
     )
     assert register.samples["3"]["gold-answer"] == []  # not investigated: still missing
+
+
+def test_failed_verdict_import_does_not_mark_job_collected(
+    tmp_path: Path, monkeypatch, box: dict[str, str]
+) -> None:
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit import _audit_workspace
+
+    _start(["gold-answer"])
+    log = tmp_path / "worker.eval"
+    log.write_text("placeholder")
+
+    class Runs:
+        async def status(self, run_id):
+            return "complete"
+
+        async def logs(self, run_id, out_dir):
+            return [log]
+
+    async def copy(files, destination):
+        pass
+
+    attempts = []
+
+    async def import_results(files, address):
+        attempts.append(address)
+        if len(attempts) == 1:
+            raise ToolError("repair findings.json")
+        return "imported"
+
+    monkeypatch.setattr(_audit_workspace, "copy_into_box", copy)
+    monkeypatch.setattr(_audit, "_log_line", lambda path: "worker")
+    monkeypatch.setattr(_audit, "_import_investigations", import_results)
+    inv = _audit.Audit(
+        root=tmp_path,
+        runs=Runs(),
+        where="local",
+        task="task",
+        task_package="p",
+        investigation_package="a",
+        investigator_image="i",
+        menu=_audit.ModelMenu(investigators=[], subjects=[], judges=[]),
+        supplied=[],
+    )
+    record = inv.record()
+    record.jobs = [{"label": "child", "kind": "investigation", "run_id": "r", "address": "hawk:r"}]
+    collect = _audit.jobs(inv)
+    with pytest.raises(ToolError, match="repair"):
+        asyncio.run(collect("collect", "child", None))
+    assert not record.jobs[0].get("collected")
+    asyncio.run(collect("collect", "child", None))
+    assert record.jobs[0]["collected"]

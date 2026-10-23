@@ -267,7 +267,7 @@ def record_verdict(items: list[InvestigationItemSkill]) -> Tool:
             raise ToolError(f"This item also requires details: {asks}.")
 
         if item == "question-labels":
-            from ._coverage import validate_labels
+            from ._labels import validate_labels
 
             expected = store_as(AssessmentUnits).ids
             if not expected:

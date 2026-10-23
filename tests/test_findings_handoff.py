@@ -379,9 +379,8 @@ def test_ratings_require_explanations_and_primary_observations(change) -> None:
 
 @pytest.mark.parametrize("grade", ["CORRECT", "INCORRECT", "UNVERIFIABLE", "NO_VERDICT", None])
 @pytest.mark.parametrize("review_grade", [None, "CORRECT", "UNVERIFIABLE"])
-@pytest.mark.parametrize("coverage_requirement", [None, 0.5, 1.0])
 def test_progress_and_publication_agree_on_outstanding_work(
-    tmp_path: Path, grade: str | None, review_grade: str | None, coverage_requirement: float | None
+    tmp_path: Path, grade: str | None, review_grade: str | None
 ) -> None:
     """Exercise the actual publication tool, including missing and overridden worker results."""
     from inspect_audit._findings import Review, encoded, sha256
@@ -422,14 +421,6 @@ def test_progress_and_publication_agree_on_outstanding_work(
     bundle.mkdir()
     content = encoded(draft.model_dump(mode="json"))
     manifest = {"files": {"findings.json": {"sha256": sha256(content), "bytes": len(content)}}}
-    if coverage_requirement is not None:
-        # A submitted analysis artifact establishes 75% coverage, independently
-        # of the standing worker/review verdict on this sample/check.
-        coverage = encoded({"denominator": 4, "counts": {"NOT_ASSESSED": 1}})
-        (bundle / "coverage.json").write_bytes(coverage)
-        manifest["files"]["coverage.json"] = {"sha256": sha256(coverage), "bytes": len(coverage)}
-        manifest["artifacts"] = {"/workspace/analysis/coverage.json": "coverage.json"}
-        manifest["required_coverage"] = coverage_requirement
     (bundle / "findings.json").write_bytes(content)
     (bundle / "manifest.json").write_bytes(encoded(manifest))
     saved = store_as(FindingsState)
@@ -447,9 +438,7 @@ def test_progress_and_publication_agree_on_outstanding_work(
 
     asyncio.run(publish_document(tmp_path, Publisher(skills=[], build=build))())
     assert store_as(AuditState).outcome == (
-        "published_incomplete"
-        if expected_incomplete or (coverage_requirement is not None and coverage_requirement > 0.75)
-        else "published_complete"
+        "published_incomplete" if expected_incomplete else "published_complete"
     )
     assert (bundle / "findings.json").read_bytes() == content
 
@@ -470,3 +459,68 @@ def test_whitespace_only_review_explanation_cannot_be_submitted() -> None:
     ]
     with pytest.raises(ValueError, match="Reviews need an explanation"):
         validate_draft(data, register)
+
+
+def test_duplicate_finding_samples_are_refused() -> None:
+    register = Register(checks=["gold-answer"], samples={"a": {"gold-answer": []}})
+    draft = Findings(
+        investigators=investigator_results(register), auditor=AuditorFindings(summary="Summary")
+    )
+    data = draft.model_dump(mode="json")
+    data["auditor"]["findings"] = [
+        {
+            "issue": "Reference",
+            "explanation": "Checked",
+            "sample_ids": ["a", "a"],
+            "evidence": [{"observed": "Mismatch", "source": "task.py"}],
+        }
+    ]
+    with pytest.raises(ValueError, match="repeat sample IDs"):
+        validate_draft(data, register)
+
+
+def test_failed_publication_does_not_record_success(tmp_path: Path, monkeypatch) -> None:
+    from inspect_audit import _publishing
+    from inspect_audit._report import AuditState
+
+    init_subtask_store(Store())
+    saved = store_as(FindingsState)
+    saved.phase = "publishing"
+    saved.findings = Findings().model_dump(mode="json")
+    saved.manifest = {"files": {"findings.json": {"sha256": "unused"}}}
+
+    async def restored(root):
+        return tmp_path
+
+    async def build(root, bundle):
+        raise ValueError("cannot render")
+
+    monkeypatch.setattr(_publishing, "restore_bundle", restored)
+    with pytest.raises(ToolError, match="cannot render"):
+        asyncio.run(_publishing.publish_document(tmp_path, Publisher(skills=[], build=build))())
+    assert store_as(AuditState).published is None
+    assert store_as(AuditState).outcome is None
+
+
+def test_invalid_publication_records_do_not_mark_a_report_published(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from inspect_audit import _publishing
+    from inspect_audit._report import AuditState
+
+    init_subtask_store(Store())
+    saved = store_as(FindingsState)
+    saved.phase = "publishing"
+    saved.findings = Findings(investigators={}).model_dump(mode="json")
+
+    async def restored(root):
+        return tmp_path
+
+    async def build(root, bundle):
+        pytest.fail("invalid findings must fail before building")
+
+    monkeypatch.setattr(_publishing, "restore_bundle", restored)
+    with pytest.raises(KeyError):
+        asyncio.run(_publishing.publish_document(tmp_path, Publisher(skills=[], build=build))())
+    assert store_as(AuditState).published is None
+    assert store_as(AuditState).outcome is None

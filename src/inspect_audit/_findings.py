@@ -72,7 +72,6 @@ class FindingsState(StoreModel):
     findings: dict[str, Any] = Field(default_factory=dict)
     manifest: dict[str, Any] = Field(default_factory=dict)
     destination: str | None = None
-    required_coverage: float | None = None
 
 
 def require_audit() -> None:
@@ -135,6 +134,8 @@ def validate_draft(data: Any, register: "Register") -> Findings:
         )
     samples = set(register.samples)
     for finding in draft.auditor.findings:
+        if len(finding.sample_ids) != len(set(finding.sample_ids)):
+            raise ValueError("A finding must not repeat sample IDs")
         if set(finding.sample_ids) - samples:
             raise ValueError("A finding references samples outside the declared population")
         if not finding.issue.strip() or not finding.explanation.strip():
@@ -271,7 +272,6 @@ async def freeze(root: Path, draft: Findings) -> Path:
         },
         "log_references": refs,
         "jobs": store_as(AuditRecord).model_dump(mode="json")["jobs"],
-        "required_coverage": store_as(FindingsState).required_coverage,
     }
     destination = root / "submitted" / uuid4().hex
     destination.mkdir(parents=True)
@@ -311,13 +311,6 @@ def read_bundle(bundle: Path) -> tuple[Findings, dict[str, Any]]:
         raise ValueError("Manifest must contain a files mapping")
     if any(target not in manifest["files"] for target in manifest.get("artifacts", {}).values()):
         raise ValueError("Artifact mapping must reference files in the bundle manifest")
-    required = manifest.get("required_coverage")
-    if required is not None and (
-        isinstance(required, bool)
-        or not isinstance(required, (int, float))
-        or not 0 < required <= 1
-    ):
-        raise ValueError("required_coverage must be a fraction in (0, 1]")
     if "findings.json" not in manifest["files"]:
         raise ValueError("Manifest must include findings.json")
     entries = list(bundle.rglob("*"))

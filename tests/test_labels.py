@@ -1,6 +1,6 @@
 import pytest
 
-from inspect_audit._coverage import coverage_summary, validate_labels
+from inspect_audit._labels import validate_labels
 
 
 def label(qid, status):
@@ -11,25 +11,6 @@ def label(qid, status):
         "evidence": ["source.py:12"],
         "explanation": "Observed evidence",
     }
-
-
-def test_missing_and_disputed_labels_never_become_clean():
-    result = coverage_summary(
-        ["1.1", "1.2", "1.3"],
-        [
-            label("1.1", "NO_ISSUE_FOUND"),
-            label("1.1", "NO_ISSUE_FOUND"),
-            label("1.2", "DEFECT"),
-            label("1.2", "NO_ISSUE_FOUND"),
-        ],
-    )
-    assert result["counts"] == {
-        "NO_ISSUE_FOUND": 1,
-        "DEFECT": 0,
-        "UNRESOLVED": 1,
-        "NOT_ASSESSED": 1,
-    }
-    assert sum(result["counts"].values()) == result["denominator"] == 3
 
 
 def test_complete_unique_ids_and_evidence_required():
@@ -46,7 +27,7 @@ def test_complete_unique_ids_and_evidence_required():
 
 
 @pytest.mark.parametrize("units", [None, ["part-a", "part-b"]])
-def test_recorded_question_verdicts_round_trip_into_coverage(tmp_path, units):
+def test_recorded_question_verdicts_retain_labels(tmp_path, units):
     import json
 
     from inspect_ai import Task, eval
@@ -55,7 +36,6 @@ def test_recorded_question_verdicts_round_trip_into_coverage(tmp_path, units):
     from inspect_ai.tool import ToolError
     from inspect_ai.util import store_as
 
-    from inspect_audit._coverage import export_coverage
     from inspect_audit._verdicts import (
         AssessmentUnits,
         Evidence,
@@ -108,30 +88,12 @@ def test_recorded_question_verdicts_round_trip_into_coverage(tmp_path, units):
     )
     log = eval(task, model="mockllm/model", log_dir=str(tmp_path / "logs"), display="none")[0]
     assert log.status == "success", log.error
-    result = export_coverage([log.location], [*expected, "missing"], tmp_path / "coverage.json")
-    assert result["counts"] == {
-        "NO_ISSUE_FOUND": len(expected),
-        "DEFECT": 0,
-        "UNRESOLVED": 0,
-        "NOT_ASSESSED": 1,
-    }
-    assert "sample=1" in result["questions"][0]["assessments"][0]["evidence"][-1]
+    [sample] = log.samples
+    rows = sample.scores["question-labels"].metadata["question_assessments"]
+    assert [row.question_id for row in validate_labels(rows, expected)] == expected
 
 
-def test_defect_counts_deduplicate_and_outstanding_units_survive():
-    rows = [
-        {
-            **label("parent.a", "DEFECT"),
-            "defect_types": ["missing_information", "incorrect_reference_or_test"],
-        },
-        {**label("parent.a", "DEFECT"), "defect_types": ["missing_information"]},
-        label("parent.b", "UNRESOLVED"),
-        label("other", "DEFECT"),
-    ]
-    result = coverage_summary(["parent.a", "parent.b", "other"], rows)
-    assert result["defect_counts"] == {"incorrect_reference_or_test": 1, "missing_information": 1}
-    assert result["unclassified_defects"] == 1
-    assert result["outstanding_ids"] == ["parent.b"]
+def test_defect_classification_is_required_for_new_verdicts():
     with pytest.raises(ValueError, match="defect type"):
         validate_labels([label("old", "DEFECT")], ["old"], require_classification=True)
     assert validate_labels([label("old", "DEFECT")], ["old"])

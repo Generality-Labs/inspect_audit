@@ -163,30 +163,37 @@ def source(
     scorecard = example[
         example.index(r"\auditpart{Eval Scorecard}") : example.index(r"\auditpart{Eval Datasheet}")
     ]
-    scorecard = re.sub(
-        r"\[Headline assessment:.*?\]",
-        lambda _: (
-            tex(ratings["overall"].explanation) + r"\par " + evidence(ratings["overall"].evidence)
-        ),
-        scorecard,
-        flags=re.DOTALL,
-    )
     replacements = {
         r"[e.g.\ Agentic data analysis / Single-turn prompt response]": "type",
         "[Capability/Safety -- domain]": "domain",
         "[what the headline metric claims to measure]": "measurement_aim",
         "[release date, leaderboard, maintenance status]": "status",
     }
-    for placeholder, key in replacements.items():
-        scorecard = scorecard.replace(placeholder, tex(findings.subject.get(key, "Not recorded")))
+    values = {
+        placeholder: tex(findings.subject.get(key, "Not recorded"))
+        for placeholder, key in replacements.items()
+    }
+    values.update(
+        dict.fromkeys(
+            (
+                "[sandbox/API, dataset size, content handling]",
+                r"[cost per model/episode incl.\ judges; audit total]",
+                "[wall-clock per model/episode]",
+                r"[port location; commit \ccommitref]",
+            ),
+            "Not recorded",
+        )
+    )
+    # One pass over template placeholders: inserted findings are never reinterpreted.
     scorecard = re.sub(
-        r"\[[^\[\]]+\]",
-        lambda m: (
-            m[0]
-            if m[0] in ("[c]", "[top=1mm, bottom=1mm, before skip=4pt, after skip=4pt]")
-            else "Not recorded"
+        r"\[Headline assessment:.*?\]|" + "|".join(re.escape(key) for key in values),
+        lambda match: (
+            tex(ratings["overall"].explanation) + r"\par " + evidence(ratings["overall"].evidence)
+            if match[0].startswith("[Headline assessment:")
+            else values[match[0]]
         ),
         scorecard,
+        flags=re.DOTALL,
     )
     parts.append(scorecard)
     subject = "".join(
@@ -272,7 +279,11 @@ def source(
                 r"\findingfield{Criterion}{" + tex(finding.criterion) + "}",
                 r"\findingfield{Condition}{" + tex(finding.explanation) + "}",
                 r"\findingfield{Samples}{"
-                + tex(f"{len(finding.sample_ids)}/{samples}: " + ", ".join(finding.sample_ids))
+                + tex(
+                    f"{len(finding.sample_ids)}/{samples}: " + ", ".join(finding.sample_ids)
+                    if finding.sample_ids
+                    else "Benchmark-wide finding; no individual sample count claimed."
+                )
                 + "}",
                 r"\findingfield{Evidence}{" + evidence(finding.evidence) + "}",
                 r"\end{finding}",

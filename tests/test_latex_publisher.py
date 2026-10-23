@@ -211,3 +211,21 @@ def test_baked_cache_runs_without_network_or_github_credentials(
         )
     finally:
         subprocess.run(["docker", "image", "rm", image], check=True, capture_output=True)
+
+
+def test_source_preserves_bracketed_findings_and_benchmark_wide_scope(tmp_path: Path) -> None:
+    (tmp_path / "reports/Example").mkdir(parents=True)
+    (tmp_path / "reports/Example/Content.tex").write_text(
+        r"\auditpart{Contents} contents \auditpart{Eval Scorecard} [Headline assessment: example] [Capability/Safety -- domain] \auditpart{Eval Datasheet}"
+    )
+    (tmp_path / "reports/Example/Example_Audit.tex").write_text(r"\evalscore{A}")
+    findings, manifest = read_bundle(FIXTURE)
+    findings.auditor.ratings["overall"].explanation = "Issue [sample 12]"
+    findings.auditor.ratings["overall"].evidence[0].source = "reference [v2]"
+    findings.subject["domain"] = "science [physics]"
+    findings.auditor.findings[0].sample_ids = []
+    _, content = latex.source(findings, manifest, latex.Prose(), tmp_path)
+    assert "Issue [sample 12]" in content
+    assert "reference [v2]" in content
+    assert "science [physics]" in content
+    assert "Benchmark-wide finding; no individual sample count claimed." in content

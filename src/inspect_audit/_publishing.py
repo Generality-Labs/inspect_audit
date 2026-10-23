@@ -61,6 +61,28 @@ def publish_document(root: Path, publisher: Publisher) -> Tool:
         from ._audit_workspace import persist
 
         bundle = await restore_bundle(root)
+        # Submission preserves missing work explicitly. A report does not turn it into coverage.
+        from ._findings import Findings
+        from ._register import Register, apply_reviews, select
+        from ._verdicts import InvestigationItemSkill
+
+        findings = Findings.model_validate(store_as(FindingsState).findings)
+        checks = TypeAdapter(dict[str, InvestigationItemSkill]).validate_python(
+            findings.investigators["checks"]
+        )
+        register = Register.model_validate(
+            {"checks": list(checks), "samples": findings.investigators["samples"]}
+        )
+        apply_reviews(register, findings.auditor.reviews, checks)
+        unresolved = select(register, "missing", checks, None) or select(
+            register, "unresolved", checks, None
+        )
+        outcome = "published_incomplete" if unresolved else "published_complete"
+        reasons = (
+            ["Some planned sample/check cells are missing or unresolved"]
+            if outcome == "published_incomplete"
+            else []
+        )
         try:
             output = await publisher.build(root, bundle)
         except (ValueError, OSError, ImportError) as ex:
@@ -86,44 +108,9 @@ def publish_document(root: Path, publisher: Publisher) -> Tool:
         if (root / "artifacts.json").exists():
             location = await persist(root, destination, f"published/{destination.name}")
         state = store_as(AuditState)
+        state.outcome = outcome
+        state.outcome_reasons = reasons
         state.published = location
-        # Submission preserves missing work explicitly. A report does not turn it into coverage.
-        from ._findings import Findings
-        from ._register import Register, apply_reviews, select
-        from ._verdicts import InvestigationItemSkill
-
-        findings = Findings.model_validate(store_as(FindingsState).findings)
-        checks = TypeAdapter(dict[str, InvestigationItemSkill]).validate_python(
-            findings.investigators["checks"]
-        )
-        register = Register.model_validate(
-            {"checks": list(checks), "samples": findings.investigators["samples"]}
-        )
-        apply_reviews(register, findings.auditor.reviews, checks)
-        unresolved = select(register, "missing", checks, None) or select(
-            register, "unresolved", checks, None
-        )
-        state.outcome = "published_incomplete" if unresolved else "published_complete"
-        state.outcome_reasons = (
-            ["Some planned sample/check cells are missing or unresolved"]
-            if state.outcome == "published_incomplete"
-            else []
-        )
-        required = store_as(FindingsState).manifest.get("required_coverage")
-        if required is not None:
-            from ._report import assessed_fraction
-
-            relative = (
-                store_as(FindingsState)
-                .manifest.get("artifacts", {})
-                .get("/workspace/analysis/coverage.json")
-            )
-            measured = assessed_fraction(bundle / relative) if relative else None
-            if measured is None or measured[0] < required:
-                state.outcome = "published_incomplete"
-                state.outcome_reasons = [
-                    f"Required coverage {required:.0%} was not established by the submitted evidence"
-                ]
         return f"Published {location}. Outcome: {state.outcome}. Findings remain unchanged."
 
     return execute

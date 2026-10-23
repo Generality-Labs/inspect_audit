@@ -411,7 +411,6 @@ def prepare_workspace(
     work = root / "work"
     inputs.mkdir(parents=True)
     work.mkdir()
-    shutil.copyfile(Path(__file__).with_name("_coverage.py"), inputs / "coverage.py")
     seed: dict[str, object] = dict(_snapshot_repo(repo, revision, inputs, paths))
     log_index = []
     for index, source in enumerate(logs):
@@ -809,13 +808,13 @@ def jobs(inv: Audit) -> Tool:
                 host.mkdir(parents=True, exist_ok=True)
                 files = [Path(shutil.copy2(f, host / f.name)) for f in files]
             await copy_into_box(files, f"/inputs/jobs/{label}")
+            lines = [_log_line(f) for f in files]
+            if job["kind"] == "investigation":
+                lines.append(await _import_investigations(files, job["address"]))
             record = inv.record()
             record.jobs = [
                 {**j, "collected": True} if j["label"] == label else j for j in record.jobs
             ]
-            lines = [_log_line(f) for f in files]
-            if job["kind"] == "investigation":
-                lines.append(await _import_investigations(files, job["address"]))
             return f"{label}: {status}; collected to /inputs/jobs/{label}/\n" + "\n".join(lines)
         raise ToolError("action must be list, status, wait, collect, log or stop")
 
@@ -1004,7 +1003,6 @@ def audit(
     auditor_image: str | None = None,
     artifact_dir: str | None = None,
     instructions: str | None = None,
-    required_coverage: float | None = None,
     policy: dict[str, Any] | None = None,
     task_args: dict[str, Any] | None = None,
     investigation_samples: list[str] | str | None = None,
@@ -1061,8 +1059,6 @@ def audit(
         artifact_dir: Where the published report is also saved, under this sample:
             on Hawk, the job's S3 artifacts directory. None keeps it on the host only.
         instructions: Operator instructions and scope, separate from benchmark background.
-        required_coverage: Fraction of the question population (0-1) the published
-            coverage.json must assess for the run to count as complete.
         policy: Frozen model permissions, declared log inputs and job limits.
             YAML also accepts benchmark, investigation and execution sections. Permission
             changes on resume are refused; start a new audit instead.
@@ -1089,7 +1085,7 @@ def audit(
     # the file is read before anything else is decided: an argument is "given" only
     # when it is not None, so a value equal to a default is still an override
     settings = _audit_file(config, locals()) if config else {}
-    from ._findings import Findings, FindingsState, encoded, submit_findings
+    from ._findings import Findings, encoded, submit_findings
     from ._publishing import PhaseTools, load_publisher
 
     publisher = settings.get("publisher", publisher) or "latex"
@@ -1124,7 +1120,6 @@ def audit(
     auditor_image = str(settings.get("auditor_image", auditor_image) or DEFAULT_AUDITOR_IMAGE)
     artifact_dir = settings.get("artifact_dir", artifact_dir)
     instructions = settings.get("instructions", instructions)
-    required_coverage = settings.get("required_coverage", required_coverage)
     policy = settings.get("policy", policy)
     permissions = Permissions.model_validate(policy or {})
     benchmark_environment = validate_environment(
@@ -1202,8 +1197,6 @@ def audit(
         raise ValueError("box must be 'docker' or 'k8s'")
     if "hawk" in (runs, "k8s" if box == "k8s" else None) and not hawk_api_url:
         raise ValueError("Hawk work needs hawk_api_url (or HAWK_API_URL)")
-    if required_coverage is not None and not (0 < float(required_coverage) <= 1):
-        raise ValueError("required_coverage must be a fraction in (0, 1]")
     if not repo:
         raise ValueError(
             "audit needs a repo: the benchmark to investigation, or a config naming one"
@@ -1310,8 +1303,6 @@ def audit(
         start_register(target_task, launch_policy),
         register_view(),
     ]
-    if required_coverage is not None:
-        seed["required_coverage"] = float(required_coverage)
     inv = None
     if runs:
         if task_package is None or investigation_package is None or target_task is None:
@@ -1375,7 +1366,6 @@ def audit(
     @solver
     def begin_findings() -> Solver:
         async def solve(state: TaskState, generate: Generate) -> TaskState:
-            state.store_as(FindingsState).required_coverage = required_coverage
             from ._register import Register, save
 
             await save(

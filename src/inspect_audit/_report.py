@@ -49,19 +49,6 @@ class AuditState(StoreModel):
     outcome_reasons: list[str] = Field(default_factory=list)
 
 
-def assessed_fraction(coverage_path: Path) -> tuple[float, str] | None:
-    """The share of the question population with a label, and a readable count."""
-    if not coverage_path.is_file():
-        return None
-    coverage = json.loads(coverage_path.read_text())
-    denominator = int(coverage.get("denominator") or 0)
-    if not denominator:
-        return 0.0, "0 questions"
-    counts = coverage.get("counts") or {}
-    assessed = denominator - int(counts.get("NOT_ASSESSED", denominator))
-    return assessed / denominator, f"{assessed}/{denominator} questions assessed"
-
-
 def log_address(root: Path, relative: Path, jobs: dict[str, str]) -> str:
     """Where a log under /inputs came from: its job's address or the operator's source.
 

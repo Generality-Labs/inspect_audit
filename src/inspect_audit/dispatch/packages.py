@@ -65,3 +65,58 @@ def own_package_spec() -> str | None:
         elif (local := data.get("url", "")).startswith("file://"):
             spec = git_package_spec(Path(local.removeprefix("file://")))
     return f"inspect_audit[runner] @ {spec}" if spec else None
+
+
+def locked_extra_pins(repo: str, commit: str, extra: str) -> list[str]:
+    """Exact pins, from the benchmark's own lockfile, for what one extra adds.
+
+    Installing `pkg @ git+repo@commit` ignores the repository's `uv.lock` and resolves
+    its ranges afresh, so a dependency released since the run (swebench 5 for a run
+    locked to 4.1) changes the grader. These pins put the extra's packages back to the
+    versions locked at that commit. Only the extra's own additions are pinned: the
+    core (Inspect, pydantic, ...) is the job's to set, and pinning it would fight the
+    runner. Needs `git` and `uv`; the commit's `pyproject.toml` and `uv.lock` are all
+    that is fetched.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="benchmark-lock-") as tmp:
+        checkout = Path(tmp)
+
+        def run(*args: str) -> str:
+            return subprocess.run(
+                args, cwd=checkout, capture_output=True, text=True, check=True
+            ).stdout
+
+        run("git", "init", "-q")
+        run("git", "fetch", "-q", "--depth", "1", "--filter=blob:none", repo, commit)
+        run("git", "checkout", "-q", "FETCH_HEAD", "--", "pyproject.toml", "uv.lock")
+
+        def export(*flags: str) -> set[str]:
+            text = run(
+                "uv",
+                "export",
+                "--frozen",
+                "--no-hashes",
+                "--no-dev",
+                "--no-emit-project",
+                "--format",
+                "requirements-txt",
+                *flags,
+            )
+            return {
+                line.strip()
+                for line in text.splitlines()
+                if line.strip() and not line.lstrip().startswith(("#", "-e", "."))
+            }
+
+        return sorted(export("--extra", extra) - export())
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) != 4:
+        raise SystemExit("usage: python -m inspect_audit.dispatch.packages REPO COMMIT EXTRA")
+    for pin in locked_extra_pins(*sys.argv[1:]):
+        print(f"- {pin}")

@@ -204,6 +204,39 @@ def test_recorded_judge_settings_are_kept(fixture_log: str, tmp_path: Path) -> N
     assert indexed.judge_configs == {"grader": configured}
 
 
+def test_a_recorded_judge_endpoint_is_not_replayed(fixture_log: str, tmp_path: Path) -> None:
+    """The logs' run called its judge at its own host's endpoint; this run uses its own.
+
+    A SimpleQA run recorded grader base_url https://openrouter.ai/api/v1; replayed on
+    Hawk it bypassed the gateway with the gateway's token and every grade got a 401.
+    """
+    from inspect_ai.log import write_eval_log
+    from test_helpers.logs import fixture_task
+
+    from inspect_audit._task import investigation_task
+
+    log = read_eval_log(fixture_log)
+    log.eval.model_roles = {
+        "grader": ModelConfig(
+            model="mockllm/grader",
+            config=GenerateConfig(temperature=0.3),
+            base_url="https://elsewhere.example/v1",
+        )
+    }
+    path = tmp_path / "roles.eval"
+    write_eval_log(log, str(path))
+    task = investigation_task(
+        fixture_task("fixture_task"),
+        samples=["1"],
+        checks=["gold-answer"],
+        logs=[str(path)],
+        source=str(tmp_path),
+    )
+    grader = task.model_roles["grader"]
+    assert grader.api.base_url != "https://elsewhere.example/v1"
+    assert grader.config.temperature == 0.3
+
+
 def test_investigation_judge_configuration_is_applied_and_cannot_be_supplied_by_the_agent() -> None:
     name = "mockllm/grader"
     configured = ModelConfig(model=name, config=GenerateConfig(temperature=0.4))

@@ -212,20 +212,19 @@ def investigation_task(
     )
     roles = judge_roles(index, judge)
     configured_roles: dict[str, str | Model] = dict(roles)
-    configurations = {
-        **(index.judge_configs if index is not None else {}),
-        **{
-            role: ModelConfig.model_validate(value) for role, value in (judge_configs or {}).items()
-        },
+    recorded = index.judge_configs if index is not None else {}
+    declared = {
+        role: ModelConfig.model_validate(value) for role, value in (judge_configs or {}).items()
     }
-    for role, configured in configurations.items():
+    for role, configured in {**recorded, **declared}.items():
         if roles.get(role) != configured.model:
             raise ValueError(f"judge configuration for {role!r} must match its declared model")
-        if (
-            index is not None
-            and role in index.judge_configs
-            and configured != index.judge_configs[role]
-        ):
+        # the endpoint the logs' run called is where that run was hosted, not part of
+        # the judge: a recorded one is not replayed (on Hawk it would bypass the
+        # gateway with the gateway's token), and only a declared one is used
+        if role in recorded and configured.model_copy(update={"base_url": None}) != recorded[
+            role
+        ].model_copy(update={"base_url": None}):
             raise LogMismatchError(
                 f"judge configuration for {role!r} differs from the recorded configuration"
             )
@@ -234,7 +233,7 @@ def investigation_task(
         configured_roles[role] = get_model(
             configured.model,
             config=configured.config,
-            base_url=configured.base_url,
+            base_url=declared[role].base_url if role in declared else None,
             **model_kwargs,
         )
     if index is not None:

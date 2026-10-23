@@ -102,3 +102,103 @@ def test_declared_benchmark_pins_travel_with_every_child_job_and_nothing_else() 
     unpinned = Job(label="b", task="bench", package=policy.task_package or "", models=["m"])
     with pytest.raises(ToolError, match="dependencies"):
         auth.authorise(unpinned, "benchmark", set())
+
+
+def _valid() -> tuple["AuditAuthorizer", Job, Job]:
+    """A policy, and one investigation and one benchmark job it accepts."""
+    from inspect_audit.dispatch.policy import (
+        AuditAuthorizer,
+        LaunchPolicy,
+        Limits,
+        Models,
+        canonical,
+    )
+
+    args = {"split": "test"}
+    policy = LaunchPolicy(
+        task="bench",
+        task_package="bench",
+        task_pins=("dep==1.0",),
+        investigation_package="ia",
+        investigator_image="img",
+        models=Models(subjects=("subj",), investigators=("inv",), judges=("judge",)),
+        samples=("1", "2"),
+        checks=("gold-answer", "question-labels"),
+        task_args_json=canonical(args),
+        source="bench.task",
+        supplied_logs=("hawk:run",),
+        limits=Limits(investigation_sample_cost_usd=0.5),
+        configuration_json="{}",
+    )
+    investigation = Job(
+        label="i",
+        task="inspect_audit/investigation",
+        package="ia",
+        models=["inv"],
+        extra_packages=["bench", "dep==1.0"],
+        task_args={
+            "task": "bench",
+            "task_args": args,
+            "samples": ["1"],
+            "checks": ["gold-answer"],
+            "source": "bench.task",
+            "logs": ["hawk:run"],
+            "judge": {"grader": "judge"},
+            "investigator_image": "img",
+            "cost_limit": 0.2,
+        },
+    )
+    benchmark = Job(
+        label="b",
+        task="bench",
+        package="bench",
+        models=["subj"],
+        task_args=args,
+        sample_ids=["2"],
+        extra_packages=["dep==1.0"],
+        model_roles={"grader": "judge"},
+    )
+    return AuditAuthorizer(policy), investigation, benchmark
+
+
+def test_the_valid_jobs_pass() -> None:
+    auth, investigation, benchmark = _valid()
+    auth.authorise(investigation, "investigation", set())
+    auth.authorise(benchmark, "benchmark", set())
+
+
+@pytest.mark.parametrize(
+    ("kind", "change"),
+    [
+        ("investigation", {"cost_limit": 0.9}),  # above the per-sample cap
+        ("investigation", {"cost_limit": float("inf")}),
+        ("investigation", {"cost_limit": 0}),
+        ("investigation", {"logs": ["hawk:someone-elses-run"]}),
+        ("investigation", {"source": "other.module"}),
+        ("investigation", {"samples": ["3"]}),
+        ("investigation", {"checks": ["red-teaming"]}),
+        ("investigation", {"task_args": {"split": "train"}}),
+        ("investigation", {"judge": {"grader": "not-allowed"}}),
+        ("investigation", {"investigator_image": "evil"}),
+        ("investigation", {"extra": "field"}),
+        ("investigation", {"__extra_packages__": ["bench"]}),  # pins dropped
+        ("benchmark", {"__sample_ids__": ["3"]}),
+        ("benchmark", {"__sample_range__": (1, 1)}),  # with sample ids: one or the other
+        ("benchmark", {"__models__": ["unlisted"]}),
+        ("benchmark", {"__model_roles__": {"grader": "not-allowed"}}),
+        ("benchmark", {"__task_args__": {"split": "train"}}),
+        ("benchmark", {"__extra_packages__": []}),
+    ],
+)
+def test_every_policy_limit_refuses_a_job_that_breaks_it(kind: str, change: dict) -> None:
+    """One valid job, broken one way at a time: each must be refused."""
+    import dataclasses
+
+    auth, investigation, benchmark = _valid()
+    job = investigation if kind == "investigation" else benchmark
+    fields = {k.strip("_"): v for k, v in change.items() if k.startswith("__")}
+    args = {k: v for k, v in change.items() if not k.startswith("__")}
+    fields.setdefault("task_args", {**job.task_args, **args})
+    job = dataclasses.replace(job, **fields)
+    with pytest.raises(ToolError):
+        auth.authorise(job, kind, set())

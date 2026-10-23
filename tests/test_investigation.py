@@ -461,3 +461,49 @@ def test_a_sample_gets_only_its_own_attempts_as_an_inspect_log(tmp_path: Path) -
     (tmp_path / name).write_bytes(data)
     sliced = read_eval_log(str(tmp_path / name))  # and as an ordinary Inspect log
     assert sliced.eval.eval_id == log.eval.eval_id and len(sliced.samples or []) == 2
+
+
+def test_a_log_names_the_same_build_only_by_commit_and_never_from_an_edited_tree() -> None:
+    from inspect_audit._logs import same_build
+
+    assert same_build("0.18.1.dev33+g67a9ea533", "0.18.1.dev40+g67a9ea5334a1")  # tags differ
+    assert not same_build("0.18.1.dev33+g67a9ea533", "0.18.1.dev33+g1234567")
+    assert not same_build("1.0.0.dev1+gabc1234.d20260101", "1.0.0.dev1+gabc1234")  # edited
+    assert not same_build("1.0.0.dev1+gabc1234", "1.0.0.dev1+gabc1234.d20260101")
+    assert same_build("1.0.0.dev1+gabc1234.d20260101", "1.0.0.dev1+gabc1234.d20260101")
+    assert not same_build("0.3.266", "0.3.264")
+
+
+def test_a_log_from_a_different_run_is_refused(tmp_path: Path) -> None:
+    """Declared task, declared arguments and nothing undeclared, or the log is refused."""
+    from inspect_ai import Task, task
+    from inspect_ai import eval as inspect_eval
+
+    from inspect_audit._logs import LogMismatchError, index_logs
+
+    @task
+    def probe(split: str = "test", hard: bool = False) -> Task:
+        return Task(dataset=[Sample(id="1", input="q", target="a")])
+
+    [log] = inspect_eval(
+        probe(split="dev", hard=True), model="mockllm/model", log_dir=str(tmp_path), display="none"
+    )
+    name = log.eval.task_registry_name or log.eval.task
+    index_logs(
+        [log.location], task_name=name, task_args={"split": "dev", "hard": True}, package=None
+    )
+    with pytest.raises(LogMismatchError, match="split"):
+        index_logs(
+            [log.location], task_name=name, task_args={"split": "test", "hard": True}, package=None
+        )
+    with pytest.raises(LogMismatchError, match="does not declare: hard"):
+        index_logs([log.location], task_name=name, task_args={"split": "dev"}, package=None)
+    with pytest.raises(LogMismatchError, match="records task"):
+        index_logs([log.location], task_name="other/task", task_args={}, package=None)
+    with pytest.raises(LogMismatchError, match="does not record which"):
+        index_logs(
+            [log.location],
+            task_name=name,
+            task_args={"split": "dev", "hard": True},
+            package="pytest",
+        )

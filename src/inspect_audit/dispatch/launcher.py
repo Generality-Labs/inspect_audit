@@ -63,6 +63,17 @@ class Records:
     def __init__(self, root: Path = STATE_DIR) -> None:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
+        # This machine's namespace among the keys: every key it mints is named
+        # `inv-<operator>-...`, and it only ever reaps keys in its own namespace, so two
+        # operators sharing an OpenRouter account never revoke each other's audits.
+        tag = self.root / "operator"
+        if not tag.exists():
+            tag.write_text(random.token_hex(3))
+        self.operator = tag.read_text().strip()
+
+    @property
+    def prefix(self) -> str:
+        return f"{PREFIX}{self.operator}-"
 
     def save(self, record: Record) -> None:
         path = self.root / f"{record.id}.json"
@@ -101,7 +112,7 @@ class Launcher:
         # one auditor user holds one key: a second audit would share it
         if busy := self.active():
             raise RuntimeError(f"audit {busy[0].id} is still running; finish it first")
-        record = Record(id=f"{PREFIX}{label}-{random.token_hex(4)}", cap_usd=cap_usd)
+        record = Record(id=f"{self.records.prefix}{label}-{random.token_hex(4)}", cap_usd=cap_usd)
         self.records.save(record)  # the plan exists before the key does
         try:
             record.key_hash, key = self.keys.create(record.id, cap_usd)
@@ -159,7 +170,7 @@ class Launcher:
         return record
 
     async def reap(self) -> list[str]:
-        """Finish what is not running; disable every inv- key no live audit owns."""
+        """Finish what is not running; disable this operator's keys no live audit owns."""
         reaped: list[str] = []
         token: str | None = None
 
@@ -170,7 +181,8 @@ class Launcher:
 
         live: set[str] = set()
         for record in self.active():
-            submitted = record.stage == "running"
+            # "installed" may have been submitted just before a crash: ask Hawk too
+            submitted = record.stage in ("installed", "running")
             if submitted and await self.delivery.running(
                 record.eval_set_id or record.id, await operator()
             ):
@@ -179,7 +191,7 @@ class Launcher:
             # never submitted: its start either failed (and finished it) or died midway
             await self.finish(record.id, reason="reaped")
             reaped.append(record.id)
-        for state in self.keys.list(PREFIX):
+        for state in self.keys.list(self.records.prefix):
             if state.name not in live and not state.disabled:
                 self.keys.disable(state.hash)
                 reaped.append(f"{state.name} (key had no live audit)")

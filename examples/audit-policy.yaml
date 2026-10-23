@@ -33,6 +33,6 @@ execution:
   backend: hawk
   credential_mode: restricted
 
-# Inspector sandbox; independent of the child-job backend.
+# The auditor's own sandbox; independent of the child-job backend.
 box: docker
 # investigation_package defaults to this checkout's published commit. Override only at launch.

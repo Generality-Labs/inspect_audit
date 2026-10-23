@@ -627,9 +627,9 @@ def run_investigation(inv: Audit) -> Tool:
 
         Args:
             label: A short name for this job, unique in the audit.
-            samples: The benchmark's sample ids to investigation.
+            samples: The benchmark's sample ids to investigate.
             checks: Checks to run, e.g. ["gold-answer", "red-teaming"].
-            logs: Recorded attempts to investigation against: labels of benchmark jobs you
+            logs: Recorded attempts to investigate against: labels of benchmark jobs you
                 ran, or supplied log sources from the seed; [] for none.
             investigator_model: The investigator, a full Inspect model name from the investigator list.
             source: The Python module that defines the benchmark's task, e.g.
@@ -1150,9 +1150,7 @@ def audit(
     if "hawk" in (runs, "k8s" if box == "k8s" else None) and not hawk_api_url:
         raise ValueError("Hawk work needs hawk_api_url (or HAWK_API_URL)")
     if not repo:
-        raise ValueError(
-            "audit needs a repo: the benchmark to investigation, or a config naming one"
-        )
+        raise ValueError("audit needs a repo: the benchmark to audit, or a config naming one")
     skill_paths = [str(ASSETS / "skills" / name) for name in AUDIT_SKILLS] + [
         str(SKILLS / name) for name in (*LOG_SKILLS, *SUPPORT_SKILLS)
     ]

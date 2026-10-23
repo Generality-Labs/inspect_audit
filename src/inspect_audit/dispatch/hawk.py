@@ -220,8 +220,7 @@ class HawkRuns:
         return RUNNING
 
     async def logs(self, run_id: str, out_dir: Path) -> list[Path]:
-        await download(run_id, await self.login.access_token(), out_dir)
-        return sorted(out_dir.glob("*.eval"))
+        return await download(run_id, await self.login.access_token(), out_dir, self.login.api_url)
 
     async def runner_log(self, run_id: str) -> str:
         async with self._client() as client:
@@ -318,21 +317,43 @@ class HawkDelivery:
         return status is not None and str(status.status) not in ("complete", "failed", "deleted")
 
 
-async def download(address: str, token: str, out_dir: Path) -> None:
-    """Hawk's own eval-set download into `out_dir`: `<eval set>` or `<eval set>/<file>`."""
+async def download(address: str, token: str, out_dir: Path, api_url: str) -> list[Path]:
+    """Hawk's own eval-set download into `out_dir`: `<eval set>` or `<eval set>/<file>`.
+
+    Hawk's downloader takes the API address from the hawk CLI's settings, so the
+    address this job was given is put there for the call. An eval set that wrote no
+    logs (a run that failed before writing any) comes back as an empty list.
+    """
+    import click
     from hawk.cli.download import download_eval
     from hawk.client import HawkClient
 
     eval_set, _, selected = address.partition("/")
-    eval_file = None
-    if selected:
-        async with HawkClient(token=token) as client:
-            names = [str(f["name"]) for f in await client.get_log_files(eval_set)]
-        matches = [n for n in names if Path(n).name == selected]
-        if len(matches) != 1:
-            raise ValueError(f"Expected exactly one Hawk log at {address!r}, found {len(matches)}")
-        eval_file = matches[0]
-    await download_eval(eval_set, token, out_dir, eval_file=eval_file)
+    previous = os.environ.get("HAWK_API_URL")
+    os.environ["HAWK_API_URL"] = api_url
+    try:
+        eval_file = None
+        if selected:
+            async with HawkClient(token=token, api_url=api_url) as client:
+                names = [str(f["name"]) for f in await client.get_log_files(eval_set)]
+            matches = [n for n in names if Path(n).name == selected]
+            if len(matches) != 1:
+                raise ValueError(
+                    f"Expected exactly one Hawk log at {address!r}, found {len(matches)}"
+                )
+            eval_file = matches[0]
+        try:
+            await download_eval(eval_set, token, out_dir, eval_file=eval_file)
+        except click.ClickException as ex:
+            if "No log files found" in ex.message:
+                return []
+            raise RuntimeError(ex.message) from ex
+    finally:
+        if previous is None:
+            os.environ.pop("HAWK_API_URL", None)
+        else:
+            os.environ["HAWK_API_URL"] = previous
+    return sorted(out_dir.glob("*.eval"))
 
 
 def fetch_eval_sets(eval_sets: str) -> str:
@@ -353,7 +374,9 @@ def fetch_eval_sets(eval_sets: str) -> str:
         token = os.environ.get("HAWK_ACCESS_TOKEN") or await HawkLogin(api).access_token()
         for address in eval_sets.split(","):
             # a folder per eval set: same-named files from two sets cannot collide
-            await download(address, token, fetched / address.partition("/")[0])
+            files = await download(address, token, fetched / address.partition("/")[0], api)
+            if not files:
+                raise ValueError(f"No .eval files found in Hawk eval set {address!r}")
 
     # task construction may already be inside inspect's event loop
     with concurrent.futures.ThreadPoolExecutor(1) as pool:

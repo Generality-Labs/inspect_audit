@@ -17,7 +17,7 @@ metadata:
 `metadata` may hold more of the gold. Some benchmarks store none: correctness is a
 predicate the grader computes over the submission — it executes the submitted
 program, runs the tests, checks the end state. There an empty `target` is not a missing
-or wrong answer. The gold is any submission the grader accepts, so what you investigation is
+or wrong answer. The gold is any submission the grader accepts, so what you investigate is
 whether a valid solution exists and whether that acceptance predicate is sound —
 never whether the empty string is correct. The logs hold every recorded attempt at it.
 

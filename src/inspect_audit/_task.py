@@ -148,7 +148,7 @@ def investigation_task(
     Args:
         task: The benchmark task: a registry name such as `inspect_evals/simpleqa`,
             or a `Task` (then `task_args` must be empty).
-        samples: The sample ids to investigation, or `"all"`.
+        samples: The sample ids to investigate, or `"all"`.
         checks: The checks to run on each sample, by skill name.
         task_args: The benchmark task's arguments, exactly as the logs ran it.
         logs: `.eval` files recording attempts at this task; every header must

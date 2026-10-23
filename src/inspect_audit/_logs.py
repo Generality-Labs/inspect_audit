@@ -87,6 +87,7 @@ def _roles(header: EvalLog) -> dict[str, str]:
 
 
 _COMMIT = re.compile(r"(?:^|[+.])g([0-9a-f]{7,40})(?:$|\.)")
+_DIRTY = re.compile(r"\.d\d{8}$")
 
 
 def same_build(logged: str, installed: str) -> bool:
@@ -95,9 +96,13 @@ def same_build(logged: str, installed: str) -> bool:
     Equal strings do. So do two git builds naming the same commit: setuptools-scm
     writes the commit into the local version (`+g67a9ea533`), and the rest of the
     string depends on which tags the checkout happened to fetch, not on the code.
+    A build from an edited tree (setuptools-scm's `.dYYYYMMDD`) names no commit's code,
+    so it matches nothing but itself.
     """
     if logged == installed:
         return True
+    if _DIRTY.search(logged) or _DIRTY.search(installed):
+        return False
     a, b = _COMMIT.search(logged), _COMMIT.search(installed)
     if a is None or b is None:
         return False
@@ -262,7 +267,7 @@ def index_logs(
             except (IndexError, KeyError):
                 raise LogMismatchError(
                     f"{path} lists {len(summaries)} samples but holds none of them (a compacted "
-                    "log): it has no transcripts to investigation"
+                    "log): it has no transcripts to investigate"
                 ) from None
     index.judges = roles_seen or {}
     return index

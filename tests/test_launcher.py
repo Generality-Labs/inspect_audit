@@ -74,7 +74,9 @@ def _launcher(tmp_path: Path, hawk: FakeHawk | None = None) -> tuple[Launcher, F
 def test_an_audit_gets_its_own_capped_key_installed_then_launched(tmp_path: Path) -> None:
     launcher, keys, hawk = _launcher(tmp_path)
     record = asyncio.run(launcher.start({"name": "inv"}, 20.0, "simpleqa"))
-    assert record.id.startswith("inv-simpleqa-") and record.stage == "running"
+    assert (
+        record.id.startswith(f"{Records(tmp_path).prefix}simpleqa-") and record.stage == "running"
+    )
     [key] = keys.keys.values()
     assert (key["name"], key["limit"]) == (record.id, 20.0)
     assert hawk.installed == ["sk-or-secret-h0"]
@@ -126,10 +128,15 @@ def test_reap_finishes_what_has_stopped_and_disables_keys_nobody_owns(tmp_path: 
     # an audit that ended while the launcher was away
     hawk.live.clear()
     # a key minted elsewhere, or left by a lost record
-    keys.create("inv-orphan-9999", 2.0)
+    keys.create(f"{Records(tmp_path).prefix}orphan-9999", 2.0)
+    keys.create("inv-someoneelse-live-0001", 2.0)  # another operator's running audit
     reaped = asyncio.run(launcher.reap())
-    assert alive.id in reaped and any("inv-orphan-9999" in r for r in reaped)
-    assert all(k["disabled"] for k in keys.keys.values())
+    assert alive.id in reaped and any("orphan-9999" in r for r in reaped)
+    others = [k for k in keys.keys.values() if k["name"] == "inv-someoneelse-live-0001"]
+    assert others and not others[0]["disabled"]
+    assert all(
+        k["disabled"] for k in keys.keys.values() if k["name"].startswith(Records(tmp_path).prefix)
+    )
     assert Records(tmp_path).load(alive.id).stage == "finished"
 
 

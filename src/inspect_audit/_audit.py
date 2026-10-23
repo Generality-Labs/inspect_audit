@@ -47,6 +47,7 @@ from ._report import (
     report_blocker,
 )
 from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS
+from .containers import AUDITOR_IMAGE, INVESTIGATOR_IMAGE
 from .dispatch import FINISHED, STUCK, HawkRuns, Job, LocalRuns, Runs, validate_environment
 from .dispatch.packages import git_package_spec, own_package_spec
 from .dispatch.policy import (
@@ -71,14 +72,8 @@ ASSETS = Path(__file__).parent / "audit"
 
 # Ours first, then the vendored ones, adapted for a container with no user in it and no
 # `hawk` binary. See audit/skills/VENDORED.md for provenance and what changed.
-DEFAULT_INVESTIGATOR_IMAGE = (
-    "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
-    "63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa"
-)
-DEFAULT_AUDITOR_IMAGE = (
-    "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
-    "d21b285bc4ce2f2d34084c2ae382ab5a6996704dbb8d58d1199a1d1925fa71fa"
-)
+DEFAULT_INVESTIGATOR_IMAGE = INVESTIGATOR_IMAGE
+DEFAULT_AUDITOR_IMAGE = AUDITOR_IMAGE
 
 AUDIT_SKILLS = (
     "auditing",

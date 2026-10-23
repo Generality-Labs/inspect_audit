@@ -17,4 +17,15 @@ INVESTIGATOR_DOCKERFILE = (HERE / "investigator.Dockerfile").read_text()
 # service, DNS plus world, so the "can verify" property holds off Docker.
 EGRESS_POLICY = (HERE / "egress.helm.yaml").read_text()
 
-__all__ = ["EGRESS_POLICY", "INVESTIGATOR_DOCKERFILE"]
+# The published builds, pulled where an image cannot be built in place (Hawk, any
+# Kubernetes) and by default everywhere. Public: no registry login needed.
+INVESTIGATOR_IMAGE = (
+    "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
+    "63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa"
+)
+AUDITOR_IMAGE = (
+    "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
+    "d21b285bc4ce2f2d34084c2ae382ab5a6996704dbb8d58d1199a1d1925fa71fa"
+)
+
+__all__ = ["AUDITOR_IMAGE", "EGRESS_POLICY", "INVESTIGATOR_DOCKERFILE", "INVESTIGATOR_IMAGE"]

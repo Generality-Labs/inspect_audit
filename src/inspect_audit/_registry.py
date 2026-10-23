@@ -11,9 +11,10 @@ from inspect_ai.tool import WebSearchProviders
 from ._audit import audit as audit
 from ._log_sources import fetch_logs as fetch_logs
 from ._log_sources import log_files as log_files
-from ._prices import register_prices
+from ._prices import prices_for_models, register_prices
 from ._publishing import publish as publish
 from ._task import investigation_task
+from .containers import INVESTIGATOR_IMAGE
 
 
 def resolve_source(source: str | None) -> str | None:
@@ -49,23 +50,31 @@ def investigation(
     working_limit: int | None = None,
     model_prices: dict[str, dict[str, float]] | None = None,
 ) -> Task:
-    """Investigation a benchmark task from inside its own samples (see `investigation_task` in `_task`).
+    """Investigate a benchmark task from inside its own samples (see `investigation_task` in `_task`).
 
     Everything is declared: `samples` is a list of ids or the literal "all"; `logs` are
     `.eval` files or `hawk:<eval set id>`; `source` is the task's file, a directory, or
-    a module name. The investigator is the eval's own `--model`; `model_prices` registers
-    prices for a job whose models Inspect does not price.
+    a module name. The investigator is the eval's own `--model`. With a `cost_limit`,
+    prices come from Inspect, else OpenRouter's list; `model_prices` overrides them.
+    `investigator_image` defaults to the published image; "build" builds it locally.
     """
     if isinstance(samples, str) and samples != "all":
         raise ValueError('samples must be a list of sample ids or the literal "all"')
     if model_prices:
         register_prices(model_prices)
+    elif cost_limit is not None:
+        # a cost limit needs a price for every model this sample can call: the
+        # investigator (the run's --model) and the judges. Inspect's own costs first,
+        # else OpenRouter's published price; a model with neither is refused there.
+        from inspect_ai.model import get_model
+
+        register_prices(prices_for_models([str(get_model()), *(judge or {}).values()]))
     return investigation_task(
         task,
         samples=samples if samples == "all" else list(samples),
         checks=checks,
         task_args=task_args,
-        logs=log_files(logs) if logs is not None else None,
+        logs=log_files(logs) if logs else None,
         judge=judge,
         judge_configs=judge_configs,
         source=resolve_source(source),
@@ -75,7 +84,10 @@ def investigation(
         confidential=confidential,
         notes=notes,
         search=search,
-        investigator_image=investigator_image,
+        # the published image unless told otherwise; "build" builds it here, from source
+        investigator_image=None
+        if investigator_image == "build"
+        else investigator_image or INVESTIGATOR_IMAGE,
         cost_limit=cost_limit,
         message_limit=message_limit,
         time_limit=time_limit,

@@ -11,6 +11,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
+from logging import getLogger
 from typing import Any
 
 from inspect_ai.event import EventTreeSpan, ModelEvent, event_tree
@@ -25,6 +26,8 @@ from inspect_ai.tool import Tool, ToolError, tool
 from inspect_ai.util import sandbox
 
 from ._compose import INVESTIGATOR
+
+logger = getLogger(__name__)
 
 
 class LogMismatchError(ValueError):
@@ -159,6 +162,15 @@ def _check_header(
         raise LogMismatchError(
             f"{path} passed task argument(s) the investigation does not declare: "
             f"{', '.join(sorted(undeclared))}"
+        )
+    # Inspect itself decides how samples are set up and scored: a different version
+    # can grade the same answer differently. Not refused (a log's exact build is often
+    # unobtainable), but said, so a regrade that disagrees has a named suspect.
+    logged_inspect = spec.packages.get("inspect_ai")
+    if logged_inspect and not same_build(logged_inspect, version("inspect_ai")):
+        logger.warning(
+            f"{path} was produced by inspect_ai {logged_inspect}; this run uses "
+            f"{version('inspect_ai')}: regrades may differ for that reason"
         )
     if package is not None:
         try:

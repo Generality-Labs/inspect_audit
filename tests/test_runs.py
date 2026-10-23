@@ -353,16 +353,32 @@ def test_task_arguments_cannot_place_code_or_name_other_models(kind: str) -> Non
         canonical,
     )
 
-    for args in [
-        {"judge_prompt": "original", "grader_model": "openai/judge", "judges": ["openai/judge"]},
-        {"sandbox": "local"},
-        {"image": "evil:latest"},
-        {"paths": ["/etc"]},
-        {"nested": {"data_dir": "/etc", "judge": "openai/other"}},
-        {"items": [{"docker_image": "evil:latest"}]},
-        {"grader_model": "openai/other"},
-        {"judges": ["openai/other"]},
-        {"models": {"reviewer": "openai/other"}},
+    # the operator's own sandbox, image and path choices stand (SWE-bench needs them);
+    # running outside a sandbox and judges outside the policy do not
+    for args, allowed in [
+        (
+            {
+                "judge_prompt": "original",
+                "grader_model": "openai/judge",
+                "judges": ["openai/judge"],
+            },
+            True,
+        ),
+        (
+            {
+                "sandbox_type": "k8s",
+                "image_name_template": "sweb.{issue}:latest",
+                "sandbox_config": None,
+            },
+            True,
+        ),
+        ({"items": [{"docker_image": "theirs:1"}], "data_dir": "/data"}, True),
+        ({"sandbox": "local"}, False),
+        ({"sandbox_type": "LOCAL"}, False),
+        ({"nested": {"data_dir": "/etc", "judge": "openai/other"}}, False),
+        ({"grader_model": "openai/other"}, False),
+        ({"judges": ["openai/other"]}, False),
+        ({"models": {"reviewer": "openai/other"}}, False),
     ]:
         policy = LaunchPolicy(
             task="bench",
@@ -395,7 +411,7 @@ def test_task_arguments_cannot_place_code_or_name_other_models(kind: str) -> Non
                 },
             )
         authorizer = AuditAuthorizer(policy)
-        if "judge_prompt" in args:
+        if allowed:
             assert authorizer.authorise(job, kind, set()).task_args == job.task_args
         else:
             with pytest.raises(ToolError, match="task_args"):

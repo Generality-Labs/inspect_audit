@@ -160,11 +160,10 @@ def bind_policy(policy: LaunchPolicy) -> Solver:
     return solve
 
 
-# A job cannot move execution out of its declared environment through task arguments.
-PLACEMENT_ARG = re.compile(
-    r"(^|_)(sandbox|image|docker|compose|path|filepath|filename|file|dir|directory|workdir|root|url|host)s?($|_)",
-    re.IGNORECASE,
-)
+# Benchmark arguments are the operator's declaration (a job must match them exactly),
+# so they choose sandboxes, images and paths freely; the one choice refused is moving
+# the benchmark's code out of a sandbox and into the runner, beside its credentials.
+SANDBOX_ARG = re.compile(r"(^|_)sandbox(_type)?$", re.IGNORECASE)
 MODEL_ARG = re.compile(r"(^|_)(model|judge|grader)s?($|_)", re.IGNORECASE)
 
 
@@ -177,8 +176,8 @@ def argument_problems(
     if isinstance(args, dict):
         for key, value in args.items():
             here = f"{where}.{key}"
-            if PLACEMENT_ARG.search(str(key)):
-                problems.append(f"{here}: jobs may not set where code runs or what it reads")
+            if SANDBOX_ARG.search(str(key)) and str(value).strip().lower() == "local":
+                problems.append(f"{here}: the benchmark may not run outside a sandbox")
             else:
                 problems += argument_problems(
                     value, allowed, here, model_value or bool(MODEL_ARG.search(str(key)))

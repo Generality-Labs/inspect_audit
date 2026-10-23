@@ -6,7 +6,6 @@ record the declared task, the declared arguments and the installed benchmark
 version -- a log of a different run is not evidence about this one.
 """
 
-import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -22,10 +21,7 @@ from inspect_ai.log import (
     read_eval_log_sample_summaries,
 )
 from inspect_ai.model import ModelConfig
-from inspect_ai.tool import Tool, ToolError, tool
-from inspect_ai.util import sandbox
-
-from ._compose import INVESTIGATOR
+from inspect_ai.tool import ToolError
 
 logger = getLogger(__name__)
 
@@ -274,83 +270,33 @@ def index_logs(
     return index
 
 
-def _render(message: Any) -> str:
-    text = message.text if hasattr(message, "text") else str(message.content)
-    calls = getattr(message, "tool_calls", None) or []
-    rendered = f"[{message.role}] {text}"
-    for call in calls:
-        rendered += f"\n  -> {call.function}({json.dumps(call.arguments)[:2000]})"
-    return rendered
+def sliced_logs(index: LogIndex, sample_id: str) -> dict[str, bytes]:
+    """This sample's recorded attempts, as Inspect logs: one per source log.
 
+    Each keeps its source log's header (task, args, models, results for the whole run)
+    and only this sample's epochs. Written in Inspect's JSON log format: Inspect reads
+    it like any log, and so does plain `json`, so the box needs nothing installed.
+    Written on the host; the box gets the bytes.
+    """
+    import tempfile
 
-def log_tools(index: LogIndex | None, sample_id: str) -> list[Tool]:
-    """Host-side tools over the recorded attempts at one sample."""
+    from inspect_ai.log import write_eval_log
 
-    @tool
-    def attempts() -> Tool:
-        async def execute() -> str:
-            """List every recorded attempt at this sample: eval_id, epoch, model, scores, error."""
-            if index is None:
-                return "No logs were declared for this investigation."
-            rows = [a.row() for a in index.for_sample(sample_id)]
-            return json.dumps(rows, default=str) if rows else "No recorded attempts at this sample."
-
-        return execute
-
-    @tool
-    def read_attempt() -> Tool:
-        async def execute(eval_id: str, epoch: int, start: int, count: int) -> str:
-            """Read one recorded attempt's transcript, a window of messages at a time.
-
-            Args:
-                eval_id: The attempt's eval_id, from attempts().
-                epoch: The attempt's epoch, from attempts().
-                start: Index of the first message to return (0 for the beginning).
-                count: How many messages to return (20 is a sensible window).
-            """
-            if index is None:
-                raise ToolError("No logs were declared for this investigation.")
-            found = index.find(sample_id, eval_id, epoch)
-            sample = read_eval_log_sample(
-                found.log, id=found.sample_id, epoch=epoch, resolve_attachments=True
-            )
-            window = sample.messages[start : start + count]
-            body = "\n\n".join(f"#{start + i} {_render(m)}" for i, m in enumerate(window))
-            return (
-                f"messages {start}-{start + len(window) - 1} of {len(sample.messages)}"
-                f" | completion: {sample.output.completion[:2000]!r}\n\n{body}"
-            )
-
-        return execute
-
-    @tool
-    def export_attempts() -> Tool:
-        async def execute() -> str:
-            """Write every recorded attempt at this sample to /audit/attempts.jsonl in your box.
-
-            One JSON object per attempt: eval_id, epoch, model, scores, error,
-            completion and messages. For scripting over attempts with pandas.
-            """
-            if index is None:
-                raise ToolError("No logs were declared for this investigation.")
-            lines = []
-            for found in index.for_sample(sample_id):
-                sample = read_eval_log_sample(
-                    found.log, id=found.sample_id, epoch=found.epoch, resolve_attachments=True
-                )
-                lines.append(
-                    json.dumps(
-                        {
-                            **found.row(),
-                            "completion": sample.output.completion,
-                            "messages": [m.model_dump(exclude_none=True) for m in sample.messages],
-                        },
-                        default=str,
-                    )
-                )
-            await sandbox(INVESTIGATOR).write_file("/audit/attempts.jsonl", "\n".join(lines) + "\n")
-            return f"wrote {len(lines)} attempt(s) to /audit/attempts.jsonl"
-
-        return execute
-
-    return [attempts(), read_attempt(), export_attempts()]
+    by_log: dict[str, list[Attempt]] = {}
+    for attempt in index.for_sample(sample_id):
+        by_log.setdefault(attempt.log, []).append(attempt)
+    files: dict[str, bytes] = {}
+    with tempfile.TemporaryDirectory(prefix="sliced-logs-") as tmp:
+        for n, (log, attempts) in enumerate(sorted(by_log.items())):
+            header = read_eval_log(log, header_only=True)
+            samples = [
+                read_eval_log_sample(log, id=a.sample_id, epoch=a.epoch, resolve_attachments=True)
+                for a in attempts
+            ]
+            stem = log.rstrip("/").rsplit("/", 1)[-1].removesuffix(".eval").removesuffix(".json")
+            name = f"{n:02d}-{stem}.json"
+            out = f"{tmp}/{name}"
+            write_eval_log(header.model_copy(update={"samples": samples}), out, format="json")
+            with open(out, "rb") as f:
+                files[name] = f.read()
+    return files

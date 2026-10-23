@@ -8,8 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         librsvg2-bin ca-certificates curl git jq ripgrep poppler-utils procps time \
     && rm -rf /var/lib/apt/lists/*
 
-# pandas + pyarrow for exported attempts; pillow to measure an image as well as
-# look at one; scipy + sympy for independent numerical and symbolic checks
-RUN pip install --no-cache-dir pandas pyarrow pillow scipy sympy
+# inspect-ai to read the recorded attempts (/audit/logs/*.eval); pandas + pyarrow to
+# analyse them; pillow to measure an image as well as look at one; scipy + sympy for
+# independent numerical and symbolic checks
+RUN pip install --no-cache-dir inspect-ai pandas pyarrow pillow scipy sympy
 
 WORKDIR /audit

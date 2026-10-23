@@ -8,7 +8,6 @@ in the native Inspect log are the compatibility evidence, not the validity label
 
 import importlib
 import json
-from contextlib import suppress
 from typing import Any
 
 from inspect_ai import Task, task, task_with
@@ -50,6 +49,19 @@ def compatibility(expected: dict[str, bool]):
     return score
 
 
+# The item, and the recorded attempts as staged in the box (Inspect JSON logs), read
+# with plain json so the probe needs nothing installed there.
+STAGED = (
+    "python3 -c '"
+    'import glob, json; d = json.load(open("/audit/item.json")); '
+    'out = {k: d[k] for k in ["sample_id", "target", "choices", "files_in_their_box", "has_setup_script"]}; '
+    'assert d.get("benchmark_source"), "no source manifest"; '
+    'logs = [json.load(open(f)) for f in sorted(glob.glob("/audit/logs/*.json"))]; '
+    'out["attempts"] = [{"eval_id": g["eval"]["eval_id"], "epoch": s["epoch"]} for g in logs for s in g.get("samples") or []]; '
+    "print(json.dumps(out))'"
+)
+
+
 @modelapi(name="ia_probe")
 class ProbeAPI(ModelAPI):
     async def generate(
@@ -71,27 +83,14 @@ class ProbeAPI(ModelAPI):
         if "investigator_bash" not in done:
             return call(
                 "investigator_bash",
-                command='python3 -c \'import json; d=json.load(open("/audit/item.json")); print(json.dumps({k:d[k] for k in ["sample_id","target","choices","files_in_their_box","has_setup_script"]})); assert d.get("benchmark_source"), "no source manifest"\'',
+                command=STAGED,
             )
-        if "attempts" not in done:
-            return call("attempts")
-        attempts: list[dict[str, Any]] = []
-        listed = next(m for m in results if m.function == "attempts")
-        with suppress(json.JSONDecodeError):
-            attempts = json.loads(listed.text)
-        if attempts and "read_attempt" not in done:
-            return call(
-                "read_attempt",
-                eval_id=attempts[0]["eval_id"],
-                epoch=attempts[0]["epoch"],
-                start=0,
-                count=2,
-            )
+        staged = json.loads(next(m for m in results if m.function == "investigator_bash").text)
+        attempts: list[dict[str, Any]] = staged["attempts"]
         if "benchmark_bash" in available and "benchmark_bash" not in done:
             return call("benchmark_bash", command="pwd\nls -al")
         if "grade" in available and "grade" not in done:
-            staged = next(m for m in results if m.function == "investigator_bash")
-            item = json.loads(staged.text)
+            item = staged
             if attempts:
                 return call(
                     "grade", answer="", eval_id=attempts[0]["eval_id"], epoch=attempts[0]["epoch"]

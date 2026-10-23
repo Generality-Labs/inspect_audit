@@ -658,7 +658,6 @@ def _investigator_tools() -> list[Any]:
     """The investigator's own tools, from the factories its solver calls (never executed)."""
     from inspect_audit._grade import grade_tool
     from inspect_audit._image import view_image
-    from inspect_audit._logs import log_tools
     from inspect_audit._reset import reset_tool
     from inspect_audit._verdicts import investigation_items, record_verdict, submit_investigation
 
@@ -667,7 +666,6 @@ def _investigator_tools() -> list[Any]:
         record_verdict(checks),
         submit_investigation(checks),
         view_image("investigator"),
-        *log_tools(None, "1"),
         grade_tool(
             TaskState(model="mockllm/model", sample_id="1", epoch=1, input="q", messages=[]),
             [],

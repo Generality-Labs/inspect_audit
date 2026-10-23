@@ -23,10 +23,11 @@ from . import prompts
 from ._compose import INVESTIGATOR
 from ._grade import grade_tool
 from ._image import view_image
-from ._logs import LogIndex, log_tools
+from ._logs import LogIndex, sliced_logs
 from ._reset import reset_tool
 from ._source import SourceCopy
 from ._verdicts import (
+    LOG_SKILLS,
     SKILLS,
     SUPPORT_SKILLS,
     AssessmentUnits,
@@ -124,12 +125,13 @@ def investigator(
     search: WebSearchProviders | None = None,
     model: Model | None = None,
 ) -> Solver:
-    """Investigation the sample this solver runs in, in place of the benchmark's solver."""
+    """Investigate the sample this solver runs in, in place of the benchmark's solver."""
     granted = {name for check in checks for name in check.tools}
     skill_dirs = [
         str(path)
         for path in sorted(SKILLS.iterdir())
-        if path.is_dir() and path.name in ({c.name for c in checks} | set(SUPPORT_SKILLS))
+        if path.is_dir()
+        and path.name in ({c.name for c in checks} | set(SUPPORT_SKILLS) | set(LOG_SKILLS))
     ]
     named = "\n".join(f"- `{c.name}`: {c.description}" for c in checks)
     system = prompts.INVESTIGATOR.format(
@@ -150,6 +152,11 @@ def investigator(
         their_messages = list(state.messages)
         store_as(AssessmentUnits).ids = list((assessment_ids or {}).get(sample_id) or [sample_id])
         await stage_item(state, their_sample, source, redact)
+        if index is not None:
+            # this sample's recorded attempts, as ordinary .eval files the investigator
+            # reads with Inspect's log API (see the reading-logs skill)
+            for name, data in sliced_logs(index, sample_id).items():
+                await sandbox(INVESTIGATOR).write_file(f"{INVESTIGATION_ROOT}/logs/{name}", data)
 
         tools: list[Tool] = [
             _bash(
@@ -161,7 +168,6 @@ def investigator(
             skill(skill_dirs),
             record_verdict(checks),
             view_image(INVESTIGATOR),
-            *log_tools(index, sample_id),
         ]
         if search is not None:
             tools.append(web_search(providers=search))
@@ -181,7 +187,7 @@ def investigator(
 
         agent = react(
             name="investigator",
-            description="Investigations one benchmark item and records a verdict per check.",
+            description="Investigates one benchmark item and records a verdict per check.",
             prompt=system,
             tools=tools,
             model=model,

@@ -63,7 +63,7 @@ def grade_tool(
             Args:
                 answer: The submission. For multiple-choice items, the letter(s). With
                     a recorded attempt, "" keeps its own completion.
-                eval_id: A recorded attempt's eval_id, from attempts(), or "" for none.
+                eval_id: A recorded attempt's eval_id (its log header's eval.eval_id, in /audit/logs), or "" for none.
                 epoch: That attempt's epoch, or 0 for none.
             """
             if not scorers:

@@ -17,9 +17,9 @@ your box may also be offline. Before a finding rests on network access from thei
 box, check the benchmark's sandbox configuration, and say
 in your debrief whether their box had internet during the investigation.
 
-The recorded attempts are read on the host: `attempts()` lists them,
-`read_attempt()` reads a transcript a window at a time, `export_attempts()` writes
-them all to /audit/attempts.jsonl for scripting. `grade` puts a submission in front
+The recorded attempts at this item are in /audit/logs/, one Inspect log per recorded
+run (JSON format), holding only this item's samples. Read them with plain `json` or
+Inspect's log API (the reading-logs skill). `grade` puts a submission in front
 of the benchmark's own grader, against their box as it stands now; `reset`, where a
 check grants it, rebuilds their boxes from scratch.
 

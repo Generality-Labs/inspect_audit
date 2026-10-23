@@ -15,8 +15,7 @@ def outcomes(messages: Sequence[ChatMessage], expected: dict[str, bool]) -> dict
     errors: dict[str, str] = {}
     for stage, tool, applicable in [
         ("sample_and_source", "investigator_bash", True),
-        ("attempt_index", "attempts", expected["logs"]),
-        ("transcript", "read_attempt", expected["logs"]),
+        ("recorded_attempts", "investigator_bash", expected["logs"]),
         ("benchmark_shell", "benchmark_bash", expected["benchmark_box"]),
         ("grading", "grade", expected["grader"]),
         ("verdict", "record_verdict", True),
@@ -35,6 +34,13 @@ def outcomes(messages: Sequence[ChatMessage], expected: dict[str, bool]) -> dict
             errors[stage] = result.error.message
         else:
             stages[stage] = "passed"
+            if stage == "recorded_attempts":
+                try:
+                    if not json.loads(result.text)["attempts"]:
+                        raise ValueError("no recorded attempts staged in /audit/logs")
+                except (ValueError, KeyError, TypeError) as ex:
+                    stages[stage] = "failed"
+                    errors[stage] = str(ex)
             if tool == "grade":
                 try:
                     scores = json.loads(result.text)["scores"]

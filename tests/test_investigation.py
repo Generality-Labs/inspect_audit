@@ -146,7 +146,7 @@ def test_an_investigation_runs_inside_the_benchmark(tmp_path: Path, sample_sandb
 
     script = [
         _call("benchmark_bash", command="cat /work/input.txt /work/setup_done"),
-        _call("attempts"),
+        _call("investigator_bash", command="cat /audit/logs/*.json"),
         _call("grade", answer="42", eval_id="", epoch=0),
         _call("benchmark_bash", command="rm -rf /work"),
         _call("grade", answer="42", eval_id="", epoch=0),
@@ -211,7 +211,7 @@ def test_an_investigation_runs_inside_the_benchmark(tmp_path: Path, sample_sandb
     by_call = [r for _, r in results]
     assert [f for f, _ in results] == [o.message.tool_calls[0].function for o in script]  # type: ignore[index]
     assert "ready" in by_call[0]  # their files and setup script
-    assert eval_id in by_call[1]  # the recorded attempt is indexed
+    assert eval_id in by_call[1]  # the recorded attempt is staged as an Inspect log
     grades = [json.loads(r)["scores"][0]["value"] for f, r in results if f == "grade"]
     assert grades == ["C", "I", "C", "C"]  # right, broken box, rebuilt, recorded completion
     assert "rebuilt default" in by_call[5]
@@ -262,7 +262,9 @@ def test_the_checks_and_prompt_name_only_what_the_v2_investigator_has() -> None:
 
     stale = [
         "sample.json",
-        "/audit/logs",
+        "attempts()",
+        "read_attempt",
+        "export_attempts",
         "gold/grading.md",
         "samples_df(",
         "investigation_probe",
@@ -334,7 +336,6 @@ def test_every_investigator_tool_schema_is_strict() -> None:
 
     from inspect_audit._grade import grade_tool
     from inspect_audit._investigator import view_image
-    from inspect_audit._logs import LogIndex, log_tools
     from inspect_audit._reset import reset_tool
     from inspect_audit._verdicts import investigation_items, record_verdict, submit_investigation
 
@@ -344,7 +345,6 @@ def test_every_investigator_tool_schema_is_strict() -> None:
         record_verdict(checks),
         submit_investigation(checks),
         view_image(),
-        *log_tools(LogIndex(), "a"),
         grade_tool(state, [], [], None),
         reset_tool(Sample(input="q"), [], state, None),  # type: ignore[arg-type]
     ]
@@ -419,3 +419,45 @@ def test_every_task_setting_is_either_overridden_or_kept_on_purpose(tmp_path: Pa
             "metadata",
         }, name
     assert investigation.approval is None and getattr(investigation, "review", None) is None
+
+
+def test_a_sample_gets_only_its_own_attempts_as_an_inspect_log(tmp_path: Path) -> None:
+    """The box receives a JSON Inspect log per source run, holding only this sample's epochs."""
+    import json
+
+    from inspect_ai import Task
+    from inspect_ai import eval as inspect_eval
+    from inspect_ai.log import read_eval_log
+
+    from inspect_audit._logs import Attempt, LogIndex, sliced_logs
+
+    samples = [Sample(id="7", input="q", target="a"), Sample(id="8", input="r", target="b")]
+    [log] = inspect_eval(
+        Task(dataset=samples, epochs=2),
+        model="mockllm/model",
+        log_dir=str(tmp_path),
+        display="none",
+    )
+    index = LogIndex(
+        attempts={
+            "7": [
+                Attempt(
+                    log=log.location,
+                    eval_id=log.eval.eval_id,
+                    model="m",
+                    sample_id="7",
+                    epoch=epoch,
+                    scores={},
+                    error=None,
+                )
+                for epoch in (1, 2)
+            ]
+        }
+    )
+    [(name, data)] = sliced_logs(index, "7").items()
+    assert name.endswith(".json")
+    raw = json.loads(data)  # readable with no Inspect installed
+    assert [(s["id"], s["epoch"]) for s in raw["samples"]] == [("7", 1), ("7", 2)]
+    (tmp_path / name).write_bytes(data)
+    sliced = read_eval_log(str(tmp_path / name))  # and as an ordinary Inspect log
+    assert sliced.eval.eval_id == log.eval.eval_id and len(sliced.samples or []) == 2

@@ -80,7 +80,7 @@ output/score does not describe every earlier rejection.
 ## Start with the logs, not the web
 
 Enumerate every distinct answer the field gave and how each was graded. The
-sample id is in `/audit/item.json`. `attempts()` lists the attempts and their scores; `read_attempt()` reads a transcript a window at a time, and `export_attempts()` writes them all to `/audit/attempts.jsonl` for pandas.
+sample id is in `/audit/item.json`. The recorded attempts are in /audit/logs/*.json (Inspect logs holding only this item's samples); read them with Inspect's log API, as the reading-logs skill shows.
 
 Enumerate all epochs and read the actual submissions, not just the scorer's
 extracted answers. Reuse the saved attempt review table across skills. Account

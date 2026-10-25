@@ -662,3 +662,31 @@ def test_even_an_empty_configuration_requires_a_bound_policy(
     with pytest.raises(RuntimeError, match="differs from its saved launch policy"):
         asyncio.run(audit.launch(job, "benchmark", "unbound"))
     assert not runs.submitted
+
+
+def test_budget_reports_what_the_audit_has_spent(
+    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Measured spend, not only a key's allowance: CL-bench planned against caps (FRICTION 25)."""
+    from types import SimpleNamespace
+
+    import inspect_ai.util
+
+    record.jobs.append({"label": "screen", "kind": "investigation", "run_id": "r1", "address": "a"})
+    record.jobs.append(
+        {"label": "running", "kind": "investigation", "run_id": "r2", "address": "b"}
+    )
+    folder = tmp_path / "inputs" / "jobs" / "screen"
+    folder.mkdir(parents=True)
+    (folder / "x.eval").write_bytes(b"")
+    monkeypatch.setattr(_audit, "_recorded_cost", lambda path: 9.71)
+    monkeypatch.setattr(
+        inspect_ai.util,
+        "sample_limits",
+        lambda: SimpleNamespace(cost=SimpleNamespace(usage=5.82, limit=150.0)),
+    )
+    report = asyncio.run(_audit.budget(None, openrouter=False, root=tmp_path)())  # type: ignore[call-arg]
+    assert "Your own calls: $5.82 of a $150.00 cap" in report
+    assert "screen: $9.71 recorded" in report
+    assert "running: not collected, cost unknown" in report
+    assert "Audit so far: $15.53" in report

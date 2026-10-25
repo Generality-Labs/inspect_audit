@@ -21,7 +21,7 @@ import yaml
 from inspect_ai import Task, task
 from inspect_ai.agent import AgentState, react
 from inspect_ai.dataset import Sample
-from inspect_ai.log import list_eval_logs, read_eval_log_sample_summaries
+from inspect_ai.log import EvalSampleSummary, list_eval_logs, read_eval_log_sample_summaries
 from inspect_ai.model import CompactionSummary, GenerateConfig, ModelConfig, get_model
 from inspect_ai.solver import TaskState
 from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
@@ -451,19 +451,36 @@ def docker_box(root: Path) -> tuple[str, str]:
 
 
 @tool(name="budget")
-def budget(hawk_api_url: str | None, openrouter: bool) -> Tool:
+def budget(hawk_api_url: str | None, openrouter: bool, root: Path | None = None) -> Tool:
     async def execute() -> str:
-        """Read the configured model key's remaining allowance.
+        """What this audit has spent so far, and the model key's remaining allowance.
 
-        This covers all calls only when the auditor and jobs share that key.
-        It is not an attributed audit spend total. Calls using the key fail
-        when its provider-enforced allowance is exhausted.
+        Spent: your own calls, and each collected job's recorded cost (a job not
+        yet collected is listed without one). The key's allowance covers all calls
+        only when the auditor and jobs share that key; calls using it fail when
+        its provider-enforced allowance is exhausted.
         """
-        return "\n".join(
-            await key_balance(
-                hawk_api_url, openrouter and str(get_model()).startswith("openrouter/")
-            )
+        from inspect_ai.util import sample_limits
+
+        own = sample_limits().cost
+        cap = f" of a ${own.limit:.2f} cap" if own.limit is not None else ""
+        lines = [f"Your own calls: ${own.usage:.2f}{cap}"]
+        jobs_total = 0.0
+        for j in store_as(AuditRecord).jobs:
+            folder = root / "inputs" / "jobs" / str(j["label"]) if root else None
+            files = sorted(folder.rglob("*.eval")) if folder and folder.is_dir() else []
+            if not files:
+                lines.append(f"  {j['label']}: not collected, cost unknown")
+                continue
+            cost = sum(_recorded_cost(f) for f in files)
+            jobs_total += cost
+            lines.append(f"  {j['label']}: ${cost:.2f} recorded")
+        lines.append(f"Jobs collected so far: ${jobs_total:.2f}")
+        lines.append(f"Audit so far: ${own.usage + jobs_total:.2f}")
+        lines += await key_balance(
+            hawk_api_url, openrouter and str(get_model()).startswith("openrouter/")
         )
+        return "\n".join(lines)
 
     return execute
 
@@ -903,12 +920,20 @@ async def _import_investigations(files: list[Path], address: str) -> str:
     return f"  register: {len(added)} investigator take(s) added, {flagged} flagged"
 
 
+def _cost(summaries: list[EvalSampleSummary]) -> float:
+    return sum((u.total_cost or 0.0) for s in summaries for u in (s.model_usage or {}).values())
+
+
+def _recorded_cost(path: Path) -> float:
+    """What one log's samples recorded spending."""
+    return _cost(read_eval_log_sample_summaries(str(path)))
+
+
 def _log_line(path: Path) -> str:
     """One log, summarised from its samples: how many, how they ended, what they cost."""
     summaries = read_eval_log_sample_summaries(str(path))
     errors = sum(1 for s in summaries if s.error)
-    cost = sum((u.total_cost or 0.0) for s in summaries for u in (s.model_usage or {}).values())
-    return f"  {path.name}: {len(summaries)} samples, {errors} errored, ${cost:.2f} recorded"
+    return f"  {path.name}: {len(summaries)} samples, {errors} errored, ${_cost(summaries):.2f} recorded"
 
 
 async def _continue(state: AgentState, interactive: bool) -> bool | str:
@@ -1250,6 +1275,7 @@ def audit(
         budget(
             hawk_api_url if "hawk" in (runs, "k8s" if box == "k8s" else None) else None,
             openrouter=box == "docker" or runs == "local",
+            root=root,
         ),
         view_image(),
         report_blocker(),

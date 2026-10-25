@@ -86,3 +86,7 @@ Entries 1-20 were collected 2026-10-22 to 2026-10-24 while running SWE-bench, Sc
     - 1 is a real but benchmark-wide defect: the judge never sees the context, so an answer that contradicts the context can pass (ba10505a).
     - 1 is debatable (4642fec0).
     - 1 is a judge flip filed as an item defect (3c6b5ac6). Totals over 20: 11 real item defects, 1 benchmark-wide, 2 debatable, 2 wrong, 3 judge noise in the wrong check, 1 that can't be told apart from judge noise.
+
+32. **2026-10-25. Update to 30: fixed in 9efe40d.** `run_investigation` now passes `note` as the investigation's `notes`, and the launch contract (`dispatch/policy.py`) accepts `notes` as text. Test: `test_an_investigation_reads_logs_by_job_label_or_supplied_source` asserts the note reaches `task_args`. 272 tests pass. The prompt still heads it "Notes from the operator", which is now also what the auditor writes. Entry 30 stays as written.
+
+33. **2026-10-25. Hawk's per-job usage API returned nothing for the CL-bench audit.** `GET /usage?group_by=job&hours=24` (and 48) returned `[]` the morning after the audit ran, so the audit's total had to be priced from each job's log by hand. For three jobs whose logs were never downloaded (format-countercheck, repair-items, resolve-primary), the figures came from the auditor's journal. Status: verified symptom; cause not investigated (retention window, bin size, or no job attribution for proxy calls).

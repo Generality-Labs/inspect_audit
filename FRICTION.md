@@ -1,6 +1,8 @@
-# Known bugs
+# Friction log
 
-Found while running Inspect Auditor on SWE-bench, SciCode, SQAV and CL-bench (2026-10-22 to 2026-10-24), plus a four-reviewer code sweep (2026-10-23). Status is one of: **verified** (reproduced or confirmed in code and a run), **reviewer** (read in code by a reviewer, not reproduced), **worked around** (a run used a workaround; the bug remains), **fixed** (commit named).
+Append-only: every problem hit while auditing benchmarks with Inspect Auditor, newest at the bottom, never rewritten. Each entry: date, symptom, cause (file:line), evidence (run id or measurement), status (verified, reviewer, worked around, fixed <commit>). A later entry can supersede an earlier one; the earlier one stays.
+
+Entries 1-20 were collected 2026-10-22 to 2026-10-24 while running SWE-bench, SciCode, SQAV and CL-bench, plus a four-reviewer code sweep on 2026-10-23.
 
 ## inspect_audit
 

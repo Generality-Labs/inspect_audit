@@ -14,6 +14,7 @@ from pydantic import Field
 
 from .._findings import FindingsState, encoded, restore_bundle
 from .._publishing import Publisher
+from ._render import box_has, render_in_box, tree
 
 GL_REVISION = "014b3165403bab23d630c0623acf0ed9d50df445"
 ASSETS = {
@@ -127,6 +128,38 @@ def figure() -> Tool:
     return execute
 
 
+RENDERER = Path(__file__).with_name("gl_render.py")
+
+
+def _render_here(work: dict[str, bytes], command: list[str]) -> dict[str, bytes]:
+    import subprocess
+    import sys
+    import tempfile
+
+    try:
+        import playwright  # noqa: F401
+    except ImportError as ex:
+        raise ToolError(
+            "No browser to draw the report: use an auditor image with Chromium, or "
+            "install inspect-audit[publishing] on the Inspect host"
+        ) from ex
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, data in work.items():
+            (Path(tmp) / name).parent.mkdir(parents=True, exist_ok=True)
+            (Path(tmp) / name).write_bytes(data)
+        result = subprocess.run(
+            [sys.executable, *[c.replace("{dir}", tmp) for c in command[1:]]],
+            cwd=tmp,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        if result.returncode:
+            raise ToolError(f"Rendering failed: {result.stderr[-4000:]}")
+        return tree(Path(tmp) / "out")
+
+
 def _assets(root: Path) -> dict[str, bytes]:
     cache = root / "publisher-assets"
     cache.mkdir(exist_ok=True)
@@ -146,14 +179,6 @@ async def build(root: Path, bundle: Path | None = None) -> Path:
     import re
 
     from markdown_it import MarkdownIt
-
-    try:
-        from playwright.async_api import Error as BrowserError
-        from playwright.async_api import async_playwright
-    except ImportError as ex:
-        raise ToolError(
-            "Install inspect-audit[publishing] on the Inspect host to publish with GL"
-        ) from ex
 
     if bundle is None:
         await restore_bundle(root)
@@ -202,55 +227,19 @@ window.figuresReady = true;
     if output.exists():
         shutil.rmtree(output)
     output.mkdir()
-    errors: list[str] = []
-    async with async_playwright() as playwright:
-        try:
-            browser = await playwright.chromium.launch()
-        except BrowserError as ex:
-            raise ToolError(
-                "Chromium could not start. On the Inspect host run: python -m playwright install --with-deps chromium. "
-                + str(ex)
-            ) from ex
-        try:
-            page = await browser.new_page(viewport={"width": 1000, "height": 900})
-
-            def page_error(error: Any) -> None:
-                errors.append(str(error))
-
-            page.on("pageerror", page_error)
-
-            async def route_request(route: Any) -> None:
-                prefix = "https://publication.invalid/"
-                url = route.request.url
-                key = url.removeprefix(prefix)
-                if not url.startswith(prefix) or key not in resources:
-                    await route.abort()
-                    return
-                await route.fulfill(
-                    body=resources[key],
-                    content_type="application/javascript" if key.endswith(".js") else "text/html",
-                )
-
-            await page.route("**/*", route_request)
-            await page.goto("https://publication.invalid/report.html")
-            if selected:
-                await page.wait_for_function("window.figuresReady === true", timeout=30000)
-            if errors:
-                raise ToolError("GL component failed: " + "; ".join(errors))
-            await page.evaluate("document.fonts.ready")
-            await page.pdf(path=str(output / "report.pdf"), format="A4", print_background=True)
-            await page.screenshot(path=str(output / "preview.png"), full_page=True)
-            for name in selected:
-                node = page.locator(f'[data-figure="{name}"] svg').first
-                (output / f"{name}.svg").write_text(await node.evaluate("node => node.outerHTML"))
-            await page.evaluate(
-                "document.querySelectorAll('script').forEach(node => node.remove())"
-            )
-            (output / "report.html").write_text(await page.content())
-        except BrowserError as ex:
-            raise ToolError("GL rendering failed: " + ("; ".join(errors) or str(ex))) from ex
-        finally:
-            await browser.close()
+    work = {
+        **{f"site/{name}": data for name, data in resources.items()},
+        "selected.json": json.dumps(list(selected)).encode(),
+        "gl_render.py": RENDERER.read_bytes(),
+    }
+    command = ["python", "gl_render.py", "{dir}"]
+    if await box_has('python -c "import playwright"'):
+        drawn = await render_in_box(work, command, "out")
+    else:
+        # no box with a browser (a direct call, or an old image): draw on this host
+        drawn = await asyncio.to_thread(_render_here, work, command)
+    for name, data in drawn.items():
+        (output / name).write_bytes(data)
     (output / "report.md").write_text(prose)
     (output / "figures.json").write_bytes(
         encoded({"gl_revision": GL_REVISION, "figures": selected})

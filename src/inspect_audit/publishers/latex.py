@@ -16,6 +16,7 @@ from .._findings import Findings, encoded, read_bundle
 from .._framework import REGISTRY
 from .._publishing import Publisher
 from .._verdicts import Evidence
+from ._render import box_has, render_in_box, tree
 from ._template import template
 
 ASSESSMENTS = {
@@ -356,6 +357,20 @@ async def build(root: Path, bundle: Path) -> Path:
         "-no-shell-escape",
         "report.tex",
     ]
+    if await box_has("command -v latexmk"):
+        # the auditor's box carries TeX wherever the audit runs; the host may not
+        files = tree(output)
+        compiled = await render_in_box(
+            {f"src/{name}": data for name, data in files.items()},
+            [
+                "sh",
+                "-c",
+                f"cd src && {' '.join(command)} && mkdir -p ../out && cp report.pdf ../out/",
+            ],
+            "out",
+        )
+        (output / "report.pdf").write_bytes(compiled["report.pdf"])
+        return output
     if image := os.environ.get("INSPECT_AUDIT_LATEX_IMAGE"):
         command = [
             "docker",
@@ -373,7 +388,8 @@ async def build(root: Path, bundle: Path) -> Path:
         ]
     elif not shutil.which("latexmk"):
         raise ToolError(
-            "Install latexmk and TeX on the publishing host, or set INSPECT_AUDIT_LATEX_IMAGE to the publishing image"
+            "No TeX to compile the report: use an auditor image with latexmk, install "
+            "latexmk on the Inspect host, or set INSPECT_AUDIT_LATEX_IMAGE"
         )
     result = await subprocess(command, cwd=str(output), timeout=300)
     if not result.success:

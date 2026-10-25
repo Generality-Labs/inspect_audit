@@ -263,10 +263,12 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
             0.5,
             "{}",
             '{"grader": "openai/judge"}',
-            "",
+            "Check every failed rubric item against the context.",
         )
     )
     [job] = runs.submitted
+    # the auditor's note is the investigators' brief, not just a line in its record
+    assert job.task_args["notes"] == "Check every failed rubric item against the context."
     assert job.task == "inspect_audit/investigation" and job.extra_packages == ["benchmark"]
     assert job.task_args["logs"] == ["hawk:r", "hawk:supplied-logs"]
     assert job.task_args["judge"] == {"grader": "openai/judge"}

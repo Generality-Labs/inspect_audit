@@ -640,7 +640,8 @@ def run_investigation(inv: Audit) -> Tool:
             judge: Role name to model for the benchmark's judge, as a JSON object, from
                 the judge list. With logs, it must be the model the logs record; "{}"
                 for none.
-            note: Why you are running this.
+            note: Why you are running this, and what the investigators should do:
+                each investigator reads it.
         """
         args = json_object(task_args, "task_args")
         judges = {str(k): str(v) for k, v in json_object(judge, "judge").items()}
@@ -680,6 +681,7 @@ def run_investigation(inv: Audit) -> Tool:
                 "investigator_image": inv.investigator_image,
                 "cost_limit": item_cost_limit,
                 "model_prices": prices,
+                "notes": note or None,
             },
         )
         return await inv.launch(job, "investigation", note)

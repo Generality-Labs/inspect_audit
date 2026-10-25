@@ -239,11 +239,14 @@ class AuditAuthorizer:
                 "investigator_image",
                 "cost_limit",
                 "model_prices",
+                "notes",
             }
             if set(args) - permitted or job.model_roles or job.sample_range is not None:
                 raise ToolError(
                     "investigation job contains configuration outside the launch contract"
                 )
+            if not isinstance(args.get("notes") or "", str):
+                raise ToolError("investigation notes must be text")
             if args.get("task") != p.task or args.get("investigator_image") != p.investigator_image:
                 raise ToolError("investigation task and image must match the launch policy")
             source = args.get("source")

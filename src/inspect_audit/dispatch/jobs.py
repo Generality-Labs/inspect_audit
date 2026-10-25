@@ -17,7 +17,7 @@ from inspect_ai.model import ModelConfig
 
 # The Inspect every job runs on, and the one this package is tested against. Hawk
 # swaps in its own build unless a job names one, so every job names this.
-INSPECT_VERSION = "0.3.266"
+INSPECT_VERSION = "0.3.283"
 
 # a job's lifecycle as both backends report it
 RUNNING = "running"

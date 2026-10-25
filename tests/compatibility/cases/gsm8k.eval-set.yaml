@@ -1,6 +1,6 @@
 name: ia-api-free-gsm8k-20261021
 packages:
-- inspect-ai==0.3.266
+- inspect-ai==0.3.283
 - inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
 - inspect-evals[scicode] @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
 tasks:

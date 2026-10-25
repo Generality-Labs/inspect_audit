@@ -47,7 +47,7 @@ def test_hawk_uses_inspects_full_model_identity(name: str) -> None:
             )
         )
     )
-    assert "inspect-ai==0.3.266" in config.packages
+    assert "inspect-ai==0.3.283" in config.packages
     [group] = config.models
     assert group.package == "inspect-ai"
     [item] = group.items

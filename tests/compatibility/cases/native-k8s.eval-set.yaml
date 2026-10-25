@@ -1,7 +1,7 @@
 name: ia-api-free-native-k8s-20261022
 packages:
 - inspect-audit[k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
-- inspect-ai==0.3.266
+- inspect-ai==0.3.283
 tasks:
 - package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility
   name: ia_compatibility

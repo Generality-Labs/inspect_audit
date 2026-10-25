@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git jq ripgrep poppler-utils procps time \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir inspect-ai==0.3.266 pandas pyarrow pillow scipy sympy
+RUN pip install --no-cache-dir inspect-ai==0.3.283 pandas pyarrow pillow scipy sympy
 # Fail the image build if the standard log-analysis stack is incomplete.
 RUN python -c "import pandas, pyarrow, PIL, scipy, sympy; from inspect_ai.analysis import samples_df"
 

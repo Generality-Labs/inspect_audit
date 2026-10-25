@@ -1,6 +1,6 @@
 name: ia-api-free-gpqa-20261021
 packages:
-- inspect-ai==0.3.266
+- inspect-ai==0.3.283
 - inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
 - inspect-evals @ git+https://github.com/Generality-Labs/inspect_evals@32b79a244f17ecf54fa1186d30f33dc10143c10f
 tasks:

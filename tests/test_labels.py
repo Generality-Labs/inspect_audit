@@ -97,5 +97,18 @@ def test_defect_classification_is_required_for_new_verdicts():
     with pytest.raises(ValueError, match="defect type"):
         validate_labels([label("old", "DEFECT")], ["old"], require_classification=True)
     assert validate_labels([label("old", "DEFECT")], ["old"])
-    custom = {**label("new", "DEFECT"), "defect_types": ["novel_mechanism"]}
-    assert validate_labels([custom], ["new"], require_classification=True)
+    # new verdicts name causes from one list, so they can be counted (FRICTION 28);
+    # historical free-text names still read
+    custom = {**label("new", "DEFECT"), "defect_types": ["judge_errors"]}
+    with pytest.raises(ValueError, match="grader_instability"):
+        validate_labels([custom], ["new"], require_classification=True)
+    assert validate_labels([custom], ["new"])
+    listed = {**label("new", "DEFECT"), "defect_types": ["hidden_requirement", "other"]}
+    assert validate_labels([listed], ["new"], require_classification=True)
+
+
+def test_grader_instability_is_recorded_without_making_a_defect():
+    """A judge flipping on the same answer is about the grader, not the question (FRICTION 29)."""
+    row = {**label("1", "NO_ISSUE_FOUND"), "grader_instability": "same answer graded 0, 1, 0"}
+    [parsed] = validate_labels([row], ["1"], require_classification=True)
+    assert parsed.status == "NO_ISSUE_FOUND" and parsed.grader_instability

@@ -7,7 +7,7 @@ metadata:
   unresolved: [UNRESOLVED]
   tools: [grade]
   details:
-    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include each ID from assessment_ids in /audit/item.json exactly once. Preserve ids exactly. defect_types is a list of mechanism names, required and nonempty for DEFECT, empty otherwise. scoring_effect and next_check are optional strings.'
+    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include each ID from assessment_ids in /audit/item.json exactly once. Preserve ids exactly. defect_types is a list of mechanism names from the list in this skill, required and nonempty for DEFECT, empty otherwise. scoring_effect, next_check and grader_instability are optional strings.'
 ---
 
 # Classify the question, not the model's answer
@@ -42,11 +42,16 @@ Return the table through record_verdict details, so it survives sandbox cleanup.
 
 ## Defect mechanisms and follow-up
 
-Classify established defects by cause. Reuse these names when applicable:
+Classify established defects by cause, using only these names:
 `missing_information`, `specification_test_contradiction`, `incorrect_reference_or_test`,
-`insufficient_test_coverage`, `environment_failure`, `harness_failure`.
-Use another concise mechanism name when these do not fit; multiple types may apply.
+`insufficient_test_coverage`, `hidden_requirement`, `surface_form_sensitivity`,
+`grader_context_omission`, `environment_failure`, `harness_failure`, or `other` (name
+the cause in the explanation). Multiple types may apply.
 Explain the actual missing requirement or contradiction, not just its category.
+
+A grader that scores the same answer differently on repeat grading is not a defect in
+the question. Label the question on its own merits and put the instability, with the
+repeated grades, in `grader_instability`.
 In scoring_effect distinguish a demonstrated effect on a recorded submission from
 an unmeasured consequence. A bad test does not prove every failed answer was correct.
 For unresolved work, name the next useful check or the specific blocker in next_check.

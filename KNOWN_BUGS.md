@@ -47,3 +47,7 @@ Found while running Inspect Auditor on SWE-bench, SciCode, SQAV and CL-bench (20
 ## CL-bench (Tencent-Hunyuan eval.py)
 
 19. **The GPT-5.1 judge writes `//` comments inside its JSON, which fails parsing and scores 0.** 34 of ~1,600 judgements in our runs (all on long rubric lists); 3 were tasks the judge had marked solved. Our port keeps eval.py's behaviour (count as 0, record `outcome: unparsed`). Status: verified.
+
+## Missing capabilities
+
+20. **The auditor cannot re-judge a model-graded benchmark.** `_regrade.py` (re-score every logged answer, then re-score disagreements to split judge noise from a changed grader) exists only as a command-line tool, not as an auditor job. The auditor's box can run `inspect score`, but has no model credentials by design (`_audit_workspace.configure`: no env, no service account), so judge calls fail. Model-calling work only reaches credentials through jobs that Hawk runs. Evidence: on CL-bench the judge flipped Sonnet's answer on 043f89de from 0 to 1 when re-judged (`inv-clbench-sonnet2-uo49t4ikgyahg6zn`), and the auditor had no way to measure how often this happens across a run. Status: open. Candidate shapes: a regrade job, or a Scout scan that applies the benchmark's judge to each logged answer (Hawk runs scans with credentials); bugs 4 and 8 affect the regrade and need fixing first.

@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from inspect_ai import Task, task_with
 from inspect_ai.dataset import Sample
-from inspect_ai.model import GenerateConfig, Model, ModelConfig, get_model
+from inspect_ai.model import ChatMessage, GenerateConfig, Model, ModelConfig, get_model
 from inspect_ai.scorer import Scorer
 from inspect_ai.solver import Solver
 from inspect_ai.tool import WebSearchProviders
@@ -59,6 +59,11 @@ def _task_source(task: Task, name: str, source: str | None) -> SourceCopy:
     return collect_source(Path(file))
 
 
+def _content(value: str | list[ChatMessage]) -> str | list[dict[str, Any]]:
+    # a chat's messages get a fresh random id each time the dataset is loaded
+    return value if isinstance(value, str) else [m.model_dump(exclude={"id"}) for m in value]
+
+
 def check_same_items(index: LogIndex, samples: list[Sample]) -> None:
     """Each investigated sample's input must be the input its logged attempts were given."""
     from inspect_ai.log import read_eval_log_sample
@@ -69,7 +74,7 @@ def check_same_items(index: LogIndex, samples: list[Sample]) -> None:
             logged = read_eval_log_sample(
                 attempt.log, id=attempt.sample_id, epoch=attempt.epoch, exclude_fields={"events"}
             ).input
-            if logged != sample.input:
+            if _content(logged) != _content(sample.input):
                 raise LogMismatchError(
                     f"sample {sample.id}: the installed benchmark's input differs from the "
                     f"input logged in {attempt.log}"

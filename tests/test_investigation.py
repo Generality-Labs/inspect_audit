@@ -507,3 +507,26 @@ def test_a_log_from_a_different_run_is_refused(tmp_path: Path) -> None:
             task_args={"split": "dev", "hard": True},
             package="pytest",
         )
+
+
+def test_a_chat_input_matches_its_log_whatever_its_message_ids(tmp_path: Path) -> None:
+    """A chat's messages get fresh random ids on every load; only their content counts."""
+    from inspect_ai import Task, eval
+    from inspect_ai.dataset import Sample
+    from inspect_ai.model import ChatMessageSystem, ChatMessageUser
+
+    from inspect_audit._task import check_same_items
+
+    def chat(question: str) -> list[ChatMessageSystem | ChatMessageUser]:
+        return [ChatMessageSystem(content="You referee Zorb."), ChatMessageUser(content=question)]
+
+    [log] = eval(
+        Task(name="chat_task", dataset=[Sample(id="a", input=chat("Who wins?"))]),
+        model="mockllm/model",
+        log_dir=str(tmp_path),
+        display="none",
+    )
+    index = index_logs([log.location], task_name="chat_task", task_args={}, package=None)
+    check_same_items(index, [Sample(id="a", input=chat("Who wins?"))])
+    with pytest.raises(LogMismatchError, match="differs"):
+        check_same_items(index, [Sample(id="a", input=chat("Who loses?"))])

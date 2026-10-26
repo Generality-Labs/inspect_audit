@@ -848,3 +848,24 @@ def test_a_launch_that_could_cross_the_audit_budget_is_refused(
     (folder / "x.eval").write_bytes(b"")
     monkeypatch.setattr(_audit, "_recorded_cost", lambda path: 1.0)
     launch("second", ["3"], 2.5)  # $4 + $1 + $2.50 = $7.50
+
+
+def test_full_coverage_holds_submission_until_every_cell_has_a_take(
+    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """v3 sampled 120 of 409 failures and stopped with $132 unspent (FRICTION 25)."""
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit import _register
+    from inspect_audit._findings import submit_findings
+    from inspect_audit.dispatch.policy import AuditAuthorizer, Limits
+
+    inv = _make_audit(tmp_path, FakeRuns())
+    policy = inv.authorizer.policy
+    inv.authorizer = AuditAuthorizer(policy.model_copy(update={"limits": Limits(coverage="full")}))
+    gap = _register.Register(
+        checks=["gold-answer"], samples={"1": {"gold-answer": []}, "2": {"gold-answer": []}}
+    )
+    monkeypatch.setattr(_register, "load", lambda: gap)
+    with pytest.raises(ToolError, match="full coverage: 2 of 2"):
+        asyncio.run(submit_findings(tmp_path, inv, "b/t")())  # type: ignore[call-arg]

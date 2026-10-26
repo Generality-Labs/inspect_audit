@@ -393,6 +393,21 @@ def submit_findings(
                         )
                     if not job.get("collected") and not job.get("collection_error"):
                         raise ToolError(f"Collect job {job['label']} before submitting findings")
+                if audit.authorizer.policy.limits.coverage == "full":
+                    register = load()
+                    missing = [
+                        f"{sample_id}/{check}"
+                        for sample_id, by_check in register.samples.items()
+                        for check, takes in by_check.items()
+                        if not takes
+                    ]
+                    if missing:
+                        raise ToolError(
+                            f"The operator requires full coverage: {len(missing)} of "
+                            f"{sum(len(c) for c in register.samples.values())} sample/check cells "
+                            f"have no take yet (e.g. {', '.join(missing[:5])}). Investigate "
+                            "them, or call report_blocker with why they cannot be done."
+                        )
             try:
                 draft = validate_draft(json.loads(await sandbox().read_file(DRAFT)), load())
                 if validate is not None:

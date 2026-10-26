@@ -38,6 +38,10 @@ class Limits(FrozenModel):
     # one budget for the auditor's own calls and every job it launches: a launch that
     # could take the total past it is refused (FRICTION 22)
     budget_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    # "full": findings cannot be submitted while any permitted sample has no take on
+    # any policy check; the auditor finishes the work or reports why it cannot
+    # (report_blocker). "any": submit at whatever coverage (FRICTION 25)
+    coverage: Literal["any", "full"] = "any"
 
 
 class Inputs(FrozenModel):

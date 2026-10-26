@@ -53,6 +53,9 @@ def grade_tool(
         async def execute(answer: str, eval_id: str, epoch: int) -> str:
             """Grade a submission with the benchmark's own grader, against its live box.
 
+            A model-graded benchmark can grade the same submission differently on
+            each call: grade at least three times before resting a finding on it.
+
             With only `answer`: the benchmark's question, then `answer` as the final
             reply. With `eval_id` and `epoch`: a recorded attempt's transcript and
             completion, metadata and solver store as logged. An authored replacement

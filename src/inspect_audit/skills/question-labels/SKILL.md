@@ -23,6 +23,10 @@ NO_ISSUE_FOUND means specified checks completed without finding a validity defec
 it is not proof the question is flawless. List the actual checks. DEFECT requires
 evidence for a concrete problem with the question or acceptance rule. An unexpected
 model failure, disagreement, or timeout alone does not establish a defect.
+A recorded model objecting to the question, or hedging around it, is a claim to
+check against the source, not evidence of a defect. Establish the fact yourself:
+count, compute, quote the passage. A grade of your own authored answer is evidence
+only when repeated; a model grader can flip on the same text.
 UNRESOLVED means attempted checks could not settle validity. NOT_ASSESSED means no
 adequate assessment was undertaken. Never turn missing work into NO_ISSUE_FOUND.
 

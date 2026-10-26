@@ -228,6 +228,7 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
             "address": "hawk:run-1",
             "note": "why",
             "policy_sha256": inv.authorizer.policy.digest,
+            "max_cost": None,  # a benchmark rerun declares no per-item cap
         }
     ]
     from inspect_ai.tool import ToolError
@@ -692,7 +693,8 @@ def test_budget_reports_what_the_audit_has_spent(
     assert "Your own calls: $5.82 of a $150.00 cap" in report
     assert "screen: $9.71 recorded" in report
     assert "running: not collected, cost unknown" in report
-    assert "Audit so far: $15.53" in report
+    assert "Spent so far: $15.53" in report
+    assert "Jobs with no cap, not counted: running" in report
 
 
 def test_fetched_logs_land_in_the_same_folder_on_every_attempt(tmp_path: Path) -> None:
@@ -784,3 +786,65 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
                 "again", ["1"], ["hawk:supplied-logs"], '{"grader": "openai/judge"}', 50, 0.5, ""
             )
         )
+
+
+def test_a_launch_that_could_cross_the_audit_budget_is_refused(
+    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One budget for the auditor and its jobs, enforced, not stated (FRICTION 22)."""
+    from types import SimpleNamespace
+
+    import inspect_ai.util
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit.dispatch.policy import Limits
+
+    runs = FakeRuns()
+    inv = _make_audit(tmp_path, runs)
+    policy = inv.authorizer.policy
+    budgeted = policy.model_copy(update={"limits": Limits(budget_usd=10.0)})
+    from inspect_ai.util import store_as
+
+    from inspect_audit.dispatch.policy import AuditAuthorizer, PolicyStore, ensure_policy
+
+    inv.authorizer = AuditAuthorizer(budgeted)
+    saved = store_as(PolicyStore)
+    saved.policy_json = saved.digest = None  # the fixture's policy, replaced by the budgeted one
+    ensure_policy(budgeted, saved, require_existing=False)
+    monkeypatch.setattr(
+        _audit,
+        "prices_for_models",
+        lambda models: {m: {"input": 1.0, "output": 2.0} for m in models},
+    )
+    monkeypatch.setattr(
+        inspect_ai.util,
+        "sample_limits",
+        lambda: SimpleNamespace(cost=SimpleNamespace(usage=4.0, limit=None)),
+    )
+    investigate = _audit.run_investigation(inv)
+
+    def launch(label: str, samples: list[str], cap: float) -> str:
+        return asyncio.run(
+            investigate(  # type: ignore[arg-type]
+                label,
+                samples,
+                ["gold-answer"],
+                ["hawk:supplied-logs"],
+                "openai/investigator",
+                "benchmark.task",
+                cap,
+                "{}",
+                '{"grader": "openai/judge"}',
+                "",
+            )
+        )
+
+    launch("first", ["1", "2"], 2.0)  # $4 spent + $4 at its cap = $8: within $10
+    with pytest.raises(ToolError, match="over budget"):
+        launch("second", ["3"], 2.5)  # $8 + $2.50 > $10
+    # once the first is collected its recorded cost ($1) replaces its $4 cap
+    folder = tmp_path / "inputs" / "jobs" / "first"
+    folder.mkdir(parents=True)
+    (folder / "x.eval").write_bytes(b"")
+    monkeypatch.setattr(_audit, "_recorded_cost", lambda path: 1.0)
+    launch("second", ["3"], 2.5)  # $4 + $1 + $2.50 = $7.50

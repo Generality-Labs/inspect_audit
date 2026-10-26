@@ -35,6 +35,9 @@ class Models(FrozenModel):
 class Limits(FrozenModel):
     investigation_sample_cost_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     max_concurrent_jobs: int | None = Field(default=None, gt=0, strict=True)
+    # one budget for the auditor's own calls and every job it launches: a launch that
+    # could take the total past it is refused (FRICTION 22)
+    budget_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
 
 class Inputs(FrozenModel):

@@ -441,8 +441,44 @@ def docker_box(root: Path) -> tuple[str, str]:
     return "docker", str(root / "compose.yaml")
 
 
+def _worst_case(job: Job) -> float | None:
+    """The most a job can spend: its per-item cap times its items (times epochs)."""
+    cap = job.task_args.get("cost_limit")
+    if not isinstance(cap, (int, float)):
+        return None
+    if job.task in ("inspect_audit/investigation", "inspect_audit/regrade"):
+        items = len(job.task_args.get("samples") or [])
+        epochs = job.task_args.get("epochs", 1) if job.task == "inspect_audit/regrade" else 1
+        return float(cap) * items * int(epochs)
+    return None
+
+
+def committed_spend(root: Path | None) -> tuple[float, float, float, list[str]]:
+    """(own calls, collected jobs' recorded cost, running jobs at their caps, uncapped labels)."""
+    from inspect_ai.util import sample_limits
+
+    own = float(sample_limits().cost.usage)
+    collected = running = 0.0
+    uncapped: list[str] = []
+    for j in store_as(AuditRecord).jobs:
+        folder = root / "inputs" / "jobs" / str(j["label"]) if root else None
+        files = sorted(folder.rglob("*.eval")) if folder and folder.is_dir() else []
+        if files:
+            collected += sum(_recorded_cost(f) for f in files)
+        elif isinstance(j.get("max_cost"), (int, float)):
+            running += float(j["max_cost"])
+        else:
+            uncapped.append(str(j["label"]))
+    return own, collected, running, uncapped
+
+
 @tool(name="budget")
-def budget(hawk_api_url: str | None, openrouter: bool, root: Path | None = None) -> Tool:
+def budget(
+    hawk_api_url: str | None,
+    openrouter: bool,
+    root: Path | None = None,
+    budget_usd: float | None = None,
+) -> Tool:
     async def execute() -> str:
         """What this audit has spent so far, and the model key's remaining allowance.
 
@@ -453,21 +489,30 @@ def budget(hawk_api_url: str | None, openrouter: bool, root: Path | None = None)
         """
         from inspect_ai.util import sample_limits
 
-        own = sample_limits().cost
-        cap = f" of a ${own.limit:.2f} cap" if own.limit is not None else ""
-        lines = [f"Your own calls: ${own.usage:.2f}{cap}"]
-        jobs_total = 0.0
+        own_limit = sample_limits().cost.limit
+        cap = f" of a ${own_limit:.2f} cap" if own_limit is not None else ""
+        own, collected, running, uncapped = committed_spend(root)
+        lines = [f"Your own calls: ${own:.2f}{cap}"]
         for j in store_as(AuditRecord).jobs:
             folder = root / "inputs" / "jobs" / str(j["label"]) if root else None
             files = sorted(folder.rglob("*.eval")) if folder and folder.is_dir() else []
-            if not files:
+            if files:
+                lines.append(
+                    f"  {j['label']}: ${sum(_recorded_cost(f) for f in files):.2f} recorded"
+                )
+            elif isinstance(j.get("max_cost"), (int, float)):
+                lines.append(f"  {j['label']}: not collected, at most ${float(j['max_cost']):.2f}")
+            else:
                 lines.append(f"  {j['label']}: not collected, cost unknown")
-                continue
-            cost = sum(_recorded_cost(f) for f in files)
-            jobs_total += cost
-            lines.append(f"  {j['label']}: ${cost:.2f} recorded")
-        lines.append(f"Jobs collected so far: ${jobs_total:.2f}")
-        lines.append(f"Audit so far: ${own.usage + jobs_total:.2f}")
+        lines.append(f"Jobs collected so far: ${collected:.2f}")
+        lines.append(f"Spent so far: ${own + collected:.2f}")
+        lines.append(
+            f"Committed (spent, plus running jobs at their caps): ${own + collected + running:.2f}"
+        )
+        if budget_usd is not None:
+            lines.append(f"Audit budget: ${budget_usd:.2f} for your calls and every job")
+        if uncapped:
+            lines.append(f"Jobs with no cap, not counted: {', '.join(uncapped)}")
         lines += await key_balance(
             hawk_api_url, openrouter and str(get_model()).startswith("openrouter/")
         )
@@ -529,6 +574,23 @@ class Audit:
             )
             if active >= cap:
                 raise ToolError(f"the policy permits at most {cap} concurrent jobs")
+        worst = _worst_case(approved)
+        limit = policy.limits.budget_usd
+        if limit is not None:
+            own, collected, running, _ = committed_spend(self.root)
+            if worst is None:
+                raise ToolError(
+                    "this audit has a budget, and this job has no cost cap to count against it"
+                )
+            committed = own + collected + running
+            if committed + worst > limit:
+                raise ToolError(
+                    f"over budget: ${committed:.2f} committed (your calls ${own:.2f}, collected "
+                    f"jobs ${collected:.2f}, running jobs at their caps ${running:.2f}) plus this "
+                    f"job's ${worst:.2f} cap exceeds the ${limit:.2f} audit budget. Collect "
+                    "finished jobs (their recorded cost replaces their cap), lower this job's "
+                    "per-item cap, or select fewer items."
+                )
         run_id = await self.runs.submit(approved)
         address = self.runs.address(run_id)
         # assigned back, not appended in place: the store records an assignment
@@ -542,6 +604,7 @@ class Audit:
                 "address": address,
                 "note": note,
                 "policy_sha256": policy.digest,
+                "max_cost": worst,
             },
         ]
         return (
@@ -1346,6 +1409,7 @@ def audit(
             hawk_api_url if "hawk" in (runs, "k8s" if box == "k8s" else None) else None,
             openrouter=box == "docker" or runs == "local",
             root=root,
+            budget_usd=launch_policy.limits.budget_usd,
         ),
         view_image(),
         report_blocker(),

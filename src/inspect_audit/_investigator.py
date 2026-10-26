@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from copy import copy
 from typing import Any
 
-import anyio
+import anyio.to_thread
 from inspect_ai.agent import AgentSubmit, as_solver, react
 from inspect_ai.dataset import Sample
 from inspect_ai.model import ChatMessage, ChatMessageUser, ContentImage, Model

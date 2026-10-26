@@ -84,3 +84,14 @@ repos:
         exclude: ^src/inspect_audit/(prompts|templates|audit/skills|publishers/skills)/
         additional_dependencies:
           - mdformat-gfm # padded/aligned tables + GFM extensions (task lists, strikethrough)
+
+  # CI type-checks with basedpyright; without it here, commits that pass every
+  # hook still broke CI (FRICTION 46)
+  - repo: local
+    hooks:
+      - id: basedpyright
+        name: basedpyright
+        entry: uv run --no-sync basedpyright
+        language: system
+        types: [python]
+        pass_filenames: false

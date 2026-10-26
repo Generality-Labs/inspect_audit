@@ -12,7 +12,7 @@ from copy import deepcopy
 from functools import partial
 from typing import Any
 
-import anyio
+import anyio.to_thread
 from inspect_ai.log import read_eval_log_sample
 from inspect_ai.model import ChatMessage, ChatMessageAssistant, ModelName, ModelOutput
 from inspect_ai.scorer import Scorer, Target

@@ -13,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-from playwright.async_api import Error, async_playwright
+from playwright.async_api import Error, Route, async_playwright
 
 PREFIX = "https://publication.invalid/"
 
@@ -35,7 +35,7 @@ async def render(root: Path) -> None:
             page = await browser.new_page(viewport={"width": 1000, "height": 900})
             page.on("pageerror", lambda error: errors.append(str(error)))
 
-            async def route_request(route):
+            async def route_request(route: Route) -> None:
                 url = route.request.url
                 file = site / url.removeprefix(PREFIX)
                 if not url.startswith(PREFIX) or not file.is_file():

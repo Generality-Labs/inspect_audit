@@ -132,17 +132,16 @@ RENDERER = Path(__file__).with_name("gl_render.py")
 
 
 def _render_here(work: dict[str, bytes], command: list[str]) -> dict[str, bytes]:
+    import importlib.util
     import subprocess
     import sys
     import tempfile
 
-    try:
-        import playwright  # noqa: F401
-    except ImportError as ex:
+    if importlib.util.find_spec("playwright") is None:
         raise ToolError(
             "No browser to draw the report: use an auditor image with Chromium, or "
             "install inspect-audit[publishing] on the Inspect host"
-        ) from ex
+        )
     with tempfile.TemporaryDirectory() as tmp:
         for name, data in work.items():
             (Path(tmp) / name).parent.mkdir(parents=True, exist_ok=True)

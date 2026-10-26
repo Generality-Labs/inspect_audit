@@ -122,3 +122,14 @@ Entries 1-20 were collected 2026-10-22 to 2026-10-24 while running SWE-bench, Sc
 46. **2026-10-26. CI failed on every push since 25 Oct 15:04, and the hooks didn't catch it.** basedpyright runs in CI but not in pre-commit, so commits that passed every local hook still broke CI: an unused `playwright` import and an untyped `route` parameter (75f9361), and `anyio.to_thread` used via `import anyio` (13f1c52). James got the failure emails. Fixed: the three type errors, and basedpyright added to pre-commit as a local hook.
 
 47. **2026-10-26. Update to 42: cause found, fixed in e23f1ba.** The investigation's recorded plan held the paths of its downloaded logs (`/tmp/hawk_logs_<random>/…`, verified in `remaining2`'s first-attempt header). Inspect hashes the plan into the task's identity, so each runner attempt was a different task, and `eval_set` refused to resume. Logs now go to folders fixed by their source (`_paths.stable_dir`: Hawk sets, remote URLs, combined corpora). Test: `test_fetched_logs_land_in_the_same_folder_on_every_attempt`. Not yet verified with a real restart on Hawk.
+
+48. **2026-10-26. Fixes for the blockers and the "matters for trusting results" list (James: fix them all, stick to luna).**
+
+    - 27, results back: the audit's outcome names where the findings and report were saved and gives `hawk download-artifacts <eval set>`, which works once Hawk has imported the run (e0af310). v3's "No samples found" was the warehouse not yet having the run; the same command now fetches all 99 files.
+    - 40, paper: investigations take `paper`; `run_investigation` passes the audit's own paper, staged at `/audit/paper/` (a4737e4). The registered task now accepts it, and a test ties the launch contract to the task's signature (1c669c3). That gap would have failed every job.
+    - 39, over-calling: the question-labels skill says a recorded model's objection is a claim to check, not evidence; `grade` says to grade three times before relying on it (ca0543f).
+    - 4 and 8, regrade: scores are paired by Inspect's own append naming, and the judge's recorded settings are applied through the shared `configured_judges` (037a069).
+    - 20, re-judging: an `inspect_audit/regrade` task replays recorded attempts and scores them each epoch; the auditor launches it with `run_regrade`, as the judge, so the job has its credentials (984b8c6). On CL-bench this needs `openai/gpt-5.1` added to the proxy under that name (36).
+    - 22, shared budget: policy `limits.budget_usd`; a launch that could take own calls, collected jobs, and running jobs at their caps past it is refused (3726c0d).
+    - 25, coverage: policy `limits.coverage: full` holds submission until every permitted sample has a take on every policy check, or the auditor reports a blocker.
+    - 42/47 (resume) and 44/45 (event loop) as recorded above. Not yet verified on Hawk: all of these, plus 41 (PDF in the box). 295 tests pass; basedpyright clean.

@@ -3,7 +3,7 @@
 import asyncio
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from test_helpers.audit import make_audit
@@ -896,3 +896,53 @@ def test_a_platform_refusal_reaches_the_auditor_not_the_eval(
     record.jobs.append({"label": "old", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})
     with pytest.raises(ToolError, match="unreachable"):
         asyncio.run(_audit.jobs(inv)("status", "old", None))  # type: ignore[arg-type]
+
+
+def test_hawk_says_which_models_it_will_refuse(monkeypatch: pytest.MonkeyPatch) -> None:
+    import hawk.cli.middleman as mm
+
+    from inspect_audit.dispatch.hawk import HawkRuns
+
+    async def served(*args: object, **kwargs: object) -> list[dict[str, object]]:
+        # the proxy as it is: database rows qualified, autodiscovered ones bare
+        return [
+            {"name": "openai/gpt-6-luna"},
+            {"name": "gpt-5.1"},
+            {"name": "openai/gpt-4", "dead": True},
+        ]
+
+    runs = HawkRuns("https://api.example")
+
+    async def token() -> str:
+        return "t"
+
+    monkeypatch.setattr(runs.login, "access_token", token)
+    monkeypatch.setattr(mm, "request", served)
+    missing = asyncio.run(runs.unservable(["openai/gpt-6-luna", "openai/gpt-5.1", "openai/gpt-4"]))
+    assert missing == ["openai/gpt-4", "openai/gpt-5.1"]
+
+
+def test_an_audit_naming_unservable_models_stops_before_it_spends() -> None:
+    # FRICTION 53: v5 learned this at its first regrade, 40 minutes in
+    from inspect_ai.solver import TaskState
+
+    from inspect_audit.dispatch.policy import LaunchPolicy, Models
+
+    class Proxy:
+        def __init__(self, missing: list[str]) -> None:
+            self.missing, self.asked = missing, []
+
+        async def unservable(self, models: list[str]) -> list[str]:
+            self.asked.append(models)
+            return self.missing
+
+    policy = LaunchPolicy.model_construct(
+        models=Models(investigators=("openai/gpt-6-luna",), judges=("openai/gpt-5.1",))
+    )
+    state = cast(TaskState, object())
+    blocked = Proxy(["openai/gpt-5.1"])
+    with pytest.raises(RuntimeError, match=r"openai/gpt-5\.1"):
+        asyncio.run(_audit.check_models(blocked, policy)(state, None))  # type: ignore[arg-type]
+    assert blocked.asked == [["openai/gpt-6-luna", "openai/gpt-5.1"]]
+    assert asyncio.run(_audit.check_models(Proxy([]), policy)(state, None)) is state  # type: ignore[arg-type]
+    assert asyncio.run(_audit.check_models(None, policy)(state, None)) is state  # type: ignore[arg-type]

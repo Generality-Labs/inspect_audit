@@ -24,7 +24,7 @@ from inspect_ai.agent import AgentState, react
 from inspect_ai.dataset import Sample
 from inspect_ai.log import EvalSampleSummary, list_eval_logs, read_eval_log_sample_summaries
 from inspect_ai.model import CompactionSummary, GenerateConfig, ModelConfig, get_model
-from inspect_ai.solver import TaskState
+from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
 from inspect_ai.util import CheckpointConfig, sandbox, store_as
 
@@ -532,6 +532,29 @@ def _platform(what: str) -> Generator[None]:
         raise
     except Exception as ex:
         raise ToolError(f"{what} failed: {type(ex).__name__}: {ex}") from ex
+
+
+@solver
+def check_models(runs: Runs | None, policy: LaunchPolicy) -> Solver:
+    """Refuse the audit before it starts when its policy names models the platform won't serve.
+
+    Otherwise the first job naming one is refused at submission, after the audit has
+    spent (FRICTION 53).
+    """
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        unservable = getattr(runs, "unservable", None)
+        m = policy.models
+        named = [*m.investigators, *m.subjects, *m.judges]
+        if unservable is not None and named and (missing := await unservable(named)):
+            raise RuntimeError(
+                "The policy names models Hawk's proxy does not serve under those names: "
+                f"{', '.join(missing)}. Jobs naming them would be refused. Add them "
+                "(hawk proxy models add) or take them out of the policy."
+            )
+        return state
+
+    return solve
 
 
 @dataclass
@@ -1493,8 +1516,6 @@ def audit(
         ensure_policy(launch_policy, store_as(PolicyStore), require_existing=True)
         return await _continue(state, interactive)
 
-    from inspect_ai.solver import Generate, Solver, solver
-
     @solver
     def begin_findings() -> Solver:
         async def solve(state: TaskState, generate: Generate) -> TaskState:
@@ -1520,7 +1541,12 @@ def audit(
         ensure_model(launch_policy, state.store_as(PolicyStore), str(state.model))
 
     return Task(
-        setup=[bind_policy(launch_policy), stage_inputs(root), begin_findings()],
+        setup=[
+            bind_policy(launch_policy),
+            check_models(inv.runs if inv else None, launch_policy),
+            stage_inputs(root),
+            begin_findings(),
+        ],
         on_resume=on_resume,
         dataset=[
             Sample(

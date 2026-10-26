@@ -11,8 +11,8 @@ import shutil
 import sys
 import urllib.parse
 import urllib.request
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Generator
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -201,6 +201,22 @@ class HawkRuns:
                 created = await client.create_eval_set(config, **options)
         return created["eval_set_id"]
 
+    async def unservable(self, models: list[str]) -> list[str]:
+        """Which of `models` Hawk would refuse in a job: names its proxy does not serve.
+
+        Hawk checks a job's model names against the proxy's public names when it is
+        submitted (FRICTION 53), so this is the same check, made before any spend.
+        """
+        import hawk.cli.middleman as mm
+
+        token = await self.login.access_token()
+        with _api_url(self.login.api_url):
+            served = await mm.request(
+                "post", "/permitted_models_info", token, data={"api_key": token}
+            )
+        names = {str(m.get("name")) for m in served if not m.get("dead")}
+        return sorted(set(models) - names)
+
     def address(self, run_id: str) -> str:
         return f"hawk:{run_id}"
 
@@ -328,9 +344,7 @@ async def download(address: str, token: str, out_dir: Path, api_url: str) -> lis
     from hawk.client import HawkClient
 
     eval_set, _, selected = address.partition("/")
-    previous = os.environ.get("HAWK_API_URL")
-    os.environ["HAWK_API_URL"] = api_url
-    try:
+    with _api_url(api_url):
         eval_file = None
         if selected:
             async with HawkClient(token=token, api_url=api_url) as client:
@@ -347,12 +361,21 @@ async def download(address: str, token: str, out_dir: Path, api_url: str) -> lis
             if "No log files found" in ex.message:
                 return []
             raise RuntimeError(ex.message) from ex
+    return sorted(out_dir.glob("*.eval"))
+
+
+@contextmanager
+def _api_url(api_url: str) -> Generator[None]:
+    """Hawk's CLI helpers read the API address from the environment: set it for a call."""
+    previous = os.environ.get("HAWK_API_URL")
+    os.environ["HAWK_API_URL"] = api_url
+    try:
+        yield
     finally:
         if previous is None:
             os.environ.pop("HAWK_API_URL", None)
         else:
             os.environ["HAWK_API_URL"] = previous
-    return sorted(out_dir.glob("*.eval"))
 
 
 def fetch_eval_sets(eval_sets: str) -> str:

@@ -44,6 +44,8 @@ class AuditState(StoreModel):
     # published_incomplete (short of the operator's required coverage), blocked
     outcome: str | None = None
     outcome_reasons: list[str] = Field(default_factory=list)
+    # where the frozen findings and the report were saved, for the operator (FRICTION 27)
+    saved: list[str] = Field(default_factory=list)
 
 
 def log_address(root: Path, relative: Path, jobs: dict[str, str]) -> str:
@@ -115,12 +117,21 @@ def audit_outcome() -> Scorer:
     async def score(state: TaskState, target: Target) -> Score:
         audit = state.store_as(AuditState)
         outcome = audit.outcome or ("published_complete" if audit.published else "unpublished")
+        results = (
+            "Results saved to "
+            + ", ".join(audit.saved)
+            + ". Fetch them with `hawk download-artifacts <this eval set id>` once Hawk has"
+            " imported the run (a few minutes after it ends)."
+            if audit.saved
+            else "Nothing was saved outside this run's host."
+        )
         return Score(
             value=outcome,
-            explanation="; ".join(audit.outcome_reasons) or None,
+            explanation="\n\n".join([*audit.outcome_reasons, results]),
             metadata={
                 "published": audit.published,
                 "reasons": audit.outcome_reasons,
+                "saved": audit.saved,
             },
         )
 

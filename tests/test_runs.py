@@ -704,3 +704,22 @@ def test_fetched_logs_land_in_the_same_folder_on_every_attempt(tmp_path: Path) -
     combined = fetch_logs([str(first)])
     assert fetch_logs([str(first)]) == combined  # a second attempt, same corpus, same path
     assert [p.name for p in Path(combined).iterdir()] == ["0_a.eval"]
+
+
+def test_the_outcome_tells_the_operator_where_the_results_are() -> None:
+    """v3's results sat on S3 with nothing pointing at them (FRICTION 27)."""
+    from inspect_ai.scorer import Target
+    from inspect_ai.solver import TaskState
+
+    from inspect_audit._report import AuditState, audit_outcome
+
+    state = TaskState(model="m", sample_id="audit", epoch=1, input="", messages=[])
+    audit = state.store_as(AuditState)
+    audit.outcome = "blocked"
+    audit.outcome_reasons = ["publishing failed"]
+    audit.saved = ["s3://bucket/evals/x/artifacts/u/findings"]
+    score = asyncio.run(audit_outcome()(state, Target("")))
+    assert score is not None and score.explanation
+    assert "publishing failed" in score.explanation
+    assert "s3://bucket/evals/x/artifacts/u/findings" in score.explanation
+    assert "hawk download-artifacts" in score.explanation

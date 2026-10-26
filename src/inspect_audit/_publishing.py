@@ -107,6 +107,7 @@ def publish_document(root: Path, publisher: Publisher) -> Tool:
         location = str(destination)
         if (root / "artifacts.json").exists():
             location = await persist(root, destination, f"published/{destination.name}")
+            store_as(AuditState).saved.append(location)
         state = store_as(AuditState)
         state.outcome = outcome
         state.outcome_reasons = reasons

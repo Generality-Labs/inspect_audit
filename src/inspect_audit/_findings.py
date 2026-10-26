@@ -282,8 +282,9 @@ async def freeze(root: Path, draft: Findings) -> Path:
     await stage_bundle(destination)
     if (root / "artifacts.json").exists():
         from ._audit_workspace import persist
+        from ._report import AuditState
 
-        await persist(root, destination, "findings")
+        store_as(AuditState).saved.append(await persist(root, destination, "findings"))
     state = store_as(FindingsState)
     state.findings = draft.model_dump(mode="json")
     state.manifest = manifest

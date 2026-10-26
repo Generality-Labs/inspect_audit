@@ -9,8 +9,10 @@ run (its own scorers report verdicts).
 
 import json
 from copy import deepcopy
+from functools import partial
 from typing import Any
 
+import anyio
 from inspect_ai.log import read_eval_log_sample
 from inspect_ai.model import ChatMessage, ChatMessageAssistant, ModelName, ModelOutput
 from inspect_ai.scorer import Scorer, Target
@@ -75,8 +77,16 @@ def grade_tool(
                     raise ToolError("No logs were declared for this investigation.")
                 found = index.find(sample_id, eval_id, epoch)
                 model = ModelName(found.model)
-                recorded = read_eval_log_sample(
-                    found.log, id=found.sample_id, epoch=epoch, resolve_attachments=True
+                # off the event loop: Inspect's sync readers re-enter a running loop
+                # (nest_asyncio), which corrupts it under concurrent samples
+                recorded = await anyio.to_thread.run_sync(
+                    partial(
+                        read_eval_log_sample,
+                        found.log,
+                        id=found.sample_id,
+                        epoch=epoch,
+                        resolve_attachments=True,
+                    )
                 )
                 messages = deepcopy(recorded.messages)
                 output = recorded.output

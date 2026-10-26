@@ -530,3 +530,59 @@ def test_a_chat_input_matches_its_log_whatever_its_message_ids(tmp_path: Path) -
     check_same_items(index, [Sample(id="a", input=chat("Who wins?"))])
     with pytest.raises(LogMismatchError, match="differs"):
         check_same_items(index, [Sample(id="a", input=chat("Who loses?"))])
+
+
+def test_grading_a_recorded_attempt_reads_its_log_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inspect's sync log readers re-enter a running loop (nest_asyncio). On the loop,
+    concurrent regrades corrupted it: IndexError: pop from an empty deque, every sample
+    cancelled (FRICTION 44)."""
+    import asyncio
+
+    from inspect_ai.solver import TaskState
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit import _grade
+    from inspect_audit._logs import Attempt, LogIndex
+
+    seen: list[bool] = []
+
+    def reader(*args: object, **kwargs: object) -> None:
+        try:
+            asyncio.get_running_loop()
+            seen.append(True)
+        except RuntimeError:
+            seen.append(False)
+        raise ToolError("read")  # stop here: only where the read ran matters
+
+    monkeypatch.setattr(_grade, "read_eval_log_sample", reader)
+    index = LogIndex(
+        attempts={
+            "7": [
+                Attempt(
+                    log="x.eval",
+                    eval_id="e",
+                    model="mockllm/model",
+                    sample_id="7",
+                    epoch=1,
+                    scores={},
+                    error=None,
+                )
+            ]
+        }
+    )
+    state = TaskState(model="m", sample_id="7", epoch=1, input="q", messages=[])
+    grade = _grade.grade_tool(state, [], [object()], index)  # type: ignore[list-item]
+    with pytest.raises(ToolError, match="read"):
+        asyncio.run(grade(answer="", eval_id="e", epoch=1))  # type: ignore[operator]
+    assert seen == [False]  # read in a worker thread, with no loop to re-enter
+
+
+def test_staging_a_samples_logs_happens_off_the_event_loop() -> None:
+    import inspect
+
+    from inspect_audit import _investigator
+
+    # the solver reads and writes logs to stage them; it must hand that to a thread
+    assert "to_thread.run_sync(sliced_logs" in inspect.getsource(_investigator)

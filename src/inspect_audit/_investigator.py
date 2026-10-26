@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from copy import copy
 from typing import Any
 
+import anyio
 from inspect_ai.agent import AgentSubmit, as_solver, react
 from inspect_ai.dataset import Sample
 from inspect_ai.model import ChatMessage, ChatMessageUser, ContentImage, Model
@@ -155,7 +156,9 @@ def investigator(
         if index is not None:
             # this sample's recorded attempts, as ordinary .eval files the investigator
             # reads with Inspect's log API (see the reading-logs skill)
-            for name, data in sliced_logs(index, sample_id).items():
+            # off the event loop: the sync log readers re-enter a running loop
+            sliced = await anyio.to_thread.run_sync(sliced_logs, index, sample_id)
+            for name, data in sliced.items():
                 await sandbox(INVESTIGATOR).write_file(f"{INVESTIGATION_ROOT}/logs/{name}", data)
 
         tools: list[Tool] = [

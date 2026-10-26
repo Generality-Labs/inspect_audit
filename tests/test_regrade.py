@@ -68,3 +68,25 @@ def test_a_scorer_that_needs_the_box_is_reported_not_worked_around(graded_log: s
     )
     rows = regrade(boxed, logs=[graded_log])
     assert rows and all(r.status == NEEDS_BOX for r in rows), rows
+
+
+def test_a_scorer_that_returns_nothing_does_not_shift_the_others() -> None:
+    """Pairing by position filed every later score under the wrong scorer (FRICTION 4)."""
+    from inspect_audit._regrade import _fresh
+
+    original = {"judge": 0, "exact": 0}
+    rescored = {**original, "exact1": 1}  # the judge returned None this time
+    assert _fresh(original, rescored, ["judge", "exact"]) == [("judge", None), ("exact", "exact1")]
+
+
+def test_a_regrade_uses_the_judges_recorded_settings() -> None:
+    """With defaults instead, a regrade tests a different grader (FRICTION 8)."""
+    from inspect_ai.model import GenerateConfig, Model, ModelConfig
+
+    from inspect_audit._logs import LogIndex
+    from inspect_audit._task import configured_judges
+
+    recorded = ModelConfig(model="mockllm/model", config=GenerateConfig(temperature=0.3))
+    index = LogIndex(attempts={}, judge_configs={"grader": recorded})
+    [judge] = configured_judges(index, {"grader": "mockllm/model"}).values()
+    assert isinstance(judge, Model) and judge.config.temperature == 0.3

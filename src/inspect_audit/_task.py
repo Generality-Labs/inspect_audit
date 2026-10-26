@@ -81,6 +81,44 @@ def check_same_items(index: LogIndex, samples: list[Sample]) -> None:
                 )
 
 
+def configured_judges(
+    index: LogIndex | None,
+    roles: dict[str, str],
+    judge_configs: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, str | Model]:
+    """Judge roles as models carrying the logs' recorded settings (temperature, effort).
+
+    Shared by investigations and regrades: a regrade with the judge's defaults instead
+    of its recorded settings tests a different grader (FRICTION 8).
+    """
+    configured_roles: dict[str, str | Model] = dict(roles)
+    recorded = index.judge_configs if index is not None else {}
+    declared = {
+        role: ModelConfig.model_validate(value) for role, value in (judge_configs or {}).items()
+    }
+    for role, configured in {**recorded, **declared}.items():
+        if roles.get(role) != configured.model:
+            raise ValueError(f"judge configuration for {role!r} must match its declared model")
+        # the endpoint the logs' run called is where that run was hosted, not part of
+        # the judge: a recorded one is not replayed (on Hawk it would bypass the
+        # gateway with the gateway's token), and only a declared one is used
+        if role in recorded and configured.model_copy(update={"base_url": None}) != recorded[
+            role
+        ].model_copy(update={"base_url": None}):
+            raise LogMismatchError(
+                f"judge configuration for {role!r} differs from the recorded configuration"
+            )
+        model_kwargs: dict[str, Any] = dict(configured.args)
+        model_kwargs["memoize"] = False
+        configured_roles[role] = get_model(
+            configured.model,
+            config=configured.config,
+            base_url=declared[role].base_url if role in declared else None,
+            **model_kwargs,
+        )
+    return configured_roles
+
+
 def judge_roles(index: LogIndex | None, judge: dict[str, str] | None) -> dict[str, str]:
     """The model roles their scorers grade with: recorded in the logs, or declared."""
     if index is None:
@@ -219,31 +257,7 @@ def investigation_task(
         else None
     )
     roles = judge_roles(index, judge)
-    configured_roles: dict[str, str | Model] = dict(roles)
-    recorded = index.judge_configs if index is not None else {}
-    declared = {
-        role: ModelConfig.model_validate(value) for role, value in (judge_configs or {}).items()
-    }
-    for role, configured in {**recorded, **declared}.items():
-        if roles.get(role) != configured.model:
-            raise ValueError(f"judge configuration for {role!r} must match its declared model")
-        # the endpoint the logs' run called is where that run was hosted, not part of
-        # the judge: a recorded one is not replayed (on Hawk it would bypass the
-        # gateway with the gateway's token), and only a declared one is used
-        if role in recorded and configured.model_copy(update={"base_url": None}) != recorded[
-            role
-        ].model_copy(update={"base_url": None}):
-            raise LogMismatchError(
-                f"judge configuration for {role!r} differs from the recorded configuration"
-            )
-        model_kwargs: dict[str, Any] = dict(configured.args)
-        model_kwargs["memoize"] = False
-        configured_roles[role] = get_model(
-            configured.model,
-            config=configured.config,
-            base_url=declared[role].base_url if role in declared else None,
-            **model_kwargs,
-        )
+    configured_roles = configured_judges(index, roles, judge_configs)
     if index is not None:
         # every log that attempted an investigated sample must have given it this sample's
         # input: positional ids under a shuffled run, a changed dataset or a different

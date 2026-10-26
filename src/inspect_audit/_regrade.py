@@ -17,11 +17,13 @@ from typing import Any
 
 from inspect_ai import Task, score_async
 from inspect_ai.log import EvalLog, read_eval_log
+from inspect_ai.model import Model
 from inspect_ai.scorer import CORRECT, INCORRECT, NOANSWER, PARTIAL, Scorer, Value
+from inspect_ai.scorer._scorer import unique_scorer_name
 from inspect_ai.util import registry_create, registry_info
 
 from ._logs import index_logs
-from ._task import judge_roles
+from ._task import configured_judges, judge_roles
 
 AGREE = "AGREE"
 STABLE = "STABLE_DISAGREEMENT"
@@ -68,7 +70,7 @@ def _name(scorer: Scorer) -> str:
     return registry_info(scorer).name.split("/")[-1]
 
 
-async def _rescore(log: EvalLog, scorers: list[Scorer], roles: dict[str, str]) -> EvalLog:
+async def _rescore(log: EvalLog, scorers: list[Scorer], roles: dict[str, str | Model]) -> EvalLog:
     # reducer named explicitly: the log's own may not resolve here, and the investigation
     # compares per-sample grades, never aggregates
     return await score_async(
@@ -82,9 +84,25 @@ async def _rescore(log: EvalLog, scorers: list[Scorer], roles: dict[str, str]) -
     )
 
 
-def _fresh(original: dict[str, Any], rescored: dict[str, Any]) -> list[str]:
-    """Score names the rescore added, in the order it added them."""
-    return [name for name in rescored if name not in original]
+def _fresh(
+    original: dict[str, Any], rescored: dict[str, Any], names: list[str]
+) -> list[tuple[str, str | None]]:
+    """Each scorer beside the score name the rescore gave it, None where it gave none.
+
+    Mirrors Inspect's append naming (`score._score_sample`): a scorer's name is made
+    unique against the sample's scores so far, and a scorer returning None adds
+    nothing. Pairing by position misfiled every later score after one None (FRICTION 4).
+    """
+    used = set(original)
+    pairs: list[tuple[str, str | None]] = []
+    for name in names:
+        candidate = unique_scorer_name(name, list(used))
+        if candidate in rescored:
+            used.add(candidate)
+            pairs.append((name, candidate))
+        else:
+            pairs.append((name, None))
+    return pairs
 
 
 async def regrade_async(
@@ -103,7 +121,7 @@ async def regrade_async(
         name = registry_info(their).name
         package = name.split("/")[0] if "/" in name else None
     index = index_logs(logs, task_name=name, task_args=dict(task_args or {}), package=package)
-    roles = judge_roles(index, judge)
+    roles = configured_judges(index, judge_roles(index, judge))
     scorers: list[Scorer] = (
         list(their.scorer) if isinstance(their.scorer, list) else [s for s in [their.scorer] if s]
     )
@@ -136,10 +154,9 @@ async def regrade_async(
             continue
         for before, after in zip(samples, rescored.samples or [], strict=True):
             recorded = dict(before.scores or {})
-            fresh = _fresh(recorded, dict(after.scores or {}))
-            for scorer_name, fresh_name in zip(names, fresh, strict=False):
+            for scorer_name, fresh_name in _fresh(recorded, dict(after.scores or {}), names):
                 old = recorded.get(scorer_name)
-                new = (after.scores or {})[fresh_name]
+                new = (after.scores or {})[fresh_name].value if fresh_name else None
                 rows.append(
                     Regrade(
                         path,
@@ -148,9 +165,11 @@ async def regrade_async(
                         before.epoch,
                         scorer_name,
                         str(old.value) if old is not None else UNSCORED,
-                        str(new.value),
+                        str(new) if new is not None else UNSCORED,
                         AGREE
-                        if old is not None and comparable(old.value) == comparable(new.value)
+                        if old is not None
+                        and new is not None
+                        and comparable(old.value) == comparable(new)
                         else STABLE,
                     )
                 )
@@ -165,16 +184,18 @@ async def regrade_async(
             for _ in range(resamples):
                 again = await _rescore(subset, scorers, roles)
                 for before, after in zip(subset.samples or [], again.samples or [], strict=True):
-                    fresh = _fresh(dict(before.scores or {}), dict(after.scores or {}))
-                    for scorer_name, fresh_name in zip(names, fresh, strict=False):
-                        value = (after.scores or {})[fresh_name].value
+                    pairs = _fresh(dict(before.scores or {}), dict(after.scores or {}), names)
+                    for scorer_name, fresh_name in pairs:
+                        value = (after.scores or {})[fresh_name].value if fresh_name else None
                         for row in disputed:
                             same = (row.sample_id, row.epoch, row.scorer) == (
                                 str(before.id),
                                 before.epoch,
                                 scorer_name,
                             )
-                            if same and comparable(str(value)) != comparable(row.regraded):
+                            if same and comparable(
+                                str(value) if value is not None else UNSCORED
+                            ) != comparable(row.regraded):
                                 row.status = NOISY
     return rows
 

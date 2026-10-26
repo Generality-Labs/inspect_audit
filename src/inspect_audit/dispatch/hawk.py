@@ -9,7 +9,6 @@ import json
 import os
 import shutil
 import sys
-import tempfile
 import urllib.parse
 import urllib.request
 from collections.abc import AsyncGenerator
@@ -368,7 +367,9 @@ def fetch_eval_sets(eval_sets: str) -> str:
     api = os.environ.get("HAWK_API_URL")
     if not api:
         raise ValueError("fetching hawk: logs needs HAWK_API_URL, Hawk's API address")
-    fetched = Path(tempfile.mkdtemp(prefix="hawk_logs_"))
+    from .._paths import stable_dir
+
+    fetched = stable_dir("hawk", eval_sets)
 
     async def fetch() -> None:
         token = os.environ.get("HAWK_ACCESS_TOKEN") or await HawkLogin(api).access_token()

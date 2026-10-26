@@ -6,11 +6,11 @@ Reading a log, once it is local, is `_logs`' business.
 """
 
 import shutil
-import tempfile
 from pathlib import Path
 
 from inspect_ai.log import list_eval_logs
 
+from ._paths import stable_dir
 from .dispatch.hawk import declared_transcripts, fetch_eval_sets
 
 
@@ -54,7 +54,7 @@ def fetch_logs(logs: str | list[str]) -> str:
     anything else (a path, an `s3://` dir inspect reads natively) passes through.
     """
     if isinstance(logs, list):
-        combined = Path(tempfile.mkdtemp(prefix="investigation_corpus_"))
+        combined = stable_dir("corpus", "\n".join(logs))
         for index, source in enumerate(logs):
             resolved = fetch_logs(source)
             files = (
@@ -93,7 +93,7 @@ def _download(url: str) -> str:
     """
     import fsspec  # pyright: ignore[reportMissingTypeStubs]
 
-    fetched = Path(tempfile.mkdtemp(prefix="remote_logs_"))
+    fetched = stable_dir("remote", url)
     names = [url] if url.endswith((".eval", ".json")) else [i.name for i in list_eval_logs(url)]
     if not names:
         raise ValueError(f"No Inspect logs found: {url}")

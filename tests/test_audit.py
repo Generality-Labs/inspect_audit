@@ -463,6 +463,7 @@ def test_every_tool_schema_survives_a_strict_provider(tmp_path: Path) -> None:
     ours = [
         _audit.run_benchmark(inv),
         _audit.run_investigation(inv),
+        _audit.run_regrade(inv),
         _audit.jobs(inv),
         _audit.budget(None, openrouter=False),
         view_image(),
@@ -612,6 +613,7 @@ def test_every_agent_tool_schema_meets_openais_strict_rules(tmp_path: Path) -> N
     tools = [
         _audit.run_benchmark(inv),
         _audit.run_investigation(inv),
+        _audit.run_regrade(inv),
         _audit.jobs(inv),
         _audit.budget(None, openrouter=False),
         view_image(),

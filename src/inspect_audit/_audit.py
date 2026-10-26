@@ -620,6 +620,82 @@ def run_benchmark(inv: Audit) -> Tool:
 
 
 @tool
+def run_regrade(inv: Audit) -> Tool:
+    async def execute(
+        label: str,
+        samples: list[str],
+        logs: list[str],
+        judge: str,
+        epochs: int,
+        item_cost_limit: float,
+        note: str,
+    ) -> str:
+        """Re-grade recorded attempts with the benchmark's own grader, as a job.
+
+        Each recorded attempt at the selected samples is replayed (no model call) and
+        scored `epochs` times by the benchmark's scorers. Epochs that disagree with each
+        other are judge noise; epochs that agree with each other but not with the
+        recorded grade are a stable disagreement. Use it to measure how often a
+        model-graded benchmark's judge flips, across many answers at once. It runs where
+        the judge's credentials are, which your box is not. Read results from the
+        collected log: per sample and epoch, the fresh scores, with the recorded grades
+        in metadata["inspect_audit_regrade"]["recorded"].
+
+        Args:
+            label: A short name for this job, unique in the audit.
+            samples: The benchmark's sample ids to regrade.
+            logs: Recorded attempts: labels of benchmark jobs you ran, or supplied log
+                sources from the seed.
+            judge: Role name to model for the benchmark's judge, as a JSON object, from
+                the judge list; it must be the model the logs record.
+            epochs: How many times to score each attempt, 1 to 10.
+            item_cost_limit: Dollars one regraded attempt may spend.
+            note: Why you are running this.
+        """
+        judges = {str(k): str(v) for k, v in json_object(judge, "judge").items()}
+        if not judges:
+            raise ToolError('judge must name the judge role, e.g. {"grader": "openai/gpt-5.1"}')
+        addresses = []
+        for name in logs:
+            known = [j for j in inv.record().jobs if j["label"] == name]
+            if known:
+                addresses.append(known[0]["address"])
+            elif name in inv.supplied:
+                addresses.append(name)
+            else:
+                raise ToolError(
+                    f"{name!r} is neither a job of yours nor a supplied source "
+                    f"({', '.join(inv.supplied) or 'none supplied'})"
+                )
+        try:
+            prices = prices_for_models(list(judges.values()))
+        except Exception as ex:
+            raise ToolError(f"cannot price the judge for its cost limit: {ex}") from ex
+        job = Job(
+            label=label,
+            task="inspect_audit/regrade",
+            package=inv.investigation_package,
+            extra_packages=[inv.task_package, *inv.task_pins],
+            # the judge as the eval's model: never called, but it is how the job gets
+            # the judge's credentials
+            models=list(judges.values())[:1],
+            task_args={
+                "task": inv.task,
+                "task_args": json.loads(inv.authorizer.policy.task_args_json),
+                "logs": addresses,
+                "judge": judges,
+                "samples": samples,
+                "epochs": epochs,
+                "cost_limit": item_cost_limit,
+                "model_prices": prices,
+            },
+        )
+        return await inv.launch(job, "regrade", note)
+
+    return execute
+
+
+@tool
 def run_investigation(inv: Audit) -> Tool:
     async def execute(
         label: str,
@@ -1299,7 +1375,7 @@ def audit(
             task_pins=task_package_pins,
             paper=paper,
         )
-        tools += [run_benchmark(inv), run_investigation(inv), jobs(inv)]
+        tools += [run_benchmark(inv), run_investigation(inv), run_regrade(inv), jobs(inv)]
         seed["jobs"] = {
             "runs": runs,
             "task": target_task,

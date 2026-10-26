@@ -747,3 +747,40 @@ def test_every_argument_a_job_may_carry_is_one_its_task_accepts() -> None:
 
     accepted = set(pyinspect.signature(_registry.investigation).parameters)
     assert accepted >= INVESTIGATION_ARGS
+
+
+def test_the_auditor_launches_a_regrade_as_its_judge(
+    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-judging needs the judge's credentials, which only a job has (FRICTION 20)."""
+    import inspect as pyinspect
+
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit import _registry
+    from inspect_audit.dispatch.policy import REGRADE_ARGS
+
+    runs = FakeRuns()
+    inv = _make_audit(tmp_path, runs)
+    monkeypatch.setattr(
+        _audit,
+        "prices_for_models",
+        lambda models: {m: {"input": 1.0, "output": 2.0} for m in models},
+    )
+    regrade = _audit.run_regrade(inv)
+    asyncio.run(
+        regrade(  # type: ignore[arg-type]
+            "rejudge", ["1"], ["hawk:supplied-logs"], '{"grader": "openai/judge"}', 3, 0.5, "noise"
+        )
+    )
+    [job] = runs.submitted
+    assert job.task == "inspect_audit/regrade" and job.models == ["openai/judge"]
+    assert job.task_args["judge"] == {"grader": "openai/judge"} and job.task_args["epochs"] == 3
+    assert job.task_args["logs"] == ["hawk:supplied-logs"]
+    assert set(pyinspect.signature(_registry.regrade).parameters) >= REGRADE_ARGS
+    with pytest.raises(ToolError, match="1 to 10"):
+        asyncio.run(
+            regrade(  # type: ignore[arg-type]
+                "again", ["1"], ["hawk:supplied-logs"], '{"grader": "openai/judge"}', 50, 0.5, ""
+            )
+        )

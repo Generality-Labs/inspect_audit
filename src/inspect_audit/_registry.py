@@ -1,4 +1,4 @@
-"""The package's Inspect tasks, `investigation` and `audit`."""
+"""The package's Inspect tasks: `investigation`, `regrade` and `audit`."""
 
 import importlib
 import importlib.util
@@ -94,4 +94,37 @@ def investigation(
         message_limit=message_limit,
         time_limit=time_limit,
         working_limit=working_limit,
+    )
+
+
+@task
+def regrade(
+    task: str,
+    logs: list[str],
+    task_args: dict[str, Any] | None = None,
+    judge: dict[str, str] | None = None,
+    samples: list[str] | None = None,
+    epochs: int = 3,
+    cost_limit: float | None = None,
+    model_prices: dict[str, dict[str, float]] | None = None,
+) -> Task:
+    """Re-grade recorded attempts with the benchmark's own scorers (`regrade_task` in `_regrade`).
+
+    The eval's `--model` is never called; on Hawk, make it the judge so the job gets
+    the judge's credentials.
+    """
+    from ._regrade import regrade_task
+
+    if model_prices:
+        register_prices(model_prices)
+    elif cost_limit is not None:
+        register_prices(prices_for_models(list((judge or {}).values())))
+    return regrade_task(
+        task,
+        logs=log_files(logs),
+        task_args=task_args,
+        judge=judge,
+        samples=samples,
+        epochs=epochs,
+        cost_limit=cost_limit,
     )

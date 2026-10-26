@@ -11,15 +11,20 @@ that needs the benchmark's box is reported, not worked around.
 import asyncio
 import csv
 import math
+from copy import deepcopy
 from dataclasses import asdict, dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
+import anyio.to_thread
 from inspect_ai import Task, score_async
-from inspect_ai.log import EvalLog, read_eval_log
+from inspect_ai.dataset import Sample
+from inspect_ai.log import EvalLog, read_eval_log, read_eval_log_sample
 from inspect_ai.model import Model
 from inspect_ai.scorer import CORRECT, INCORRECT, NOANSWER, PARTIAL, Scorer, Value
 from inspect_ai.scorer._scorer import unique_scorer_name
+from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import registry_create, registry_info
 
 from ._logs import index_logs
@@ -248,3 +253,107 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{status}: {count}")
     print(f"wrote {len(rows)} rows to {args.out}")
     return 1 if any(r.status in (STABLE, ERROR, NEEDS_BOX) for r in rows) else 0
+
+
+# where a replayed sample keeps what it replays, beside the benchmark's own metadata
+REPLAY = "inspect_audit_regrade"
+
+
+@solver
+def replay() -> Solver:
+    """Put the recorded attempt back: its transcript, final output and solver store."""
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        recorded = state.metadata[REPLAY]
+        # off the event loop: Inspect's sync readers re-enter a running one (FRICTION 44)
+        sample = await anyio.to_thread.run_sync(
+            partial(
+                read_eval_log_sample,
+                recorded["log"],
+                id=recorded["sample_id"],
+                epoch=recorded["epoch"],
+                resolve_attachments=True,
+            )
+        )
+        state.messages = deepcopy(sample.messages)
+        state.output = sample.output
+        for key, value in (sample.store or {}).items():
+            state.store.set(key, deepcopy(value))
+        return state
+
+    return solve
+
+
+def regrade_task(
+    task: str | Task,
+    *,
+    logs: list[str],
+    task_args: dict[str, Any] | None = None,
+    judge: dict[str, str] | None = None,
+    samples: list[str] | None = None,
+    epochs: int = 3,
+    cost_limit: float | None = None,
+) -> Task:
+    """Re-grade recorded attempts with the benchmark's own scorers, as an Inspect task.
+
+    One sample per recorded attempt (optionally only `samples`), replayed without
+    calling a model, scored `epochs` times: epochs that disagree are judge noise, and
+    epochs that agree with each other but not with the recorded grade are a stable
+    disagreement. Run on Hawk with the judge as the eval's model, the job gets the
+    judge's credentials, which the auditor's own box does not have (FRICTION 20).
+    Each sample's metadata keeps the recorded grades under `inspect_audit_regrade`.
+    """
+    if isinstance(task, Task):
+        their, name, package = task, task.name, None
+    else:
+        their = registry_create("task", task, **(task_args or {}))
+        name = registry_info(their).name
+        package = name.split("/")[0] if "/" in name else None
+    index = index_logs(logs, task_name=name, task_args=dict(task_args or {}), package=package)
+    roles = configured_judges(index, judge_roles(index, judge))
+    scorers: list[Scorer] = (
+        list(their.scorer) if isinstance(their.scorer, list) else [s for s in [their.scorer] if s]
+    )
+    if not scorers:
+        raise ValueError(f"task {name!r} declares no scorer to regrade with")
+    wanted = set(samples) if samples is not None else None
+    dataset: list[Sample] = []
+    for sample_id, attempts in sorted(index.attempts.items()):
+        if wanted is not None and sample_id not in wanted:
+            continue
+        for attempt in attempts:
+            # at task construction, outside any event loop, so the sync reader is safe
+            recorded = read_eval_log_sample(
+                attempt.log, id=attempt.sample_id, epoch=attempt.epoch, resolve_attachments=True
+            )
+            dataset.append(
+                Sample(
+                    id=f"{attempt.eval_id}/{attempt.sample_id}/{attempt.epoch}",
+                    input=recorded.input,
+                    target=recorded.target,
+                    choices=recorded.choices,
+                    metadata={
+                        **(recorded.metadata or {}),
+                        REPLAY: {
+                            "log": attempt.log,
+                            "eval_id": attempt.eval_id,
+                            "sample_id": attempt.sample_id,
+                            "epoch": attempt.epoch,
+                            "model": attempt.model,
+                            "recorded": {k: v.value for k, v in (recorded.scores or {}).items()},
+                        },
+                    },
+                )
+            )
+    if wanted is not None and not dataset:
+        raise ValueError("none of the selected samples has a recorded attempt in these logs")
+    return Task(
+        dataset=dataset,
+        solver=replay(),
+        scorer=scorers,
+        epochs=epochs,
+        model_roles=roles or None,
+        cost_limit=cost_limit,
+        name=f"regrade/{name}",
+        metadata={"regraded_task": name, "regraded_logs": list(logs)},
+    )

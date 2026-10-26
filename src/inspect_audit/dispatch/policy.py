@@ -207,6 +207,11 @@ INVESTIGATION_ARGS = frozenset(
     }
 )
 
+# the same for a regrade job, against the registered `regrade` task
+REGRADE_ARGS = frozenset(
+    {"task", "task_args", "logs", "judge", "samples", "epochs", "cost_limit", "model_prices"}
+)
+
 
 @dataclass(frozen=True)
 class AuditAuthorizer:
@@ -222,6 +227,52 @@ class AuditAuthorizer:
                 f"{', '.join(refused)} may not be {part}; allowed: {', '.join(allowed) or 'none'}"
             )
 
+    def _regrade(self, job: Job, known_logs: set[str]) -> Job:
+        """A regrade: the benchmark's own scorers on recorded attempts, judges only."""
+        p = self.policy
+        args = job.task_args
+        if job.task != "inspect_audit/regrade" or job.package != p.investigation_package:
+            raise ToolError("regrade task and package must match the launch policy")
+        if job.extra_packages != [p.task_package, *p.task_pins]:
+            raise ToolError("job dependencies must match the launch policy")
+        if set(args) - REGRADE_ARGS or job.model_roles or job.sample_range is not None:
+            raise ToolError("regrade job contains configuration outside the launch contract")
+        if args.get("task") != p.task or canonical(args.get("task_args", {})) != p.task_args_json:
+            raise ToolError("regrade task and task_args are fixed by the launch policy")
+        judges = [str(m) for m in (args.get("judge") or {}).values()]
+        if not judges or job.models != judges[:1]:
+            raise ToolError("a regrade names its judge and runs as that judge")
+        self.allow(judges, p.models.judges, "judges")
+        if not args.get("logs") or set(args["logs"]) - (set(p.supplied_logs) | known_logs):
+            raise ToolError("regrade inputs are outside the launch policy")
+        selected = args.get("samples")
+        if not isinstance(selected, list) or not selected:
+            raise ToolError("a regrade must select sample IDs")
+        if p.samples is not None and set(selected) - set(p.samples):
+            raise ToolError("sample selection is outside the launch policy")
+        epochs = args.get("epochs")
+        if isinstance(epochs, bool) or not isinstance(epochs, int) or not 1 <= epochs <= 10:
+            raise ToolError("regrade epochs must be 1 to 10")
+        cost = args.get("cost_limit")
+        if (
+            isinstance(cost, bool)
+            or not isinstance(cost, (int, float))
+            or not math.isfinite(cost)
+            or cost <= 0
+        ):
+            raise ToolError("regrade cost_limit must be a finite positive number")
+        cap = p.limits.investigation_sample_cost_usd
+        if cap is not None and cost > cap:
+            raise ToolError(f"regrade cost_limit exceeds the policy's ${cap:g} per sample")
+        approved = deepcopy(job)
+        configs = {
+            name: ModelConfig.model_validate(value)
+            for name, value in json.loads(p.model_configs_json).items()
+        }
+        approved.model_configs = {name: configs[name] for name in job.models if name in configs}
+        approved.environment = json.loads(p.environment_json)
+        return approved
+
     def authorise(self, job: Job, kind: str, known_logs: set[str]) -> Job:
         p = self.policy
         if job.environment and canonical(job.environment) != p.environment_json:
@@ -229,8 +280,10 @@ class AuditAuthorizer:
         # a run folder's and a Hawk eval set's name: no paths, nothing Hawk would refuse
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}", job.label):
             raise ToolError("a label is letters, digits, - and _, at most 48 characters")
-        if kind not in ("investigation", "benchmark"):
+        if kind not in ("investigation", "benchmark", "regrade"):
             raise ToolError(f"unknown job kind: {kind}")
+        if kind == "regrade":
+            return self._regrade(job, known_logs)
         expected_task = "inspect_audit/investigation" if kind == "investigation" else p.task
         expected_package = p.investigation_package if kind == "investigation" else p.task_package
         if job.task != expected_task or job.package != expected_package:

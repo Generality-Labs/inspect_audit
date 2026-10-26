@@ -133,3 +133,5 @@ Entries 1-20 were collected 2026-10-22 to 2026-10-24 while running SWE-bench, Sc
     - 22, shared budget: policy `limits.budget_usd`; a launch that could take own calls, collected jobs, and running jobs at their caps past it is refused (3726c0d).
     - 25, coverage: policy `limits.coverage: full` holds submission until every permitted sample has a take on every policy check, or the auditor reports a blocker.
     - 42/47 (resume) and 44/45 (event loop) as recorded above. Not yet verified on Hawk: all of these, plus 41 (PDF in the box). 295 tests pass; basedpyright clean.
+
+49. **2026-10-26. CI still failed after 46: the browser test ran where there is no browser.** The default pytest selection excluded `docker` and `latex` but not `publishing`, so `test_the_gl_renderer_draws_a_pdf_in_the_box` ran in the main CI job, which installs no Chromium. Fixed: `publishing` is opt-in like the others, and CI's GL step (which installs Chromium) runs `tests/test_render.py` too.

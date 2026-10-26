@@ -55,7 +55,7 @@ jobs:
 
       - name: Findings handoff and GL publication
         if: github.event_name == 'pull_request'
-        run: uv run pytest -m publishing tests/test_findings_handoff.py
+        run: uv run pytest -m publishing tests/test_findings_handoff.py tests/test_render.py
 
   latex:
     name: LaTeX fixture

@@ -136,8 +136,8 @@ exclude = ["src/inspect_audit/skills", "**/__pycache__"]
 testpaths = ["tests"]
 pythonpath = ["src", "tests", "tests/compatibility/src"]
 markers = ["latex: needs TeX and the private pinned audit template", "docker: needs a running Docker daemon", "publishing: needs the Playwright Chromium browser and downloads pinned GL components"]
-# Heavy Docker and LaTeX tests are opt-in; CI runs their explicit markers.
-addopts = "-rA --durations=10 --color=yes --cov=src --cov-report=term-missing -m 'not docker and not latex'"
+# Heavy Docker, LaTeX and browser tests are opt-in; CI runs their explicit markers.
+addopts = "-rA --durations=10 --color=yes --cov=src --cov-report=term-missing -m 'not docker and not latex and not publishing'"
 
 [tool.uv.sources]
 inspect-evals = { git = "https://github.com/Generality-Labs/inspect_evals", rev = "67a9ea5333d3fc672ebce3ca9724bcfdad87f541" }

@@ -14,7 +14,7 @@ from pydantic import Field
 
 from .._findings import FindingsState, encoded, restore_bundle
 from .._publishing import Publisher
-from ._render import box_has, render_in_box, tree
+from ._render import ensure_browser, render_in_box, tree
 
 GL_REVISION = "014b3165403bab23d630c0623acf0ed9d50df445"
 ASSETS = {
@@ -233,10 +233,10 @@ window.figuresReady = true;
         "gl_render.py": RENDERER.read_bytes(),
     }
     command = ["python", "gl_render.py", "{dir}"]
-    if await box_has('python -c "import playwright"'):
+    if await ensure_browser():
         drawn = await render_in_box(work, command, "out")
     else:
-        # no box with a browser (a direct call, or an old image): draw on this host
+        # no box at all (a direct call): draw on this host
         drawn = await asyncio.to_thread(_render_here, work, command)
     for name, data in drawn.items():
         (output / name).write_bytes(data)

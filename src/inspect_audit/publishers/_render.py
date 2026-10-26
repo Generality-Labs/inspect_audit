@@ -20,6 +20,36 @@ async def box_has(probe: str) -> bool:
     return result.success
 
 
+# the browser is installed in the box when first needed: the box has internet, and
+# baking it into the image means a multi-GB build for one feature
+PLAYWRIGHT = "1.64.1"
+BROWSER = 'python -c "import playwright" && ls -d ~/.cache/ms-playwright/chromium* >/dev/null 2>&1'
+
+
+async def ensure_browser() -> bool:
+    """Whether the box can draw with Chromium, installing it there if needed.
+
+    False where there is no box at all; a box that cannot install it is an error.
+    """
+    if await box_has(BROWSER):
+        return True
+    try:
+        result = await sandbox().exec(
+            [
+                "sh",
+                "-c",
+                f"pip install -q playwright=={PLAYWRIGHT} && "
+                "python -m playwright install --with-deps chromium",
+            ],
+            timeout=900,
+        )
+    except Exception:  # no sandbox in this context
+        return False
+    if not result.success:
+        raise ToolError(f"Could not install Chromium in the box: {result.stderr[-2000:]}")
+    return True
+
+
 async def render_in_box(
     files: dict[str, bytes], command: list[str], outputs: str, timeout: int = 300
 ) -> dict[str, bytes]:

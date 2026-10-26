@@ -869,3 +869,30 @@ def test_full_coverage_holds_submission_until_every_cell_has_a_take(
     monkeypatch.setattr(_register, "load", lambda: gap)
     with pytest.raises(ToolError, match="full coverage: 2 of 2"):
         asyncio.run(submit_findings(tmp_path, inv, "b/t")())  # type: ignore[call-arg]
+
+
+class RefusingRuns(FakeRuns):
+    """Hawk as v5 met it: the proxy lacks a model, so submissions and lookups fail."""
+
+    async def submit(self, job: Job) -> str:
+        raise RuntimeError("Middleman error: Models not found: ['openai/gpt-5.1']")
+
+    async def status(self, run_id: str) -> str:
+        raise ConnectionError("Hawk API unreachable")
+
+
+def test_a_platform_refusal_reaches_the_auditor_not_the_eval(
+    tmp_path: Path, record: AuditRecord
+) -> None:
+    # FRICTION 51: an exception here ended the audit with nothing saved
+    from inspect_ai.tool import ToolError
+
+    inv = _make_audit(tmp_path, RefusingRuns())
+    benchmark = _audit.run_benchmark(inv)
+    with pytest.raises(ToolError, match="Models not found"):
+        asyncio.run(benchmark("smoke", ["openai/subject"], ["1"], None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
+    assert record.jobs == []
+
+    record.jobs.append({"label": "old", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})
+    with pytest.raises(ToolError, match="unreachable"):
+        asyncio.run(_audit.jobs(inv)("status", "old", None))  # type: ignore[arg-type]

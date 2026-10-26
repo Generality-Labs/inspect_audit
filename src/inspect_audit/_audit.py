@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 import tarfile
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from importlib.metadata import version
 from logging import getLogger
@@ -521,6 +523,17 @@ def budget(
     return execute
 
 
+@contextmanager
+def _platform(what: str) -> Generator[None]:
+    """The platform refusing or failing a call is the auditor's to work around, not a crash."""
+    try:
+        yield
+    except ToolError:
+        raise
+    except Exception as ex:
+        raise ToolError(f"{what} failed: {type(ex).__name__}: {ex}") from ex
+
+
 @dataclass
 class Audit:
     """What the job tools need that the agent does not hold."""
@@ -591,7 +604,8 @@ class Audit:
                     "finished jobs (their recorded cost replaces their cap), lower this job's "
                     "per-item cap, or select fewer items."
                 )
-        run_id = await self.runs.submit(approved)
+        with _platform(f"submitting {job.label!r}"):
+            run_id = await self.runs.submit(approved)
         address = self.runs.address(run_id)
         # assigned back, not appended in place: the store records an assignment
         record = self.record()
@@ -868,56 +882,61 @@ def jobs(inv: Audit) -> Tool:
         if not label:
             raise ToolError(f"action {action!r} needs a label")
         job = inv.job(label)
-        run_id = job["run_id"]
-        if action == "status":
-            return f"{label}: {await inv.runs.status(run_id)}"
-        if action == "wait":
-            deadline = asyncio.get_running_loop().time() + 60 * (wait_minutes or 20)
-            while (status := await inv.runs.status(run_id)) not in (*FINISHED, STUCK):
-                if asyncio.get_running_loop().time() > deadline:
-                    break
-                await asyncio.sleep(30)
-            return f"{label}: {status}"
-        if action == "log":
-            return await inv.runs.runner_log(run_id)
-        if action == "stop":
-            await inv.runs.stop(run_id)
-            return (
-                f"stop requested for {label}; wait for it to finish before collecting. "
-                "Completed samples remain in its logs."
-            )
-        if action == "collect":
-            from ._audit_workspace import copy_into_box
-
-            status = await inv.runs.status(run_id)
-            if status not in FINISHED:
-                raise ToolError(f"{label} is {status}; wait for it before collecting")
-            host = inv.root / "inputs" / "jobs" / label
-            files = await inv.runs.logs(run_id, host)
-            if not files:
-                record = inv.record()
-                record.jobs = [
-                    {**j, "collection_error": f"{status}: no logs"} if j["label"] == label else j
-                    for j in record.jobs
-                ]
-                raise ToolError(
-                    f"{label} ({status}) wrote no logs; the failure was recorded. jobs(action='log') shows why"
-                )
-            if files[0].parent != host:  # a local run's logs are already on this machine
-                host.mkdir(parents=True, exist_ok=True)
-                files = [Path(shutil.copy2(f, host / f.name)) for f in files]
-            await copy_into_box(files, f"/inputs/jobs/{label}")
-            lines = [_log_line(f) for f in files]
-            if job["kind"] == "investigation":
-                lines.append(await _import_investigations(files, job["address"]))
-            record = inv.record()
-            record.jobs = [
-                {**j, "collected": True} if j["label"] == label else j for j in record.jobs
-            ]
-            return f"{label}: {status}; collected to /inputs/jobs/{label}/\n" + "\n".join(lines)
-        raise ToolError("action must be list, status, wait, collect, log or stop")
+        with _platform(f"jobs {action} {label!r}"):
+            return await _job_action(inv, job, action, wait_minutes)
 
     return execute
+
+
+async def _job_action(
+    inv: Audit, job: dict[str, Any], action: str, wait_minutes: float | None
+) -> str:
+    label, run_id = job["label"], job["run_id"]
+    if action == "status":
+        return f"{label}: {await inv.runs.status(run_id)}"
+    if action == "wait":
+        deadline = asyncio.get_running_loop().time() + 60 * (wait_minutes or 20)
+        while (status := await inv.runs.status(run_id)) not in (*FINISHED, STUCK):
+            if asyncio.get_running_loop().time() > deadline:
+                break
+            await asyncio.sleep(30)
+        return f"{label}: {status}"
+    if action == "log":
+        return await inv.runs.runner_log(run_id)
+    if action == "stop":
+        await inv.runs.stop(run_id)
+        return (
+            f"stop requested for {label}; wait for it to finish before collecting. "
+            "Completed samples remain in its logs."
+        )
+    if action == "collect":
+        from ._audit_workspace import copy_into_box
+
+        status = await inv.runs.status(run_id)
+        if status not in FINISHED:
+            raise ToolError(f"{label} is {status}; wait for it before collecting")
+        host = inv.root / "inputs" / "jobs" / label
+        files = await inv.runs.logs(run_id, host)
+        if not files:
+            record = inv.record()
+            record.jobs = [
+                {**j, "collection_error": f"{status}: no logs"} if j["label"] == label else j
+                for j in record.jobs
+            ]
+            raise ToolError(
+                f"{label} ({status}) wrote no logs; the failure was recorded. jobs(action='log') shows why"
+            )
+        if files[0].parent != host:  # a local run's logs are already on this machine
+            host.mkdir(parents=True, exist_ok=True)
+            files = [Path(shutil.copy2(f, host / f.name)) for f in files]
+        await copy_into_box(files, f"/inputs/jobs/{label}")
+        lines = [_log_line(f) for f in files]
+        if job["kind"] == "investigation":
+            lines.append(await _import_investigations(files, job["address"]))
+        record = inv.record()
+        record.jobs = [{**j, "collected": True} if j["label"] == label else j for j in record.jobs]
+        return f"{label}: {status}; collected to /inputs/jobs/{label}/\n" + "\n".join(lines)
+    raise ToolError("action must be list, status, wait, collect, log or stop")
 
 
 @tool

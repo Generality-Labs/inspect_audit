@@ -240,6 +240,7 @@ class AuditAuthorizer:
                 "cost_limit",
                 "model_prices",
                 "notes",
+                "paper",
             }
             if set(args) - permitted or job.model_roles or job.sample_range is not None:
                 raise ToolError(
@@ -247,6 +248,8 @@ class AuditAuthorizer:
                 )
             if not isinstance(args.get("notes") or "", str):
                 raise ToolError("investigation notes must be text")
+            if not isinstance(args.get("paper") or "", str):
+                raise ToolError("investigation paper must be a path or URL")
             if args.get("task") != p.task or args.get("investigator_image") != p.investigator_image:
                 raise ToolError("investigation task and image must match the launch policy")
             source = args.get("source")

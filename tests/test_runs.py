@@ -245,6 +245,7 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
 
     runs = FakeRuns()
     inv = _make_audit(tmp_path, runs)
+    inv.paper = "https://arxiv.org/abs/2601.00001"
     record.jobs.append({"label": "smoke", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})
     monkeypatch.setattr(
         _audit,
@@ -269,6 +270,8 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
     [job] = runs.submitted
     # the auditor's note is the investigators' brief, not just a line in its record
     assert job.task_args["notes"] == "Check every failed rubric item against the context."
+    # and the operator's paper goes with it (FRICTION 40)
+    assert job.task_args["paper"] == "https://arxiv.org/abs/2601.00001"
     assert job.task == "inspect_audit/investigation" and job.extra_packages == ["benchmark"]
     assert job.task_args["logs"] == ["hawk:r", "hawk:supplied-logs"]
     assert job.task_args["judge"] == {"grader": "openai/judge"}
@@ -723,3 +726,12 @@ def test_the_outcome_tells_the_operator_where_the_results_are() -> None:
     assert "publishing failed" in score.explanation
     assert "s3://bucket/evals/x/artifacts/u/findings" in score.explanation
     assert "hawk download-artifacts" in score.explanation
+
+
+def test_a_local_paper_is_read_as_a_file(tmp_path: Path) -> None:
+    from inspect_audit._paper import paper_file
+
+    (tmp_path / "cl-bench.pdf").write_bytes(b"%PDF-1.7")
+    assert paper_file(str(tmp_path / "cl-bench.pdf")) == ("cl-bench.pdf", b"%PDF-1.7")
+    with pytest.raises(OSError):
+        paper_file("not a path or a url")

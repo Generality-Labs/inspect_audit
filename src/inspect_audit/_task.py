@@ -140,6 +140,7 @@ def investigation_task(
     redact: Sequence[str] = (),
     confidential: bool = False,
     notes: str | None = None,
+    paper: str | None = None,
     search: WebSearchProviders | None = None,
     investigator_image: str | None = None,
     cost_limit: float | None = None,
@@ -175,6 +176,8 @@ def investigation_task(
         redact: Metadata keys withheld from the staged item.
         confidential: The benchmark is unpublished: the investigator must not transmit it.
         notes: A free-form steer for the investigator.
+        paper: The benchmark's paper, a path or URL, put in the investigator's box at
+            /audit/paper/ so the benchmark's own account of its design is to hand.
         search: Inspect web_search provider configuration, e.g. {"tavily": True}.
             External providers work across investigator models and need their API key
             in the Inspect runner environment. Omitted means no search tool.
@@ -280,6 +283,7 @@ def investigation_task(
         redact=redact,
         confidential=confidential,
         notes=notes,
+        paper=paper,
         search=search,
         model=investigator_model,
     )

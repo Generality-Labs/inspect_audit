@@ -9,7 +9,6 @@ import re
 import shutil
 import subprocess
 import tarfile
-import urllib.request
 from dataclasses import dataclass, field
 from importlib.metadata import version
 from logging import getLogger
@@ -156,23 +155,15 @@ def _fetch_paper(paper: str, inputs: Path) -> str:
     An arXiv abstract URL is turned into its PDF. A failed download keeps the URL
     in the seed so the agent can try itself, with the failure recorded.
     """
-    local = Path(paper).expanduser()
+    from ._paper import paper_file
+
     (inputs / "paper").mkdir(exist_ok=True)
-    if local.is_file():
-        shutil.copyfile(local.resolve(), inputs / "paper" / local.name)
-        return f"/inputs/paper/{local.name}"
-    if not paper.startswith(("http://", "https://")):
+    if not Path(paper).expanduser().is_file() and not paper.startswith(("http://", "https://")):
         return paper
-    url = re.sub(r"arxiv\.org/abs/([^v?#]+)(v\d+)?", r"arxiv.org/pdf/\1\2", paper)
-    name = Path(url.split("?", 1)[0].rstrip("/")).name or "paper"
-    if not name.lower().endswith(".pdf"):
-        name += ".pdf"
     try:
-        request = urllib.request.Request(url, headers={"User-Agent": "inspect_audit"})
-        with urllib.request.urlopen(request, timeout=60) as response:
-            data = response.read()
+        name, data = paper_file(paper)
     except Exception as ex:  # network is optional at prep time
-        logger.warning(f"could not download the paper from {url}: {ex}")
+        logger.warning(f"could not download the paper from {paper}: {ex}")
         return paper
     (inputs / "paper" / name).write_bytes(data)
     return f"/inputs/paper/{name}"
@@ -499,6 +490,8 @@ class Audit:
     authorizer: AuditAuthorizer
     # exact pins installed beside the benchmark in every child job (its lockfile's)
     task_pins: list[str] = field(default_factory=list)
+    # the operator's paper (path or URL), passed on so investigators read it too
+    paper: str | None = None
     launch_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     def record(self) -> AuditRecord:
@@ -699,6 +692,7 @@ def run_investigation(inv: Audit) -> Tool:
                 "cost_limit": item_cost_limit,
                 "model_prices": prices,
                 "notes": note or None,
+                "paper": inv.paper,
             },
         )
         return await inv.launch(job, "investigation", note)
@@ -1303,6 +1297,7 @@ def audit(
             supplied=sorted(set(supplied)),
             authorizer=AuditAuthorizer(launch_policy),
             task_pins=task_package_pins,
+            paper=paper,
         )
         tools += [run_benchmark(inv), run_investigation(inv), jobs(inv)]
         seed["jobs"] = {

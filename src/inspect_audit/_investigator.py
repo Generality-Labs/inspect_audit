@@ -9,6 +9,7 @@ import base64
 import json
 from collections.abc import Sequence
 from copy import copy
+from logging import getLogger
 from typing import Any
 
 import anyio.to_thread
@@ -38,6 +39,7 @@ from ._verdicts import (
 )
 
 INVESTIGATION_ROOT = "/audit"
+logger = getLogger(__name__)
 ITEM_PROMPT = (
     "Investigate this benchmark item. It is described in /audit/item.json in your box; "
     "the benchmark's source is under /audit/benchmark/."
@@ -123,6 +125,7 @@ def investigator(
     redact: Sequence[str] = (),
     confidential: bool = False,
     notes: str | None = None,
+    paper: str | None = None,
     search: WebSearchProviders | None = None,
     model: Model | None = None,
 ) -> Solver:
@@ -140,7 +143,14 @@ def investigator(
         confidential=prompts.INVESTIGATION_CONFIDENTIAL.format(root=INVESTIGATION_ROOT)
         if confidential
         else "",
-        notes=prompts.INVESTIGATION_NOTES.format(notes=notes) if notes else "",
+        notes=(prompts.INVESTIGATION_NOTES.format(notes=notes) if notes else "")
+        + (
+            "\n\nThe benchmark's paper is in /audit/paper/: read what it says the "
+            "benchmark measures and how its grading is meant to work before calling "
+            "anything a defect."
+            if paper
+            else ""
+        ),
     )
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
@@ -153,6 +163,16 @@ def investigator(
         their_messages = list(state.messages)
         store_as(AssessmentUnits).ids = list((assessment_ids or {}).get(sample_id) or [sample_id])
         await stage_item(state, their_sample, source, redact)
+        if paper:
+            from ._paper import paper_file
+
+            # the URL is the solver's argument, not the bytes: its plan stays small and
+            # the same on every attempt (FRICTION 42); paper_file caches the download
+            try:
+                name, data = await anyio.to_thread.run_sync(paper_file, paper)
+                await sandbox(INVESTIGATOR).write_file(f"{INVESTIGATION_ROOT}/paper/{name}", data)
+            except OSError as ex:
+                logger.warning(f"could not stage the paper {paper}: {ex}")
         if index is not None:
             # this sample's recorded attempts, as ordinary .eval files the investigator
             # reads with Inspect's log API (see the reading-logs skill)

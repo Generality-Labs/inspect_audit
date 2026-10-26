@@ -735,3 +735,15 @@ def test_a_local_paper_is_read_as_a_file(tmp_path: Path) -> None:
     assert paper_file(str(tmp_path / "cl-bench.pdf")) == ("cl-bench.pdf", b"%PDF-1.7")
     with pytest.raises(OSError):
         paper_file("not a path or a url")
+
+
+def test_every_argument_a_job_may_carry_is_one_its_task_accepts() -> None:
+    """The launch contract and the task's signature drifted: `paper` was permitted and
+    passed but the registered task did not take it, so every job would have failed."""
+    import inspect as pyinspect
+
+    from inspect_audit import _registry
+    from inspect_audit.dispatch.policy import INVESTIGATION_ARGS
+
+    accepted = set(pyinspect.signature(_registry.investigation).parameters)
+    assert accepted >= INVESTIGATION_ARGS

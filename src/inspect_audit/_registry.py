@@ -43,6 +43,7 @@ def investigation(
     redact: list[str] | None = None,
     confidential: bool = False,
     notes: str | None = None,
+    paper: str | None = None,
     search: WebSearchProviders | None = None,
     investigator_image: str | None = None,
     message_limit: int | None = None,
@@ -83,6 +84,7 @@ def investigation(
         redact=redact or (),
         confidential=confidential,
         notes=notes,
+        paper=paper,
         search=search,
         # the published image unless told otherwise; "build" builds it here, from source
         investigator_image=None

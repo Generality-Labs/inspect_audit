@@ -188,6 +188,26 @@ def argument_problems(
     return problems
 
 
+# the arguments an auditor-launched investigation may carry; every one must be a
+# parameter of the registered `investigation` task (a test holds them together)
+INVESTIGATION_ARGS = frozenset(
+    {
+        "task",
+        "task_args",
+        "samples",
+        "checks",
+        "source",
+        "logs",
+        "judge",
+        "investigator_image",
+        "cost_limit",
+        "model_prices",
+        "notes",
+        "paper",
+    }
+)
+
+
 @dataclass(frozen=True)
 class AuditAuthorizer:
     """Approve a complete job before the backend can submit it."""
@@ -228,21 +248,7 @@ class AuditAuthorizer:
             raise ToolError("epochs must be positive")
         args = job.task_args
         if kind == "investigation":
-            permitted = {
-                "task",
-                "task_args",
-                "samples",
-                "checks",
-                "source",
-                "logs",
-                "judge",
-                "investigator_image",
-                "cost_limit",
-                "model_prices",
-                "notes",
-                "paper",
-            }
-            if set(args) - permitted or job.model_roles or job.sample_range is not None:
+            if set(args) - INVESTIGATION_ARGS or job.model_roles or job.sample_range is not None:
                 raise ToolError(
                     "investigation job contains configuration outside the launch contract"
                 )

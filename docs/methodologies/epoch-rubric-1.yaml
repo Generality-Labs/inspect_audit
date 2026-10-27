@@ -175,7 +175,8 @@ checks:
   question: Have the scorer, instructions or ground truth changed without a version bump?
   guidance: >-
     Phase 1 answers this from the source's version history, its changelog and the published
-    methodology; phase 2 re-checks it against the versions and graders the logs record.
+    methodology, and is the last row phase 1 writes: every evaluation-quality row waits for phase 2.
+    Phase 2 re-checks it against the versions and graders the logs record.
     Compare the scorer, instructions and reference answers across the logs' recorded versions and grading
     models against what the leaderboard presents as one series. Flag only when results from different
     versions are shown to be incomparable, with a measured score difference attributable to the change.
@@ -307,6 +308,7 @@ checks:
   - logs
   - source
 - id: contamination
+  needs_logs: true
   section: 3. Evaluation quality
   name: Contamination
   question: Is there evidence/risk of contamination?
@@ -330,6 +332,7 @@ checks:
   form: >-
     As of {as_of}: {tasks_public_pct}% of tasks public; {solutions_public_pct}% of solutions public
 - id: human_completability
+  needs_logs: true
   section: 3. Evaluation quality
   name: Human completability
   question: Has human completability been assessed?
@@ -352,6 +355,7 @@ checks:
     - Not established
     - Not reviewed
 - id: score_range
+  needs_logs: true
   section: 3. Evaluation quality
   name: Score range
   question: Score range (if possible to estimate)
@@ -392,10 +396,12 @@ checks:
   - runs_per_model
   form: '{runs_per_model} runs/model'
 - id: construct_validity
+  needs_logs: true
   section: 3. Evaluation quality
   name: Construct validity
   question: Construct validity
   guidance: >-
+    Assessed last, after every other row, with everything the review learned in hand.
     Say what the score measures and how far that matches the capability the benchmark claims. Independent
     checks of the reference answers belong here, as does any evidence that the task can be solved without
     the claimed capability.

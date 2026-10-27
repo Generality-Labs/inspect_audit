@@ -21,8 +21,9 @@ title: "{benchmark} Review"
 notices:
   no_logs: >-
     Phase 1 of 2: the tasks and their scoring were audited without evaluation logs.
-    Elicitation, bias in the evaluation setup and the effect of the recorded defects on
-    published results await a second phase with logs, so the verdict cannot be Verified.
+    Elicitation, bias in the evaluation setup, the evaluation-quality section and the effect
+    of the recorded defects on published results await a second phase with logs, so the
+    verdict cannot be Verified.
 footnotes:
   title: Footnotes
   max_words: 60

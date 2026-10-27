@@ -38,7 +38,7 @@ the `logs` tool and `hawk_submit` refuse them until `close_phase1` has frozen th
 | 0 Orient | source, docs, overview | the benchmark's facts; the population and its strata; the sample design, yours or the operator's | `profile.json`, `sampling.json` |
 | 1 Reviewability | source | can tasks, scoring logic and settings be inspected? | the reviewability row |
 | 2 Items | the sample | question-labels and the substantive item checks, two items first, then the rest, then at most one repair batch for what the batch left open; no logs attached to any of them; the defect rate decides the scoring row | `coverage.json`, the scoring row |
-| 3 Consistency | source history, changelog, published methodology | did the scorer, instructions or references change without a version bump? | the consistency row; the quality rows the documentation answers |
+| 3 Consistency | source history, changelog, published methodology | did the scorer, instructions or references change without a version bump? | the consistency row |
 | 4 Close | the labels and the source rows | with logs on hand, `close_phase1` and go on to stage 5, no prose written; without logs, the prose blocks the derived verdict calls for, then publish: Flawed on a Flag, otherwise Incomplete with a notice that phase 2 awaits logs | `report/phase1/`, or the page |
 
 Phase 2, the effect analysis, follows in the same run once phase 1 closes, or in a resume
@@ -49,7 +49,7 @@ of a published phase-1 audit with logs attached. It never relabels phase 1's ite
 | 5 Effect and grading | the logs | two jobs together: gold-answer over every recorded defect, for what each did to each recorded result; grading-labels over the whole sample, one agent per item, for the recorded grades that are wrong, then at most one repair batch; `export_coverage` over the phase-1 and grading batches together. After a phase-1 Flag, the effect job alone, then stage 9 | `coverage.json` (union), the scoring row, Affected logs, footnotes |
 | 6 Revisit | log headers | reviewability may rise; consistency re-checked against recorded versions and graders | those rows |
 | 7 Benchmark-wide | headers, transcripts | elicitation and bias in rubric order; the first Flag ends the rubric, the rows after it are Not Reviewed | the rows up to and including the first Flag, with its `impact` |
-| 8 Quality | no Flag in stage 7 | the log-dependent quality rows | assessments complete |
+| 8 Quality | no Flag in stage 7 | the quality rows in rubric order, construct validity last with every other row in hand | assessments complete |
 | 9 Publish | the derived verdict | the prose blocks it calls for; republish | the page |
 
 Two consequences for the writing. Observations that would have gone into rows after a

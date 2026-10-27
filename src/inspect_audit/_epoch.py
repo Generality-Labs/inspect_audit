@@ -71,8 +71,8 @@ def close_phase1(report: Path) -> dict[str, Any]:
         )
     method, _ = workspace_methodology(report)
     _, assessments, _, _ = load_records(report)
-    # the gate and the minimum-standard rows the source answers; the quality rows phase
-    # 1 can answer are not a condition of closing it
+    # the gate and the minimum-standard rows the source answers; every quality row
+    # waits for phase 2
     blind = [
         c.id
         for c in (method.gate, *method.minimum)

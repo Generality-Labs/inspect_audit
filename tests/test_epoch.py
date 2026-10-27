@@ -940,6 +940,7 @@ def test_without_logs_the_benchmark_wide_checks_stay_not_reviewed(tmp_path: Path
     rows = filled_assessments()
     for check in ("elicitation_adequacy", "evaluation_bias"):
         row(rows, check).update(level="Not Reviewed", notes="", evidence=[], fields={})
+    # every quality row waits for phase 2, the source-answered ones included
     row(rows, "contamination").update(
         level="Assessed",
         fields={"as_of": "2026-10-19", "tasks_public_pct": 100, "solutions_public_pct": 0},
@@ -947,18 +948,9 @@ def test_without_logs_the_benchmark_wide_checks_stay_not_reviewed(tmp_path: Path
         evidence=evidence(),
     )
     (root / "work/report/assessments.json").write_text(json.dumps(rows))
-    (root / "work/report/prose.json").write_text(
-        json.dumps(
-            dict(
-                flawed_prose(),
-                limitations=["No logs were supplied."],
-                recommendations=["Publish the logs."],
-            )
-        )
-    )
-    derived = prepare_publication(root, [])
-    assert derived["verdict"] == "Incomplete"
-    # a quality row that needs logs is refused in phase 1 even though the verdict is open
+    with pytest.raises(ValueError, match=r"phase 1.*contamination"):
+        prepare_publication(root, [])
+    row(rows, "contamination").update(level="Not Reviewed", notes="", evidence=[], fields={})
     row(rows, "statistical_adequacy").update(
         level="Known", fields={"runs_per_model": 1}, notes="One run.", evidence=evidence()
     )

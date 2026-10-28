@@ -1,6 +1,6 @@
 name: ia-api-free-gpqa-20261021
 packages:
-- inspect-ai==0.3.266
+- inspect-ai==0.3.283
 - inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
 - inspect-evals @ git+https://github.com/Generality-Labs/inspect_evals@32b79a244f17ecf54fa1186d30f33dc10143c10f
 tasks:
@@ -31,7 +31,7 @@ tasks:
         selection: seeded random selection from the supplied recorded population
         child_secrets:
         - HF_TOKEN
-        auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+        investigator_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
       limit: 1
 models:
 - package: openai

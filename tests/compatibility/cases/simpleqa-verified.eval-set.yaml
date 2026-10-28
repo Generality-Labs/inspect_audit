@@ -1,6 +1,6 @@
 name: ia-api-free-simpleqa-verified-20261022
 packages:
-- inspect-ai==0.3.266
+- inspect-ai==0.3.283
 - inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
 - inspect-evals @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
 tasks:
@@ -18,7 +18,7 @@ tasks:
         logs: []
         judges: {}
         package: inspect-evals @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
-        auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+        investigator_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
         selection: First sample of the explicitly declared Verified task, no historical
           logs.
         mock_judges:

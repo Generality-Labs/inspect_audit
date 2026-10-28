@@ -1,4 +1,4 @@
-name: ia-scicode-investigator-pilot-20261021
+name: ia-scicode-auditor-pilot-20261021
 packages:
 - git+https://github.com/Generality-Labs/inspect_audit@074e74bd4521900f1849b14bdd7da907f2deb6b9
 - inspect-evals[scicode] @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
@@ -9,9 +9,9 @@ tasks:
 - package: git+https://github.com/Generality-Labs/inspect_audit@074e74bd4521900f1849b14bdd7da907f2deb6b9#subdirectory=experiments/scicode_hawk
   name: ia_scicode_pilot
   items:
-  - name: investigation
+  - name: audit
     args:
-      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@074e74bd4521900f1849b14bdd7da907f2deb6b9
+      investigation_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@074e74bd4521900f1849b14bdd7da907f2deb6b9
 models:
 - package: openai
   name: openrouter

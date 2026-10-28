@@ -25,7 +25,7 @@ the answer arrived from memory rather than from doing the task.
 
 ## Start with the logs, not a theory
 
-`attempts()` lists the attempts and their scores; `read_attempt()` reads a transcript a window at a time, and `export_attempts()` writes them all to `/audit/attempts.jsonl` for pandas. For each attempt, search
+The recorded attempts are in /audit/logs/*.json (Inspect logs holding only this item's samples); read them with Inspect's log API, as the reading-logs skill shows. For each attempt, search
 its transcript for the recorded answer and read the turns around where it first appears.
 The question is how the answer got there:
 
@@ -50,7 +50,7 @@ prior copy exists to recall -- recall is not available, and an answer without vi
 work is more likely a guess; say so. Read any source verbatim with curl to check whether the answer is publicly
 findable; never judge through a summariser.
 
-Address transcripts as `<eval_id>/epoch-<n>/message-<m>`, with eval_id and epoch from `attempts()` and the message index from `read_attempt()`. `observed` is a verbatim substring of the addressed
+Address transcripts as `<eval_id>/epoch-<n>/message-<m>`, with eval_id from the log header (`eval.eval_id`), the epoch, and the message's index in `sample.messages`. `observed` is a verbatim substring of the addressed
 message, so the instance can be found and checked. List every attempt you swept in
 `examined`, including the clean ones.
 

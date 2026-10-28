@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "inspect_audit"
 dynamic = ["version"]
-description = "Benchmark validity auditing for Inspect AI evals"
+description = "Benchmark validity investigating for Inspect AI evals"
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "James Mann", email = "james.mann@generality.org" }]
@@ -13,11 +13,11 @@ authors = [{ name = "James Mann", email = "james.mann@generality.org" }]
 # .python-version pins 3.13 so local and CI environments get Hawk.
 requires-python = ">=3.11"
 dependencies = [
-    "inspect-ai>=0.3.266",
+    "inspect-ai==0.3.283",
     "pillow>=10.0",
     "openai>=1.0",
     # k8s_sandbox passes newline-terminated Helm output to Version.parse;
-    # semver 3.1 rejects that output before any audit sample can start.
+    # semver 3.1 rejects that output before any investigation sample can start.
     "semver>=3.0,<3.1",
 ]
 
@@ -26,7 +26,7 @@ inspect_audit = "inspect_audit._registry"
 
 [project.scripts]
 inspect-audit-regrade = "inspect_audit._regrade:main"
-inspect-audit-launch = "inspect_audit.launcher.__main__:main"
+inspect-audit-launch = "inspect_audit.dispatch.cli:main"
 
 [project.optional-dependencies]
 remote = [
@@ -39,6 +39,7 @@ runner = [
     "hawk[client]>=3.4,<4; python_version >= '3.13'",
     "aiofiles; python_version >= '3.13'",
 ]
+publishing = ["playwright>=1.49"]
 k8s = [
     "inspect-k8s-sandbox>=0.13",
 ]
@@ -46,11 +47,12 @@ k8s = [
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
+    "playwright>=1.49",
     "pytest-cov>=7.0.0",
     "pytest-xdist",
-    "basedpyright>=1.39",
-    "pre-commit>=4.0.0",
-    "types-PyYAML",
+    "basedpyright>=1.40.2",
+    "pre-commit>=4.7.0",
+    "types-PyYAML>=6.0.12.20260906",
     "hawk[cli]>=3.4,<4; python_version >= '3.13'",
     "inspect-k8s-sandbox>=0.13",
     "aiofiles; python_version >= '3.13'",
@@ -133,9 +135,9 @@ exclude = ["src/inspect_audit/skills", "**/__pycache__"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests", "tests/compatibility/src"]
-markers = ["docker: needs a running Docker daemon"]
-# The docker suite is deselected by default; `pytest -m docker` runs it alone.
-addopts = "-rA --durations=10 --color=yes --cov=src --cov-report=term-missing -m 'not docker'"
+markers = ["latex: needs TeX and the private pinned audit template", "docker: needs a running Docker daemon", "publishing: needs the Playwright Chromium browser and downloads pinned GL components"]
+# Heavy Docker, LaTeX and browser tests are opt-in; CI runs their explicit markers.
+addopts = "-rA --durations=10 --color=yes --cov=src --cov-report=term-missing -m 'not docker and not latex and not publishing'"
 
 [tool.uv.sources]
 inspect-evals = { git = "https://github.com/Generality-Labs/inspect_evals", rev = "67a9ea5333d3fc672ebce3ca9724bcfdad87f541" }

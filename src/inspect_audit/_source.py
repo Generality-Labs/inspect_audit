@@ -1,12 +1,7 @@
-"""The benchmark's code for the auditor to read: the task's own package, followed by import.
+"""Copy the task package's imports and data files within size limits.
 
-Starting from the task's file, every import that resolves inside the same top-level
-package is followed, file by file -- including imports inside functions, which a
-scorer often makes lazily. Modules Python actually loaded from the package are added
-as a backstop for imports by computed name. Each copied module's folder brings its
-non-Python files (templates, data) and any data-only subfolders, under a size cap.
-Other packages are not copied: their exact install specs are recorded so the auditor,
-which has internet, can install and read precisely the versions that ran.
+Include loaded modules to cover dynamic imports. Record exact install specs
+for dependencies outside the copied package.
 """
 
 import ast
@@ -24,7 +19,7 @@ MAX_TOTAL_BYTES = 100 * 1024 * 1024
 
 @dataclass
 class SourceCopy:
-    """What the auditor gets of the benchmark's code, and what it does not."""
+    """What the investigator gets of the benchmark's code, and what it does not."""
 
     root: Path
     """Directory the copied paths are relative to (the package's parent)."""

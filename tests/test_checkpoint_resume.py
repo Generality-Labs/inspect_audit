@@ -1,6 +1,6 @@
 """Inspect's checkpointing carries a crashed agent's box files, store and messages over.
 
-The investigator's own workspace sync and resume exist to survive a crash. This
+The auditor's own workspace sync and resume exist to survive a crash. This
 pins the behaviour of Inspect's checkpointing that would replace them: a react
 agent writes a file in its box and a value in the store, then a tool crashes the
 sample; `eval_set`'s retry -- what Hawk's runner does -- must come back with the file, the value and the transcript,

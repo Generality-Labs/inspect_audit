@@ -1,0 +1,534 @@
+"""The handoff: real records, phase-specific tools, frozen artifacts and fresh publishing."""
+
+import asyncio
+from pathlib import Path
+
+import pytest
+from inspect_ai import eval, task_with
+from inspect_ai.model import ChatMessageTool, ModelOutput, get_model
+from inspect_ai.tool import ToolDef, ToolError
+from inspect_ai.util import Store, store_as
+from inspect_ai.util._store import init_subtask_store
+from test_helpers.audit import make_audit
+
+from inspect_audit._findings import (
+    AuditorFindings,
+    Findings,
+    FindingsState,
+    investigator_results,
+    read_bundle,
+    require_audit,
+    validate_draft,
+)
+from inspect_audit._publishing import PhaseTools, Publisher, publish
+from inspect_audit._register import Register, Take
+from inspect_audit._verdicts import Evidence
+from inspect_audit.publishers.gl import validate_rows
+
+
+def test_draft_keeps_investigators_and_requires_explained_findings() -> None:
+    register = Register(
+        subject={"task": "bench"},
+        checks=["gold-answer"],
+        samples={
+            "a": {
+                "gold-answer": [
+                    Take(
+                        by="investigator",
+                        label="UNVERIFIABLE",
+                        explanation="No reference",
+                        evidence=[Evidence(observed="reference missing", source="task.py")],
+                    )
+                ]
+            }
+        },
+    )
+    draft = Findings(
+        subject=register.subject,
+        investigators=investigator_results(register),
+        auditor=AuditorFindings(summary="Reference missing"),
+    )
+    assert validate_draft(draft.model_dump(mode="json"), register) == draft
+    data = draft.model_dump(mode="json")
+    data["investigators"]["samples"]["a"]["gold-answer"] = []
+    with pytest.raises(ValueError, match="collected results"):
+        validate_draft(data, register)
+    data = draft.model_dump(mode="json")
+    data["auditor"]["findings"] = [
+        {
+            "issue": "missing reference",
+            "explanation": "read source",
+            "sample_ids": ["absent"],
+            "evidence": [{"observed": "empty", "source": "task.py"}],
+        }
+    ]
+    with pytest.raises(ValueError, match="outside"):
+        validate_draft(data, register)
+
+
+def test_phase_tools_are_not_advertised_before_submission() -> None:
+    from inspect_ai.tool import bash
+
+    init_subtask_store(Store())
+
+    async def build(root: Path, bundle: Path) -> Path:
+        return root
+
+    package = Publisher(skills=[], build=build)
+    tools = PhaseTools(Path("."), [], [bash()], package)
+    assert [ToolDef(t).name for t in asyncio.run(tools.tools())] == ["bash"]
+    store_as(FindingsState).phase = "publishing"
+    assert [ToolDef(t).name for t in asyncio.run(tools.tools())] == ["skill", "publish_document"]
+    with pytest.raises(ToolError, match="final"):
+        require_audit()
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [{"label": "a", "value": float("nan")}],
+        [{"label": "a", "value": True}],
+        [{"label": "a"}],
+        [],
+    ],
+)
+def test_figure_values_are_actual_finite_numbers(rows) -> None:
+    with pytest.raises(ValueError):
+        validate_rows("bars", rows)
+
+
+@pytest.mark.docker
+@pytest.mark.publishing
+def test_agent_submits_then_publishes_and_a_fresh_agent_reuses_the_bundle(tmp_path: Path) -> None:
+    from test_audit import git_repo
+
+    from inspect_audit._audit import audit
+
+    repo = git_repo(tmp_path / "repo")
+    target = audit(str(repo), output_dir=str(tmp_path / "runs"), publisher="gl")
+    root = Path(target.metadata["audit_dir"])
+    assert not list((root / "work/report").iterdir())
+    compose = tmp_path / "box.yaml"
+    compose.write_text(
+        "services:\n  default:\n    image: python:3.13-slim\n    command: sleep infinity\n    working_dir: /workspace\n"
+    )
+    script = """python - <<'PYCODE'
+import json
+from pathlib import Path
+p=Path('/workspace/findings.json')
+d=json.loads(p.read_text())
+d['auditor']['summary']='The scripted audit completed; these are synthetic test results.'
+d['auditor']['artifacts']=['/workspace/analysis/counts.json','/workspace/analysis/stacked.json','/workspace/analysis/histogram.json']
+Path('/workspace/analysis').mkdir(exist_ok=True)
+Path('/workspace/analysis/counts.json').write_text('[{"label":"Reviewed","value":1,"group":"Samples"}]')
+Path('/workspace/analysis/stacked.json').write_text(json.dumps([{'label':'Synthetic','segments':[{'name':'Reviewed','value':1,'tone':'good'}]}]))
+Path('/workspace/analysis/histogram.json').write_text(json.dumps([{'value':i%5,'series':'Synthetic'} for i in range(20)]))
+p.write_text(json.dumps(d))
+PYCODE"""
+    report_script = """python - <<'PYCODE'
+from pathlib import Path
+p=Path('/inputs/findings/findings.json')
+assert p.exists()
+Path('/workspace/report/report.md').write_text('# Synthetic investigation\\n\\nThe submitted result is synthetic.\\n\\n{{figure:coverage}}\\n\\n{{figure:composition}}\\n\\n{{figure:distribution}}\\n')
+PYCODE"""
+    model = get_model(
+        "mockllm/model",
+        custom_outputs=[
+            # an audit skill installed first must not hide the publishing skill
+            ModelOutput.for_tool_call("mockllm/model", "skill", {"command": "auditing"}),
+            ModelOutput.for_tool_call("mockllm/model", "bash", {"command": script}),
+            ModelOutput.for_tool_call("mockllm/model", "submit_findings", {}),
+            ModelOutput.for_tool_call("mockllm/model", "skill", {"command": "publishing"}),
+            ModelOutput.for_tool_call("mockllm/model", "bash", {"command": report_script}),
+            ModelOutput.for_tool_call(
+                "mockllm/model",
+                "figure",
+                {
+                    "name": "coverage",
+                    "component": "bars",
+                    "data_path": "/workspace/analysis/counts.json",
+                    "caption": "One synthetic reviewed sample; denominator one.",
+                    "x_label": "Samples (count)",
+                    "sources": ["evidence/workspace/analysis/counts.json"],
+                },
+            ),
+            ModelOutput.for_tool_call(
+                "mockllm/model",
+                "figure",
+                {
+                    "name": "composition",
+                    "component": "stacked-bars",
+                    "data_path": "/workspace/analysis/stacked.json",
+                    "caption": "One synthetic sample by status.",
+                    "x_label": "Samples (count)",
+                    "sources": ["evidence/workspace/analysis/stacked.json"],
+                },
+            ),
+            ModelOutput.for_tool_call(
+                "mockllm/model",
+                "figure",
+                {
+                    "name": "distribution",
+                    "component": "histogram",
+                    "data_path": "/workspace/analysis/histogram.json",
+                    "caption": "Distribution of 20 synthetic observations.",
+                    "x_label": "Synthetic value (units)",
+                    "sources": ["evidence/workspace/analysis/histogram.json"],
+                },
+            ),
+            ModelOutput.for_tool_call("mockllm/model", "preview_report", {}),
+            ModelOutput.for_tool_call("mockllm/model", "publish_document", {}),
+        ],
+    )
+    [log] = eval(
+        task_with(target, sandbox=("docker", str(compose)), message_limit=30),
+        model=model,
+        display="none",
+        log_dir=str(tmp_path / "logs"),
+    )
+    assert log.status == "success", log.error
+    assert log.samples
+    errors = [
+        m.error for m in log.samples[0].messages if isinstance(m, ChatMessageTool) and m.error
+    ]
+    assert not errors
+    [bundle] = (root / "submitted").iterdir()
+    findings, _manifest = read_bundle(bundle)
+    assert findings.auditor.summary.startswith("The scripted")
+    [publication] = (root / "published").iterdir()
+    assert (publication / "report.pdf").read_bytes().startswith(b"%PDF")
+    assert "<svg" in (publication / "report.html").read_text()
+    assert "<script" not in (publication / "report.html").read_text()
+    assert {p.stem for p in publication.glob("*.svg")} == {
+        "coverage",
+        "composition",
+        "distribution",
+    }
+    before = (bundle / "findings.json").read_bytes()
+    fresh = publish(
+        str(bundle / "findings.json"), output_dir=str(tmp_path / "fresh"), publisher="gl"
+    )
+    fresh_root = Path(fresh.metadata["audit_dir"])
+    model = get_model(
+        "mockllm/model",
+        custom_outputs=[
+            ModelOutput.for_tool_call("mockllm/model", "skill", {"command": "publishing"}),
+            ModelOutput.for_tool_call(
+                "mockllm/model",
+                "bash",
+                {
+                    "command": "mkdir -p /workspace/report && printf '# Second presentation\\n\\nSame synthetic findings.\\n' > /workspace/report/report.md"
+                },
+            ),
+            ModelOutput.for_tool_call("mockllm/model", "publish_document", {}),
+        ],
+    )
+    [replayed] = eval(
+        task_with(fresh, sandbox=("docker", str(compose)), message_limit=20),
+        model=model,
+        display="none",
+        log_dir=str(tmp_path / "fresh-logs"),
+    )
+    assert replayed.status == "success", replayed.error
+    assert list((fresh_root / "published").glob("*/report.pdf"))
+    assert (bundle / "findings.json").read_bytes() == before
+    # The portable bundle is independently integrity checked.
+    (bundle / "evidence/workspace/analysis/counts.json").write_text("tampered")
+    with pytest.raises(ValueError, match="checksum"):
+        read_bundle(bundle)
+
+
+def test_submitted_phase_blocks_direct_job_launches(tmp_path: Path) -> None:
+    from inspect_audit._audit import ModelMenu
+    from inspect_audit.dispatch import Job, LocalRuns
+
+    init_subtask_store(Store())
+    runs = LocalRuns(tmp_path / "children")
+    inv = make_audit(
+        root=tmp_path,
+        runs=runs,
+        task="bench/task",
+        task_package="bench",
+        investigation_package="investigation",
+        investigator_image="image",
+        menu=ModelMenu(investigators=[], subjects=["mockllm/model"], judges=[]),
+        supplied=[],
+    )
+    store_as(FindingsState).phase = "publishing"
+    try:
+        with pytest.raises(ToolError, match="final"):
+            asyncio.run(
+                inv.launch(
+                    Job(label="late", task="bench/task", package="bench", models=["mockllm/model"]),
+                    "benchmark",
+                    "late experiment",
+                )
+            )
+        assert not list((tmp_path / "children").iterdir())
+    finally:
+        init_subtask_store(Store())
+
+
+def test_bundle_rejects_unlisted_files_and_directory_symlinks(tmp_path: Path) -> None:
+    from inspect_audit._findings import encoded, sha256
+
+    payload = encoded(Findings().model_dump(mode="json"))
+    (tmp_path / "findings.json").write_bytes(payload)
+    (tmp_path / "manifest.json").write_bytes(
+        encoded(
+            {
+                "files": {"findings.json": {"sha256": sha256(payload), "bytes": len(payload)}},
+                "artifacts": {},
+            }
+        )
+    )
+    read_bundle(tmp_path)
+    (tmp_path / "unexpected.txt").write_text("unlisted")
+    with pytest.raises(ValueError, match="exactly"):
+        read_bundle(tmp_path)
+    (tmp_path / "unexpected.txt").unlink()
+    (tmp_path / "escape").symlink_to(tmp_path.parent, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlinks"):
+        read_bundle(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("publisher", "skill_name"), [("latex", "latex-publishing"), ("gl", "publishing")]
+)
+def test_publishers_are_actual_inspect_skills(publisher: str, skill_name: str) -> None:
+    from inspect_ai.tool import read_skills
+
+    from inspect_audit._audit import AUDIT_SKILLS
+    from inspect_audit._publishing import load_publisher
+
+    skills = read_skills(load_publisher(publisher).skills)
+    assert [skill.name for skill in skills] == [skill_name]
+    assert "writing" not in AUDIT_SKILLS
+    assert "eval-report-workflow" not in AUDIT_SKILLS
+
+
+@pytest.mark.docker
+def test_submitted_bundle_restores_on_a_fresh_host_and_rejects_changed_evidence(
+    tmp_path: Path,
+) -> None:
+    from inspect_ai import Task, eval
+    from inspect_ai.dataset import Sample
+    from inspect_ai.solver import solver
+    from inspect_ai.util import sandbox
+
+    from inspect_audit._findings import freeze, restore_bundle
+
+    root = tmp_path / "first-host"
+    root.mkdir()
+    compose = tmp_path / "box.yaml"
+    compose.write_text(
+        "services:\n  default:\n    image: python:3.13-slim\n    command: sleep infinity\n    working_dir: /workspace\n"
+    )
+
+    @solver
+    def restore():
+        async def solve(state, generate):
+            await sandbox().exec(["mkdir", "-p", "/inputs"])
+            await sandbox().write_file("/workspace/table.json", "[1, 2, 3]")
+            await freeze(
+                root,
+                Findings(
+                    auditor=AuditorFindings(
+                        summary="Synthetic", artifacts=["/workspace/table.json"]
+                    )
+                ),
+            )
+            saved = state.store_as(FindingsState)
+            saved.destination = None
+            reconstructed = await restore_bundle(tmp_path / "fresh-host")
+            findings, manifest = read_bundle(reconstructed)
+            assert findings.auditor.summary == "Synthetic"
+            assert (
+                reconstructed / manifest["artifacts"]["/workspace/table.json"]
+            ).read_text() == "[1, 2, 3]"
+            await sandbox().write_file("/inputs/findings/evidence/workspace/table.json", "changed")
+            with pytest.raises(ToolError, match="evidence changed"):
+                await restore_bundle(tmp_path / "another-host")
+            return state
+
+        return solve
+
+    [log] = eval(
+        Task(dataset=[Sample(input="restore")], solver=restore(), sandbox=("docker", str(compose))),
+        model="mockllm/model",
+        display="none",
+        log_dir=str(tmp_path / "logs"),
+    )
+    assert log.status == "success", log.error
+
+
+@pytest.mark.parametrize(
+    "change", [{"explanation": " "}, {"evidence": [{"observed": "", "source": "source"}]}]
+)
+def test_ratings_require_explanations_and_primary_observations(change) -> None:
+    register = Register()
+    rating = {
+        "label": "Minor",
+        "explanation": "Observed",
+        "evidence": [{"observed": "observation", "source": "source"}],
+        **change,
+    }
+    data = Findings(auditor=AuditorFindings(summary="Summary")).model_dump(mode="json")
+    data["auditor"]["ratings"] = {"grading": rating}
+    with pytest.raises(ValueError):
+        validate_draft(data, register)
+
+
+@pytest.mark.parametrize("grade", ["CORRECT", "INCORRECT", "UNVERIFIABLE", "NO_VERDICT", None])
+@pytest.mark.parametrize("review_grade", [None, "CORRECT", "UNVERIFIABLE"])
+def test_progress_and_publication_agree_on_outstanding_work(
+    tmp_path: Path, grade: str | None, review_grade: str | None
+) -> None:
+    """Exercise the actual publication tool, including missing and overridden worker results."""
+    from inspect_audit._findings import Review, encoded, sha256
+    from inspect_audit._publishing import publish_document
+    from inspect_audit._register import apply_reviews, select
+    from inspect_audit._report import AuditState
+    from inspect_audit._verdicts import investigation_items
+
+    init_subtask_store(Store())
+    takes = (
+        [Take(by="investigator", label=grade, explanation="Observed in the worker log")]
+        if grade is not None
+        else []
+    )
+    register = Register(checks=["gold-answer"], samples={"a": {"gold-answer": takes}})
+    draft = Findings(investigators=investigator_results(register))
+    if review_grade is not None:
+        draft.auditor.reviews = [
+            Review(
+                sample_id="a",
+                check="gold-answer",
+                label=review_grade,
+                explanation="Checked the reference",
+                evidence=[Evidence(observed="reference", source="source.py")],
+            )
+        ]
+    checks = {s.name: s for s in investigation_items(register.checks)}
+    original = register.model_dump()
+    reviewed = register.model_copy(deep=True)
+    apply_reviews(reviewed, draft.auditor.reviews, checks)
+    top = review_grade or grade
+    expected_incomplete = top in (None, "UNVERIFIABLE", "NO_VERDICT")
+    rows = select(reviewed, "missing", checks, None) or select(reviewed, "unresolved", checks, None)
+    assert bool(rows) == expected_incomplete
+    assert register.model_dump() == original
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    content = encoded(draft.model_dump(mode="json"))
+    manifest = {"files": {"findings.json": {"sha256": sha256(content), "bytes": len(content)}}}
+    (bundle / "findings.json").write_bytes(content)
+    (bundle / "manifest.json").write_bytes(encoded(manifest))
+    saved = store_as(FindingsState)
+    saved.phase = "publishing"
+    saved.findings = draft.model_dump(mode="json")
+    saved.manifest = manifest
+    saved.destination = str(bundle)
+
+    async def build(root: Path, frozen: Path) -> Path:
+        assert frozen == bundle
+        output = root / "output"
+        output.mkdir()
+        (output / "report.md").write_text("Report from frozen findings")
+        return output
+
+    asyncio.run(publish_document(tmp_path, Publisher(skills=[], build=build))())
+    assert store_as(AuditState).outcome == (
+        "published_incomplete" if expected_incomplete else "published_complete"
+    )
+    assert (bundle / "findings.json").read_bytes() == content
+
+
+def test_whitespace_only_review_explanation_cannot_be_submitted() -> None:
+    register = Register(checks=["gold-answer"], samples={"a": {"gold-answer": []}})
+    draft = Findings(investigators=investigator_results(register))
+    data = draft.model_dump(mode="json")
+    data["auditor"]["summary"] = "Reference checked"
+    data["auditor"]["reviews"] = [
+        {
+            "sample_id": "a",
+            "check": "gold-answer",
+            "label": "CORRECT",
+            "explanation": " ",
+            "evidence": [{"observed": "reference", "source": "source.py"}],
+        }
+    ]
+    with pytest.raises(ValueError, match="Reviews need an explanation"):
+        validate_draft(data, register)
+
+
+@pytest.mark.parametrize("segment", [None, 1, "segment", []])
+def test_stacked_bar_segments_must_be_objects(segment) -> None:
+    with pytest.raises(ValueError, match="Segments require names"):
+        validate_rows("stacked-bars", [{"label": "group", "segments": [segment]}])
+
+
+def test_duplicate_finding_samples_are_refused() -> None:
+    register = Register(checks=["gold-answer"], samples={"a": {"gold-answer": []}})
+    draft = Findings(
+        investigators=investigator_results(register), auditor=AuditorFindings(summary="Summary")
+    )
+    data = draft.model_dump(mode="json")
+    data["auditor"]["findings"] = [
+        {
+            "issue": "Reference",
+            "explanation": "Checked",
+            "sample_ids": ["a", "a"],
+            "evidence": [{"observed": "Mismatch", "source": "task.py"}],
+        }
+    ]
+    with pytest.raises(ValueError, match="repeat sample IDs"):
+        validate_draft(data, register)
+
+
+def test_failed_publication_does_not_record_success(tmp_path: Path, monkeypatch) -> None:
+    from inspect_audit import _publishing
+    from inspect_audit._report import AuditState
+
+    init_subtask_store(Store())
+    saved = store_as(FindingsState)
+    saved.phase = "publishing"
+    saved.findings = Findings().model_dump(mode="json")
+    saved.manifest = {"files": {"findings.json": {"sha256": "unused"}}}
+
+    async def restored(root):
+        return tmp_path
+
+    async def build(root, bundle):
+        raise ValueError("cannot render")
+
+    monkeypatch.setattr(_publishing, "restore_bundle", restored)
+    with pytest.raises(ToolError, match="cannot render"):
+        asyncio.run(_publishing.publish_document(tmp_path, Publisher(skills=[], build=build))())
+    assert store_as(AuditState).published is None
+    assert store_as(AuditState).outcome is None
+
+
+def test_invalid_publication_records_do_not_mark_a_report_published(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from inspect_audit import _publishing
+    from inspect_audit._report import AuditState
+
+    init_subtask_store(Store())
+    saved = store_as(FindingsState)
+    saved.phase = "publishing"
+    saved.findings = Findings(investigators={}).model_dump(mode="json")
+
+    async def restored(root):
+        return tmp_path
+
+    async def build(root, bundle):
+        pytest.fail("invalid findings must fail before building")
+
+    monkeypatch.setattr(_publishing, "restore_bundle", restored)
+    with pytest.raises(KeyError):
+        asyncio.run(_publishing.publish_document(tmp_path, Publisher(skills=[], build=build))())
+    assert store_as(AuditState).published is None
+    assert store_as(AuditState).outcome is None

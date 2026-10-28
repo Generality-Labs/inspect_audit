@@ -1,4 +1,4 @@
-"""The audit's compose is merged in Python; Docker's own merge is the reference.
+"""The investigation's compose is merged in Python; Docker's own merge is the reference.
 
 The runner on Hawk has no docker, so `docker compose config` cannot flatten the
 benchmark's compose there. Ours must resolve the same host paths Docker does, and
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from inspect_audit._compose import AUDITOR, UnsupportedBenchmarkError, audit_compose
+from inspect_audit._compose import INVESTIGATOR, UnsupportedBenchmarkError, investigation_compose
 
 THEIRS = """
 services:
@@ -55,7 +55,9 @@ def test_their_paths_resolve_against_their_folder_and_the_rest_is_untouched(
     tmp_path: Path,
 ) -> None:
     compose = _benchmark(tmp_path)
-    spec = audit_compose(compose, stage=tmp_path / "stage", auditor_image="auditor:latest")
+    spec = investigation_compose(
+        compose, stage=tmp_path / "stage", investigator_image="investigator:latest"
+    )
     merged = yaml.safe_load(Path(spec.config).read_text())  # type: ignore[arg-type]
     root = compose.parent.resolve()
     default = merged["services"]["default"]
@@ -68,25 +70,27 @@ def test_their_paths_resolve_against_their_folder_and_the_rest_is_untouched(
     assert merged["services"]["helper"]["build"] == str(root / "helper")
     assert merged["configs"]["settings"]["file"] == str(root / "settings.json")
     assert merged["volumes"] == {"cache": {}}
-    assert merged["services"][AUDITOR]["network_mode"] == "bridge"
+    assert merged["services"][INVESTIGATOR]["network_mode"] == "bridge"
 
 
 def test_an_include_or_extends_is_refused_not_half_merged(tmp_path: Path) -> None:
     included = tmp_path / "included.yaml"
     included.write_text("include: [other.yaml]\nservices: {default: {image: x}}\n")
     with pytest.raises(UnsupportedBenchmarkError, match="include"):
-        audit_compose(included, stage=tmp_path / "a")
+        investigation_compose(included, stage=tmp_path / "a")
     extended = tmp_path / "extended.yaml"
     extended.write_text("services: {default: {extends: {file: base.yaml, service: b}}}\n")
     with pytest.raises(UnsupportedBenchmarkError, match="extends"):
-        audit_compose(extended, stage=tmp_path / "b")
+        investigation_compose(extended, stage=tmp_path / "b")
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="needs the docker CLI")
 def test_the_merge_resolves_paths_as_docker_does(tmp_path: Path) -> None:
     """Docker's `compose config` is the reference for every path it resolves."""
     compose = _benchmark(tmp_path)
-    spec = audit_compose(compose, stage=tmp_path / "stage", auditor_image="auditor:latest")
+    spec = investigation_compose(
+        compose, stage=tmp_path / "stage", investigator_image="investigator:latest"
+    )
     ours = yaml.safe_load(Path(spec.config).read_text())  # type: ignore[arg-type]
     docker = yaml.safe_load(
         subprocess.run(

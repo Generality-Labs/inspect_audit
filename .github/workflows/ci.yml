@@ -29,7 +29,7 @@ jobs:
   # One real-container lifecycle gate on PRs; the complete Docker suite on main.
   docker:
     name: Docker tests
-    # Full report tests build TeX images from cold; keep the PR step bounded below.
+    # Keep the PR lifecycle gate bounded; the full Docker suite runs on main.
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
@@ -43,10 +43,38 @@ jobs:
         run: |
           uv sync --locked
           uv pip install --no-deps -e tests/compatibility
+      - name: Install publishing browser
+        run: uv run python -m playwright install --with-deps chromium
       - name: PR container and child-job lifecycle gate
         timeout-minutes: 15
         if: github.event_name == 'pull_request'
-        run: uv run pytest -m docker tests/test_audit.py::test_an_audit_runs_inside_the_benchmark tests/test_lifecycle.py
+        run: uv run pytest -m docker tests/test_investigation.py::test_an_investigation_runs_inside_the_benchmark tests/test_lifecycle.py
       - name: Pytest (docker)
         if: github.event_name != 'pull_request'
         run: uv run pytest -m docker
+
+      - name: Findings handoff and GL publication
+        if: github.event_name == 'pull_request'
+        run: uv run pytest -m publishing tests/test_findings_handoff.py tests/test_render.py
+
+  latex:
+    name: LaTeX fixture
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Pinned LaTeX template fixture
+        env:
+          INSPECT_AUDIT_LATEX_IMAGE: inspect-audit:publishing
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+          docker build -f src/inspect_audit/containers/publishing.Dockerfile -t "$INSPECT_AUDIT_LATEX_IMAGE" src/inspect_audit/containers
+          uv run pytest -m latex tests/test_latex_publisher.py

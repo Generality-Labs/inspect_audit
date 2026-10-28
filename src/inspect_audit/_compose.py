@@ -1,4 +1,4 @@
-"""The audit sandbox: the benchmark's own compose, untouched, plus an `auditor` service.
+"""The investigation sandbox: the benchmark's own compose, untouched, plus an `investigator` service.
 
 Their services keep their names, so their `default` stays the default and their tools
 and scorers address the box they always did. Ours is added beside it with internet.
@@ -6,8 +6,8 @@ The two are merged here into one plain file, their relative paths made absolute 
 the file can live elsewhere: the Docker provider runs it as is, and the k8s
 converter (which refuses `include:`) accepts it, with no docker needed to merge.
 
-On Docker only the auditor reaches the internet. On Kubernetes internet is granted
-per sandbox, so their box has it during an audit too; the auditor is told so.
+On Docker only the investigator reaches the internet. On Kubernetes internet is granted
+per sandbox, so their box has it during an investigation too; the investigator is told so.
 """
 
 import os
@@ -18,13 +18,13 @@ import yaml
 from inspect_ai.dataset import Sample
 from inspect_ai.util import ComposeConfig, SandboxEnvironmentSpec
 
-from .containers import AUDITOR_DOCKERFILE
+from .containers import INVESTIGATOR_DOCKERFILE
 
-AUDITOR = "auditor"
+INVESTIGATOR = "investigator"
 
 
 class UnsupportedBenchmarkError(ValueError):
-    """The benchmark is outside what the auditor supports; the message says why."""
+    """The benchmark is outside what the investigator supports; the message says why."""
 
 
 def sandbox_spec(value: object) -> SandboxEnvironmentSpec | None:
@@ -39,10 +39,10 @@ def sandbox_spec(value: object) -> SandboxEnvironmentSpec | None:
 
 
 def their_sandbox(task_sandbox: object, samples: list[Sample]) -> SandboxEnvironmentSpec | None:
-    """The one sandbox every audited sample runs in, None if it has none, or a loud refusal.
+    """The one sandbox every investigated sample runs in, None if it has none, or a loud refusal.
 
     A sample-level sandbox equal to the task's is fine; any other means the
-    benchmark gives samples different environments, which the auditor does not support.
+    benchmark gives samples different environments, which the investigator does not support.
     """
     task_spec = sandbox_spec(task_sandbox)
     distinct: dict[str, SandboxEnvironmentSpec] = {}
@@ -62,7 +62,7 @@ def their_sandbox(task_sandbox: object, samples: list[Sample]) -> SandboxEnviron
             f"({len(distinct)} distinct); per-sample environments are not supported"
         )
     if task_spec is None:
-        return None  # no box of theirs: the audit runs with the auditor's alone
+        return None  # no box of theirs: the investigation runs with the investigator's alone
     if task_spec.type not in {"docker", "k8s"}:
         raise UnsupportedBenchmarkError(
             f"the benchmark's sandbox is {task_spec.type!r}; supported providers are docker and k8s"
@@ -74,7 +74,7 @@ def their_compose(spec: SandboxEnvironmentSpec, compose: str | None, stage: Path
     """The benchmark's compose file: declared by the task, or by the operator.
 
     Inspect looks for an implicit compose file or Dockerfile beside a task that
-    names only `"docker"`; the auditor does not guess, so such a task needs `compose=`.
+    names only `"docker"`; the investigator does not guess, so such a task needs `compose=`.
     """
     config = spec.config
     if compose is not None:
@@ -108,55 +108,49 @@ def their_compose(spec: SandboxEnvironmentSpec, compose: str | None, stage: Path
     return path.resolve()
 
 
-def audit_compose(
-    benchmark_compose: Path | None, *, stage: Path, auditor_image: str | None = None
+def investigation_compose(
+    benchmark_compose: Path | None, *, stage: Path, investigator_image: str | None = None
 ) -> SandboxEnvironmentSpec:
-    """Their compose (if they have one) plus the `auditor` service, merged into `stage/compose.yaml`."""
+    """Their compose (if they have one) plus the `investigator` service, merged into `stage/compose.yaml`."""
     stage.mkdir(parents=True, exist_ok=True)
     services = (
         yaml.safe_load(benchmark_compose.read_text()).get("services") or {}
         if benchmark_compose is not None
         else {}
     )
-    if AUDITOR in services:
-        raise UnsupportedBenchmarkError(f"the benchmark already has a service named {AUDITOR!r}")
+    if INVESTIGATOR in services:
+        raise UnsupportedBenchmarkError(
+            f"the benchmark already has a service named {INVESTIGATOR!r}"
+        )
 
-    # egress through Docker's shared default bridge, not a named network: a named
-    # network takes a /24 per sample from Docker's ~31-subnet pool, exhausts it at
-    # concurrency and leaks on a hard kill (an earlier auditor hit this). Their box stays on its own
-    # network or none; the auditor reaches it through exec, never the network.
-    auditor: dict[str, Any] = {
+    # Use the shared bridge to avoid allocating a subnet per sample.
+    # Benchmark access uses exec, independent of the investigator's network.
+    investigator: dict[str, Any] = {
         "command": "tail -f /dev/null",
         "init": True,
         "network_mode": "bridge",
     }
-    if auditor_image is not None:
-        auditor["image"] = auditor_image
+    if investigator_image is not None:
+        investigator["image"] = investigator_image
     else:
-        (stage / "auditor.Dockerfile").write_text(AUDITOR_DOCKERFILE)
-        auditor["build"] = {"context": str(stage), "dockerfile": "auditor.Dockerfile"}
-        auditor["x-local"] = True
+        (stage / "investigator.Dockerfile").write_text(INVESTIGATOR_DOCKERFILE)
+        investigator["build"] = {"context": str(stage), "dockerfile": "investigator.Dockerfile"}
+        investigator["x-local"] = True
     merged: dict[str, Any] = (
         _absolute(yaml.safe_load(benchmark_compose.read_text()) or {}, benchmark_compose.parent)
         if benchmark_compose is not None
         else {"services": {}}
     )
     if benchmark_compose is None:
-        # a benchmark with no box of its own: Inspect needs a `default`, and marking
-        # ours default would have the k8s converter rename it. An idle, offline
-        # placeholder keeps every service name the same on Docker and k8s; no tool
-        # is given access to it.
+        # A separate default service prevents the k8s converter from renaming ours.
         merged["services"]["default"] = {
             "image": "python:3.12-slim",
             "command": "tail -f /dev/null",
             "init": True,
             "network_mode": "none",
         }
-    # Docker puts a service that names no network on the project's `default`. Hawk
-    # refuses a sandbox where one service sets network_mode while another names no
-    # network (hawk/runner/run_eval_set.py _patch_network_mode), so theirs are put
-    # there by name: the same network on Docker, and on k8s they still reach each
-    # other. The auditor needs no network to them; it reaches their box by exec.
+    # Name the implicit default network explicitly: Hawk rejects unnamed networks
+    # when another service sets network_mode.
     unnamed = [
         service
         for service in merged["services"].values()
@@ -168,7 +162,7 @@ def audit_compose(
         merged.setdefault("networks", {}).setdefault("default", {})
         for service in unnamed:
             service["networks"] = ["default"]
-    merged["services"][AUDITOR] = auditor
+    merged["services"][INVESTIGATOR] = investigator
     # the project is Inspect's to name
     merged.pop("name", None)
     path = stage / "compose.yaml"

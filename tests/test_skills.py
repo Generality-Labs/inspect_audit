@@ -1,4 +1,4 @@
-"""The skills an auditor is given.
+"""The skills an investigator is given.
 
 Loaded through Inspect's own reader, so a broken frontmatter, a directory renamed away
 from its skill name, or a duplicate name fails here rather than inside a container.
@@ -50,7 +50,7 @@ def test_the_gold_skill_names_its_grades() -> None:
 def test_descriptions_stay_within_the_always_visible_budget() -> None:
     """Descriptions cost context on every turn.
 
-    They live in the skill tool's own description, so an audit pays for them whether or
+    They live in the skill tool's own description, so an investigation pays for them whether or
     not a skill is ever invoked.
     """
     for skill in load():
@@ -60,7 +60,7 @@ def test_descriptions_stay_within_the_always_visible_budget() -> None:
 def test_a_skill_directory_is_the_whole_contract(tmp_path: Path, monkeypatch) -> None:
     """Dropping a skill directory in is all it takes: prompt, validation and scoring derive."""
     import inspect_audit._verdicts as agent_module
-    from inspect_audit._verdicts import audit_items
+    from inspect_audit._verdicts import investigation_items
 
     # a new item, added as a directory and nothing else
     for name, grades in (
@@ -74,15 +74,15 @@ def test_a_skill_directory_is_the_whole_contract(tmp_path: Path, monkeypatch) ->
         )
     monkeypatch.setattr(agent_module, "SKILLS", tmp_path)
 
-    items = audit_items()
+    items = investigation_items()
     assert [item.name for item in items] == ["env-broken", "gold-answer"]
     assert items[0].grades == ["SOUND", "BROKEN"]
 
     # selection validates against what exists
     import pytest
 
-    with pytest.raises(ValueError, match="Unknown audit item"):
-        audit_items(["nope"])
+    with pytest.raises(ValueError, match="Unknown investigation item"):
+        investigation_items(["nope"])
 
 
 def test_malformed_frontmatter_fails_at_load(tmp_path: Path, monkeypatch) -> None:
@@ -97,7 +97,7 @@ def test_malformed_frontmatter_fails_at_load(tmp_path: Path, monkeypatch) -> Non
     import pytest
 
     import inspect_audit._verdicts as agent_module
-    from inspect_audit._verdicts import audit_items
+    from inspect_audit._verdicts import investigation_items
 
     monkeypatch.setattr(agent_module, "SKILLS", tmp_path)
 
@@ -121,7 +121,7 @@ def test_malformed_frontmatter_fails_at_load(tmp_path: Path, monkeypatch) -> Non
             f"---\nname: {name}\ndescription: test item\n{frontmatter}---\n\nbody\n"
         )
         with pytest.raises(ValueError, match=name):
-            audit_items()
+            investigation_items()
         shutil.rmtree(d)
 
 
@@ -135,14 +135,14 @@ def test_verdicts_are_validated_and_scored_per_item(monkeypatch) -> None:
     from inspect_ai.util._store import Store, init_subtask_store
 
     from inspect_audit._verdicts import (
-        AuditItemSkill,
         Evidence,
+        InvestigationItemSkill,
         Verdicts,
         record_verdict,
-        submit_audit,
+        submit_investigation,
     )
 
-    item = AuditItemSkill(
+    item = InvestigationItemSkill(
         name="gold-answer",
         description="test",
         grades=["CORRECT", "INCORRECT", "UNVERIFIABLE"],
@@ -151,7 +151,7 @@ def test_verdicts_are_validated_and_scored_per_item(monkeypatch) -> None:
     )
     init_subtask_store(Store())
     record = record_verdict([item])
-    submit = submit_audit([item])
+    submit = submit_investigation([item])
     quote = [Evidence(observed="q", source="s")]
     base = {"item": "gold-answer", "approaches": "", "tried": "", "remarks": "", "details": {}}
 
@@ -177,20 +177,20 @@ def test_verdicts_are_validated_and_scored_per_item(monkeypatch) -> None:
 
 
 def test_the_confidential_section_is_off_by_default_and_names_the_boundary() -> None:
-    """The toggle constrains what leaves, not whether the auditor may verify.
+    """The toggle constrains what leaves, not whether the investigator may verify.
 
-    An auditor stripped of the ability to check anything invents citations (the
-    reason the audit sandbox grants egress at all), so the confidential prompt has
+    An investigator stripped of the ability to check anything invents citations (the
+    reason the investigation sandbox grants egress at all), so the confidential prompt has
     to draw the line at transmission and say what to do when that is not enough.
     """
     from inspect_audit import prompts
 
-    default = prompts.AUDITOR.format(items="- `x`: y", confidential="", notes="")
+    default = prompts.INVESTIGATOR.format(items="- `x`: y", confidential="", notes="")
     assert "unpublished" not in default
 
-    on = prompts.AUDITOR.format(
+    on = prompts.INVESTIGATOR.format(
         items="- `x`: y",
-        confidential=prompts.AUDIT_CONFIDENTIAL.format(root="/audit"),
+        confidential=prompts.INVESTIGATION_CONFIDENTIAL.format(root="/audit"),
         notes="",
     )
     assert "must not transmit" in on
@@ -222,14 +222,14 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
     from inspect_ai.util._store import Store, init_subtask_store
 
     from inspect_audit._verdicts import (
-        AuditItemSkill,
         Evidence,
+        InvestigationItemSkill,
         Verdicts,
         record_verdict,
-        submit_audit,
+        submit_investigation,
     )
 
-    item = AuditItemSkill(
+    item = InvestigationItemSkill(
         name="answer-format",
         description="Review answers",
         grades=["SOUND"],
@@ -256,12 +256,12 @@ def test_verdict_object_contract_and_submission_debrief() -> None:
         with pytest.raises(ToolError, match="examined"):
             await record(**args, details={})
         # prose where the object belongs (09-29 chess run, 54 times): the refusal names
-        # the fields and where the prose goes, so the auditor can correct itself
+        # the fields and where the prose goes, so the investigator can correct itself
         with pytest.raises(ToolError, match=r"began 'Review table.*remarks.*examined: Exact log"):
             await record(**args, details="Review table: see /audit/review.json")
         await record(**args, details='{"examined": ["run.eval#sample=1"]}')
         await record(**args, details={"examined": [quote.source]})
-        await submit_audit([item])(
+        await submit_investigation([item])(
             environment_issues=[
                 Evidence(observed="Analysis dependency was missing", source="tool-event-1")
             ],
@@ -285,10 +285,10 @@ def test_every_prompt_is_a_file_and_every_placeholder_gets_filled() -> None:
     from inspect_audit import prompts
 
     filled = {
-        "AUDITOR": {"items": "- `x`: y", "confidential": "", "notes": ""},
-        "AUDIT_CONFIDENTIAL": {"root": "/audit"},
-        "AUDIT_NOTES": {"notes": "look at the grader"},
-        "INVESTIGATE": {},
+        "INVESTIGATOR": {"items": "- `x`: y", "confidential": "", "notes": ""},
+        "INVESTIGATION_CONFIDENTIAL": {"root": "/audit"},
+        "INVESTIGATION_NOTES": {"notes": "look at the grader"},
+        "AUDIT": {},
     }
     assert set(filled) == set(prompts.__all__)
     for name, values in filled.items():
@@ -315,9 +315,9 @@ def test_verdict_schema_survives_openrouter_serialization() -> None:
     from inspect_ai.model._openai import openai_chat_tool_param
     from inspect_ai.tool import ToolDef, ToolInfo
 
-    from inspect_audit._verdicts import audit_items, record_verdict
+    from inspect_audit._verdicts import investigation_items, record_verdict
 
-    definition = ToolDef(record_verdict(audit_items()))
+    definition = ToolDef(record_verdict(investigation_items()))
     wire = openai_chat_tool_param(
         ToolInfo(
             name=definition.name,
@@ -342,17 +342,19 @@ def test_verdict_schema_survives_openrouter_serialization() -> None:
 def test_a_missing_verdict_says_why() -> None:
     """09-29 chess run: puzzles 40 and 75 came back NO_VERDICT with only concordance
     metadata. 40 had hit its cost limit before any verdict, 75 had every
-    record_verdict refused; the investigator could see neither and blamed the wrong
-    thing. Real eval: a limit hit before the auditor records anything."""
+    record_verdict refused; the auditor could see neither and blamed the wrong
+    thing. Real eval: a limit hit before the investigator records anything."""
     from inspect_ai import Task, eval
     from inspect_ai.dataset import Sample
     from inspect_ai.solver import generate
 
-    from inspect_audit._verdicts import AuditItemSkill, item_scorer
+    from inspect_audit._verdicts import InvestigationItemSkill, item_scorer
 
-    item = AuditItemSkill(name="gold-answer", description="Check the key", grades=["CORRECT"])
+    item = InvestigationItemSkill(
+        name="gold-answer", description="Check the key", grades=["CORRECT"]
+    )
     task = Task(
-        dataset=[Sample(input="audit this")],
+        dataset=[Sample(input="investigation this")],
         solver=generate(),
         scorer=item_scorer(item),
         message_limit=1,

@@ -2,7 +2,7 @@ name: ia-api-free-cybench-delulu-20261022
 packages:
 - inspect-audit[k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
 - inspect-evals[cybench] @ git+https://github.com/UKGovernmentBEIS/inspect_evals@49738b6412cf3215db7c9d3d4838fc58b6f422a2
-- inspect-ai==0.3.266
+- inspect-ai==0.3.283
 tasks:
 - package: git+https://github.com/Generality-Labs/inspect_audit@SELF#subdirectory=tests/compatibility
   name: ia_compatibility
@@ -20,7 +20,7 @@ tasks:
           - hard
         logs: []
         judges: {}
-        auditor_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
+        investigator_image: ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa
         selection: CTF with attacker and victim containers, service health check and
           binary input files.
         repo: https://github.com/UKGovernmentBEIS/inspect_evals

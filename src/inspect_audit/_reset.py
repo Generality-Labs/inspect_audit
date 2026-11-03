@@ -13,6 +13,7 @@ from inspect_ai.util import SandboxEnvironment, sandbox
 from inspect_ai.util import subprocess as async_subprocess
 from inspect_ai.util._sandbox.context import (
     copy_sandbox_environment_files,
+    sandbox_environments_context_var,
     setup_sandbox_environment,
 )
 from inspect_ai.util._sandbox.docker.docker import DockerSandboxEnvironment
@@ -51,7 +52,10 @@ async def rebuild(
 
     # the default first: Inspect's helpers send an unprefixed file to the default
     ordered = ["default", *(s for s in services if s != "default")]
-    environments: dict[str, SandboxEnvironment] = {name: sandbox(name) for name in ordered}
+    available = sandbox_environments_context_var.get({})
+    environments: dict[str, SandboxEnvironment] = {
+        name: sandbox(name) for name in ordered if name == "default" or name in available
+    }
     if their_sample.files:
         resolved = resolve_sample_files(their_sample.files)
         files = {path: await read_sandboxenv_file(contents) for path, contents in resolved.items()}

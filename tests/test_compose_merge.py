@@ -71,6 +71,18 @@ def test_their_paths_resolve_against_their_folder_and_the_rest_is_untouched(
     assert merged["configs"]["settings"]["file"] == str(root / "settings.json")
     assert merged["volumes"] == {"cache": {}}
     assert merged["services"][INVESTIGATOR]["network_mode"] == "bridge"
+    assert "x-default" not in merged["services"][INVESTIGATOR]
+
+
+def test_agent_becomes_default_only_when_the_benchmark_has_no_default(tmp_path: Path) -> None:
+    compose = tmp_path / "compose.yaml"
+    compose.write_text("services: {agent: {image: agent}, target: {image: target}}\n")
+    spec = investigation_compose(
+        compose, stage=tmp_path / "stage", investigator_image="investigator:latest"
+    )
+    merged = yaml.safe_load(Path(spec.config).read_text())  # type: ignore[arg-type]
+    assert merged["services"]["agent"]["x-default"] is True
+    assert "x-default" not in merged["services"][INVESTIGATOR]
 
 
 def test_an_include_or_extends_is_refused_not_half_merged(tmp_path: Path) -> None:

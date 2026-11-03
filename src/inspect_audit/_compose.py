@@ -162,6 +162,11 @@ def investigation_compose(
         merged.setdefault("networks", {}).setdefault("default", {})
         for service in unnamed:
             service["networks"] = ["default"]
+    if "agent" in merged["services"] and not any(
+        name == "default" or (isinstance(service, dict) and service.get("x-default"))
+        for name, service in merged["services"].items()
+    ):
+        merged["services"]["agent"]["x-default"] = True
     merged["services"][INVESTIGATOR] = investigator
     # the project is Inspect's to name
     merged.pop("name", None)

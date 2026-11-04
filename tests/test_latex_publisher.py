@@ -159,3 +159,56 @@ def test_unbreakable_text_may_break_rather_than_run_off_the_page() -> None:
     digest = "3c0882717ba75ae0b0ac68d3b55e515d19766b90bd5ec50b16e0158605fd1fc"
     assert tex(digest).count(r"\allowbreak{}") == len(digest) - 1
     assert tex("plain words stay as they are") == "plain words stay as they are"
+
+
+async def _no_box(probe: str) -> bool:
+    return False
+
+
+async def _box_with_tex(probe: str) -> bool:
+    return True
+
+
+def _image_check(returncode: int, calls: list[list[str]]):
+    async def run(command: list[str], **kwargs: object) -> object:
+        calls.append(command)
+        return type("Result", (), {"success": returncode == 0})()
+
+    return run
+
+
+def test_an_audit_with_nothing_to_compile_its_report_stops_before_it_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("INSPECT_AUDIT_LATEX_IMAGE", raising=False)
+    monkeypatch.setattr(latex, "box_has", _no_box)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    with pytest.raises(RuntimeError, match="Nothing can compile the report"):
+        asyncio.run(latex.preflight())
+
+
+def test_tex_in_the_auditors_box_is_enough(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("INSPECT_AUDIT_LATEX_IMAGE", raising=False)
+    monkeypatch.setattr(latex, "box_has", _box_with_tex)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    asyncio.run(latex.preflight())
+
+
+def test_tex_on_the_host_is_enough(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("INSPECT_AUDIT_LATEX_IMAGE", raising=False)
+    monkeypatch.setattr(latex, "box_has", _no_box)
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    asyncio.run(latex.preflight())
+
+
+def test_a_named_latex_image_must_exist(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INSPECT_AUDIT_LATEX_IMAGE", "inspect-audit:publishing")
+    monkeypatch.setattr(latex, "box_has", _no_box)
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/docker")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(latex, "subprocess", _image_check(0, calls))
+    asyncio.run(latex.preflight())
+    assert calls == [["docker", "image", "inspect", "inspect-audit:publishing"]]
+    monkeypatch.setattr(latex, "subprocess", _image_check(1, calls))
+    with pytest.raises(RuntimeError, match="inspect-audit:publishing"):
+        asyncio.run(latex.preflight())

@@ -416,10 +416,33 @@ def preview_report(root: Path) -> Tool:
     return execute
 
 
+async def preflight() -> None:
+    """Refuse to start an audit whose report nothing here can compile."""
+    if await box_has("command -v latexmk && command -v pdflatex"):
+        return
+    if image := os.environ.get("INSPECT_AUDIT_LATEX_IMAGE"):
+        if not shutil.which("docker"):
+            raise RuntimeError(
+                f"INSPECT_AUDIT_LATEX_IMAGE is {image!r}, but there is no Docker on the Inspect host"
+            )
+        result = await subprocess(["docker", "image", "inspect", image], timeout=60)
+        if not result.success:
+            raise RuntimeError(
+                f"The LaTeX image {image!r} is not available on the Inspect host; build or pull it first"
+            )
+        return
+    if not (shutil.which("latexmk") and shutil.which("pdflatex")):
+        raise RuntimeError(
+            "Nothing can compile the report: use an auditor image with latexmk, install latexmk "
+            "and pdflatex on the Inspect host, or set INSPECT_AUDIT_LATEX_IMAGE"
+        )
+
+
 def publisher() -> Publisher:
     return Publisher(
         skills=[str(Path(__file__).parent / "skills/latex-publishing")],
         build=build,
         tools=lambda root: [preview_report(root)],
         validate=validate,
+        preflight=preflight,
     )

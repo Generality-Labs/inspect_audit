@@ -34,6 +34,9 @@ class Publisher:
     build: Callable[[Path, Path], Awaitable[Path]]
     tools: Callable[[Path], list[Tool]] = lambda root: []
     validate: Callable[[Findings], None] = lambda findings: None
+    # checked in setup, before the first model call: a missing renderer ends the audit then,
+    # not after hours of work (CVE-Bench Hard froze 9 findings, then could not publish)
+    preflight: Callable[[], Awaitable[None]] | None = None
 
 
 def load_publisher(name: str) -> Publisher:
@@ -115,6 +118,16 @@ def publish_document(root: Path, publisher: Publisher) -> Tool:
         return f"Published {location}. Outcome: {state.outcome}. Findings remain unchanged."
 
     return execute
+
+
+@solver
+def preflight_publisher(publisher: Publisher) -> Solver:
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        if publisher.preflight:
+            await publisher.preflight()
+        return state
+
+    return solve
 
 
 class PhaseTools:
@@ -224,7 +237,7 @@ def publish(
                 input=f"Findings are final at /inputs/findings/findings.json. Read their manifest and invoke the publishing skill. {instructions}"
             )
         ],
-        setup=[begin(), stage_inputs(root)],
+        setup=[preflight_publisher(selected), begin(), stage_inputs(root)],
         solver=react(
             name="publisher",
             prompt="Publish the submitted findings faithfully. Use only existing evidence and calculations. No new experiments or changes to findings. Read the publishing skill.",

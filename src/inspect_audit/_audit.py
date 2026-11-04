@@ -1239,7 +1239,7 @@ def audit(
     # when it is not None, so a value equal to a default is still an override
     settings = _audit_file(config, locals()) if config else {}
     from ._findings import Findings, encoded, submit_findings
-    from ._publishing import PhaseTools, load_publisher
+    from ._publishing import PhaseTools, load_publisher, preflight_publisher
 
     publisher = settings.get("publisher", publisher) or "latex"
     selected_publisher = load_publisher(str(publisher))
@@ -1542,6 +1542,7 @@ def audit(
 
     return Task(
         setup=[
+            preflight_publisher(selected_publisher),
             bind_policy(launch_policy),
             check_models(inv.runs if inv else None, launch_policy),
             stage_inputs(root),

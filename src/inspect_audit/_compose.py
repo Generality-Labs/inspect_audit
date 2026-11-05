@@ -113,11 +113,10 @@ def investigation_compose(
 ) -> SandboxEnvironmentSpec:
     """Their compose (if they have one) plus the `investigator` service, merged into `stage/compose.yaml`."""
     stage.mkdir(parents=True, exist_ok=True)
-    services = (
-        yaml.safe_load(benchmark_compose.read_text()).get("services") or {}
-        if benchmark_compose is not None
-        else {}
+    merged: dict[str, Any] = (
+        _resolved(benchmark_compose) if benchmark_compose is not None else {"services": {}}
     )
+    services = merged["services"]
     if INVESTIGATOR in services:
         raise UnsupportedBenchmarkError(
             f"the benchmark already has a service named {INVESTIGATOR!r}"
@@ -136,11 +135,6 @@ def investigation_compose(
         (stage / "investigator.Dockerfile").write_text(INVESTIGATOR_DOCKERFILE)
         investigator["build"] = {"context": str(stage), "dockerfile": "investigator.Dockerfile"}
         investigator["x-local"] = True
-    merged: dict[str, Any] = (
-        _absolute(yaml.safe_load(benchmark_compose.read_text()) or {}, benchmark_compose.parent)
-        if benchmark_compose is not None
-        else {"services": {}}
-    )
     if benchmark_compose is None:
         # A separate default service prevents the k8s converter from renaming ours.
         merged["services"]["default"] = {
@@ -162,11 +156,14 @@ def investigation_compose(
         merged.setdefault("networks", {}).setdefault("default", {})
         for service in unnamed:
             service["networks"] = ["default"]
-    if "agent" in merged["services"] and not any(
-        name == "default" or (isinstance(service, dict) and service.get("x-default"))
-        for name, service in merged["services"].items()
-    ):
-        merged["services"]["agent"]["x-default"] = True
+    if benchmark_compose is not None:
+        default = their_default(
+            merged["services"],
+            included="include" in (yaml.safe_load(benchmark_compose.read_text()) or {}),
+        )
+        if default != "default":
+            # said outright, so adding the investigator cannot move it under either provider
+            merged["services"][default]["x-default"] = True
     merged["services"][INVESTIGATOR] = investigator
     # the project is Inspect's to name
     merged.pop("name", None)
@@ -175,18 +172,178 @@ def investigation_compose(
     return SandboxEnvironmentSpec("docker", str(path))
 
 
+def their_default(services: dict[str, Any], *, included: bool) -> str:
+    """The service the benchmark's own runs used as `default`, by the providers' own rules.
+
+    Docker: a service named `default`, else the one marked `x-default`, else Inspect
+    refuses to run (`inspect_ai/util/_sandbox/docker/docker.py`). Kubernetes, which
+    converts the compose: the same two, else the first service in the file
+    (`k8s_sandbox/compose/_converter.py`). So with neither, the benchmark can only have
+    run converted to Kubernetes, with its first service as default. A compose that
+    includes others cannot be converted, so with no default it could not have run at all.
+    """
+    if "default" in services:
+        return "default"
+    marked = [n for n, s in services.items() if isinstance(s, dict) and s.get("x-default")]
+    if len(marked) > 1:
+        raise UnsupportedBenchmarkError(f"the benchmark marks several services x-default: {marked}")
+    if marked:
+        return marked[0]
+    if not services:
+        raise UnsupportedBenchmarkError("the benchmark's compose defines no services")
+    if included:
+        raise UnsupportedBenchmarkError(
+            "the benchmark's compose names no default service (none called 'default', none "
+            "marked x-default) and uses include:, so neither Docker nor the Kubernetes converter "
+            "could have run it: the default its logs used cannot be known"
+        )
+    return next(iter(services))
+
+
+def _resolved(path: Path, seen: tuple[Path, ...] = ()) -> dict[str, Any]:
+    """Their compose as one plain file: `include:` and `extends:` resolved, host paths absolute.
+
+    Done here rather than by `docker compose config`, which needs Docker (the Hawk runner
+    has none) and substitutes `${VAR}` with whatever the shell has, baking in defaults the
+    benchmark meant to set per sample (CVE-bench's Kali image, FRICTION 58). Each file's
+    relative paths resolve against its own folder, as in compose.
+    """
+    path = path.resolve()
+    if path in seen:
+        raise UnsupportedBenchmarkError(f"compose files include each other in a loop: {path}")
+    if not path.is_file():
+        raise UnsupportedBenchmarkError(f"compose file not found: {path}")
+    compose = yaml.safe_load(path.read_text()) or {}
+    if not isinstance(compose, dict):
+        raise UnsupportedBenchmarkError(f"{path} is not a compose file")
+    includes = compose.pop("include", None) or []
+    services: dict[str, Any] = compose.get("services") or {}
+    compose["services"] = services
+    for name, service in list(services.items()):
+        if isinstance(service, dict) and "extends" in service:
+            services[name] = _extended(service, path, (*seen, path))
+    compose = _absolute(compose, path.parent)
+    for entry in includes:
+        for included in _include_paths(entry, path):
+            other = _resolved(included, (*seen, path))
+            for section, items in other.items():
+                if not isinstance(items, dict):
+                    continue
+                mine = compose.setdefault(section, {})
+                clash = sorted(set(mine) & set(items))
+                if clash and section == "services":
+                    raise UnsupportedBenchmarkError(
+                        f"{included} defines service(s) {clash} that {path} already has"
+                    )
+                for key, value in items.items():
+                    mine.setdefault(key, value)
+    return compose
+
+
+def _include_paths(entry: object, owner: Path) -> list[Path]:
+    """The files one `include:` entry names, against the including file's folder."""
+    if isinstance(entry, dict) and (entry.get("project_directory") or entry.get("env_file")):
+        raise UnsupportedBenchmarkError(
+            f"{owner}: include with project_directory or env_file is not supported"
+        )
+    raw = entry.get("path") if isinstance(entry, dict) else entry
+    paths = raw if isinstance(raw, list) else [raw]
+    if not paths or not all(isinstance(p, str) and "${" not in p for p in paths):
+        raise UnsupportedBenchmarkError(f"{owner}: unsupported include entry {entry!r}")
+    return [(owner.parent / os.path.expanduser(str(p))).resolve() for p in paths]
+
+
+# keys compose merges by key when a service extends another; the rest are replaced
+_MAPPINGS = {
+    "annotations",
+    "build",
+    "deploy",
+    "environment",
+    "extra_hosts",
+    "healthcheck",
+    "labels",
+    "logging",
+    "sysctls",
+    "ulimits",
+}
+# sequences merged by mount target; other sequences are appended without repeats
+_BY_TARGET = {"devices", "tmpfs", "volumes"}
+_REPLACED = {"command", "entrypoint"}
+
+
+def _extended(service: dict[str, Any], owner: Path, seen: tuple[Path, ...]) -> dict[str, Any]:
+    """A service with its `extends:` base merged beneath it, as compose does."""
+    extends = service.pop("extends")
+    if isinstance(extends, str):
+        base_file, base_name = owner, extends
+    elif isinstance(extends, dict) and isinstance(extends.get("service"), str):
+        file = extends.get("file")
+        base_file = (owner.parent / file).resolve() if isinstance(file, str) else owner
+        base_name = extends["service"]
+    else:
+        raise UnsupportedBenchmarkError(f"{owner}: unsupported extends {extends!r}")
+    if base_file == owner:
+        if len(seen) > 32:
+            raise UnsupportedBenchmarkError(f"{owner}: extends nests too deeply")
+        siblings = (yaml.safe_load(owner.read_text()) or {}).get("services") or {}
+        if not isinstance(siblings.get(base_name), dict):
+            raise UnsupportedBenchmarkError(f"{owner}: extends unknown service {base_name!r}")
+        base = dict(siblings[base_name])
+        if "extends" in base:
+            base = _extended(base, owner, (*seen, owner))
+    else:
+        other = _resolved(base_file, seen)
+        if not isinstance(other["services"].get(base_name), dict):
+            raise UnsupportedBenchmarkError(f"{base_file}: no service {base_name!r} to extend")
+        base = other["services"][base_name]  # already absolute against its own folder
+    # a base's links to other services stay in its own file, as in compose
+    base = {k: v for k, v in base.items() if k not in {"depends_on", "links", "volumes_from"}}
+    return _merge_service(base, service)
+
+
+def _as_mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    out: dict[str, Any] = {}
+    for item in value or []:
+        key, sep, rest = str(item).partition("=")
+        out[key] = rest if sep else None
+    return out
+
+
+def _target(mount: Any) -> str:
+    if isinstance(mount, dict):
+        return str(mount.get("target"))
+    parts = str(mount).split(":")
+    return parts[1] if len(parts) > 1 else parts[0]
+
+
+def _merge_service(base: dict[str, Any], local: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in local.items():
+        old = merged.get(key)
+        if key not in merged:
+            merged[key] = value
+        elif key in _MAPPINGS and not isinstance(value, str) and not isinstance(old, str):
+            merged[key] = {**_as_mapping(old), **_as_mapping(value)}
+        elif key in _BY_TARGET and isinstance(value, list) and isinstance(old, list):
+            mine = {_target(v) for v in value}
+            merged[key] = [v for v in old if _target(v) not in mine] + value
+        elif key not in _REPLACED and isinstance(value, list) and isinstance(old, list):
+            merged[key] = old + [v for v in value if v not in old]
+        else:
+            merged[key] = value
+    return merged
+
+
 def _absolute(compose: dict[str, Any], base: Path) -> dict[str, Any]:
     """Their compose with every relative host path made absolute against its folder.
 
     The paths compose resolves against the file's own folder: build contexts, bind
     mount sources, env files, and top-level configs and secrets read from files.
-    Anything else is copied as written. A compose that includes or extends another
-    file is refused rather than half-merged.
+    Anything else is copied as written. `include:` and `extends:` are resolved
+    before this, by `_resolved`.
     """
-    if "include" in compose:
-        raise UnsupportedBenchmarkError(
-            "the benchmark's compose uses include:, which is not supported"
-        )
 
     def where(path: str) -> str:
         expanded = os.path.expanduser(path)
@@ -195,13 +352,9 @@ def _absolute(compose: dict[str, Any], base: Path) -> dict[str, Any]:
         return str((base / expanded).resolve())
 
     services = compose.get("services") or {}
-    for name, service in services.items():
+    for service in services.values():
         if not isinstance(service, dict):
             continue
-        if "extends" in service:
-            raise UnsupportedBenchmarkError(
-                f"service {name!r} uses extends:, which is not supported"
-            )
         build = service.get("build")
         if isinstance(build, str):
             service["build"] = where(build)

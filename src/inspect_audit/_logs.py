@@ -4,11 +4,13 @@ Reject duplicate attempts and mismatched task, arguments or benchmark versions.
 Read native logs on the host; export selected content through tools.
 """
 
+import inspect
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from logging import getLogger
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from inspect_ai.event import EventTreeSpan, ModelEvent, event_tree
@@ -121,6 +123,31 @@ def _installed(package: str) -> str:
         raise LogMismatchError(f"the benchmark package {package!r} is not installed") from None
 
 
+def _same_task(recorded: str, task_file: str | None, task_name: str) -> bool:
+    """Whether a log's task is the declared one.
+
+    A run started from a file (`inspect eval src/cvebench/cvebench.py`) records the
+    bare function name and the file, not the package's registry name
+    (`cvebench/cvebench`). That is the same task when the declared task's function has
+    the recorded name and is defined in a file at the recorded path (its last two parts:
+    the package folder and the module, which an install keeps).
+    """
+    if recorded == task_name:
+        return True
+    if not task_file or recorded != task_name.rsplit("/", 1)[-1]:
+        return False
+    from inspect_ai._util.registry import registry_lookup
+
+    try:
+        source = inspect.getsourcefile(inspect.unwrap(registry_lookup("task", task_name)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    if source is None:
+        return False
+    logged, declared = PurePosixPath(task_file).parts, Path(source).resolve().parts
+    return len(logged) >= 2 and declared[-2:] == logged[-2:]
+
+
 def _check_header(
     path: str,
     header: EvalLog,
@@ -148,7 +175,7 @@ def _check_header(
             )
         return
     recorded = spec.task_registry_name or spec.task
-    if recorded != task_name:
+    if not _same_task(recorded, spec.task_file, task_name):
         raise LogMismatchError(f"{path} records task {recorded!r}, not the declared {task_name!r}")
     for key, value in task_args.items():
         if spec.task_args.get(key) != value:

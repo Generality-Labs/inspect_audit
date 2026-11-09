@@ -18,7 +18,7 @@ dependencies = [
     "openai>=1.0",
     # k8s_sandbox passes newline-terminated Helm output to Version.parse;
     # semver 3.1 rejects that output before any audit sample can start.
-    "semver>=3.0,<3.1",
+    "semver>=3.0,<3.2",
 ]
 
 [project.entry-points.inspect_ai]

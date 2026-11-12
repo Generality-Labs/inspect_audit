@@ -50,6 +50,7 @@ def investigation(
     time_limit: int | None = None,
     working_limit: int | None = None,
     model_prices: dict[str, dict[str, float]] | None = None,
+    install: list[str] | None = None,
 ) -> Task:
     """Investigate a benchmark task from inside its own samples (see `investigation_task` in `_task`).
 
@@ -86,6 +87,7 @@ def investigation(
         notes=notes,
         paper=paper,
         search=search,
+        install=install or (),
         # the published image unless told otherwise; "build" builds it here, from source
         investigator_image=None
         if investigator_image == "build"

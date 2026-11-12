@@ -111,6 +111,24 @@ def _bash(name: str, service: str | None, description: str, timeout: int) -> Too
     ).as_tool()
 
 
+async def install_into_box(specs: list[str]) -> None:
+    """Install the benchmark into the investigator's box; record, never fail, the outcome."""
+    import json
+
+    result = await sandbox(INVESTIGATOR).exec(
+        ["python", "-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check", *specs],
+        timeout=1800,
+    )
+    record = {
+        "installed": result.success,
+        "specs": specs,
+        "log_tail": (result.stdout + result.stderr)[-4000:],
+    }
+    await sandbox(INVESTIGATOR).write_file(
+        f"{INVESTIGATION_ROOT}/benchmark-install.json", json.dumps(record, indent=2)
+    )
+
+
 @solver
 def investigator(
     *,
@@ -128,8 +146,14 @@ def investigator(
     paper: str | None = None,
     search: WebSearchProviders | None = None,
     model: Model | None = None,
+    install: Sequence[str] = (),
 ) -> Solver:
-    """Investigate the sample this solver runs in, in place of the benchmark's solver."""
+    """Investigate the sample this solver runs in, in place of the benchmark's solver.
+
+    `install` are the pip specs its job installed the benchmark with: the same go into
+    the investigator's own box, so it can import and run the benchmark's code there
+    (FRICTION 74), with the outcome in /audit/benchmark-install.json.
+    """
     granted = {name for check in checks for name in check.tools}
     skill_dirs = [
         str(path)
@@ -163,6 +187,8 @@ def investigator(
         their_messages = list(state.messages)
         store_as(AssessmentUnits).ids = list((assessment_ids or {}).get(sample_id) or [sample_id])
         await stage_item(state, their_sample, source, redact)
+        if install:
+            await install_into_box(list(install))
         if paper:
             from ._paper import paper_file
 

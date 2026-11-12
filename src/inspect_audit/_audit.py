@@ -43,6 +43,7 @@ from ._report import (
 from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS
 from .containers import AUDITOR_IMAGE, INVESTIGATOR_IMAGE
 from .dispatch import FINISHED, STUCK, HawkRuns, Job, LocalRuns, Runs, validate_environment
+from .dispatch.jobs import INSPECT_VERSION
 from .dispatch.packages import git_package_spec, own_package_spec
 from .dispatch.policy import (
     AuditAuthorizer,
@@ -890,6 +891,8 @@ def send_investigators(inv: Audit) -> Tool:
                 "model_prices": prices,
                 "notes": note or None,
                 "paper": inv.paper,
+                # the benchmark into the investigator's own box, as this job installs it
+                "install": [inv.task_package, *inv.task_pins, f"inspect-ai=={INSPECT_VERSION}"],
             },
         )
         return await inv.launch(job, "investigation", note)
@@ -1503,7 +1506,6 @@ def audit(
     seed_path.write_text(json.dumps(seed, indent=2))
 
     from ._audit_workspace import configure, install_benchmark, stage_inputs
-    from .dispatch.jobs import INSPECT_VERSION
 
     sandbox = configure(root, auditor_image) if box == "k8s" else docker_box(root)
     if artifact_dir:

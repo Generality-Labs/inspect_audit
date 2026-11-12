@@ -215,6 +215,7 @@ INVESTIGATION_ARGS = frozenset(
         "model_prices",
         "notes",
         "paper",
+        "install",
     }
 )
 

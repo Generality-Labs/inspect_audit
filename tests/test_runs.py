@@ -264,6 +264,9 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
     assert job.task_args["judge"] == {"grader": "openai/judge"}
     assert job.task_args["cost_limit"] == 0.5
     assert job.task_args["source"] == "benchmark.task"
+    # the benchmark goes into the investigators' own boxes as the job installs it (FRICTION 74)
+    assert job.task_args["install"][0] == "benchmark"
+    assert job.task_args["install"][-1].startswith("inspect-ai==")
     assert set(job.task_args["model_prices"]) == {
         "openai/investigator",
         "openai/judge",

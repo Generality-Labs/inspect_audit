@@ -1,10 +1,10 @@
-"""The audit's compose against Hawk's own sandbox rules and Inspect's k8s converter.
+"""The investigation's compose against Hawk's own sandbox rules and Inspect's k8s converter.
 
 Hawk's runner sanitises every compose before converting it (run_eval_set.py
 `_patch_network_mode`); that module does not import outside a runner, so its
 functions are lifted from the installed source and run as shipped. The corpus is
 every compose file in the installed inspect_evals: any benchmark Hawk accepts on
-its own must still be accepted with the auditor added.
+its own must still be accepted with the investigator added.
 """
 
 import ast
@@ -16,7 +16,7 @@ from typing import Any, cast
 import pytest
 import yaml
 
-from inspect_audit._compose import audit_compose
+from inspect_audit._compose import investigation_compose
 
 SANITISER = (
     "_compose_services",
@@ -61,7 +61,9 @@ def _corpus() -> list[Path]:
     return sorted(p for p in root.rglob("*.yaml") if "compose" in p.name)
 
 
-def test_every_benchmark_hawk_accepts_is_still_accepted_with_the_auditor(tmp_path: Path) -> None:
+def test_every_benchmark_hawk_accepts_is_still_accepted_with_the_investigator(
+    tmp_path: Path,
+) -> None:
     files = _corpus()
     if not files:
         pytest.skip("inspect_evals has no compose files installed")
@@ -76,11 +78,13 @@ def test_every_benchmark_hawk_accepts_is_still_accepted_with_the_auditor(tmp_pat
         if _accepted(theirs, work) is not None:
             continue  # Hawk refuses the benchmark itself; nothing for us to keep
         accepted_alone += 1
-        spec = audit_compose(file, stage=work / "stage", auditor_image="auditor:latest")
+        spec = investigation_compose(
+            file, stage=work / "stage", investigator_image="investigator:latest"
+        )
         merged = yaml.safe_load(Path(cast(str, spec.config)).read_text())
         if (why := _accepted(merged, work)) is not None:
             # accepted (2026-10-20): Hawk grants internet per sandbox, so a benchmark
-            # that keeps its services on an internal network cannot be audited there
+            # that keeps its services on an internal network cannot be investigated there
             if "network marked 'internal: true'" in why:
                 continue
             lost.append(f"{file.relative_to(file.parents[2])}: {why}")

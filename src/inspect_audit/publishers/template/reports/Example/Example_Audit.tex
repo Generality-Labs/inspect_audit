@@ -1,0 +1,29 @@
+% ==================================================================
+% EXAMPLE AUDIT (template)
+% To start a new audit: copy reports/Example/ to a new reports/<Eval>/
+% directory, rename this file <Eval>_Audit.tex, fill in the reference
+% numbers below, then replace every [bracketed placeholder] in
+% Content.tex. Compile from inside the report directory (the .latexmkrc
+% there finds the shared template files in the repository).
+%
+% Structure lives in template/auditframework.sty and template/sections/ (shared by all
+% reports): edit those to change every report at once.
+% ==================================================================
+\PassOptionsToPackage{table,xcdraw,dvipsnames}{xcolor}
+\documentclass[11pt]{GLaudit}
+\usepackage{auditframework}
+\hypersetup{pdftitle={Evaluation Audit Report}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% DOCUMENT REFERENCE NUMBERS %%%
+\reporttype{AUDIT}
+\reportno{GL-[number]}	% Audit report number (top-right header)
+\evalname{PLACEHOLDER}		% The evaluation this report covers
+\evalscore{?}			% Overall grade (S/A/B/C/D/E): drives the badge
+\commitref{[commit]}		% Eval version/commit audited
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%% DOCUMENT STARTS HERE: %%%
+\begin{document}
+\input{Content}
+\end{document}

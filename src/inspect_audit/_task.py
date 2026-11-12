@@ -1,10 +1,6 @@
-"""The audit task: the benchmark's own task, with the auditor in place of its solver.
+"""Replace the benchmark solver with an investigator while retaining sample setup.
 
-Everything is declared: the task and its arguments, the samples, the checks, the
-logs. Inspect then sets up each sample exactly as it did for the evaluated agent.
-What the audit replaces it replaces explicitly -- solver, scorers, sandbox (theirs
-plus ours), every limit and generation setting -- and what it cannot support it
-refuses, saying why.
+Task overrides are explicit; unsupported environments raise UnsupportedBenchmarkError.
 """
 
 import inspect as pyinspect
@@ -15,22 +11,22 @@ from typing import Any, Literal
 
 from inspect_ai import Task, task_with
 from inspect_ai.dataset import Sample
-from inspect_ai.model import GenerateConfig, Model, ModelConfig, get_model
+from inspect_ai.model import ChatMessage, GenerateConfig, Model, ModelConfig, get_model
 from inspect_ai.scorer import Scorer
 from inspect_ai.solver import Solver
 from inspect_ai.tool import WebSearchProviders
 from inspect_ai.util import registry_create, registry_info
 
-from ._auditor import auditor
-from ._compose import UnsupportedBenchmarkError, audit_compose, their_compose, their_sandbox
-from ._k8s import audit_k8s
+from ._compose import UnsupportedBenchmarkError, investigation_compose, their_compose, their_sandbox
+from ._investigator import investigator
+from ._k8s import investigation_k8s
 from ._logs import LogIndex, LogMismatchError, index_logs
 from ._source import SourceCopy, collect_directory, collect_source
-from ._verdicts import audit_items, item_scorer
+from ._verdicts import investigation_items, item_scorer
 
-# task settings of theirs the audit keeps on purpose: `setup` prepares their box,
+# task settings of theirs the investigation keeps on purpose: `setup` prepares their box,
 # `cleanup` tears their resources down, `model` is the eval's own --model (the
-# auditor), `version` and `description` describe their task
+# investigator), `version` and `description` describe their task
 KEPT = frozenset({"setup", "cleanup", "model", "version", "description"})
 
 
@@ -63,8 +59,13 @@ def _task_source(task: Task, name: str, source: str | None) -> SourceCopy:
     return collect_source(Path(file))
 
 
+def _content(value: str | list[ChatMessage]) -> str | list[dict[str, Any]]:
+    # a chat's messages get a fresh random id each time the dataset is loaded
+    return value if isinstance(value, str) else [m.model_dump(exclude={"id"}) for m in value]
+
+
 def check_same_items(index: LogIndex, samples: list[Sample]) -> None:
-    """Each audited sample's input must be the input its logged attempts were given."""
+    """Each investigated sample's input must be the input its logged attempts were given."""
     from inspect_ai.log import read_eval_log_sample
 
     for sample in samples:
@@ -73,11 +74,49 @@ def check_same_items(index: LogIndex, samples: list[Sample]) -> None:
             logged = read_eval_log_sample(
                 attempt.log, id=attempt.sample_id, epoch=attempt.epoch, exclude_fields={"events"}
             ).input
-            if logged != sample.input:
+            if _content(logged) != _content(sample.input):
                 raise LogMismatchError(
                     f"sample {sample.id}: the installed benchmark's input differs from the "
                     f"input logged in {attempt.log}"
                 )
+
+
+def configured_judges(
+    index: LogIndex | None,
+    roles: dict[str, str],
+    judge_configs: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, str | Model]:
+    """Judge roles as models carrying the logs' recorded settings (temperature, effort).
+
+    Shared by investigations and regrades: a regrade with the judge's defaults instead
+    of its recorded settings tests a different grader (FRICTION 8).
+    """
+    configured_roles: dict[str, str | Model] = dict(roles)
+    recorded = index.judge_configs if index is not None else {}
+    declared = {
+        role: ModelConfig.model_validate(value) for role, value in (judge_configs or {}).items()
+    }
+    for role, configured in {**recorded, **declared}.items():
+        if roles.get(role) != configured.model:
+            raise ValueError(f"judge configuration for {role!r} must match its declared model")
+        # the endpoint the logs' run called is where that run was hosted, not part of
+        # the judge: a recorded one is not replayed (on Hawk it would bypass the
+        # gateway with the gateway's token), and only a declared one is used
+        if role in recorded and configured.model_copy(update={"base_url": None}) != recorded[
+            role
+        ].model_copy(update={"base_url": None}):
+            raise LogMismatchError(
+                f"judge configuration for {role!r} differs from the recorded configuration"
+            )
+        model_kwargs: dict[str, Any] = dict(configured.args)
+        model_kwargs["memoize"] = False
+        configured_roles[role] = get_model(
+            configured.model,
+            config=configured.config,
+            base_url=declared[role].base_url if role in declared else None,
+            **model_kwargs,
+        )
+    return configured_roles
 
 
 def judge_roles(index: LogIndex | None, judge: dict[str, str] | None) -> dict[str, str]:
@@ -98,12 +137,12 @@ def judge_roles(index: LogIndex | None, judge: dict[str, str] | None) -> dict[st
             )
     roles = {**index.judges, **declared}
     # a scorer that judged with the evaluated model (get_model() with no role) would
-    # judge with the auditor here
+    # judge with the investigator here
     unbound = index.scorer_models - set(roles.values())
     if unbound & index.eval_models:
         raise UnsupportedBenchmarkError(
             f"the recorded scorer judged with the evaluated model ({', '.join(sorted(unbound))}) "
-            "rather than a model role; in an audit that model would be the auditor"
+            "rather than a model role; in an investigation that model would be the investigator"
         )
     return roles
 
@@ -124,7 +163,7 @@ def numbered(task: Task) -> tuple[list[Sample], bool]:
     return dataset, positional
 
 
-def audit_task(
+def investigation_task(
     task: str | Task,
     *,
     samples: Sequence[str] | Literal["all"],
@@ -139,20 +178,21 @@ def audit_task(
     redact: Sequence[str] = (),
     confidential: bool = False,
     notes: str | None = None,
+    paper: str | None = None,
     search: WebSearchProviders | None = None,
-    auditor_image: str | None = None,
+    investigator_image: str | None = None,
     cost_limit: float | None = None,
     message_limit: int | None = None,
     time_limit: int | None = None,
     working_limit: int | None = None,
-    auditor_model: Model | None = None,
+    investigator_model: Model | None = None,
 ) -> Task:
-    """Build the audit of a benchmark task.
+    """Build the investigation of a benchmark task.
 
     Args:
         task: The benchmark task: a registry name such as `inspect_evals/simpleqa`,
             or a `Task` (then `task_args` must be empty).
-        samples: The sample ids to audit, or `"all"`.
+        samples: The sample ids to investigate, or `"all"`.
         checks: The checks to run on each sample, by skill name.
         task_args: The benchmark task's arguments, exactly as the logs ran it.
         logs: `.eval` files recording attempts at this task; every header must
@@ -162,29 +202,31 @@ def audit_task(
             without logs: `{}` when their scorers call no model.
         judge_configs: Inspect ModelConfig records for judge roles, including
             generation settings and endpoints. Must agree with recorded roles.
-        source: The benchmark's code for the auditor's box: the task's `.py` file (its
+        source: The benchmark's code for the investigator's box: the task's `.py` file (its
             imports within its package are followed, with their folders' data files;
             see `_source`) or a directory copied whole. Required for tasks from an
             installed package; otherwise defaults to the task's own file.
-        auditor_model: Optional explicit agent model for programmatic drivers. The
+        investigator_model: Optional explicit agent model for programmatic drivers. The
             CLI normally uses the evaluation model. Binding here also works when
             an execution backend overrides Task.model after construction.
         compose: The benchmark's compose file, when its task names only `"docker"`.
         assessment_ids: Assessment-unit ids per sample for question labels.
         redact: Metadata keys withheld from the staged item.
-        confidential: The benchmark is unpublished: the auditor must not transmit it.
-        notes: A free-form steer for the auditor.
+        confidential: The benchmark is unpublished: the investigator must not transmit it.
+        notes: A free-form steer for the investigator.
+        paper: The benchmark's paper, a path or URL, put in the investigator's box at
+            /audit/paper/ so the benchmark's own account of its design is to hand.
         search: Inspect web_search provider configuration, e.g. {"tavily": True}.
-            External providers work across auditor models and need their API key
+            External providers work across investigator models and need their API key
             in the Inspect runner environment. Omitted means no search tool.
-        auditor_image: A published auditor image (required on k8s, which cannot build).
-        cost_limit: Dollars per audited sample, the auditor's and its `grade` judge calls
-            together. The audit is governed by a dollar cap: this one, or the eval's own
+        investigator_image: A published investigator image (required on k8s, which cannot build).
+        cost_limit: Dollars per investigated sample, the investigator's and its `grade` judge calls
+            together. The investigation is governed by a dollar cap: this one, or the eval's own
             (`--cost-limit`, an eval set's `cost_limit`); a sample with neither refuses to
             start. Inspect refuses a cost-capped run with any unpriced model.
-        message_limit: The auditor's message limit (the benchmark's is not inherited).
-        time_limit: The auditor's time limit, seconds.
-        working_limit: The auditor's working-time limit, seconds.
+        message_limit: The investigator's message limit (the benchmark's is not inherited).
+        time_limit: The investigator's time limit, seconds.
+        working_limit: The investigator's working-time limit, seconds.
     """
     if isinstance(task, Task):
         if task_args:
@@ -194,7 +236,7 @@ def audit_task(
         their = registry_create("task", task, **(task_args or {}))
         name = registry_info(their).name
         package = name.split("/")[0] if "/" in name else None
-    scoped = audit_items(list(checks))
+    scoped = investigation_items(list(checks))
 
     dataset, _ = numbered(their)
     by_id: dict[str, Sample] = {str(s.id): s for s in dataset}
@@ -207,7 +249,7 @@ def audit_task(
             raise ValueError(f"unknown sample id(s): {', '.join(unknown)}")
     selected = [by_id[s] for s in chosen]
     if assessment_ids is not None and set(assessment_ids) - set(chosen):
-        raise ValueError("assessment_ids names samples that are not being audited")
+        raise ValueError("assessment_ids names samples that are not being investigated")
 
     index = (
         index_logs(list(logs), task_name=name, task_args=dict(task_args or {}), package=package)
@@ -215,34 +257,9 @@ def audit_task(
         else None
     )
     roles = judge_roles(index, judge)
-    configured_roles: dict[str, str | Model] = dict(roles)
-    configurations = {
-        **(index.judge_configs if index is not None else {}),
-        **{
-            role: ModelConfig.model_validate(value) for role, value in (judge_configs or {}).items()
-        },
-    }
-    for role, configured in configurations.items():
-        if roles.get(role) != configured.model:
-            raise ValueError(f"judge configuration for {role!r} must match its declared model")
-        if (
-            index is not None
-            and role in index.judge_configs
-            and configured != index.judge_configs[role]
-        ):
-            raise LogMismatchError(
-                f"judge configuration for {role!r} differs from the recorded configuration"
-            )
-        model_kwargs: dict[str, Any] = dict(configured.args)
-        model_kwargs["memoize"] = False
-        configured_roles[role] = get_model(
-            configured.model,
-            config=configured.config,
-            base_url=configured.base_url,
-            **model_kwargs,
-        )
+    configured_roles = configured_judges(index, roles, judge_configs)
     if index is not None:
-        # every log that attempted an audited sample must have given it this sample's
+        # every log that attempted an investigated sample must have given it this sample's
         # input: positional ids under a shuffled run, a changed dataset or a different
         # variant all fail here, item by item, rather than by a rule about the run
         check_same_items(index, selected)
@@ -256,17 +273,19 @@ def audit_task(
             raise UnsupportedBenchmarkError(
                 "compose= applies to Docker; declare the k8s config on the task"
             )
-        sandbox = audit_k8s(spec, stage=stage / "sandbox", auditor_image=auditor_image)
+        sandbox = investigation_k8s(
+            spec, stage=stage / "sandbox", investigator_image=investigator_image
+        )
     else:
-        sandbox = audit_compose(
+        sandbox = investigation_compose(
             their_compose(spec, compose, stage) if spec is not None else None,
             stage=stage / "sandbox",
-            auditor_image=auditor_image,
+            investigator_image=investigator_image,
         )
 
     their_scorers: list[Scorer] = _as_list(their.scorer)
     their_setup: list[Solver] = _as_list(their.setup)
-    solver = auditor(
+    solver = investigator(
         checks=scoped,
         their_scorers=their_scorers,
         their_setup=their_setup,
@@ -278,11 +297,12 @@ def audit_task(
         redact=redact,
         confidential=confidential,
         notes=notes,
+        paper=paper,
         search=search,
-        model=auditor_model,
+        model=investigator_model,
     )
 
-    # every setting of theirs that would govern the auditor is replaced, not inherited
+    # every setting of theirs that would govern the investigator is replaced, not inherited
     overrides: dict[str, Any] = {
         # Their sample declarations were resolved into the merged task sandbox.
         # Leaving one here lets Inspect override that merge and lose our service.
@@ -313,21 +333,21 @@ def audit_task(
         "time_limit": time_limit,
         "working_limit": working_limit,
         "cost_limit": cost_limit,
-        "name": f"audit/{name}",
+        "name": f"investigation/{name}",
         "metadata": {
-            "audited_task": name,
-            "audited_task_args": dict(task_args or {}),
-            "audited_logs": list(logs or []),
+            "investigated_task": name,
+            "investigated_task_args": dict(task_args or {}),
+            "investigated_logs": list(logs or []),
             "judge_roles": roles,
         },
     }
     accepted = set(pyinspect.signature(task_with).parameters)
     unclassified = accepted - set(overrides) - KEPT - {"task"}
     if unclassified:
-        # a new Inspect added a task setting: decide whether the audit overrides or keeps
-        # it before it can quietly govern the auditor
+        # a new Inspect added a task setting: decide whether the investigation overrides or keeps
+        # it before it can quietly govern the investigator
         raise RuntimeError(
-            f"task_with takes {', '.join(sorted(unclassified))}, which the audit neither "
+            f"task_with takes {', '.join(sorted(unclassified))}, which the investigation neither "
             "overrides nor keeps; classify them in _task.py"
         )
     return task_with(their, **{k: v for k, v in overrides.items() if k in accepted})

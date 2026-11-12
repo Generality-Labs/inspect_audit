@@ -19,7 +19,7 @@ metadata:
 # Does the question determine a single answer?
 
 A benchmark may intentionally allow several valid solutions. Multiplicity is not
-itself a defect if the stated task and acceptance rule admit those solutions. Audit
+itself a defect if the stated task and acceptance rule admit those solutions. Investigation
 whether an unstated choice changes which answer is accepted: a competent worker
 following the question as written should not need to guess the author's convention.
 

@@ -1,6 +1,6 @@
-"""Deterministic auditor tool exercise. No external model requests are made.
+"""Deterministic investigator tool exercise. No external model requests are made.
 
-The real auditor stages each sample and exposes its real tools. A scripted model
+The real investigator stages each sample and exposes its real tools. A scripted model
 drives those tools, probes the grader, records an unresolved validity judgment and
 submits. Judge calls use explicit mock fixtures when declared; otherwise they are refused. Tool events
 in the native Inspect log are the compatibility evidence, not the validity label.
@@ -8,7 +8,6 @@ in the native Inspect log are the compatibility evidence, not the validity label
 
 import importlib
 import json
-from contextlib import suppress
 from typing import Any
 
 from inspect_ai import Task, task, task_with
@@ -28,10 +27,10 @@ from inspect_ai.solver import TaskState
 from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_ai.util import registry_create
 
-from inspect_audit._openrouter import openrouter_prices
-from inspect_audit._prices import register_prices
-from inspect_audit._registry import log_files, resolve_source
-from inspect_audit._task import audit_task, numbered
+from inspect_audit._log_sources import log_files
+from inspect_audit._prices import openrouter_prices, register_prices
+from inspect_audit._registry import resolve_source
+from inspect_audit._task import investigation_task, numbered
 
 from .judges import MOCK_JUDGE, mock_judge
 from .probe_results import outcomes
@@ -48,6 +47,19 @@ def compatibility(expected: dict[str, bool]):
         )
 
     return score
+
+
+# The item, and the recorded attempts as staged in the box (Inspect JSON logs), read
+# with plain json so the probe needs nothing installed there.
+STAGED = (
+    "python3 -c '"
+    'import glob, json; d = json.load(open("/audit/item.json")); '
+    'out = {k: d[k] for k in ["sample_id", "target", "choices", "files_in_their_box", "has_setup_script"]}; '
+    'assert d.get("benchmark_source"), "no source manifest"; '
+    'logs = [json.load(open(f)) for f in sorted(glob.glob("/audit/logs/*.json"))]; '
+    'out["attempts"] = [{"eval_id": g["eval"]["eval_id"], "epoch": s["epoch"]} for g in logs for s in g.get("samples") or []]; '
+    "print(json.dumps(out))'"
+)
 
 
 @modelapi(name="ia_probe")
@@ -68,30 +80,17 @@ class ProbeAPI(ModelAPI):
         def call(name: str, **args: Any) -> ModelOutput:
             return ModelOutput.for_tool_call("ia_probe/driver", name, args)
 
-        if "auditor_bash" not in done:
+        if "investigator_bash" not in done:
             return call(
-                "auditor_bash",
-                command='python3 -c \'import json; d=json.load(open("/audit/item.json")); print(json.dumps({k:d[k] for k in ["sample_id","target","choices","files_in_their_box","has_setup_script"]})); assert d.get("benchmark_source"), "no source manifest"\'',
+                "investigator_bash",
+                command=STAGED,
             )
-        if "attempts" not in done:
-            return call("attempts")
-        attempts: list[dict[str, Any]] = []
-        listed = next(m for m in results if m.function == "attempts")
-        with suppress(json.JSONDecodeError):
-            attempts = json.loads(listed.text)
-        if attempts and "read_attempt" not in done:
-            return call(
-                "read_attempt",
-                eval_id=attempts[0]["eval_id"],
-                epoch=attempts[0]["epoch"],
-                start=0,
-                count=2,
-            )
+        staged = json.loads(next(m for m in results if m.function == "investigator_bash").text)
+        attempts: list[dict[str, Any]] = staged["attempts"]
         if "benchmark_bash" in available and "benchmark_bash" not in done:
             return call("benchmark_bash", command="pwd\nls -al")
         if "grade" in available and "grade" not in done:
-            staged = next(m for m in results if m.function == "auditor_bash")
-            item = json.loads(staged.text)
+            item = staged
             if attempts:
                 return call(
                     "grade", answer="", eval_id=attempts[0]["eval_id"], epoch=attempts[0]["epoch"]
@@ -136,7 +135,7 @@ class ProbeAPI(ModelAPI):
 
 @task
 def probe(spec: dict[str, Any], limit: int = 1) -> Task:
-    """Exercise the production audit task with a scripted, API-free tool driver."""
+    """Exercise the production investigation task with a scripted, API-free tool driver."""
     if limit < 1:
         raise ValueError("probe limit must be positive")
     # Hawk replaces Task.model with its declared grid model after construction.
@@ -171,7 +170,7 @@ def probe(spec: dict[str, Any], limit: int = 1) -> Task:
         role: MOCK_JUDGE if role in mocked else "ia_probe/judge"
         for role in set(spec.get("judges", {})) | set(mocked)
     }
-    audit = audit_task(
+    investigation = investigation_task(
         spec["task"],
         task_args=args,
         samples=samples[:limit],
@@ -179,11 +178,11 @@ def probe(spec: dict[str, Any], limit: int = 1) -> Task:
         source=resolve_source(spec["source"]),
         logs=log_files(logs) if logs else None,
         judge=judges,
-        auditor_image=spec["auditor_image"],
+        investigator_image=spec["investigator_image"],
         cost_limit=0.01,
         time_limit=900,
         message_limit=20,
-        auditor_model=get_model("ia_probe/driver"),
+        investigator_model=get_model("ia_probe/driver"),
     )
     expected = {
         "logs": bool(logs),
@@ -192,20 +191,20 @@ def probe(spec: dict[str, Any], limit: int = 1) -> Task:
         "mock_judge": bool(mocked),
     }
     validity_scorers = (
-        list(audit.scorer)
-        if isinstance(audit.scorer, list)
-        else [audit.scorer]
-        if audit.scorer
+        list(investigation.scorer)
+        if isinstance(investigation.scorer, list)
+        else [investigation.scorer]
+        if investigation.scorer
         else []
     )
     return task_with(
-        audit,
+        investigation,
         model=get_model("ia_probe/driver"),
-        model_roles={**(audit.model_roles or {}), **mocked},
+        model_roles={**(investigation.model_roles or {}), **mocked},
         # Inspect truncates tool output for model context. This scripted driver
         # needs complete grader JSON, including SciCode's long explanations.
         config=GenerateConfig(max_tool_output=1_000_000),
         name=f"probe/{spec['task']}",
         scorer=[*validity_scorers, compatibility(expected)],
-        metadata={**(audit.metadata or {}), "functionality_probe": expected},
+        metadata={**(investigation.metadata or {}), "functionality_probe": expected},
     )

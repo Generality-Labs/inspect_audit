@@ -6,36 +6,36 @@ tasks:
 - package: git+https://github.com/Generality-Labs/inspect_audit@e83a4fd5acd2e58f411ad898a0a99887d6eab2a5#subdirectory=experiments/functionality_hawk
   name: ia_functionality
   items:
-  - name: investigation
+  - name: audit
     args:
       benchmark: scicode
-      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@e83a4fd5acd2e58f411ad898a0a99887d6eab2a5
+      investigation_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@e83a4fd5acd2e58f411ad898a0a99887d6eab2a5
       model: openrouter/anthropic/claude-haiku-4.5
-      audit_sample_cost: 2.0
-  - name: investigation
+      investigation_sample_cost: 2.0
+  - name: audit
     args:
       benchmark: simpleqa
-      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@e83a4fd5acd2e58f411ad898a0a99887d6eab2a5
+      investigation_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@e83a4fd5acd2e58f411ad898a0a99887d6eab2a5
       model: openrouter/anthropic/claude-haiku-4.5
-      audit_sample_cost: 2.0
-  - name: investigation
+      investigation_sample_cost: 2.0
+  - name: audit
     args:
       benchmark: gsm8k
-      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@e83a4fd5acd2e58f411ad898a0a99887d6eab2a5
+      investigation_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@e83a4fd5acd2e58f411ad898a0a99887d6eab2a5
       model: openrouter/anthropic/claude-haiku-4.5
-      audit_sample_cost: 2.0
-  - name: investigation
+      investigation_sample_cost: 2.0
+  - name: audit
     args:
       benchmark: bbh
-      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@e83a4fd5acd2e58f411ad898a0a99887d6eab2a5
+      investigation_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@e83a4fd5acd2e58f411ad898a0a99887d6eab2a5
       model: openrouter/anthropic/claude-haiku-4.5
-      audit_sample_cost: 2.0
-  - name: investigation
+      investigation_sample_cost: 2.0
+  - name: audit
     args:
       benchmark: agentharm
-      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@e83a4fd5acd2e58f411ad898a0a99887d6eab2a5
+      investigation_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@e83a4fd5acd2e58f411ad898a0a99887d6eab2a5
       model: openrouter/anthropic/claude-haiku-4.5
-      audit_sample_cost: 2.0
+      investigation_sample_cost: 2.0
 models:
 - package: openai
   name: openrouter

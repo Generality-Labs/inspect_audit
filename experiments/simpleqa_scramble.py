@@ -1,6 +1,6 @@
 """Prepare and measure a blinded SimpleQA answer-corruption experiment.
 
-Only run_dir/task is staged for the auditor. The original answers and corruption
+Only run_dir/task is staged for the investigator. The original answers and corruption
 map live in run_dir/private, and are used only by the host-side measurement.
 """
 
@@ -17,26 +17,26 @@ from inspect_ai import task, task_with
 from inspect_ai.dataset import json_dataset
 from inspect_evals.simpleqa.simpleqa import simpleqa
 
-from inspect_audit._task import audit_task
+from inspect_audit._task import investigation_task
 from inspect_audit._prices import register_prices
 
 HERE = Path(__file__).parent
 
 
 @task
-def audit(cost_limit: float = 0.10):
+def investigation(cost_limit: float = 0.10):
     register_prices({"openrouter/openai/gpt-6-luna": {
         "input": 0.10, "output": 0.50,
         "input_cache_read": 0.01, "input_cache_write": 0.125,
     }})
     benchmark = task_with(simpleqa(), dataset=json_dataset(str(HERE / "benchmark.json")))
-    return audit_task(
+    return investigation_task(
         benchmark,
         samples="all",
         checks=["gold-answer"],
         judge={"grader": "openrouter/openai/gpt-6-luna"},
         source=str(HERE),
-        auditor_image="ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa",
+        investigator_image="ghcr.io/generality-labs/inspect-audit-auditor@sha256:63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa",
         cost_limit=cost_limit,
         message_limit=80,
         time_limit=600,
@@ -93,7 +93,7 @@ def prepare(root: Path, seed: int, count: int, corrupt: int) -> None:
         "source_sha256": SIMPLEQA_DATASET_SHA256,
         "modified_dataset_sha256": hashlib.sha256(payload.encode()).hexdigest(),
         "smoke_sample_ids": [clean, broken],
-        "auditor": "openrouter/openai/gpt-6-luna",
+        "investigator": "openrouter/openai/gpt-6-luna",
         "cost_limit_per_sample_usd": 0.10,
     }
     (private / "manifest.json").write_text(json.dumps(manifest, indent=2))

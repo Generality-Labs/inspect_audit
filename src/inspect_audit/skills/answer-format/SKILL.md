@@ -2,7 +2,7 @@
 name: answer-format
 description: Establish whether the packaging of answers corrupted the measurement --
   right content graded wrong for its shape, or a format specification too ambiguous
-  to follow. Investigate the scorer's parsing before judging any attempt.
+  to follow. Audit the scorer's parsing before judging any attempt.
 metadata:
   grades: [PENALISED, AMBIGUOUS, SOUND, INCONCLUSIVE]
   flags: [PENALISED, AMBIGUOUS]
@@ -42,7 +42,7 @@ correct final answer the extractor dropped, or credit for an answer the submissi
 never committed to.
 
 Save an attempt-level CSV or JSON table and print it in bounded chunks so the
-audit log retains it after sandbox cleanup. Include exact eval_id/epoch references,
+investigation log retains it after sandbox cleanup. Include exact eval_id/epoch references,
 submission evidence, recorded extraction/score, your interpretation and review
 status. Classify justified credit/rejection, false credit/rejection, abstention,
 scoring failure, and unresolved cases. Compute counts from the saved table;

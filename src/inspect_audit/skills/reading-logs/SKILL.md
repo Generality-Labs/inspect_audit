@@ -88,7 +88,7 @@ Before reading log files, walk through:
 - **Long-running processes hold onto memory.** Python's allocator typically does not return freed heap memory to the OS, so iterating through many large logs in a single process makes RSS grow even after each log goes out of scope. If you have already read several full logs in the same process and memory matters, spawn a fresh subprocess per file (process exit fully releases memory). For a handful of logs this is overkill.
 - **Parallel reads are fine when the total footprint fits.** Estimate from a single-file read first, then decide concurrency based on available RAM.
 
-## Investigating errors
+## Auditing errors
 
 Three common error questions, with the right route for each:
 

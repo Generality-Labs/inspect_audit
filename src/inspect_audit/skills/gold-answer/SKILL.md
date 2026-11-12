@@ -17,11 +17,11 @@ metadata:
 `metadata` may hold more of the gold. Some benchmarks store none: correctness is a
 predicate the grader computes over the submission — it executes the submitted
 program, runs the tests, checks the end state. There an empty `target` is not a missing
-or wrong answer. The gold is any submission the grader accepts, so what you audit is
+or wrong answer. The gold is any submission the grader accepts, so what you investigate is
 whether a valid solution exists and whether that acceptance predicate is sound —
 never whether the empty string is correct. The logs hold every recorded attempt at it.
 
-The gold is the claim under audit, not the reference. Establish what the answer
+The gold is the claim under investigation, not the reference. Establish what the answer
 is from sources, then compare.
 
 The benchmark's own machinery is not such a source. Its grader, its generation
@@ -80,7 +80,7 @@ output/score does not describe every earlier rejection.
 ## Start with the logs, not the web
 
 Enumerate every distinct answer the field gave and how each was graded. The
-sample id is in `/audit/item.json`. `attempts()` lists the attempts and their scores; `read_attempt()` reads a transcript a window at a time, and `export_attempts()` writes them all to `/audit/attempts.jsonl` for pandas.
+sample id is in `/audit/item.json`. The recorded attempts are in /audit/logs/*.json (Inspect logs holding only this item's samples); read them with Inspect's log API, as the reading-logs skill shows.
 
 Enumerate all epochs and read the actual submissions, not just the scorer's
 extracted answers. Reuse the saved attempt review table across skills. Account

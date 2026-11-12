@@ -3,7 +3,7 @@ name: audit-framework
 description: Generality Labs assessment definitions and rubric. Read before assigning framework judgments; distinguish item findings from benchmark-wide evidence.
 ---
 
-The pinned GL framework defines the questions below. Audit items and per-question defect
+The pinned GL framework defines the questions below. Investigation items and per-question defect
 labels provide evidence for these questions; they are not substitutes for them. Apply only
 checks within operator scope. Do not attempt to establish population representativeness or
 cross-model effects from one sample. Report useful observations even when they do not settle

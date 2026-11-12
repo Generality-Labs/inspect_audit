@@ -1,6 +1,6 @@
 ---
 name: other-findings
-description: Record what you noticed that none of the other audit items would have
+description: Record what you noticed that none of the other investigation items would have
   caught. The item set is a list of defects someone already knew to look for; this
   one is for the defect nobody wrote an item for yet.
 metadata:
@@ -57,7 +57,7 @@ line in `not_pursued`, not a finding.
 Mark each finding `item` or `benchmark`. A fact about this one question is worth
 recording; a fact that would recur across the bank is worth far more, because
 downstream it becomes one finding with many demonstrations rather than many findings.
-You are auditing one item and cannot see the others, so say `benchmark` when the
+You are investigating one item and cannot see the others, so say `benchmark` when the
 mechanism you found is not specific to this question -- and say what you would expect
 to see elsewhere if you are right.
 
@@ -68,8 +68,8 @@ to see elsewhere if you are right.
 
 There is no grade for "probably fine". NONE is a claim that you looked.
 
-Keep audit-environment failures in the submission debrief. A missing analysis
+Keep investigation-environment failures in the submission debrief. A missing analysis
 package, unavailable judge, or misconfigured API route is not by itself a defect
 of the benchmark. Historical judge differences are a lead: establish their effect
-before asserting measurement corruption. Keep incomplete investigations in
+before asserting measurement corruption. Keep incomplete audits in
 `not_pursued`, with the next check that would resolve them.

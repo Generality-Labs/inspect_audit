@@ -15,7 +15,7 @@ from hawk.client import HawkClient
 from inspect_ai.event import ModelEvent
 from inspect_ai.log import read_eval_log
 
-from inspect_audit._runs import HawkLogin
+from inspect_audit.dispatch import HawkLogin
 
 ROOT = Path(__file__).resolve().parents[2]
 CASES = Path(__file__).parent / "cases"

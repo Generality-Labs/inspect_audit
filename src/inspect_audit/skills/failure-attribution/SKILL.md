@@ -11,7 +11,7 @@ metadata:
   unresolved: [UNCLEAR]
   details:
     attributions: each distinct cause of failure, as {route, why, owner} -- why the
-      attempts on that route failed, and owner is the audit item that owns it if an
+      attempts on that route failed, and owner is the investigation item that owns it if an
       artefact (environment-integrity, gold-answer, answer-format,
       insufficiently-specified), or `capability` when the work was simply not done
 ---

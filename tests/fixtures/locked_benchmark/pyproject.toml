@@ -1,0 +1,8 @@
+[project]
+name = "bench"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["six==1.16.0"]
+
+[project.optional-dependencies]
+grader = ["idna==3.7"]

@@ -6,12 +6,12 @@ tasks:
 - package: git+https://github.com/Generality-Labs/inspect_audit@8edecdc6b0eed9b4bb59581d9fb7943a0e9ec3a0#subdirectory=experiments/functionality_hawk
   name: ia_functionality
   items:
-  - name: investigation
+  - name: audit
     args:
       benchmark: mirrorcode
-      audit_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@8edecdc6b0eed9b4bb59581d9fb7943a0e9ec3a0
+      investigation_package: inspect-audit[remote,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@8edecdc6b0eed9b4bb59581d9fb7943a0e9ec3a0
       model: openrouter/anthropic/claude-haiku-4.5
-      audit_sample_cost: 2.0
+      investigation_sample_cost: 2.0
       spec:
         repo: https://github.com/jrh-mann/MirrorCode
         revision: 819db252edc4e72feed767cb92b04ac2a5bc6792

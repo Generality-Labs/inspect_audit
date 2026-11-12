@@ -1,4 +1,4 @@
-"""The image viewer the auditor and the investigator share."""
+"""The image viewer the investigator and the auditor share."""
 
 from types import SimpleNamespace
 

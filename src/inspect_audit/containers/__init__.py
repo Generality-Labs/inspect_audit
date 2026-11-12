@@ -16,11 +16,11 @@ EGRESS_POLICY = (HERE / "egress.helm.yaml").read_text()
 # Kubernetes) and by default everywhere. Public: no registry login needed.
 INVESTIGATOR_IMAGE = (
     "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
-    "63665b4948b4adfe9767079ceb9a5d70fe39c0f56518e700a55b0313fa1e52aa"
+    "cde03f37170b9d112eff3fc98823c344154d51abf587de4df7146fa72a0be4e1"
 )
 AUDITOR_IMAGE = (
     "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
-    "d21b285bc4ce2f2d34084c2ae382ab5a6996704dbb8d58d1199a1d1925fa71fa"
+    "f0ed82536bde7b211a4973dc3b1b779431774922d8e1fef25931610d7c064b98"
 )
 
 __all__ = ["AUDITOR_IMAGE", "EGRESS_POLICY", "INVESTIGATOR_DOCKERFILE", "INVESTIGATOR_IMAGE"]

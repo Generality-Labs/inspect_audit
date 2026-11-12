@@ -36,11 +36,9 @@ tasks:
           budget_usd: 2.0
       runs: hawk
       box: k8s
-      instructions: 'SMOKE TEST of Inspect Auditor, not a real audit. Keep total spend under $1. Do exactly
-        these steps, then stop: (1) in your box, import the task and load its dataset to confirm the benchmark
-        is installed; (2) run_eval fresh attempts on ONE sample of your choice with the subject model,
-        epochs 1; (3) send_investigators on that sample with check gold-answer and that job''s logs, item_cost_limit
-        0.25; (4) collect both jobs, submit short findings and publish.'
+      instructions: 'This case: no supplied logs. Jobs: run_eval fresh attempts on ONE sample with the
+        subject model; then send_investigators on that sample, check gold-answer, with that job''s logs,
+        item_cost_limit 0.25.'
 models:
 - package: inspect-ai
   items:

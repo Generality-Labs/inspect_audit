@@ -44,13 +44,10 @@ tasks:
           budget_usd: 2.0
       runs: hawk
       box: k8s
-      instructions: 'SMOKE TEST of Inspect Auditor, not a real audit. Keep total spend under $1. Do exactly
-        these steps, then stop: (1) in your box, import the task and build it to confirm the benchmark
-        is installed; (2) send_investigators on ONE sample of your choice with check gold-answer and the
-        supplied logs, item_cost_limit 0.25; (3) run_eval with code: copy the task''s prompt module into
-        a folder at its installed path, make one small harmless wording change, and run that variant on
-        the same ONE sample with the subject model, epochs 1; (4) collect both jobs, submit short findings
-        noting whether the variant ran, and publish.'
+      instructions: 'This case: logs hawk:scicode-provider-default-pgcjfyx2vbyas1w5 (65 samples; use ONE).
+        Jobs: send_investigators on one sample, check gold-answer, with the supplied logs, item_cost_limit
+        0.25; run_eval with code: a small harmless wording change to the task''s prompt, at its installed
+        path, on the same sample with the subject model.'
 models:
 - package: inspect-ai
   items:

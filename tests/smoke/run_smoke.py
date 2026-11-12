@@ -30,10 +30,14 @@ FINISHED = {"complete", "failed", "deleted", "stuck"}
 
 
 def materialize(case: Path, revision: str) -> Path:
-    """The case with this inspect_audit revision in place of SELF."""
-    text = case.read_text().replace("@SELF", f"@{revision}")
+    """The case with this inspect_audit revision in place of SELF, and the shared testing
+    routine (routine.md) ahead of the case's own notes: every smoke audit presses every
+    button and reports on the tool, not the benchmark."""
+    config = yaml.safe_load(case.read_text().replace("@SELF", f"@{revision}"))
+    args = config["tasks"][0]["items"][0]["args"]
+    args["instructions"] = (HERE / "routine.md").read_text() + "\n" + args.get("instructions", "")
     out = Path(tempfile.mkdtemp(prefix="ia-smoke-")) / case.name
-    out.write_text(text)
+    out.write_text(yaml.safe_dump(config, sort_keys=False))
     return out
 
 

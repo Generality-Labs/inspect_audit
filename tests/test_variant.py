@@ -196,3 +196,40 @@ def test_hawk_child_jobs_never_carry_a_persons_login() -> None:
     assert Execution.model_validate({"backend": "hawk"}).credential_mode == "restricted"
     with pytest.raises(ValueError, match="restricted credentials only"):
         Execution.model_validate({"backend": "hawk", "credential_mode": "user"})
+
+
+def test_the_benchmark_is_installed_in_the_box_as_its_jobs_install_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The agent's shell is in the box: it must be able to import and run the benchmark."""
+    import json
+    from types import SimpleNamespace
+
+    from inspect_audit import _audit_workspace
+
+    calls: list[list[str]] = []
+    written: dict[str, str] = {}
+    imported = {"done": False}
+
+    class InstallBox:
+        async def exec(self, cmd: list[str], **kwargs: Any) -> Any:
+            calls.append(cmd)
+            if cmd[:3] == ["python", "-m", "pip"]:
+                imported["done"] = True
+                return SimpleNamespace(success=True, stdout="Successfully installed", stderr="")
+            return SimpleNamespace(success=imported["done"], stdout="", stderr="")
+
+        async def write_file(self, path: str, text: str) -> None:
+            written[path] = text
+
+    monkeypatch.setattr(_audit_workspace, "sandbox", InstallBox)
+    specs = ["bench @ git+https://x/bench@abc", "numpy==2.1.0", "inspect-ai==0.3.285"]
+    solve = _audit_workspace.install_benchmark(specs, "bench.tasks")
+    asyncio.run(solve(None, None))  # type: ignore[arg-type]
+    assert calls[1][-3:] == specs
+    record = json.loads(written[_audit_workspace.INSTALL_RECORD])
+    assert record["installed"] and record["imports"] and record["specs"] == specs
+    # a resumed box that still imports it is left alone
+    calls.clear()
+    asyncio.run(solve(None, None))  # type: ignore[arg-type]
+    assert calls == [["python", "-c", "import bench.tasks"]]

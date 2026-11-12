@@ -15,8 +15,10 @@ Two different things.
 - `code`: either of the above with the benchmark changed, an ablation. Copy the files
   you want to change into a folder, at their paths inside the installed package
   (`inspect_evals/simpleqa/simpleqa.py`, not the repository's `src/...` path), edit them,
-  and pass the folder. Every other file is the original. Test the change in your box
-  first. The job records the diff; cite it in findings.
+  and pass the folder. Every other file is the original. The benchmark is installed in
+  your box, so test the change there first: lay your files over a copy of the
+  installed package, build the task, check it loads and scores as you expect. The job
+  records the diff; cite it in findings.
 
 `send_investigators` sends one investigator per item, inside the benchmark's own setup,
 against the checks you choose; their verdicts go into the register.

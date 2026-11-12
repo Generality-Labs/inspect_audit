@@ -1502,7 +1502,8 @@ def audit(
     )
     seed_path.write_text(json.dumps(seed, indent=2))
 
-    from ._audit_workspace import configure, stage_inputs
+    from ._audit_workspace import configure, install_benchmark, stage_inputs
+    from .dispatch.jobs import INSPECT_VERSION
 
     sandbox = configure(root, auditor_image) if box == "k8s" else docker_box(root)
     if artifact_dir:
@@ -1547,6 +1548,16 @@ def audit(
             bind_policy(launch_policy),
             check_models(inv.runs if inv else None, launch_policy),
             stage_inputs(root),
+            *(
+                [
+                    install_benchmark(
+                        [task_package, *task_package_pins, f"inspect-ai=={INSPECT_VERSION}"],
+                        launch_policy.source,
+                    )
+                ]
+                if task_package
+                else []
+            ),
             begin_findings(),
         ],
         on_resume=on_resume,

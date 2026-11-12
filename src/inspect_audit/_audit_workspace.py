@@ -145,6 +145,52 @@ def stage_inputs(root: Path) -> Solver:
     return solve
 
 
+INSTALL_RECORD = "/inputs/benchmark-install.json"
+
+
+@solver
+def install_benchmark(specs: list[str], source: str | None) -> Solver:
+    """Install the benchmark into the auditor's box, as its jobs install it.
+
+    The agent's shell is in the box; without this it could read the benchmark but not
+    import its task, load its dataset, call its scorer or try a change without a paid
+    job. The same pip specs as the jobs (the benchmark, its lockfile pins, the jobs'
+    Inspect), so what the agent runs here is what its jobs run. A failed install is
+    recorded for the agent, not fatal: the audit can still read and launch. Packages
+    are not checkpointed, so a resumed box installs again unless `source` imports.
+    """
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        if source and (await sandbox().exec(["python", "-c", f"import {source}"])).success:
+            return state
+        result = await sandbox().exec(
+            [
+                "python",
+                "-m",
+                "pip",
+                "install",
+                "--no-cache-dir",
+                "--disable-pip-version-check",
+                *specs,
+            ],
+            timeout=1800,
+        )
+        imported = None
+        if source and result.success:
+            imported = (await sandbox().exec(["python", "-c", f"import {source}"])).success
+        record = {
+            "installed": result.success,
+            "specs": specs,
+            "source_module": source,
+            "imports": imported,
+            "log_tail": (result.stdout + result.stderr)[-4000:],
+        }
+        await sandbox().write_file(INSTALL_RECORD, json.dumps(record, indent=2))
+        return state
+
+    return solve
+
+
 async def write_into(archive: bytes, destination: str) -> None:
     """Unpack a gzipped tar into the box at `destination`."""
     await sandbox().write_file("/tmp/staged.tar.gz", archive)

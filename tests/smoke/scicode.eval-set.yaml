@@ -1,0 +1,63 @@
+name: ia-smoke-scicode
+packages:
+- inspect-ai==0.3.285
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-evals[scicode] @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
+tasks:
+- package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+  name: inspect_audit
+  items:
+  - name: audit
+    args:
+      repo: https://github.com/xantheocracy/inspect_evals
+      revision: 369d6ae1de4a7870b4c4119d12bd49a6e484ed64
+      target_task: inspect_evals/scicode
+      source: inspect_evals.scicode.scicode
+      task_package: inspect-evals[scicode] @ git+https://github.com/xantheocracy/inspect_evals@369d6ae1de4a7870b4c4119d12bd49a6e484ed64
+      task_args:
+        provide_scientific_background: false
+        timeout: 1800
+        include_dev_set: false
+        scaling: false
+        scaling_token_limit: 200000
+        feedback: null
+        stop_on_success: false
+        scaling_agent: react
+      investigation_samples: all
+      checks:
+      - gold-answer
+      policy:
+        models:
+          auditor:
+          - openrouter/deepseek/deepseek-v4.1-flash-20261017
+          investigators:
+          - openrouter/deepseek/deepseek-v4.1-flash-20261017
+          subjects:
+          - openrouter/deepseek/deepseek-v4.1-flash-20261017
+          judges: []
+        inputs:
+          logs:
+          - hawk:scicode-provider-default-pgcjfyx2vbyas1w5
+        limits:
+          investigation_sample_cost_usd: 0.25
+          max_concurrent_jobs: 3
+          budget_usd: 2.0
+      runs: hawk
+      box: k8s
+      instructions: 'SMOKE TEST of Inspect Auditor, not a real audit. Keep total spend under $1. Do exactly
+        these steps, then stop: (1) in your box, import the task and build it to confirm the benchmark
+        is installed; (2) send_investigators on ONE sample of your choice with check gold-answer and the
+        supplied logs, item_cost_limit 0.25; (3) run_eval with code: copy the task''s prompt module into
+        a folder at its installed path, make one small harmless wording change, and run that variant on
+        the same ONE sample with the subject model, epochs 1; (4) collect both jobs, submit short findings
+        noting whether the variant ran, and publish.'
+models:
+- package: inspect-ai
+  items:
+  - name: openrouter/deepseek/deepseek-v4.1-flash-20261017
+cost_limit: 2.0
+message_limit: 400
+retry_attempts: 0
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

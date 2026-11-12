@@ -1,0 +1,57 @@
+name: ia-smoke-sqav
+packages:
+- inspect-ai==0.3.285
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-evals @ git+https://github.com/Generality-Labs/inspect_evals@67a9ea5333d3fc672ebce3ca9724bcfdad87f541
+tasks:
+- package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+  name: inspect_audit
+  items:
+  - name: audit
+    args:
+      repo: https://github.com/Generality-Labs/inspect_evals
+      revision: 67a9ea5333d3fc672ebce3ca9724bcfdad87f541
+      target_task: inspect_evals/simpleqa_verified
+      source: inspect_evals.simpleqa.simpleqa
+      task_package: inspect-evals @ git+https://github.com/Generality-Labs/inspect_evals@67a9ea5333d3fc672ebce3ca9724bcfdad87f541
+      task_args:
+        scorer: original
+        grade_parse: paper
+      investigation_samples: all
+      checks:
+      - gold-answer
+      policy:
+        models:
+          auditor:
+          - openrouter/deepseek/deepseek-v4.1-flash-20261017
+          investigators:
+          - openrouter/deepseek/deepseek-v4.1-flash-20261017
+          subjects:
+          - openrouter/deepseek/deepseek-v4.1-flash-20261017
+          judges:
+          - openrouter/openai/gpt-6-luna
+        inputs:
+          logs:
+          - hawk:bench-v46e92flztx421dj
+        limits:
+          investigation_sample_cost_usd: 0.25
+          max_concurrent_jobs: 3
+          budget_usd: 2.0
+      runs: hawk
+      box: k8s
+      instructions: 'SMOKE TEST of Inspect Auditor, not a real audit. Keep total spend under $1. Do exactly
+        these steps, then stop: (1) in your box, import the task and load its dataset to confirm the benchmark
+        is installed; (2) run_eval with rescore on the supplied logs'' one sample, judge {"grader": "openrouter/openai/gpt-6-luna"},
+        epochs 2, item_cost_limit 0.05; (3) send_investigators on that sample with check gold-answer and
+        the supplied logs, item_cost_limit 0.25; (4) collect both jobs, review the verdict, submit short
+        findings and publish.'
+models:
+- package: inspect-ai
+  items:
+  - name: openrouter/deepseek/deepseek-v4.1-flash-20261017
+cost_limit: 2.0
+message_limit: 400
+retry_attempts: 0
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

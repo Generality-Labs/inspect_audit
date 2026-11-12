@@ -226,15 +226,19 @@ class HawkRuns:
     async def unservable(self, models: list[str]) -> list[str]:
         """Which of `models` Hawk would refuse in a job: names its proxy does not serve.
 
-        Hawk checks a job's model names against the proxy's public names when it is
-        submitted (FRICTION 53), so this is the same check, made before any spend.
+        Hawk checks a job's models when it is submitted (FRICTION 53), by the public
+        name its proxy knows each one as: `registry_model_name`, so `openai/gpt-5.1`
+        is looked up as `gpt-5.1` (FRICTION 71). This is the same check, made before
+        any spend; the names returned are the ones the caller gave.
         """
+        from hawk.core.providers import registry_model_name
+
         token = await self.login.access_token()
         served = await middleman_request(
             self.login.api_url, "post", "/permitted_models_info", token, {"api_key": token}
         )
         names = {str(m.get("name")) for m in served if not m.get("dead")}
-        return sorted(set(models) - names)
+        return sorted(m for m in set(models) if registry_model_name(m, strict=False) not in names)
 
     def address(self, run_id: str) -> str:
         return f"hawk:{run_id}"

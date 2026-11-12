@@ -901,11 +901,13 @@ def test_hawk_says_which_models_it_will_refuse(monkeypatch: pytest.MonkeyPatch) 
     from inspect_audit.dispatch.hawk import HawkRuns
 
     async def served(*args: object, **kwargs: object) -> list[dict[str, object]]:
-        # the proxy as it is: database rows qualified, autodiscovered ones bare
+        # public names as our proxy listed them on 2026-11-12 (FRICTION 71)
         return [
-            {"name": "openai/gpt-6-luna"},
+            {"name": "gpt-6-luna"},
             {"name": "gpt-5.1"},
-            {"name": "openai/gpt-4", "dead": True},
+            {"name": "anthropic/claude-opus-5.5"},
+            {"name": "openrouter/anthropic/claude-opus-5.5"},
+            {"name": "gpt-4", "dead": True},
         ]
 
     runs = HawkRuns("https://api.example")
@@ -915,8 +917,15 @@ def test_hawk_says_which_models_it_will_refuse(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(runs.login, "access_token", token)
     monkeypatch.setattr(hawk_backend, "middleman_request", served)
-    missing = asyncio.run(runs.unservable(["openai/gpt-6-luna", "openai/gpt-5.1", "openai/gpt-4"]))
-    assert missing == ["openai/gpt-4", "openai/gpt-5.1"]
+    asked = [
+        "openai/gpt-6-luna",  # served as gpt-6-luna
+        "openai/gpt-5.1",  # served as gpt-5.1: Hawk 4 accepts it
+        "anthropic/claude-opus-5.5",  # Hawk 4 looks up claude-opus-5.5: not served
+        "openai-api/openrouter/openrouter/anthropic/claude-opus-5.5",
+        "openai/gpt-4",  # dead
+    ]
+    missing = asyncio.run(runs.unservable(asked))
+    assert missing == ["anthropic/claude-opus-5.5", "openai/gpt-4"]
 
 
 def test_an_audit_naming_unservable_models_stops_before_it_spends() -> None:

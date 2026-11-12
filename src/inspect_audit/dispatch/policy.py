@@ -255,6 +255,42 @@ def files_problem(files: Any) -> str | None:
     return None
 
 
+def with_caching(name: str, configured: ModelConfig | None) -> ModelConfig | None:
+    """Anthropic models through OpenRouter: cache the conversation, not only the prompt.
+
+    Inspect's OpenRouter provider marks cache breakpoints only on list-content messages,
+    and an agent's messages are strings, so each turn re-bought the whole history
+    (FRICTION 17; UKGovernmentBEIS/inspect_ai#5873, fix PR #6283 unmerged on
+    2026-11-12). The workaround: Inspect's markers off, OpenRouter's automatic caching
+    on. An operator's own `cache_prompt` or `extra_body` is left as declared.
+    """
+    if not name.startswith("openrouter/anthropic/"):
+        return configured
+    current = configured or ModelConfig(model=name)
+    config = current.config
+    if config.cache_prompt is not None or config.extra_body is not None:
+        return current
+    return current.model_copy(
+        update={
+            "config": config.model_copy(
+                update={
+                    "cache_prompt": False,
+                    "extra_body": {"cache_control": {"type": "ephemeral"}},
+                }
+            )
+        }
+    )
+
+
+def cached(configs: dict[str, ModelConfig], names: Any) -> dict[str, ModelConfig]:
+    """`configs` with `with_caching` applied to every model in `names`."""
+    out = dict(configs)
+    for name in names:
+        if (config := with_caching(str(name), out.get(str(name)))) is not None:
+            out[str(name)] = config
+    return out
+
+
 @dataclass(frozen=True)
 class AuditAuthorizer:
     """Approve a complete job before the backend can submit it."""
@@ -315,7 +351,9 @@ class AuditAuthorizer:
             name: ModelConfig.model_validate(value)
             for name, value in json.loads(p.model_configs_json).items()
         }
-        approved.model_configs = {name: configs[name] for name in job.models if name in configs}
+        approved.model_configs = cached(
+            {name: configs[name] for name in job.models if name in configs}, job.models
+        )
         approved.environment = json.loads(p.environment_json)
         return approved
 
@@ -431,7 +469,7 @@ class AuditAuthorizer:
         expected_configs = {name: configs[name] for name in selected_models if name in configs}
         if job.model_configs and job.model_configs != expected_configs:
             raise ToolError("model configuration must match the launch policy")
-        approved.model_configs = expected_configs
+        approved.model_configs = cached(expected_configs, selected_models)
         if kind == "investigation" and expected_configs:
             approved.task_args["judge_configs"] = {
                 role: configs[name].model_dump(mode="json", exclude_none=True)

@@ -286,3 +286,18 @@ def test_local_runs_refuse_version_overrides(tmp_path: Path) -> None:
     job = Job(label="x", task="b/t", package="b", models=["m/x"], package_overrides=["numpy==1.0"])
     with pytest.raises(ValueError, match="need the Hawk backend"):
         asyncio.run(LocalRuns(tmp_path).submit(job))
+
+
+def test_the_auditors_box_takes_the_deployment_default_size(tmp_path: Path) -> None:
+    """Nothing reserved unless the operator asks (FRICTION 80)."""
+    import yaml
+
+    from inspect_audit._audit_workspace import configure
+
+    _, path = configure(tmp_path, "image")
+    [values] = [d for d in yaml.safe_load_all(Path(path).read_text()) if d and "services" in d]
+    assert "resources" not in values["services"]["default"]
+    sized = {"requests": {"cpu": "1", "memory": "4Gi"}}
+    _, path = configure(tmp_path, "image", sized)
+    [values] = [d for d in yaml.safe_load_all(Path(path).read_text()) if d and "services" in d]
+    assert values["services"]["default"]["resources"] == sized

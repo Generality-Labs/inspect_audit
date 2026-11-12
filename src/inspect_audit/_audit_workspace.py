@@ -11,6 +11,7 @@ import json
 import logging
 import tarfile
 from pathlib import Path
+from typing import Any
 
 import anyio
 import anyio.to_thread
@@ -24,20 +25,22 @@ from .containers import EGRESS_POLICY
 logger = logging.getLogger(__name__)
 
 
-def configure(root: Path, image: str) -> tuple[str, str]:
-    """The auditor's box as a Kubernetes pod: no mounts, no service account."""
+def configure(root: Path, image: str, resources: dict[str, Any] | None = None) -> tuple[str, str]:
+    """The auditor's box as a Kubernetes pod: no mounts, no service account.
+
+    Its size is the deployment's default for a sandbox's default service unless the
+    operator gives Kubernetes `resources` (requests/limits): nothing is reserved that
+    the audit did not ask for (James, 2026-11-12; FRICTION 80).
+    """
+    service: dict[str, Any] = {
+        "image": image,
+        "command": ["sleep", "infinity"],
+        "workingDir": "/workspace",
+    }
+    if resources:
+        service["resources"] = resources
     values = {
-        "services": {
-            "default": {
-                "image": image,
-                "command": ["sleep", "infinity"],
-                "workingDir": "/workspace",
-                "resources": {
-                    "requests": {"cpu": "2", "memory": "8Gi"},
-                    "limits": {"cpu": "4", "memory": "16Gi"},
-                },
-            }
-        },
+        "services": {"default": service},
         "automountServiceAccountToken": False,
     }
     path = root / "auditor.values.yaml"

@@ -1183,6 +1183,7 @@ def audit(
     subject_models: list[str] | None = None,
     judge_models: list[str] | None = None,
     auditor_image: str | None = None,
+    box_resources: dict[str, Any] | None = None,
     artifact_dir: str | None = None,
     instructions: str | None = None,
     policy: dict[str, Any] | None = None,
@@ -1241,6 +1242,8 @@ def audit(
         judge_models: Full Inspect model names the benchmark's own judges may be. Declare the
             judges the investigated logs record; none by default.
         auditor_image: Published auditor sandbox image for Hawk.
+        box_resources: Kubernetes `resources` (requests/limits) for the auditor's box on
+            k8s; None uses the deployment's sandbox default.
         artifact_dir: Where the published report is also saved, under this sample:
             on Hawk, the job's S3 artifacts directory. None keeps it on the host only.
         instructions: Operator instructions and scope, separate from benchmark background.
@@ -1304,6 +1307,7 @@ def audit(
         judges=list(settings.get("judge_models", judge_models) or []),
     )
     auditor_image = str(settings.get("auditor_image", auditor_image) or DEFAULT_AUDITOR_IMAGE)
+    box_resources = settings.get("box_resources", box_resources)
     artifact_dir = settings.get("artifact_dir", artifact_dir)
     instructions = settings.get("instructions", instructions)
     policy = settings.get("policy", policy)
@@ -1546,7 +1550,7 @@ def audit(
 
     from ._audit_workspace import configure, install_benchmark, stage_inputs
 
-    sandbox = configure(root, auditor_image) if box == "k8s" else docker_box(root)
+    sandbox = configure(root, auditor_image, box_resources) if box == "k8s" else docker_box(root)
     if artifact_dir:
         (root / "artifacts.json").write_text(json.dumps({"artifact_dir": artifact_dir}))
     elif box == "k8s":

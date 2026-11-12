@@ -41,6 +41,11 @@ class LocalRuns:
         return str(self._dir(run_id) / "logs")
 
     async def submit(self, job: Job) -> str:
+        if job.package_overrides:
+            raise ValueError(
+                "a local run uses this machine's Python environment: package version "
+                "overrides need the Hawk backend"
+            )
         run_dir = Path(tempfile.mkdtemp(prefix=f"{job.label}-", dir=self.root))
         args = [
             sys.executable,

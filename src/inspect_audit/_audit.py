@@ -43,7 +43,7 @@ from ._report import (
 from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS
 from .containers import AUDITOR_IMAGE, INVESTIGATOR_IMAGE
 from .dispatch import FINISHED, STUCK, HawkRuns, Job, LocalRuns, Runs, validate_environment
-from .dispatch.jobs import INSPECT_VERSION
+from .dispatch.jobs import INSPECT_VERSION, with_overrides
 from .dispatch.packages import git_package_spec, own_package_spec
 from .dispatch.policy import (
     AuditAuthorizer,
@@ -646,6 +646,7 @@ class Audit:
                 "max_cost": worst,
                 # a variant's change, kept with the job so findings can cite it exactly
                 **({"diff": diff} if diff else {}),
+                **({"packages": job.package_overrides} if job.package_overrides else {}),
             },
         ]
         return (
@@ -737,15 +738,16 @@ def run_eval(inv: Audit) -> Tool:
         epochs: int,
         rescore: list[str],
         code: str | None,
+        packages: list[str],
         item_cost_limit: float | None,
         note: str,
     ) -> str:
         """Run the benchmark, as it is or changed: new evidence about how it behaves.
 
         Fresh attempts by `models`, or with `rescore`, the benchmark's grader run again
-        on attempts already recorded. With `code`, the benchmark is modified first: an
-        ablation. Its task arguments are the launch policy's. Collect the job's logs
-        with `jobs`.
+        on attempts already recorded. With `code`, the benchmark is modified first; with
+        `packages`, it runs on other versions of its dependencies: ablations. Its task
+        arguments are the launch policy's. Collect the job's logs with `jobs`.
 
         Args:
             label: A short name for this job, unique in the audit.
@@ -762,6 +764,9 @@ def run_eval(inv: Audit) -> Tool:
             code: A folder in your box holding the files you changed, each at its path
                 inside the installed package (e.g. inspect_evals/simpleqa/simpleqa.py);
                 every other file is the original. Null for the unmodified benchmark.
+            packages: Exact versions to install instead of the benchmark's own, as
+                name==version (e.g. ["numpy==1.26.4"]; "inspect-ai==..." changes Inspect,
+                except with `code`); [] for the benchmark's. Hawk runs only.
             item_cost_limit: Dollars one rescored attempt may spend; null for fresh attempts.
             note: Why you are running this.
         """
@@ -786,7 +791,8 @@ def run_eval(inv: Audit) -> Tool:
                 label=label,
                 task="inspect_audit/regrade",
                 package=inv.investigation_package,
-                extra_packages=[inv.task_package, *inv.task_pins],
+                extra_packages=[inv.task_package, *with_overrides(list(inv.task_pins), packages)],
+                package_overrides=list(packages),
                 # the judge as the eval's model: never called, but it is how the job
                 # gets the judge's credentials
                 models=list(judges.values())[:1],
@@ -811,7 +817,12 @@ def run_eval(inv: Audit) -> Tool:
             label=label,
             task="inspect_audit/variant" if variant else inv.task,
             package=inv.investigation_package if variant else inv.task_package,
-            extra_packages=[inv.task_package, *inv.task_pins] if variant else list(inv.task_pins),
+            extra_packages=(
+                [inv.task_package, *with_overrides(list(inv.task_pins), packages)]
+                if variant
+                else with_overrides(list(inv.task_pins), packages)
+            ),
+            package_overrides=list(packages),
             task_args=(
                 {"task": inv.task, "source": policy.source, "task_args": args, "files": files}
                 if variant

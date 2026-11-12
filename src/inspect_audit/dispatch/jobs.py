@@ -50,8 +50,28 @@ class Job:
     sample_range: tuple[int, int] | None = None
     epochs: int = 1
     extra_packages: list[str] = field(default_factory=list)
+    # exact versions this run installs in place of the benchmark's lockfile pins (and
+    # the jobs' Inspect): `name==version`; a run's results may turn on them
+    package_overrides: list[str] = field(default_factory=list)
     environment: dict[str, str] = field(default_factory=dict)
     model_configs: dict[str, ModelConfig] = field(default_factory=dict)
+
+
+PINNED = r"[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9][A-Za-z0-9.+!_-]*"
+
+
+def package_name(spec: str) -> str:
+    """The canonical distribution name of a `name==version` or `name @ url` spec."""
+    import re
+
+    name = re.split(r"[\s=<>!~@\[;]", spec.strip(), maxsplit=1)[0]
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def with_overrides(pins: list[str], overrides: list[str]) -> list[str]:
+    """`pins` with every package an override names replaced by that override."""
+    replaced = {package_name(o) for o in overrides}
+    return [p for p in pins if package_name(p) not in replaced] + list(overrides)
 
 
 def validate_environment(environment: dict[str, str]) -> dict[str, str]:

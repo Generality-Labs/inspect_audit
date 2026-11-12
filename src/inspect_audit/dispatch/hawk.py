@@ -16,7 +16,16 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Any, Literal
 
-from .jobs import COMPLETE, FAILED, INSPECT_VERSION, RUNNING, STUCK, Job, validate_environment
+from .jobs import (
+    COMPLETE,
+    FAILED,
+    INSPECT_VERSION,
+    RUNNING,
+    STUCK,
+    Job,
+    validate_environment,
+)
+from .jobs import package_name as distribution_name
 
 
 def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
@@ -41,7 +50,15 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
     config: dict[str, Any] = {
         "name": job.label,
         "limit": limit,
-        "packages": [job.package, *job.extra_packages, f"inspect-ai=={INSPECT_VERSION}"],
+        "packages": [
+            job.package,
+            *job.extra_packages,
+            *(
+                []
+                if any(distribution_name(p) == "inspect-ai" for p in job.extra_packages)
+                else [f"inspect-ai=={INSPECT_VERSION}"]
+            ),
+        ],
         "tasks": [{"package": job.package, "name": package_name, "items": [item]}],
         "models": [group(m) for m in job.models],
         "model_roles": {role: group(m) for role, m in job.model_roles.items()} or None,

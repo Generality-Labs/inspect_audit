@@ -14,7 +14,15 @@ from inspect_ai.tool import ToolError
 from inspect_ai.util import StoreModel
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .jobs import VARIANT_MAX_BYTES, VARIANT_MAX_FILES, Job, validate_environment
+from .jobs import (
+    PINNED,
+    VARIANT_MAX_BYTES,
+    VARIANT_MAX_FILES,
+    Job,
+    package_name,
+    validate_environment,
+    with_overrides,
+)
 
 
 def canonical(value: Any) -> str:
@@ -312,7 +320,14 @@ class AuditAuthorizer:
         args = job.task_args
         if job.task != "inspect_audit/regrade" or job.package != p.investigation_package:
             raise ToolError("regrade task and package must match the launch policy")
-        if job.extra_packages != [p.task_package, *p.task_pins]:
+        overrides = list(job.package_overrides)
+        for spec in overrides:
+            if not re.fullmatch(PINNED, spec) or package_name(spec) in (
+                "inspect-ai",
+                "inspect-audit",
+            ):
+                raise ToolError(f"{spec!r}: a rescore may pin other packages, name==version")
+        if job.extra_packages != [p.task_package, *with_overrides(list(p.task_pins), overrides)]:
             raise ToolError("job dependencies must match the launch policy")
         if set(args) - REGRADE_ARGS or job.model_roles or job.sample_range is not None:
             raise ToolError("regrade job contains configuration outside the launch contract")
@@ -377,7 +392,19 @@ class AuditAuthorizer:
         expected_package = p.investigation_package if ours else p.task_package
         if job.task != expected_task or job.package != expected_package:
             raise ToolError("job task and package must match the launch policy")
-        pins = list(p.task_pins)
+        overrides = list(job.package_overrides)
+        if overrides and kind == "investigation":
+            raise ToolError("investigations run the benchmark as declared: no version overrides")
+        for spec in overrides:
+            if not re.fullmatch(PINNED, spec):
+                raise ToolError(f"{spec!r}: a version override is an exact pin, name==version")
+            if package_name(spec) == "inspect-audit" or (
+                kind == "variant" and package_name(spec) == "inspect-ai"
+            ):
+                raise ToolError(f"{spec!r}: this run cannot change that package's version")
+        if len({package_name(o) for o in overrides}) != len(overrides):
+            raise ToolError("one version override per package")
+        pins = with_overrides(list(p.task_pins), overrides)
         if job.extra_packages != ([p.task_package, *pins] if ours else pins):
             raise ToolError("job dependencies must match the launch policy")
         allowed = p.models.investigators if kind == "investigation" else p.models.subjects

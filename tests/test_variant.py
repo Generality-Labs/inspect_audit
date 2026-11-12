@@ -149,7 +149,7 @@ def test_run_eval_with_code_launches_a_recorded_variant(
     monkeypatch.setattr(_audit, "sandbox", lambda: box)
     run = _audit.run_eval(inv)
     asyncio.run(
-        run("ablate", ["1"], ["openai/subject"], "{}", 1, [], "/workspace/v", None, "prompt")  # type: ignore[arg-type]
+        run("ablate", ["1"], ["openai/subject"], "{}", 1, [], "/workspace/v", [], None, "prompt")  # type: ignore[arg-type]
     )
     [job] = runs.submitted
     assert job.task == "inspect_audit/variant" and job.package == "inspect_audit"
@@ -186,10 +186,10 @@ def test_rescoring_takes_no_models_and_needs_a_judge(tmp_path: Path) -> None:
     run = _audit.run_eval(inv)
     with pytest.raises(ToolError, match="models must be"):
         asyncio.run(
-            run("r", ["1"], ["openai/s"], '{"g": "openai/j"}', 1, ["hawk:logs"], None, 0.5, "")
+            run("r", ["1"], ["openai/s"], '{"g": "openai/j"}', 1, ["hawk:logs"], None, [], 0.5, "")
         )  # type: ignore[arg-type]
     with pytest.raises(ToolError, match="needs the judge"):
-        asyncio.run(run("r", ["1"], [], "{}", 1, ["hawk:logs"], None, 0.5, ""))  # type: ignore[arg-type]
+        asyncio.run(run("r", ["1"], [], "{}", 1, ["hawk:logs"], None, [], 0.5, ""))  # type: ignore[arg-type]
 
 
 def test_hawk_child_jobs_never_carry_a_persons_login() -> None:
@@ -233,3 +233,56 @@ def test_the_benchmark_is_installed_in_the_box_as_its_jobs_install_it(
     calls.clear()
     asyncio.run(solve(None, None))  # type: ignore[arg-type]
     assert calls == [["python", "-c", "import bench.tasks"]]
+
+
+def test_a_run_can_pin_other_dependency_versions() -> None:
+    """Results that turn on a dependency's version are a finding: let the auditor test it."""
+    from inspect_audit.dispatch.hawk import hawk_config
+    from inspect_audit.dispatch.jobs import Job, with_overrides
+    from inspect_audit.dispatch.policy import AuditAuthorizer, LaunchPolicy, Models
+
+    policy = LaunchPolicy(
+        task="b/t",
+        task_package="b",
+        task_pins=("numpy==2.1.0", "scipy==1.13.0"),
+        investigation_package="ia",
+        investigator_image="i",
+        models=Models(subjects=("openai/s",)),
+        checks=("gold-answer",),
+        configuration_json="{}",
+    )
+    authoriser = AuditAuthorizer(policy)
+    overrides = ["numpy==1.26.4", "inspect-ai==0.3.270"]
+    job = Job(
+        label="old-numpy",
+        task="b/t",
+        package="b",
+        models=["openai/s"],
+        extra_packages=with_overrides(list(policy.task_pins), overrides),
+        package_overrides=overrides,
+    )
+    packages = hawk_config(authoriser.authorise(job, "benchmark", set()))["packages"]
+    assert packages == ["b", "scipy==1.13.0", "numpy==1.26.4", "inspect-ai==0.3.270"]
+    for bad in (["numpy>=1"], ["numpy==1.26.4", "numpy==1.26.3"]):
+        with pytest.raises(ToolError):
+            authoriser.authorise(
+                Job(
+                    label="bad",
+                    task="b/t",
+                    package="b",
+                    models=["openai/s"],
+                    extra_packages=with_overrides(list(policy.task_pins), bad),
+                    package_overrides=bad,
+                ),
+                "benchmark",
+                set(),
+            )
+
+
+def test_local_runs_refuse_version_overrides(tmp_path: Path) -> None:
+    from inspect_audit.dispatch.jobs import Job
+    from inspect_audit.dispatch.local import LocalRuns
+
+    job = Job(label="x", task="b/t", package="b", models=["m/x"], package_overrides=["numpy==1.0"])
+    with pytest.raises(ValueError, match="need the Hawk backend"):
+        asyncio.run(LocalRuns(tmp_path).submit(job))

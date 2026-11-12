@@ -206,7 +206,9 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
     runs = FakeRuns()
     inv = _make_audit(tmp_path, runs)
     benchmark = _audit.run_eval(inv)
-    out = asyncio.run(benchmark("smoke", ["1"], ["openai/subject"], "{}", 1, [], None, None, "why"))  # type: ignore[arg-type]
+    out = asyncio.run(
+        benchmark("smoke", ["1"], ["openai/subject"], "{}", 1, [], None, [], None, "why")
+    )  # type: ignore[arg-type]
     assert "hawk:run-1" in out
     assert record.jobs == [
         {
@@ -222,9 +224,11 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
     from inspect_ai.tool import ToolError
 
     with pytest.raises(ToolError, match="may not be evaluated"):
-        asyncio.run(benchmark("other", None, ["openai/investigator"], "{}", 1, [], None, None, ""))  # type: ignore[arg-type]
+        asyncio.run(
+            benchmark("other", None, ["openai/investigator"], "{}", 1, [], None, [], None, "")
+        )  # type: ignore[arg-type]
     with pytest.raises(ToolError, match="exists"):
-        asyncio.run(benchmark("smoke", None, ["openai/subject"], "{}", 1, [], None, None, ""))  # type: ignore[arg-type]
+        asyncio.run(benchmark("smoke", None, ["openai/subject"], "{}", 1, [], None, [], None, ""))  # type: ignore[arg-type]
 
 
 def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
@@ -777,6 +781,7 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
             3,
             ["hawk:supplied-logs"],
             None,
+            [],
             0.5,
             "noise",
         )
@@ -796,6 +801,7 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
                 50,
                 ["hawk:supplied-logs"],
                 None,
+                [],
                 0.5,
                 "",
             )
@@ -902,7 +908,7 @@ def test_a_platform_refusal_reaches_the_auditor_not_the_eval(
     inv = _make_audit(tmp_path, RefusingRuns())
     benchmark = _audit.run_eval(inv)
     with pytest.raises(ToolError, match="Models not found"):
-        asyncio.run(benchmark("smoke", ["1"], ["openai/subject"], "{}", 1, [], None, None, ""))  # type: ignore[arg-type]
+        asyncio.run(benchmark("smoke", ["1"], ["openai/subject"], "{}", 1, [], None, [], None, ""))  # type: ignore[arg-type]
     assert record.jobs == []
 
     record.jobs.append({"label": "old", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})

@@ -1339,7 +1339,11 @@ def audit(
     investigation_samples = settings.get("investigation_samples", investigation_samples)
     checks = settings.get("checks", checks)
     source = settings.get("source", source)
-    credential_mode = settings.get("credential_mode", credential_mode) or "user"
+    # Hawk child jobs never carry the operator's login (FRICTION 73): restricted there,
+    # the operator's own credentials only for local jobs
+    credential_mode = settings.get("credential_mode", credential_mode) or (
+        "restricted" if runs == "hawk" else "user"
+    )
     if policy is not None:
         if any(v is not None for v in (investigator_models, subject_models, judge_models)) or any(
             key in settings for key in ("investigator_models", "subject_models", "judge_models")
@@ -1360,6 +1364,8 @@ def audit(
         raise ValueError("credential_mode must be 'restricted' or 'user'")
     if credential_mode == "restricted" and runs != "hawk":
         raise ValueError("restricted credentials require runs='hawk'")
+    if credential_mode == "user" and runs == "hawk":
+        raise ValueError("Hawk child jobs run with restricted credentials only")
     if isinstance(investigation_samples, str) and investigation_samples != "all":
         raise ValueError("investigation_samples must be a list of IDs or 'all'")
     if investigation_samples is not None and not isinstance(investigation_samples, (str, list)):

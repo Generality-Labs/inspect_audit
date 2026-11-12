@@ -68,11 +68,13 @@ def fetch_logs(logs: str | list[str]) -> str:
                 shutil.copyfile(source_path, combined / f"{index}_{source_path.name}")
         return str(combined)
     if logs.startswith("hawk:"):
-        declared = declared_transcripts()
-        if declared is not None:
-            source_id = logs.removeprefix("hawk:")
-            if source_id not in declared:
-                raise ValueError(f"Hawk input {source_id!r} was not declared for this execution")
+        # Hawk 4 resolves declared inputs in place; anything else is downloaded with this
+        # runner's own user token. Declaring inputs requires restricted credentials, and a
+        # restricted runner cannot launch jobs, so an audit reads its logs this way
+        # (FRICTION 83); a restricted child without a declaration fails at the download.
+        declared = declared_transcripts() or {}
+        source_id = logs.removeprefix("hawk:")
+        if source_id in declared:
             return declared[source_id]
     if not logs.startswith(("hawk:", "s3://", "gs://", "http://", "https://")):
         return logs

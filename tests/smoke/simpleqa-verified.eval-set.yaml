@@ -54,6 +54,3 @@ retry_attempts: 0
 runner:
   environment:
     HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai
-transcripts:
-  sources:
-  - eval_set_id: bench-v46e92flztx421dj

@@ -65,30 +65,19 @@ def test_a_job_renders_as_a_config_hawk_accepts() -> None:
 
 
 def test_a_child_job_runs_as_this_runs_user_with_its_current_credentials(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """On a runner the refresh credential rotates when the access token refreshes.
 
     The child must get the rotated one, so the access token is fetched first; and
-    it must be this run's own, so the child's calls bill to the same key.
+    it must be this run's own, so the child's calls bill to the same key. Uses
+    Hawk 4's real hook; only the IdP exchange is faked.
     """
     import hawk.client
     from inspect_ai.hooks import _hooks
 
     received: dict[str, Any] = {}
-
-    class Hook:
-        _current_refresh_token = "old"
-
-    Hook.__module__ = "hawk.runner.refresh_token"
-    hook = Hook()
-
-    def refresh(name: str, value: str) -> str:
-        # hawk >= 3.7 answers only an ask it can tell is gateway traffic
-        if value != "gateway-marker":
-            return ""
-        hook._current_refresh_token = "rotated"
-        return "current-access"
+    hook = _runner_hook(monkeypatch, tmp_path, lambda token: ("current-access", "rotated"))
 
     class Client:
         def __init__(self, **kwargs: Any) -> None:
@@ -106,8 +95,6 @@ def test_a_child_job_runs_as_this_runs_user_with_its_current_credentials(
             # hawk >= 3.5 returns the API body rather than the bare id
             return {"eval_set_id": "child-job", "warnings": []}
 
-    monkeypatch.setenv("BASE_API_KEY", "gateway-marker")
-    monkeypatch.setattr(_hooks, "override_api_key", refresh)
     monkeypatch.setattr(_hooks, "get_all_hooks", lambda: [hook])
     monkeypatch.setattr(hawk.client, "HawkClient", Client)
     job = Job(label="child", task="benchmark/task", package="benchmark", models=["m/x"])
@@ -424,43 +411,66 @@ def test_task_arguments_cannot_place_code_or_name_other_models(kind: str) -> Non
                 authorizer.authorise(job, kind, set())
 
 
+def _runner_hook(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, exchange: Any) -> Any:
+    """Hawk 4's RefreshTokenHook as a runner installs it; only the IdP call is faked.
+
+    Its token cache goes under tmp_path, and `exchange(token)` stands in for the
+    refresh-token grant, returning (access token, rotated refresh token or None).
+    """
+    import tempfile
+
+    import pydantic
+    from hawk.runner import human_token
+    from hawk.runner import refresh_token as hawk_hook
+
+    def fake(config: Any, token: pydantic.SecretStr) -> Any:
+        access, rotated = exchange(token.get_secret_value())
+        return human_token._Cache(  # pyright: ignore[reportPrivateUsage]
+            version=1,
+            identity=human_token.cache_identity(config),
+            access_token=pydantic.SecretStr(access),
+            expires_at=time.time() + 3600,
+            refresh_token=pydantic.SecretStr(rotated) if rotated else token,
+        )
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(human_token, "_exchange", fake)
+    # what a runner's environment holds: its refresh settings, the gateway's
+    # address and its own startup credential
+    monkeypatch.setenv("HAWK_RUNNER_REFRESH_URL", "https://idp.example/token")
+    monkeypatch.setenv("HAWK_RUNNER_REFRESH_CLIENT_ID", "client")
+    monkeypatch.setenv("HAWK_RUNNER_REFRESH_TOKEN", "refresh-0")
+    monkeypatch.setenv("AI_GATEWAY_BASE_URL", "https://middleman.example")
+    monkeypatch.setenv("BASE_API_KEY", "startup-jwt")
+    return hawk_hook.RefreshTokenHook()
+
+
 def test_the_runner_credentials_come_from_hawks_real_hook(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Hawk's own RefreshTokenHook, as installed, not a copy of its behaviour.
 
     2026-10-20: a fake modelled on an older hook passed while hawk 3.7's hook declined
-    the ask and the budget tool got no token on a runner. Only the network refresh
-    is replaced; the hook's own rules about which asks it answers run as shipped.
+    the ask and the budget tool got no token on a runner. 2026-11-12: Hawk 4 moved the
+    rotated refresh token from the hook into a file cache (FRICTION 70). Only the
+    network refresh is replaced; the hook's own rules run as shipped.
     """
-    from hawk.runner import refresh_token as hawk_hook
     from inspect_ai.hooks import _hooks
 
     refreshes: list[str] = []
 
-    def refresh(token: str, url: str, client: str) -> tuple[Any, str]:
+    def exchange(token: str) -> tuple[str, str]:
         refreshes.append(token)
-        rotated = f"refresh-{len(refreshes)}"
-        return (
-            hawk_hook._TokenRefreshResponse(  # pyright: ignore[reportPrivateUsage]
-                access_token=f"access-{len(refreshes)}", expires_in=3600, refresh_token=rotated
-            ),
-            token,
-        )
+        return f"access-{len(refreshes)}", f"refresh-{len(refreshes)}"
 
-    monkeypatch.setattr(hawk_hook, "_do_token_refresh_with_recovery", refresh)
-    # what a runner's environment holds: the gateway's address and its own credential
-    monkeypatch.setenv("AI_GATEWAY_BASE_URL", "https://middleman.example")
-    monkeypatch.setenv("BASE_API_KEY", "startup-jwt")
-    hook = hawk_hook.refresh_token_hook(
-        "https://idp.example/token", "client", "refresh-0", validate=False
-    )()
+    hook = _runner_hook(monkeypatch, tmp_path, exchange)
     monkeypatch.setattr(_hooks, "get_all_hooks", lambda: [hook])
 
     login = HawkLogin("https://hawk.example")
     assert asyncio.run(login.access_token()) == "access-1"
     # the child job gets the refresh token as rotated by that refresh
     assert asyncio.run(login.refresh_token()) == "refresh-1"
+    assert refreshes == ["refresh-0"]
 
 
 def test_a_dataset_without_ids_is_selected_by_position(tmp_path: Path) -> None:
@@ -534,24 +544,13 @@ def test_hawk_logs_are_fetched_with_the_runners_own_credentials(
     """A child investigation fetching hawk: logs on a runner uses Hawk's real hook."""
     import hawk.cli.download
     import hawk.client
-    from hawk.runner import refresh_token as hawk_hook
     from inspect_ai.hooks import _hooks
 
     from inspect_audit._log_sources import fetch_logs
 
-    monkeypatch.setattr(
-        hawk_hook,
-        "_do_token_refresh_with_recovery",
-        lambda token, url, client: (
-            hawk_hook._TokenRefreshResponse(access_token="runner-access", expires_in=3600),  # pyright: ignore[reportPrivateUsage]
-            token,
-        ),
-    )
-    monkeypatch.setenv("AI_GATEWAY_BASE_URL", "https://middleman.example")
-    monkeypatch.setenv("BASE_API_KEY", "startup-jwt")
+    hook = _runner_hook(monkeypatch, tmp_path, lambda token: ("runner-access", None))
     monkeypatch.setenv("HAWK_API_URL", "https://hawk.example")
     monkeypatch.delenv("HAWK_ACCESS_TOKEN", raising=False)
-    hook = hawk_hook.refresh_token_hook("https://idp", "client", "rt", validate=False)()
     monkeypatch.setattr(_hooks, "get_all_hooks", lambda: [hook])
     used: list[str] = []
 
@@ -576,7 +575,6 @@ def test_hawk_logs_are_fetched_with_the_runners_own_credentials(
 
     monkeypatch.setattr(hawk.client, "HawkClient", Client)
     monkeypatch.setattr(hawk.cli.download, "download_file", download_file)
-    monkeypatch.setattr(hawk.cli.download, "_assert_server_supports_batch_download", lambda: None)
     assert (Path(fetch_logs("hawk:run")) / "run" / "a.eval").read_bytes() == b"log"
     assert used == ["runner-access"]
 
@@ -899,8 +897,7 @@ def test_a_platform_refusal_reaches_the_auditor_not_the_eval(
 
 
 def test_hawk_says_which_models_it_will_refuse(monkeypatch: pytest.MonkeyPatch) -> None:
-    import hawk.cli.middleman as mm
-
+    from inspect_audit.dispatch import hawk as hawk_backend
     from inspect_audit.dispatch.hawk import HawkRuns
 
     async def served(*args: object, **kwargs: object) -> list[dict[str, object]]:
@@ -917,7 +914,7 @@ def test_hawk_says_which_models_it_will_refuse(monkeypatch: pytest.MonkeyPatch) 
         return "t"
 
     monkeypatch.setattr(runs.login, "access_token", token)
-    monkeypatch.setattr(mm, "request", served)
+    monkeypatch.setattr(hawk_backend, "middleman_request", served)
     missing = asyncio.run(runs.unservable(["openai/gpt-6-luna", "openai/gpt-5.1", "openai/gpt-4"]))
     assert missing == ["openai/gpt-4", "openai/gpt-5.1"]
 
@@ -946,3 +943,42 @@ def test_an_audit_naming_unservable_models_stops_before_it_spends() -> None:
     assert blocked.asked == [["openai/gpt-6-luna", "openai/gpt-5.1"]]
     assert asyncio.run(_audit.check_models(Proxy([]), policy)(state, None)) is state  # type: ignore[arg-type]
     assert asyncio.run(_audit.check_models(None, policy)(state, None)) is state  # type: ignore[arg-type]
+
+
+def test_middleman_calls_send_a_supplied_token_and_refuse_redirects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hawk 4's own middleman helper refuses tokens not read from a saved login in this
+    process (FRICTION 70); ours sends the given one, and never across a redirect."""
+    import hawk.cli.config
+    from aiohttp import web
+    from aiohttp.test_utils import TestServer
+
+    from inspect_audit.dispatch.hawk import middleman_request
+
+    seen: list[str] = []
+
+    async def models(request: web.Request) -> web.Response:
+        seen.append(request.headers["Authorization"])
+        return web.json_response([{"name": "openai/gpt-6-luna"}])
+
+    async def moved(request: web.Request) -> web.Response:
+        raise web.HTTPFound("/elsewhere")
+
+    async def run() -> None:
+        app = web.Application()
+        app.router.add_post("/permitted_models_info", models)
+        app.router.add_put("/moved", moved)
+        async with TestServer(app) as server:
+            base = str(server.make_url("")).rstrip("/")
+            config = hawk.cli.config.CliConfig.model_construct(middleman_url=base)
+            monkeypatch.setattr(hawk.cli.config, "get_config", lambda: config)
+            got = await middleman_request(
+                "https://api.example", "post", "/permitted_models_info", "supplied", {}
+            )
+            assert got == [{"name": "openai/gpt-6-luna"}]
+            with pytest.raises(RuntimeError, match="302"):
+                await middleman_request("https://api.example", "put", "/moved", "supplied", {})
+
+    asyncio.run(run())
+    assert seen == ["Bearer supplied"]

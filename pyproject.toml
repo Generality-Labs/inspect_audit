@@ -13,7 +13,7 @@ authors = [{ name = "James Mann", email = "james.mann@generality.org" }]
 # .python-version pins 3.13 so local and CI environments get Hawk.
 requires-python = ">=3.11"
 dependencies = [
-    "inspect-ai==0.3.283",
+    "inspect-ai==0.3.285",
     "pillow>=10.0",
     "openai>=1.0",
     # k8s_sandbox passes newline-terminated Helm output to Version.parse;
@@ -30,13 +30,13 @@ inspect-audit-launch = "inspect_audit.dispatch.cli:main"
 
 [project.optional-dependencies]
 remote = [
-    "hawk[cli]>=3.4,<4; python_version >= '3.13'",
+    "hawk[cli]>=3.4,<5; python_version >= '3.13'",
     # hawk download-artifacts needs it; the CLI extra omits it
     "aiofiles; python_version >= '3.13'",
 ]
 # In-cluster jobs need the client, not a second installation of the full CLI.
 runner = [
-    "hawk[client]>=3.4,<4; python_version >= '3.13'",
+    "hawk[client]>=3.4,<5; python_version >= '3.13'",
     "aiofiles; python_version >= '3.13'",
 ]
 publishing = ["playwright>=1.49"]
@@ -53,7 +53,7 @@ dev = [
     "basedpyright>=1.40.2",
     "pre-commit>=4.7.0",
     "types-PyYAML>=6.0.12.20260906",
-    "hawk[cli]>=3.4,<4; python_version >= '3.13'",
+    "hawk[cli]>=3.4,<5; python_version >= '3.13'",
     "inspect-k8s-sandbox>=0.13",
     "aiofiles; python_version >= '3.13'",
     "inspect-evals",

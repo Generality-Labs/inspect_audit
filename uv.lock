@@ -1127,16 +1127,16 @@ wheels = [
 
 [[package]]
 name = "hawk"
-version = "3.7.2"
+version = "4.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "packaging" },
     { name = "pydantic" },
     { name = "ruamel-yaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b4/aa/b7fd8f8796d6b21dd53ed9b7ec72919dcf5427c0d6c7c9d75b22bb9efaa6/hawk-3.7.2.tar.gz", hash = "sha256:e2695e71e8007385c28fc8487cd84eb0f81bb4a74460ce18729bd28d8a5b3246", size = 4621910, upload-time = "2026-10-07T20:32:36.15Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dc/5b/e05fa4540ff9418657e8fe910d984edc31a44731a614092784c0e208d7d8/hawk-4.0.0.tar.gz", hash = "sha256:be976510625c0094810715e9447553a98fdb4084f22d8b579ab4fd53831f6158", size = 6045874, upload-time = "2026-11-03T23:10:19.801Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bb/df/192f791d4ee5af0c3b28aba24c2d6e054acd06c275c2de6dd49d2cf0e319/hawk-3.7.2-py3-none-any.whl", hash = "sha256:89990955450c9fdf2c7112d8f2eb02c32eb8fc96008e90ab300e2315a54bd0d7", size = 1172112, upload-time = "2026-10-07T20:32:34.039Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/27/d9ff1147e4af6e6d963593a9a1b7675f22d9a7e2e1cb9b4dc7a2823dc61e/hawk-4.0.0-py3-none-any.whl", hash = "sha256:e09566d2b6e7657575477148260343003301bd89de0f9c4e2aa534635476feff", size = 1622597, upload-time = "2026-11-03T23:10:17.698Z" },
 ]
 
 [package.optional-dependencies]
@@ -1144,6 +1144,7 @@ cli = [
     { name = "aiofiles" },
     { name = "aiohttp" },
     { name = "click", version = "8.2.1", source = { registry = "https://pypi.org/simple" } },
+    { name = "filelock" },
     { name = "inspect-ai" },
     { name = "joserfc" },
     { name = "keyring" },
@@ -1154,6 +1155,7 @@ cli = [
     { name = "python-dotenv", version = "1.2.2", source = { registry = "https://pypi.org/simple" } },
     { name = "sentry-sdk" },
     { name = "tabulate" },
+    { name = "yarl" },
 ]
 client = [
     { name = "aiohttp" },
@@ -1378,7 +1380,7 @@ wheels = [
 
 [[package]]
 name = "inspect-ai"
-version = "0.3.283"
+version = "0.3.285"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "agent-client-protocol" },
@@ -1425,9 +1427,9 @@ dependencies = [
     { name = "zipp" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/46/64/7b46c4d92d8e6a19a83ddb3ab0f167e836fa1265190051319d66d11547d2/inspect_ai-0.3.283.tar.gz", hash = "sha256:dfa3f48df6a580032510aa4e0497fadab76a3ba9b241b85373a44592d18f5861", size = 36550960, upload-time = "2026-10-21T20:50:42.402Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/e0/595bf39b253826aaa8fd886e44ca41fc5fc9730e20aad044b8d5f927d32d/inspect_ai-0.3.285.tar.gz", hash = "sha256:78b927ddb6bf959f00cb9baffc5081eb4872067961000463696a92134c8d2025", size = 36578076, upload-time = "2026-10-25T14:29:12.556Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0d/74/2e1b582123105e899480b9ae3d1ef1eea30bbd5ba7afd1df042250e0b413/inspect_ai-0.3.283-py3-none-any.whl", hash = "sha256:9a08f86879b878efc5a15408c1d5dcbfb2195c9ee1d69726bf5f060a4c36f1ed", size = 35227846, upload-time = "2026-10-21T20:50:39.031Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/1f/ee409d639d66453f864c719c3d0d544cd234b3b2a0deef730c4cd4d55c32/inspect_ai-0.3.285-py3-none-any.whl", hash = "sha256:4658e36773e9d78116a69a3eb066f47698aa7ea9fc1c0146927a86f02b455aa6", size = 35251997, upload-time = "2026-10-25T14:29:08.272Z" },
 ]
 
 [[package]]
@@ -1475,9 +1477,9 @@ dev = [
 requires-dist = [
     { name = "aiofiles", marker = "python_full_version >= '3.13' and extra == 'remote'" },
     { name = "aiofiles", marker = "python_full_version >= '3.13' and extra == 'runner'" },
-    { name = "hawk", extras = ["cli"], marker = "python_full_version >= '3.13' and extra == 'remote'", specifier = ">=3.4,<4" },
-    { name = "hawk", extras = ["client"], marker = "python_full_version >= '3.13' and extra == 'runner'", specifier = ">=3.4,<4" },
-    { name = "inspect-ai", specifier = "==0.3.283" },
+    { name = "hawk", extras = ["cli"], marker = "python_full_version >= '3.13' and extra == 'remote'", specifier = ">=3.4,<5" },
+    { name = "hawk", extras = ["client"], marker = "python_full_version >= '3.13' and extra == 'runner'", specifier = ">=3.4,<5" },
+    { name = "inspect-ai", specifier = "==0.3.285" },
     { name = "inspect-k8s-sandbox", marker = "extra == 'k8s'", specifier = ">=0.13" },
     { name = "openai", specifier = ">=1.0" },
     { name = "pillow", specifier = ">=10.0" },
@@ -1490,7 +1492,7 @@ provides-extras = ["k8s", "publishing", "remote", "runner"]
 dev = [
     { name = "aiofiles", marker = "python_full_version >= '3.13'" },
     { name = "basedpyright", specifier = ">=1.40.2" },
-    { name = "hawk", extras = ["cli"], marker = "python_full_version >= '3.13'", specifier = ">=3.4,<4" },
+    { name = "hawk", extras = ["cli"], marker = "python_full_version >= '3.13'", specifier = ">=3.4,<5" },
     { name = "inspect-evals", git = "https://github.com/Generality-Labs/inspect_evals?rev=67a9ea5333d3fc672ebce3ca9724bcfdad87f541" },
     { name = "inspect-k8s-sandbox", specifier = ">=0.13" },
     { name = "playwright", specifier = ">=1.49" },

@@ -110,24 +110,46 @@ class HawkLogin:
             None,
         )
 
-    async def access_token(self) -> str:
-        if self._runner_hook() is not None:
-            from inspect_ai.hooks._hooks import override_api_key
+    @staticmethod
+    def _user_credentials(hook: Any) -> Any:
+        """The user credentials a runner's hook renews with; None under restricted mode.
 
-            # asked with the runner's own gateway credential: hawk >= 3.7 answers an
-            # empty ask only for a provider it routed through its gateway
-            token = override_api_key("HAWK_ACCESS_TOKEN", os.environ.get("BASE_API_KEY", ""))
-            if not token:
-                raise RuntimeError("Hawk runner's token refresh hook gave no token")
-            return token
+        Hawk 4 keeps them as a `human_token.Config` on its RefreshTokenHook; the
+        RestrictedTokenHook holds an execution credential that cannot launch jobs.
+        """
+        from hawk.runner import human_token
+
+        config = getattr(hook, "config", None)
+        return config if isinstance(config, human_token.Config) else None
+
+    async def access_token(self) -> str:
+        if (hook := self._runner_hook()) is not None:
+            from hawk.runner import human_token
+
+            if (config := self._user_credentials(hook)) is None:
+                raise RuntimeError("a restricted Hawk runner has no user token to launch jobs")
+            # Hawk 4's hook answers from its cache and refreshes in the background, so
+            # an ask can come back empty; this waits for a usable token instead
+            return await asyncio.to_thread(
+                human_token.get_access_token,
+                config,
+                refresh_margin_seconds=hook.refresh_margin_seconds,
+            )
         # fetched each time, not cached: the login refreshes it, a copy expires
         return await self._hawk("auth", "access-token")
 
     async def refresh_token(self) -> str:
         """The credential a child job's runner renews its access with: this user's."""
-        # access first: refreshing it may rotate the hook's refresh token
         if (hook := self._runner_hook()) is not None:
-            token = getattr(hook, "_current_refresh_token", None)
+            from hawk.runner import human_token
+
+            if (config := self._user_credentials(hook)) is None:
+                raise RuntimeError("a restricted Hawk runner has no refresh credential")
+            # access first: renewing it may rotate the refresh token, which Hawk 4
+            # writes only to its file cache (no public accessor: private read)
+            await self.access_token()
+            cache = human_token._read(human_token._path(config), config)  # pyright: ignore[reportPrivateUsage]
+            token = (cache.refresh_token if cache else config.refresh_token).get_secret_value()
         else:
             token = await self._hawk("auth", "refresh-token")
         if not token:
@@ -207,13 +229,10 @@ class HawkRuns:
         Hawk checks a job's model names against the proxy's public names when it is
         submitted (FRICTION 53), so this is the same check, made before any spend.
         """
-        import hawk.cli.middleman as mm
-
         token = await self.login.access_token()
-        with _api_url(self.login.api_url):
-            served = await mm.request(
-                "post", "/permitted_models_info", token, data={"api_key": token}
-            )
+        served = await middleman_request(
+            self.login.api_url, "post", "/permitted_models_info", token, {"api_key": token}
+        )
         names = {str(m.get("name")) for m in served if not m.get("dead")}
         return sorted(set(models) - names)
 
@@ -275,10 +294,8 @@ class HawkDelivery:
 
     async def install(self, operator_token: str, key: str, secret_name: str = SECRET_NAME) -> None:
         """Make `key` the auditor user's provider key: middleman's admin secret store."""
-        from hawk.cli import middleman
-
         path = f"/admin/secrets/provider-keys/{secret_name}"
-        await middleman.request("put", path, operator_token, data={"value": key})
+        await middleman_request(self.api_url, "put", path, operator_token, {"value": key})
 
     def auditor_tokens(self, refresh_token: str) -> tuple[str, str]:
         """Exchange the auditor user's refresh token: (access token, refresh token to use).
@@ -332,35 +349,66 @@ class HawkDelivery:
         return status is not None and str(status.status) not in ("complete", "failed", "deleted")
 
 
-async def download(address: str, token: str, out_dir: Path, api_url: str) -> list[Path]:
-    """Hawk's own eval-set download into `out_dir`: `<eval set>` or `<eval set>/<file>`.
+async def middleman_request(
+    api_url: str, method: str, path: str, token: str, data: dict[str, Any] | None = None
+) -> Any:
+    """A JSON call to the Hawk deployment's LLM proxy (middleman) with a supplied token.
 
-    Hawk's downloader takes the API address from the hawk CLI's settings, so the
-    address this job was given is put there for the call. An eval set that wrote no
-    logs (a run that failed before writing any) comes back as an empty list.
+    Hawk 4's `hawk.cli.middleman.request` refuses any token this process did not read
+    from a saved login (FRICTION 70); ours come from `hawk auth access-token` or a
+    runner's hook. The proxy's address is the one `api_url` reports, as the CLI
+    finds it, and, like Hawk, redirects are not followed with the credential.
     """
-    import click
-    from hawk.cli.download import download_eval
+    import aiohttp
+    import hawk.core.version
+    from hawk.cli.config import get_config
+
+    with _api_url(api_url):
+        base = get_config().middleman_url
+    if not base:
+        raise RuntimeError(f"Hawk at {api_url} reports no LLM proxy (middleman) address")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        hawk.core.version.CLIENT_VERSION_HEADER: hawk.core.version.get_version(),
+    }
+    timeout = aiohttp.ClientTimeout(total=60)
+    async with (
+        aiohttp.ClientSession(timeout=timeout) as session,
+        session.request(
+            method, base.rstrip("/") + path, json=data, headers=headers, allow_redirects=False
+        ) as response,
+    ):
+        if response.status >= 300:
+            body = (await response.text())[:500]
+            raise RuntimeError(f"middleman {method.upper()} {path}: {response.status} {body}")
+        return await response.json()
+
+
+async def download(address: str, token: str, out_dir: Path, api_url: str) -> list[Path]:
+    """An eval set's logs into `out_dir`: `<eval set>` or `<eval set>/<file>`.
+
+    Through `HawkClient`, which takes the token it is given. Hawk 4's CLI downloader
+    refuses any token this process did not read from a saved login (FRICTION 70),
+    and ours come from `hawk auth access-token` or a runner's hook. An eval set that
+    wrote no logs (a run that failed before writing any) comes back as an empty list.
+    """
+    from hawk.cli.download import download_file
     from hawk.client import HawkClient
 
     eval_set, _, selected = address.partition("/")
-    with _api_url(api_url):
-        eval_file = None
+    async with HawkClient(token=token, api_url=api_url) as client:
+        names = [str(f["name"]) for f in await client.get_log_files(eval_set)]
         if selected:
-            async with HawkClient(token=token, api_url=api_url) as client:
-                names = [str(f["name"]) for f in await client.get_log_files(eval_set)]
-            matches = [n for n in names if Path(n).name == selected]
-            if len(matches) != 1:
+            names = [n for n in names if Path(n).name == selected]
+            if len(names) != 1:
                 raise ValueError(
-                    f"Expected exactly one Hawk log at {address!r}, found {len(matches)}"
+                    f"Expected exactly one Hawk log at {address!r}, found {len(names)}"
                 )
-            eval_file = matches[0]
-        try:
-            await download_eval(eval_set, token, out_dir, eval_file=eval_file)
-        except click.ClickException as ex:
-            if "No log files found" in ex.message:
-                return []
-            raise RuntimeError(ex.message) from ex
+        if not names:
+            return []
+        out_dir.mkdir(parents=True, exist_ok=True)
+        async for url, filename in client.get_download_urls(names):
+            await download_file(url, out_dir / Path(filename).name)
     return sorted(out_dir.glob("*.eval"))
 
 

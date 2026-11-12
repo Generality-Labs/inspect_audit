@@ -384,7 +384,9 @@ def submit_findings(
         async with lock:
             require_audit()
             if (task or (audit and audit.task)) and not load().checks:
-                raise ToolError("Start the sample population with start_register before submission")
+                raise ToolError(
+                    'Open the register before submission: register(view="summary") starts it'
+                )
             if audit:
                 for job in audit.record().jobs:
                     if await audit.runs.status(job["run_id"]) not in FINISHED:

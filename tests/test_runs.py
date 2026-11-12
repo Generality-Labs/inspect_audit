@@ -168,6 +168,7 @@ def _make_audit(tmp_path: Path, runs: Any) -> _audit.Audit:
             judges=["openai/judge"],
         ),
         supplied=["hawk:supplied-logs"],
+        source="benchmark.task",
     )
 
     from inspect_ai.util import store_as
@@ -204,8 +205,8 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
 ) -> None:
     runs = FakeRuns()
     inv = _make_audit(tmp_path, runs)
-    benchmark = _audit.run_benchmark(inv)
-    out = asyncio.run(benchmark("smoke", ["openai/subject"], ["1"], None, 1, "{}", "{}", "why"))  # type: ignore[arg-type]
+    benchmark = _audit.run_eval(inv)
+    out = asyncio.run(benchmark("smoke", ["1"], ["openai/subject"], "{}", 1, [], None, None, "why"))  # type: ignore[arg-type]
     assert "hawk:run-1" in out
     assert record.jobs == [
         {
@@ -221,9 +222,9 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
     from inspect_ai.tool import ToolError
 
     with pytest.raises(ToolError, match="may not be evaluated"):
-        asyncio.run(benchmark("other", ["openai/investigator"], None, None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
+        asyncio.run(benchmark("other", None, ["openai/investigator"], "{}", 1, [], None, None, ""))  # type: ignore[arg-type]
     with pytest.raises(ToolError, match="exists"):
-        asyncio.run(benchmark("smoke", ["openai/subject"], None, None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
+        asyncio.run(benchmark("smoke", None, ["openai/subject"], "{}", 1, [], None, None, ""))  # type: ignore[arg-type]
 
 
 def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
@@ -240,7 +241,7 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
         "prices_for_models",
         lambda models: {m: {"input": 1.0, "output": 2.0} for m in models},
     )
-    investigation = _audit.run_investigation(inv)
+    investigation = _audit.send_investigators(inv)
     asyncio.run(
         investigation(  # type: ignore[arg-type]
             "a1",
@@ -248,10 +249,8 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
             ["gold-answer"],
             ["smoke", "hawk:supplied-logs"],
             "openai/investigator",
-            "benchmark.task",
-            0.5,
-            "{}",
             '{"grader": "openai/judge"}',
+            0.5,
             "Check every failed rubric item against the context.",
         )
     )
@@ -277,10 +276,8 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
                 ["gold-answer"],
                 ["/etc/passwd"],
                 "openai/investigator",
-                "b.t",
+                "{}",
                 0.5,
-                "{}",
-                "{}",
                 "",
             )  # type: ignore[arg-type]
         )
@@ -625,8 +622,8 @@ def test_an_empty_judge_reaches_the_investigation_as_empty(
     inv = _make_audit(tmp_path, runs)
     monkeypatch.setattr(_audit, "prices_for_models", lambda models: {m: {} for m in models})
     asyncio.run(
-        _audit.run_investigation(inv)(  # type: ignore[arg-type]
-            "a", ["1"], ["gold-answer"], [], "openai/investigator", "b.t", 0.5, "{}", "{}", ""
+        _audit.send_investigators(inv)(  # type: ignore[arg-type]
+            "a", ["1"], ["gold-answer"], [], None, "{}", 0.5, ""
         )
     )
     assert runs.submitted[0].task_args["judge"] == {}
@@ -767,10 +764,18 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
         "prices_for_models",
         lambda models: {m: {"input": 1.0, "output": 2.0} for m in models},
     )
-    regrade = _audit.run_regrade(inv)
+    regrade = _audit.run_eval(inv)
     asyncio.run(
         regrade(  # type: ignore[arg-type]
-            "rejudge", ["1"], ["hawk:supplied-logs"], '{"grader": "openai/judge"}', 3, 0.5, "noise"
+            "rejudge",
+            ["1"],
+            [],
+            '{"grader": "openai/judge"}',
+            3,
+            ["hawk:supplied-logs"],
+            None,
+            0.5,
+            "noise",
         )
     )
     [job] = runs.submitted
@@ -781,7 +786,15 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
     with pytest.raises(ToolError, match="1 to 10"):
         asyncio.run(
             regrade(  # type: ignore[arg-type]
-                "again", ["1"], ["hawk:supplied-logs"], '{"grader": "openai/judge"}', 50, 0.5, ""
+                "again",
+                ["1"],
+                [],
+                '{"grader": "openai/judge"}',
+                50,
+                ["hawk:supplied-logs"],
+                None,
+                0.5,
+                "",
             )
         )
 
@@ -819,7 +832,7 @@ def test_a_launch_that_could_cross_the_audit_budget_is_refused(
         "sample_limits",
         lambda: SimpleNamespace(cost=SimpleNamespace(usage=4.0, limit=None)),
     )
-    investigate = _audit.run_investigation(inv)
+    investigate = _audit.send_investigators(inv)
 
     def launch(label: str, samples: list[str], cap: float) -> str:
         return asyncio.run(
@@ -829,10 +842,8 @@ def test_a_launch_that_could_cross_the_audit_budget_is_refused(
                 ["gold-answer"],
                 ["hawk:supplied-logs"],
                 "openai/investigator",
-                "benchmark.task",
-                cap,
-                "{}",
                 '{"grader": "openai/judge"}',
+                cap,
                 "",
             )
         )
@@ -886,9 +897,9 @@ def test_a_platform_refusal_reaches_the_auditor_not_the_eval(
     from inspect_ai.tool import ToolError
 
     inv = _make_audit(tmp_path, RefusingRuns())
-    benchmark = _audit.run_benchmark(inv)
+    benchmark = _audit.run_eval(inv)
     with pytest.raises(ToolError, match="Models not found"):
-        asyncio.run(benchmark("smoke", ["openai/subject"], ["1"], None, 1, "{}", "{}", ""))  # type: ignore[arg-type]
+        asyncio.run(benchmark("smoke", ["1"], ["openai/subject"], "{}", 1, [], None, None, ""))  # type: ignore[arg-type]
     assert record.jobs == []
 
     record.jobs.append({"label": "old", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})

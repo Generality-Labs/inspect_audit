@@ -63,9 +63,25 @@ def _investigation_log(*scores: tuple[str, int, str, str]) -> Any:
 
 
 def _start(checks: list[str]) -> str:
-    return asyncio.run(
-        _audit.start_register("register_fixture")("{}", checks)  # type: ignore[arg-type]
+    """Start the register as the register tool does on first use: from a launch policy."""
+    from inspect_ai.util import store_as
+
+    from inspect_audit.dispatch.policy import LaunchPolicy, Models, PolicyStore, ensure_policy
+
+    policy = LaunchPolicy(
+        task="register_fixture",
+        task_package=None,
+        investigation_package=None,
+        investigator_image="i",
+        models=Models(),
+        checks=tuple(checks),
+        configuration_json="{}",
     )
+    saved = store_as(PolicyStore)
+    saved.policy_json = saved.digest = None
+    ensure_policy(policy, saved, require_existing=False)
+    count = asyncio.run(_audit.start_register("register_fixture", policy))
+    return f"{count} items x {len(checks)} checks"
 
 
 def test_the_population_is_the_benchmarks_items_with_an_empty_cell_per_check(
@@ -241,7 +257,7 @@ def test_failed_verdict_import_does_not_mark_job_collected(
 
     attempts = []
 
-    async def import_results(files, address):
+    async def import_results(inv, files, address):
         attempts.append(address)
         if len(attempts) == 1:
             raise ToolError("repair findings.json")

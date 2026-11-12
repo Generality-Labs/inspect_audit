@@ -585,14 +585,14 @@ class Audit:
             raise ToolError(f"no job {label!r}; jobs(action='list') shows them")
         return found[0]
 
-    async def launch(self, job: Job, kind: str, note: str) -> str:
+    async def launch(self, job: Job, kind: str, note: str, diff: str | None = None) -> str:
         async with self.launch_lock:
             from ._findings import require_audit
 
             require_audit()
-            return await self._launch(job, kind, note)
+            return await self._launch(job, kind, note, diff)
 
-    async def _launch(self, job: Job, kind: str, note: str) -> str:
+    async def _launch(self, job: Job, kind: str, note: str, diff: str | None = None) -> str:
         policy = self.authorizer.policy
         approved = self.authorizer.authorise(
             job, kind, {str(j["address"]) for j in self.record().jobs}
@@ -643,6 +643,8 @@ class Audit:
                 "note": note,
                 "policy_sha256": policy.digest,
                 "max_cost": worst,
+                # a variant's change, kept with the job so findings can cite it exactly
+                **({"diff": diff} if diff else {}),
             },
         ]
         return (
@@ -663,191 +665,209 @@ def json_object(text: str, name: str) -> dict[str, Any]:
     return value
 
 
-@tool
-def run_benchmark(inv: Audit) -> Tool:
-    async def execute(
-        label: str,
-        models: list[str],
-        sample_ids: list[str] | None,
-        sample_range: list[int] | None,
-        epochs: int,
-        task_args: str,
-        model_roles: str,
-        note: str,
-    ) -> str:
-        """Run the investigated benchmark: fresh attempts by the models you name.
+def _logs_named(inv: Audit, names: list[str]) -> list[str]:
+    """Job labels and supplied sources as addresses a job can read."""
+    addresses = []
+    for name in names:
+        known = [j for j in inv.record().jobs if j["label"] == name]
+        if known:
+            addresses.append(known[0]["address"])
+        elif name in inv.supplied:
+            addresses.append(name)
+        else:
+            raise ToolError(
+                f"{name!r} is neither a job of yours nor a supplied source "
+                f"({', '.join(inv.supplied) or 'none supplied'})"
+            )
+    return addresses
 
-        Args:
-            label: A short name for this job, unique in the audit.
-            models: Full Inspect model names from the subject list.
-            sample_ids: The benchmark's own sample ids to run, when its samples have
-                ids; null for none.
-            sample_range: [first, last] positions in the dataset, counting from 1,
-                inclusive: how to select samples that have no ids of their own (they
-                are numbered by position). Null for none. Give at most one of
-                sample_ids and sample_range; neither runs every sample.
-            epochs: Attempts per sample per model.
-            task_args: The task's arguments as a JSON object, exactly as the
-                benchmark takes them; "{}" for its defaults. A model named in one must
-                be a permitted judge; arguments that set a sandbox,
-                image, path or file are refused.
-            model_roles: Role name to model for the benchmark's own judges, as a JSON
-                object, from the judge list; "{}" when it has none.
-            note: Why you are running this.
-        """
-        args = json_object(task_args, "task_args")
-        roles = {str(k): str(v) for k, v in json_object(model_roles, "model_roles").items()}
-        if sample_ids is not None and sample_range is not None:
-            raise ToolError("give sample_ids or sample_range, not both")
-        if sample_range is not None and not (
-            len(sample_range) == 2 and 1 <= sample_range[0] <= sample_range[1]
-        ):
-            raise ToolError("sample_range is [first, last], counting from 1, first <= last")
-        job = Job(
-            label=label,
-            task=inv.task,
-            package=inv.task_package,
-            extra_packages=list(inv.task_pins),
-            models=models,
-            task_args=args,
-            model_roles=roles,
-            sample_ids=sample_ids,
-            sample_range=(sample_range[0], sample_range[1]) if sample_range else None,
-            epochs=epochs,
+
+async def _variant_files(inv: Audit, folder: str) -> tuple[dict[str, str], str]:
+    """The replacement files in a folder of the box, checked; and their diff."""
+    from ._variant import check_overlay
+
+    source = inv.authorizer.policy.source
+    if not source:
+        raise ToolError(
+            "modified code needs the module that defines the task: the operator declares benchmark.source"
         )
-        return await inv.launch(job, "benchmark", note)
+    root = folder.rstrip("/")
+    listed = await sandbox().exec(["find", root, "-type", "f"])
+    if not listed.success:
+        raise ToolError(f"cannot list {root}: {listed.stderr.strip()}")
+    files = {
+        path[len(root) + 1 :]: await sandbox().read_file(path)
+        for path in sorted(listed.stdout.split("\n"))
+        if path.strip()
+    }
+    try:
+        return files, check_overlay(inv.task, source, files)
+    except ValueError as ex:
+        raise ToolError(str(ex)) from ex
 
-    return execute
+
+def _selection(samples: list[str] | None) -> tuple[list[str] | None, tuple[int, int] | None]:
+    """Sample ids, or for a benchmark whose items have no ids, a contiguous run of positions."""
+    from ._register import load, started
+
+    current = load()
+    if samples is None or not (started(current) and current.subject.get("ids") == "positional"):
+        return samples, None
+    try:
+        numbers = sorted(int(s) for s in samples)
+    except ValueError as ex:
+        raise ToolError(
+            "this benchmark's items have no ids: select them by position, 1, 2, ..."
+        ) from ex
+    if numbers != list(range(numbers[0], numbers[-1] + 1)):
+        raise ToolError(
+            "this benchmark's items have no ids: select one contiguous run of positions"
+        )
+    return None, (numbers[0], numbers[-1])
 
 
 @tool
-def run_regrade(inv: Audit) -> Tool:
+def run_eval(inv: Audit) -> Tool:
     async def execute(
         label: str,
-        samples: list[str],
-        logs: list[str],
+        samples: list[str] | None,
+        models: list[str],
         judge: str,
         epochs: int,
-        item_cost_limit: float,
+        rescore: list[str],
+        code: str | None,
+        item_cost_limit: float | None,
         note: str,
     ) -> str:
-        """Re-grade recorded attempts with the benchmark's own grader, as a job.
+        """Run the benchmark, as it is or changed: new evidence about how it behaves.
 
-        Each recorded attempt at the selected samples is replayed (no model call) and
-        scored `epochs` times by the benchmark's scorers. Epochs that disagree with each
-        other are judge noise; epochs that agree with each other but not with the
-        recorded grade are a stable disagreement. Use it to measure how often a
-        model-graded benchmark's judge flips, across many answers at once. It runs where
-        the judge's credentials are, which your box is not. Read results from the
-        collected log: per sample and epoch, the fresh scores, with the recorded grades
-        in metadata["inspect_audit_regrade"]["recorded"].
+        Fresh attempts by `models`, or with `rescore`, the benchmark's grader run again
+        on attempts already recorded. With `code`, the benchmark is modified first: an
+        ablation. Its task arguments are the launch policy's. Collect the job's logs
+        with `jobs`.
 
         Args:
             label: A short name for this job, unique in the audit.
-            samples: The benchmark's sample ids to regrade.
-            logs: Recorded attempts: labels of benchmark jobs you ran, or supplied log
-                sources from the seed.
-            judge: Role name to model for the benchmark's judge, as a JSON object, from
-                the judge list; it must be the model the logs record.
-            epochs: How many times to score each attempt, 1 to 10.
-            item_cost_limit: Dollars one regraded attempt may spend.
+            samples: The items to run, by the benchmark's sample ids (positions 1, 2, ...
+                when its items have none); null for every permitted item.
+            models: Models to make fresh attempts, from the subject list; [] when rescoring.
+            judge: Role name to model for the benchmark's judge, as a JSON object from the
+                judge list; "{}" when it has none. When rescoring it must be the model
+                the logs record.
+            epochs: Attempts per item and model; when rescoring, how many times each
+                recorded attempt is scored again (1 to 10; disagreeing epochs are judge noise).
+            rescore: Recorded attempts to score again instead of making new ones: labels
+                of your jobs, or supplied log sources; [] for fresh attempts.
+            code: A folder in your box holding the files you changed, each at its path
+                inside the installed package (e.g. inspect_evals/simpleqa/simpleqa.py);
+                every other file is the original. Null for the unmodified benchmark.
+            item_cost_limit: Dollars one rescored attempt may spend; null for fresh attempts.
             note: Why you are running this.
         """
+        policy = inv.authorizer.policy
         judges = {str(k): str(v) for k, v in json_object(judge, "judge").items()}
-        if not judges:
-            raise ToolError('judge must name the judge role, e.g. {"grader": "openai/gpt-5.1"}')
-        addresses = []
-        for name in logs:
-            known = [j for j in inv.record().jobs if j["label"] == name]
-            if known:
-                addresses.append(known[0]["address"])
-            elif name in inv.supplied:
-                addresses.append(name)
-            else:
-                raise ToolError(
-                    f"{name!r} is neither a job of yours nor a supplied source "
-                    f"({', '.join(inv.supplied) or 'none supplied'})"
-                )
-        try:
-            prices = prices_for_models(list(judges.values()))
-        except Exception as ex:
-            raise ToolError(f"cannot price the judge for its cost limit: {ex}") from ex
+        files, diff = await _variant_files(inv, code) if code else (None, None)
+        args = json.loads(policy.task_args_json)
+        if rescore:
+            if models:
+                raise ToolError("rescoring makes no new attempts: models must be []")
+            if not judges:
+                raise ToolError('rescoring needs the judge, e.g. {"grader": "openai/gpt-5.1"}')
+            if item_cost_limit is None:
+                raise ToolError("rescoring needs item_cost_limit: dollars per rescored attempt")
+            if samples is None:
+                raise ToolError("rescoring selects the items to score again by sample id")
+            try:
+                prices = prices_for_models(list(judges.values()))
+            except Exception as ex:
+                raise ToolError(f"cannot price the judge for its cost limit: {ex}") from ex
+            job = Job(
+                label=label,
+                task="inspect_audit/regrade",
+                package=inv.investigation_package,
+                extra_packages=[inv.task_package, *inv.task_pins],
+                # the judge as the eval's model: never called, but it is how the job
+                # gets the judge's credentials
+                models=list(judges.values())[:1],
+                task_args={
+                    "task": inv.task,
+                    "task_args": args,
+                    "logs": _logs_named(inv, rescore),
+                    "judge": judges,
+                    "samples": samples,
+                    "epochs": epochs,
+                    "cost_limit": item_cost_limit,
+                    "model_prices": prices,
+                    **({"files": files, "source": policy.source} if files else {}),
+                },
+            )
+            return await inv.launch(job, "regrade", note, diff)
+        if not models:
+            raise ToolError("name the models to make fresh attempts, or give logs to rescore")
+        sample_ids, sample_range = _selection(samples)
+        variant = files is not None
         job = Job(
             label=label,
-            task="inspect_audit/regrade",
-            package=inv.investigation_package,
-            extra_packages=[inv.task_package, *inv.task_pins],
-            # the judge as the eval's model: never called, but it is how the job gets
-            # the judge's credentials
-            models=list(judges.values())[:1],
-            task_args={
-                "task": inv.task,
-                "task_args": json.loads(inv.authorizer.policy.task_args_json),
-                "logs": addresses,
-                "judge": judges,
-                "samples": samples,
-                "epochs": epochs,
-                "cost_limit": item_cost_limit,
-                "model_prices": prices,
-            },
+            task="inspect_audit/variant" if variant else inv.task,
+            package=inv.investigation_package if variant else inv.task_package,
+            extra_packages=[inv.task_package, *inv.task_pins] if variant else list(inv.task_pins),
+            task_args=(
+                {"task": inv.task, "source": policy.source, "task_args": args, "files": files}
+                if variant
+                else args
+            ),
+            models=models,
+            model_roles=judges,
+            sample_ids=sample_ids,
+            sample_range=sample_range,
+            epochs=epochs,
         )
-        return await inv.launch(job, "regrade", note)
+        return await inv.launch(job, "variant" if variant else "benchmark", note, diff)
 
     return execute
 
 
 @tool
-def run_investigation(inv: Audit) -> Tool:
+def send_investigators(inv: Audit) -> Tool:
     async def execute(
         label: str,
         samples: list[str],
         checks: list[str],
         logs: list[str],
-        investigator_model: str,
-        source: str,
-        item_cost_limit: float,
-        task_args: str,
+        model: str | None,
         judge: str,
+        item_cost_limit: float,
         note: str,
     ) -> str:
-        """Investigation benchmark items with inspect_audit's investigator, one sample per item.
+        """Send investigators: one agent per item, inside the benchmark's own setup.
+
+        Each investigates one item against the checks, can try answers with the
+        benchmark's grader, and records a verdict per check. Collect the job with `jobs`;
+        its verdicts go into the register.
 
         Args:
             label: A short name for this job, unique in the audit.
             samples: The benchmark's sample ids to investigate.
-            checks: Checks to run, e.g. ["gold-answer", "red-teaming"].
-            logs: Recorded attempts to investigate against: labels of benchmark jobs you
-                ran, or supplied log sources from the seed; [] for none.
-            investigator_model: The investigator, a full Inspect model name from the investigator list.
-            source: The Python module that defines the benchmark's task, e.g.
-                inspect_evals.simpleqa.simpleqa: its code is what the investigator reads.
+            checks: Checks to run, from the launch policy, e.g. ["gold-answer"].
+            logs: Recorded attempts the investigators read: labels of your jobs, or
+                supplied log sources; [] for none.
+            model: The investigator, from the investigator list; null for its first.
+            judge: Role name to model for the benchmark's judge, as a JSON object from
+                the judge list. With logs, the model the logs record; "{}" for none.
             item_cost_limit: Dollars one investigated item may spend.
-            task_args: The benchmark's arguments as a JSON object, exactly as the logs
-                ran it, under the same rules as run_benchmark's.
-            judge: Role name to model for the benchmark's judge, as a JSON object, from
-                the judge list. With logs, it must be the model the logs record; "{}"
-                for none.
-            note: Why you are running this, and what the investigators should do:
-                each investigator reads it.
+            note: Why you are sending them and what to look for: each investigator reads it.
         """
-        args = json_object(task_args, "task_args")
+        policy = inv.authorizer.policy
         judges = {str(k): str(v) for k, v in json_object(judge, "judge").items()}
-        if not re.fullmatch(r"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*", source):
-            raise ToolError(f"source must be a module name like pkg.mod.task, not {source!r}")
-        addresses = []
-        for name in logs:
-            known = [j for j in inv.record().jobs if j["label"] == name]
-            if known:
-                addresses.append(known[0]["address"])
-            elif name in inv.supplied:
-                addresses.append(name)
-            else:
-                raise ToolError(
-                    f"{name!r} is neither a job of yours nor a supplied source "
-                    f"({', '.join(inv.supplied) or 'none supplied'})"
-                )
+        investigator = model or (policy.models.investigators or [None])[0]
+        if not investigator:
+            raise ToolError("the launch policy names no investigator model")
+        if not policy.source:
+            raise ToolError(
+                "investigators read the module that defines the task: the operator declares benchmark.source"
+            )
         try:
-            prices = prices_for_models([investigator_model, *judges.values()])
+            prices = prices_for_models([investigator, *judges.values()])
         except Exception as ex:
             raise ToolError(f"cannot price the investigator for its cost limit: {ex}") from ex
         job = Job(
@@ -855,14 +875,14 @@ def run_investigation(inv: Audit) -> Tool:
             task="inspect_audit/investigation",
             package=inv.investigation_package,
             extra_packages=[inv.task_package, *inv.task_pins],
-            models=[investigator_model],
+            models=[investigator],
             task_args={
                 "task": inv.task,
-                "task_args": args,
+                "task_args": json.loads(policy.task_args_json),
                 "samples": samples,
                 "checks": checks,
-                "source": source,
-                "logs": addresses or None,
+                "source": policy.source,
+                "logs": _logs_named(inv, logs) or None,
                 # {} is "their grader calls no model", not "unknown": pass it as given
                 "judge": judges,
                 "investigator_image": inv.investigator_image,
@@ -956,87 +976,69 @@ async def _job_action(
         await copy_into_box(files, f"/inputs/jobs/{label}")
         lines = [_log_line(f) for f in files]
         if job["kind"] == "investigation":
-            lines.append(await _import_investigations(files, job["address"]))
+            lines.append(await _import_investigations(inv, files, job["address"]))
         record = inv.record()
         record.jobs = [{**j, "collected": True} if j["label"] == label else j for j in record.jobs]
         return f"{label}: {status}; collected to /inputs/jobs/{label}/\n" + "\n".join(lines)
     raise ToolError("action must be list, status, wait, collect, log or stop")
 
 
-@tool
-def start_register(task: str | None, policy: LaunchPolicy | None = None) -> Tool:
-    async def execute(task_args: str, checks: list[str]) -> str:
-        """Start the register: every item of the benchmark, against the checks you will run.
+async def start_register(task: str | None, policy: LaunchPolicy) -> int:
+    """Lay out the register from the launch policy; returns the number of items.
 
-        Lays out the population: the benchmark's own items, numbered as an eval numbers
-        them, each with an empty cell per check. A cell fills as investigation jobs are
-        collected and as you review; an empty one is work not yet done. Start it once,
-        before collecting investigations, with the task arguments your investigations will use.
+    Every permitted item of the benchmark, with an empty cell per policy check.
+    """
+    from inspect_ai.util import registry_create
 
-        Args:
-            task_args: The benchmark's arguments as a JSON object, as the investigations run it.
-            checks: The investigation checks to track, e.g. ["gold-answer", "answer-format"].
-        """
-        from inspect_ai.util import registry_create
+    from ._register import Register, load, save, started
+    from ._task import numbered
+    from ._verdicts import investigation_items
 
-        from ._register import Register, load, save, started
-        from ._task import numbered
-        from ._verdicts import investigation_items
-
-        if not task:
-            raise ToolError(
-                "the register needs the investigated task: the operator sets target_task"
-            )
-        if started(load()):
-            raise ToolError("the register is already started; it keeps one population")
-        args = json_object(task_args, "task_args")
-        if policy is not None:
-            ensure_policy(policy, store_as(PolicyStore), require_existing=True)
-            if canonical(args) != policy.task_args_json or set(checks) - set(policy.checks):
-                raise ToolError("register arguments and checks must match the launch policy")
-        if policy is not None and set(checks) != set(policy.checks):
-            raise ToolError("Start the register with all checks declared by the launch policy")
-        try:
-            skills = investigation_items(checks)
-        except ValueError as ex:
-            raise ToolError(str(ex)) from ex
-        try:
-            their = registry_create("task", task, **args)
-        except Exception as ex:
-            raise ToolError(
-                f"cannot load {task} here to read its dataset ({type(ex).__name__}: {ex}). "
-                "The benchmark's package must be installed beside inspect_audit."
-            ) from ex
-        dataset, positional = numbered(their)
-        if policy is not None and policy.samples is not None:
-            known = {str(s.id) for s in dataset}
-            if set(policy.samples) - known:
-                raise ToolError("launch policy selects sample IDs absent from the benchmark")
-            dataset = [s for s in dataset if str(s.id) in policy.samples]
-        register = Register(
-            subject={
-                **load().subject,
-                "task": task,
-                "task_args": args,
-                "dataset": getattr(their.dataset, "name", None),
-                "ids": "positional" if positional else "declared",
-            },
-            checks=[s.name for s in skills],
-            samples={str(s.id): {c.name: [] for c in skills} for s in dataset},
-        )
-        await save(register)
-        return (
-            f"register started: {len(dataset)} items x {len(skills)} checks, at "
-            "/workspace/findings.json. register(view='summary') shows progress."
-        )
-
-    return execute
+    if not task:
+        raise ToolError("the register needs the investigated task: the operator sets target_task")
+    if started(load()):
+        raise ToolError("the register is already started; it keeps one population")
+    ensure_policy(policy, store_as(PolicyStore), require_existing=True)
+    args = json.loads(policy.task_args_json)
+    try:
+        skills = investigation_items(list(policy.checks))
+    except ValueError as ex:
+        raise ToolError(str(ex)) from ex
+    try:
+        their = registry_create("task", task, **args)
+    except Exception as ex:
+        raise ToolError(
+            f"cannot load {task} here to read its dataset ({type(ex).__name__}: {ex}). "
+            "The benchmark's package must be installed beside inspect_audit."
+        ) from ex
+    dataset, positional = numbered(their)
+    if policy.samples is not None:
+        known = {str(s.id) for s in dataset}
+        if set(policy.samples) - known:
+            raise ToolError("launch policy selects sample IDs absent from the benchmark")
+        dataset = [s for s in dataset if str(s.id) in policy.samples]
+    register = Register(
+        subject={
+            **load().subject,
+            "task": task,
+            "task_args": args,
+            "dataset": getattr(their.dataset, "name", None),
+            "ids": "positional" if positional else "declared",
+        },
+        checks=[s.name for s in skills],
+        samples={str(s.id): {c.name: [] for c in skills} for s in dataset},
+    )
+    await save(register)
+    return len(dataset)
 
 
 @tool(name="register")
-def register_view() -> Tool:
+def register_view(task: str | None = None, policy: LaunchPolicy | None = None) -> Tool:
     async def execute(view: str, check: str | None) -> str:
-        """What the register holds, by state: the cells to work through next.
+        """The register: every permitted item against every check, and where each stands.
+
+        It starts itself from the launch policy on first use. Cells fill as investigation
+        jobs are collected and as you review; an empty cell is work not yet done.
 
         Args:
             view: "summary" (counts per check), "flagged" (an investigator flagged a
@@ -1047,11 +1049,13 @@ def register_view() -> Tool:
         from ._register import load, select, started
         from ._verdicts import investigation_items
 
-        current = load()
-        if not started(current):
-            raise ToolError("no register yet: start_register first")
         if view not in ("summary", "flagged", "unresolved", "missing", "disputed"):
             raise ToolError("view is summary, flagged, unresolved, missing or disputed")
+        if not started(load()):
+            if policy is None:
+                raise ToolError("no register: this audit has no launch policy to start one from")
+            await start_register(task, policy)
+        current = load()
         skills = {s.name: s for s in investigation_items(current.checks)}
         from ._findings import DRAFT, Findings
         from ._register import apply_reviews
@@ -1070,19 +1074,16 @@ def register_view() -> Tool:
     return execute
 
 
-async def _import_investigations(files: list[Path], address: str) -> str:
-    """An investigation job's verdicts into the register, if one is started."""
+async def _import_investigations(inv: Audit, files: list[Path], address: str) -> str:
+    """An investigation job's verdicts into the register, starting it if need be."""
     from inspect_ai.log import read_eval_log
 
     from ._register import import_investigation_log, load, save, started
     from ._verdicts import investigation_items
 
+    if not started(load()):
+        await start_register(inv.task, inv.authorizer.policy)
     current = load()
-    if not started(current):
-        return (
-            "  (no register started: these verdicts are not in it; "
-            "start_register, then collect again)"
-        )
     skills = {s.name: s for s in investigation_items()}
     flags = {g for s in skills.values() for g in s.flags}
     added: list[str] = []
@@ -1456,8 +1457,7 @@ def audit(
         ),
         view_image(),
         report_blocker(),
-        start_register(target_task, launch_policy),
-        register_view(),
+        register_view(target_task, launch_policy),
     ]
     inv = None
     if runs:
@@ -1482,7 +1482,7 @@ def audit(
             task_pins=task_package_pins,
             paper=paper,
         )
-        tools += [run_benchmark(inv), run_investigation(inv), run_regrade(inv), jobs(inv)]
+        tools += [run_eval(inv), send_investigators(inv), jobs(inv)]
         seed["jobs"] = {
             "runs": runs,
             "task": target_task,

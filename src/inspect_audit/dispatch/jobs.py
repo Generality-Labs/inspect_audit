@@ -19,6 +19,11 @@ from inspect_ai.model import ModelConfig
 # swaps in its own build unless a job names one, so every job names this.
 INSPECT_VERSION = "0.3.285"
 
+# A variant job's replacement files (FRICTION 73): a change to the benchmark, not a
+# second benchmark carried in a job config
+VARIANT_MAX_FILES = 50
+VARIANT_MAX_BYTES = 256 * 1024
+
 # a job's lifecycle as both backends report it
 RUNNING = "running"
 COMPLETE = "complete"

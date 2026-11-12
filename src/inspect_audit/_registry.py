@@ -107,6 +107,8 @@ def regrade(
     epochs: int = 3,
     cost_limit: float | None = None,
     model_prices: dict[str, dict[str, float]] | None = None,
+    files: dict[str, str] | None = None,
+    source: str | None = None,
 ) -> Task:
     """Re-grade recorded attempts with the benchmark's own scorers (`regrade_task` in `_regrade`).
 
@@ -127,4 +129,20 @@ def regrade(
         samples=samples,
         epochs=epochs,
         cost_limit=cost_limit,
+        files=files,
+        source=source,
     )
+
+
+@task
+def variant(
+    task: str, source: str, files: dict[str, str], task_args: dict[str, Any] | None = None
+) -> Task:
+    """The investigated benchmark with the auditor's replacement `files` laid over it.
+
+    An ablation (`_variant`), recorded file by file in the job. `source` is the module
+    that defines the task.
+    """
+    from ._variant import variant_task
+
+    return variant_task(task, source, task_args or {}, files)

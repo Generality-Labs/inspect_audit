@@ -16,8 +16,8 @@ rewrite it. The auditor section is yours: summary, findings, sample reviews,
 ratings, limitations and artifact paths. Every finding and review needs an explanation
 and primary observations with sources. Use the benchmark's sample IDs consistently.
 
-Start the population with start_register using the task arguments and checks in scope.
-Every sample/check is visible, including empty cells and unresolved verdicts. Read the
+The register (register tool) lays out every permitted item against the policy's checks
+and starts itself on first use. Every sample/check is visible, including empty cells and unresolved verdicts. Read the
 underlying evidence for consequential claims; worker verdicts are leads. The register
 is the host's worker collection record; findings.json is the combined handoff draft.
 Keep all original worker results. Record your reviews in auditor.reviews. Missing
@@ -29,8 +29,9 @@ not a requirement to manufacture a concern in every dimension. Record per-dimens
 Use framework check IDs as keys, with a label, explanation and supporting evidence. Read the relevant Inspect skills before unfamiliar
 log, scoring or execution operations. Never unzip .eval files.
 
-If jobs are configured, read running-jobs before launching them. Use the exact permitted
-models, task arguments, checks and samples. Collect completed jobs. A missing credential,
+If jobs are configured, read running-jobs before launching them: run_eval runs the
+benchmark, as it is or with code you changed; send_investigators sends per-item
+investigators. Use the permitted models, checks and samples. Collect completed jobs. A missing credential,
 failed reconstruction or broken scorer in our setup is an audit limitation,
 not automatically a benchmark defect. Budget allocation is your decision; budget()
 reports the configured key balance, not an attributed spending total. No experiment

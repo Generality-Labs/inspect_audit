@@ -1,31 +1,42 @@
 ---
 name: running-jobs
-description: Launch, wait on and collect benchmark and per-item investigation jobs. Read before launching one.
+description: Run the benchmark (as it is, rescored, or with changed code) and send per-item investigators; wait on and collect them. Read before launching one.
 ---
 
 ## Choose the work
 
-Two kinds of job, each one tool call. `run_benchmark` runs the investigated benchmark for
-the models you name and produces fresh attempts. `run_investigation` runs inspect_audit's
-investigator over chosen benchmark items, one sample per item, optionally against
-recorded attempts. The seed's `jobs` block lists the models each part may play:
-subjects for benchmarks, investigators for investigations, judges for the benchmark's own graders.
+Two different things.
 
-Name a benchmark's judges explicitly with `model_roles`, and any judge the task
-builds from its own arguments in `task_args`. An investigation's judge is the one its logs
-record: bind that model under the same role, or the investigation refuses.
+`run_eval` runs the benchmark and gives you new evidence about it:
+- fresh attempts by the models you name;
+- `rescore`: the benchmark's own grader run again on attempts already recorded, `epochs`
+  times each (epochs that disagree are judge noise; epochs that agree with each other
+  but not with the recorded grade are a stable disagreement);
+- `code`: either of the above with the benchmark changed, an ablation. Copy the files
+  you want to change into a folder, at their paths inside the installed package
+  (`inspect_evals/simpleqa/simpleqa.py`, not the repository's `src/...` path), edit them,
+  and pass the folder. Every other file is the original. Test the change in your box
+  first. The job records the diff; cite it in findings.
+
+`send_investigators` sends one investigator per item, inside the benchmark's own setup,
+against the checks you choose; their verdicts go into the register.
+
+The task's arguments are fixed by the launch policy. The seed's `jobs` block lists the
+models each part may play: subjects for fresh attempts, investigators, and judges for
+the benchmark's own graders. Name a judge as `{"role": "model"}`; when rescoring or
+investigating recorded attempts it must be the model those logs record.
 
 ## The register
 
-Start the register before collecting any investigation: start_register(task_args, checks) with
-the arguments and checks your investigations use. Each collected investigation then adds its verdicts as
+The register lays out every permitted item against the policy's checks; it starts itself the
+first time you view it or collect an investigation. Each collected investigation adds its verdicts as
 investigator takes, with the job, eval and epoch they came from. Work the flagged cells with
 register(view="flagged"), and record your own reviews in findings.json under auditor.reviews.
 Keep the original investigator results unchanged. Empty cells are work not done.
 
 ## Sources
 
-An investigation's `logs` are labels of benchmark jobs you ran, or supplied sources from the
+An investigation's `logs`, like `rescore`, are labels of jobs you ran, or supplied sources from the
 seed's `jobs.supplied_logs`. Verify dataset identity before joining attempts: the
 investigation refuses a log whose question differs from the installed benchmark's (a run with
 sample_shuffle numbers its samples after shuffling, so its ids name different
@@ -44,7 +55,7 @@ launched: check it before launching more.
 
 When configured to share one capped OpenRouter key, you and your jobs draw on that
 key; `budget()` reports its remaining allowance. Other provider routes have separate
-credentials and limits. The key balance is not a per-audit usage breakdown. An investigation's `item_cost_limit` caps one item. Bound a
+credentials and limits. The key balance is not a per-audit usage breakdown. `item_cost_limit` caps one investigated or rescored item. Bound a
 grader's `max_tokens` and check what a smoke job recorded before expanding. Scale in
 bounded batches.
 

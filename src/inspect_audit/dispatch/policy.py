@@ -14,7 +14,7 @@ from inspect_ai.tool import ToolError
 from inspect_ai.util import StoreModel
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .jobs import Job, validate_environment
+from .jobs import VARIANT_MAX_BYTES, VARIANT_MAX_FILES, Job, validate_environment
 
 
 def canonical(value: Any) -> str:
@@ -89,6 +89,10 @@ class Execution(FrozenModel):
             raise ValueError(
                 "restricted credentials require Hawk; local execution uses user credentials"
             )
+        # child jobs on Hawk never carry a person's login: each gets its own narrow
+        # execution token (James, 2026-11-12; FRICTION 73)
+        if self.backend == "hawk" and self.credential_mode != "restricted":
+            raise ValueError("Hawk child jobs run with restricted credentials only")
         return self
 
 
@@ -216,8 +220,39 @@ INVESTIGATION_ARGS = frozenset(
 
 # the same for a regrade job, against the registered `regrade` task
 REGRADE_ARGS = frozenset(
-    {"task", "task_args", "logs", "judge", "samples", "epochs", "cost_limit", "model_prices"}
+    {
+        "task",
+        "task_args",
+        "logs",
+        "judge",
+        "samples",
+        "epochs",
+        "cost_limit",
+        "model_prices",
+        "files",
+        "source",
+    }
 )
+
+# a variant job: the benchmark with replacement files laid over its package (FRICTION 73)
+VARIANT_ARGS = frozenset({"task", "task_args", "files", "source"})
+
+
+def files_problem(files: Any) -> str | None:
+    """Why `files` is not a small set of replacement files, or None.
+
+    The same limits as `_variant`'s, so a job built by hand is refused here too.
+    """
+    if not isinstance(files, dict) or not files:
+        return "a variant carries its replacement files"
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items()):
+        return "variant files map paths to text"
+    if (
+        len(files) > VARIANT_MAX_FILES
+        or sum(len(v.encode()) for v in files.values()) > VARIANT_MAX_BYTES
+    ):
+        return "variant files exceed the size limit"
+    return None
 
 
 @dataclass(frozen=True)
@@ -244,6 +279,10 @@ class AuditAuthorizer:
             raise ToolError("job dependencies must match the launch policy")
         if set(args) - REGRADE_ARGS or job.model_roles or job.sample_range is not None:
             raise ToolError("regrade job contains configuration outside the launch contract")
+        if "files" in args and (problem := files_problem(args["files"])):
+            raise ToolError(problem)
+        if "files" in args and (p.source is None or args.get("source") != p.source):
+            raise ToolError("a variant needs the policy's declared benchmark.source module")
         if args.get("task") != p.task or canonical(args.get("task_args", {})) != p.task_args_json:
             raise ToolError("regrade task and task_args are fixed by the launch policy")
         judges = [str(m) for m in (args.get("judge") or {}).values()]
@@ -287,16 +326,20 @@ class AuditAuthorizer:
         # a run folder's and a Hawk eval set's name: no paths, nothing Hawk would refuse
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}", job.label):
             raise ToolError("a label is letters, digits, - and _, at most 48 characters")
-        if kind not in ("investigation", "benchmark", "regrade"):
+        if kind not in ("investigation", "benchmark", "regrade", "variant"):
             raise ToolError(f"unknown job kind: {kind}")
         if kind == "regrade":
             return self._regrade(job, known_logs)
-        expected_task = "inspect_audit/investigation" if kind == "investigation" else p.task
-        expected_package = p.investigation_package if kind == "investigation" else p.task_package
+        ours = kind in ("investigation", "variant")
+        expected_task = {
+            "investigation": "inspect_audit/investigation",
+            "variant": "inspect_audit/variant",
+        }.get(kind, p.task)
+        expected_package = p.investigation_package if ours else p.task_package
         if job.task != expected_task or job.package != expected_package:
             raise ToolError("job task and package must match the launch policy")
         pins = list(p.task_pins)
-        if job.extra_packages != ([p.task_package, *pins] if kind == "investigation" else pins):
+        if job.extra_packages != ([p.task_package, *pins] if ours else pins):
             raise ToolError("job dependencies must match the launch policy")
         allowed = p.models.investigators if kind == "investigation" else p.models.subjects
         if not job.models:
@@ -347,6 +390,18 @@ class AuditAuthorizer:
                     f"investigation cost_limit exceeds the policy's ${cap:g} per sample"
                 )
             benchmark_args = args.get("task_args", {})
+        elif kind == "variant":
+            if set(args) - VARIANT_ARGS or args.get("task") != p.task:
+                raise ToolError("variant job contains configuration outside the launch contract")
+            if p.source is None or args.get("source") != p.source:
+                raise ToolError("a variant needs the policy's declared benchmark.source module")
+            if problem := files_problem(args.get("files")):
+                raise ToolError(problem)
+            selected = job.sample_ids
+            roles = job.model_roles
+            benchmark_args = args.get("task_args", {})
+            if job.sample_ids is not None and job.sample_range is not None:
+                raise ToolError("select sample IDs or a sample range, not both")
         else:
             selected = job.sample_ids
             roles = job.model_roles

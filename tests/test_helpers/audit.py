@@ -9,7 +9,9 @@ from inspect_audit.dispatch.policy import AuditAuthorizer, LaunchPolicy, Models
 
 def make_audit(**args: Any) -> Audit:
     menu = args.pop("menu")
+    source = args.pop("source", None)
     policy = LaunchPolicy(
+        source=source,
         task=args["task"],
         task_package=args["task_package"],
         investigation_package=args["investigation_package"],

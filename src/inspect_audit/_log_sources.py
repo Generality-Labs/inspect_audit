@@ -22,13 +22,14 @@ def is_remote_logs(source: str) -> bool:
 def log_files(logs: list[str]) -> list[str]:
     """Each `logs` entry as log files.
 
-    A `.eval`/`.json` file is itself; `hawk:<eval set id>` is fetched whole; any
+    A `.eval`/`.json` file is itself; `hawk:<eval set id>[/<file>]` is fetched (a
+    single file too: FRICTION 5); any
     other entry is a log directory, local or a URL Inspect reads (s3://, gs://),
     listed with Inspect's own `list_eval_logs`. An entry with no logs is an error.
     """
     files: list[str] = []
     for entry in logs:
-        if entry.endswith((".eval", ".json")):
+        if entry.endswith((".eval", ".json")) and not entry.startswith("hawk:"):
             files.append(entry)
             continue
         found = [

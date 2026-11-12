@@ -160,3 +160,22 @@ def test_hawk_downloads_use_the_given_address_and_an_empty_set_is_no_logs(tmp_pa
     monkeypatch.setattr(hawk.client, "HawkClient", Client)
     assert asyncio.run(download("run", "t", tmp_path, "https://ours.example")) == []
     assert seen == [("t", "https://ours.example")]
+
+
+def test_a_single_hawk_log_address_is_fetched_not_taken_as_a_local_file(tmp_path, monkeypatch):
+    """FRICTION 5: `hawk:<set>/<file>.eval` ends in `.eval`, and was returned unchanged
+    as if it were a local path, so the log was never downloaded."""
+    from test_helpers.logs import run_fixture_eval
+
+    from inspect_audit import _log_sources
+
+    log = Path(run_fixture_eval(str(tmp_path / "fetched")))
+    asked = []
+
+    def fetch(entry):
+        asked.append(entry)
+        return str(log.parent)
+
+    monkeypatch.setattr(_log_sources, "fetch_logs", fetch)
+    assert _log_sources.log_files(["hawk:run/a.eval"]) == [str(log)]
+    assert asked == ["hawk:run/a.eval"]

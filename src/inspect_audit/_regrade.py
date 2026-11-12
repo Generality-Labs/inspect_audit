@@ -20,7 +20,7 @@ from typing import Any
 import anyio.to_thread
 from inspect_ai import Task, score_async
 from inspect_ai.dataset import Sample
-from inspect_ai.log import EvalLog, read_eval_log, read_eval_log_sample
+from inspect_ai.log import EvalLog, read_eval_log_async, read_eval_log_sample
 from inspect_ai.model import Model
 from inspect_ai.scorer import CORRECT, INCORRECT, NOANSWER, PARTIAL, Scorer, Value
 from inspect_ai.scorer._scorer import unique_scorer_name
@@ -125,7 +125,10 @@ async def regrade_async(
         their = registry_create("task", task, **(task_args or {}))
         name = registry_info(their).name
         package = name.split("/")[0] if "/" in name else None
-    index = index_logs(logs, task_name=name, task_args=dict(task_args or {}), package=package)
+    # off the event loop: the sync header readers start their own (FRICTION 44, 79)
+    index = await anyio.to_thread.run_sync(
+        lambda: index_logs(logs, task_name=name, task_args=dict(task_args or {}), package=package)
+    )
     roles = configured_judges(index, judge_roles(index, judge))
     scorers: list[Scorer] = (
         list(their.scorer) if isinstance(their.scorer, list) else [s for s in [their.scorer] if s]
@@ -136,7 +139,7 @@ async def regrade_async(
 
     rows: list[Regrade] = []
     for path in logs:
-        log = read_eval_log(path)
+        log = await read_eval_log_async(path)
         samples = log.samples or []
         try:
             rescored = await _rescore(log, scorers, roles)

@@ -356,18 +356,33 @@ class HawkDelivery:
 
         token, refresh_token = self.auditor_tokens(refresh_token)
         async with HawkClient(token=token, api_url=self.api_url) as client:
+            # the audit itself runs as the auditor user: it needs that user's token to
+            # launch its (restricted) children, so its mode is never left to Hawk's
+            # server default (FRICTION 79d)
             created = await client.create_eval_set(
-                EvalSetConfig.model_validate(config), refresh_token=refresh_token
+                EvalSetConfig.model_validate(config),
+                refresh_token=refresh_token,
+                credential_mode="user",
             )
         return created["eval_set_id"]
 
-    async def running(self, eval_set_id: str, operator_token: str) -> bool:
-        """Whether Hawk still runs this audit: unknown to Hawk counts as not."""
+    async def running(self, eval_set_id: str, operator_token: str) -> bool | None:
+        """Whether Hawk still runs this audit; None when Hawk does not say.
+
+        Only a status Hawk reports as finished means not running. Unknown to Hawk, or a
+        refused or failed lookup, is not evidence it stopped: `reap` must not disable a
+        live audit's key on a transient 404 or 403 (FRICTION 79e).
+        """
         from hawk.client import HawkClient
 
-        async with HawkClient(token=operator_token, api_url=self.api_url) as client:
-            status = await client.get_job_status(eval_set_id)
-        return status is not None and str(status.status) not in ("complete", "failed", "deleted")
+        try:
+            async with HawkClient(token=operator_token, api_url=self.api_url) as client:
+                status = await client.get_job_status(eval_set_id)
+        except Exception:
+            return None
+        if status is None:
+            return None
+        return str(status.status) not in ("complete", "failed", "deleted")
 
 
 async def middleman_request(

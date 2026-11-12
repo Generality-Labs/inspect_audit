@@ -264,7 +264,11 @@ def test_failed_verdict_import_does_not_mark_job_collected(
         return "imported"
 
     monkeypatch.setattr(_audit_workspace, "copy_into_box", copy)
-    monkeypatch.setattr(_audit, "_log_line", lambda path: "worker")
+
+    async def line(path: Any) -> str:
+        return "worker"
+
+    monkeypatch.setattr(_audit, "_log_line", line)
     monkeypatch.setattr(_audit, "_import_investigations", import_results)
     inv = make_audit(
         root=tmp_path,

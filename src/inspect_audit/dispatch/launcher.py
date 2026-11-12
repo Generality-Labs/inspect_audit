@@ -54,7 +54,7 @@ class Delivery(Protocol):
     async def operator_token(self) -> str: ...
     async def install(self, operator_token: str, key: str) -> None: ...
     async def submit(self, config: dict[str, Any], refresh_token: str) -> str: ...
-    async def running(self, eval_set_id: str, operator_token: str) -> bool: ...
+    async def running(self, eval_set_id: str, operator_token: str) -> bool | None: ...
 
 
 class Records:
@@ -184,8 +184,11 @@ class Launcher:
         for record in self.active():
             # "installed" may have been submitted just before a crash: ask Hawk too
             submitted = record.stage in ("installed", "running")
-            if submitted and await self.delivery.running(
-                record.eval_set_id or record.id, await operator()
+            # finish only on a status Hawk reports as finished: unknown is left alone
+            if (
+                submitted
+                and await self.delivery.running(record.eval_set_id or record.id, await operator())
+                is not False
             ):
                 live.add(record.id)
                 continue

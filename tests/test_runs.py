@@ -685,8 +685,15 @@ def test_budget_reports_what_the_audit_has_spent(
     folder = tmp_path / "inputs" / "jobs" / "screen"
     folder.mkdir(parents=True)
     (folder / "x.eval").write_bytes(b"")
-    monkeypatch.setattr(_audit, "_recorded_cost", lambda path: 9.71)
-    monkeypatch.setattr(_audit, "_sample_count", lambda path: 40)
+
+    async def cost(path: Path) -> float:
+        return 9.71
+
+    async def count(path: Path) -> int:
+        return 40
+
+    monkeypatch.setattr(_audit, "_recorded_cost", cost)
+    monkeypatch.setattr(_audit, "_sample_count", count)
     monkeypatch.setattr(
         inspect_ai.util,
         "sample_limits",
@@ -876,7 +883,11 @@ def test_launches_stop_only_once_measured_spend_reaches_the_budget(
     folder = tmp_path / "inputs" / "jobs" / "first"
     folder.mkdir(parents=True)
     (folder / "x.eval").write_bytes(b"")
-    monkeypatch.setattr(_audit, "_recorded_cost", lambda path: 6.5)
+
+    async def spent(path: Path) -> float:
+        return 6.5
+
+    monkeypatch.setattr(_audit, "_recorded_cost", spent)
     with pytest.raises(ToolError, match="budget is spent"):
         launch("third", ["22"], 1.0)
 

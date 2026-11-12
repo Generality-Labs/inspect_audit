@@ -22,7 +22,12 @@ import yaml
 from inspect_ai import Task, task
 from inspect_ai.agent import AgentState, as_solver, react
 from inspect_ai.dataset import Sample
-from inspect_ai.log import EvalSampleSummary, list_eval_logs, read_eval_log_sample_summaries
+from inspect_ai.log import (
+    EvalSampleSummary,
+    list_eval_logs,
+    read_eval_log_async,
+    read_eval_log_sample_summaries_async,
+)
 from inspect_ai.model import CompactionSummary, GenerateConfig, ModelConfig, get_model
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
@@ -457,7 +462,7 @@ def _worst_case(job: Job) -> float | None:
     return None
 
 
-def committed_spend(root: Path | None) -> tuple[float, float, float, list[str]]:
+async def committed_spend(root: Path | None) -> tuple[float, float, float, list[str]]:
     """(own calls, collected jobs' recorded cost, running jobs at their caps, uncapped labels)."""
     from inspect_ai.util import sample_limits
 
@@ -468,7 +473,7 @@ def committed_spend(root: Path | None) -> tuple[float, float, float, list[str]]:
         folder = root / "inputs" / "jobs" / str(j["label"]) if root else None
         files = sorted(folder.rglob("*.eval")) if folder and folder.is_dir() else []
         if files:
-            collected += sum(_recorded_cost(f) for f in files)
+            collected += sum([await _recorded_cost(f) for f in files])
         elif isinstance(j.get("max_cost"), (int, float)):
             running += float(j["max_cost"])
         else:
@@ -495,17 +500,17 @@ def budget(
 
         own_limit = sample_limits().cost.limit
         cap = f" of a ${own_limit:.2f} cap" if own_limit is not None else ""
-        own, collected, _, _ = committed_spend(root)
+        own, collected, _, _ = await committed_spend(root)
         lines = [f"Your own calls: ${own:.2f}{cap}"]
         items = spent_on_items = 0.0
         for j in store_as(AuditRecord).jobs:
             folder = root / "inputs" / "jobs" / str(j["label"]) if root else None
             files = sorted(folder.rglob("*.eval")) if folder and folder.is_dir() else []
             if files:
-                cost = sum(_recorded_cost(f) for f in files)
+                cost = sum([await _recorded_cost(f) for f in files])
                 lines.append(f"  {j['label']} ({j['kind']}): ${cost:.2f} recorded")
                 if j["kind"] == "investigation":
-                    items += sum(_sample_count(f) for f in files)
+                    items += sum([await _sample_count(f) for f in files])
                     spent_on_items += cost
             else:
                 limit = j.get("max_cost")
@@ -626,7 +631,7 @@ class Audit:
         if limit is not None:
             # measured spend only: nothing is reserved for running jobs (FRICTION 50, 52,
             # 76); the capped key is the hard stop on what they spend meanwhile
-            own, collected, _, _ = committed_spend(self.root)
+            own, collected, _, _ = await committed_spend(self.root)
             if own + collected >= limit:
                 raise ToolError(
                     f"the ${limit:.2f} audit budget is spent: ${own + collected:.2f} measured "
@@ -992,7 +997,7 @@ async def _job_action(
             host.mkdir(parents=True, exist_ok=True)
             files = [Path(shutil.copy2(f, host / f.name)) for f in files]
         await copy_into_box(files, f"/inputs/jobs/{label}")
-        lines = [_log_line(f) for f in files]
+        lines = [await _log_line(f) for f in files]
         if job["kind"] == "investigation":
             lines.append(await _import_investigations(inv, files, job["address"]))
         record = inv.record()
@@ -1094,8 +1099,6 @@ def register_view(task: str | None = None, policy: LaunchPolicy | None = None) -
 
 async def _import_investigations(inv: Audit, files: list[Path], address: str) -> str:
     """An investigation job's verdicts into the register, starting it if need be."""
-    from inspect_ai.log import read_eval_log
-
     from ._register import import_investigation_log, load, save, started
     from ._verdicts import investigation_items
 
@@ -1107,7 +1110,9 @@ async def _import_investigations(inv: Audit, files: list[Path], address: str) ->
     added: list[str] = []
     try:
         for file in files:
-            added += import_investigation_log(current, read_eval_log(str(file)), address, skills)
+            added += import_investigation_log(
+                current, await read_eval_log_async(str(file)), address, skills
+            )
     except ValueError as ex:
         raise ToolError(f"cannot add this investigation to the register: {ex}") from ex
     await save(current)
@@ -1119,19 +1124,21 @@ def _cost(summaries: list[EvalSampleSummary]) -> float:
     return sum((u.total_cost or 0.0) for s in summaries for u in (s.model_usage or {}).values())
 
 
-def _sample_count(path: Path) -> int:
+# Inspect's async readers, never the sync ones: those start their own event loop, which
+# inside the auditor's async tools is the race that blocked CL-bench v4 (FRICTION 44, 79)
+async def _sample_count(path: Path) -> int:
     """How many samples one log recorded."""
-    return len(read_eval_log_sample_summaries(str(path)))
+    return len(await read_eval_log_sample_summaries_async(str(path)))
 
 
-def _recorded_cost(path: Path) -> float:
+async def _recorded_cost(path: Path) -> float:
     """What one log's samples recorded spending."""
-    return _cost(read_eval_log_sample_summaries(str(path)))
+    return _cost(await read_eval_log_sample_summaries_async(str(path)))
 
 
-def _log_line(path: Path) -> str:
+async def _log_line(path: Path) -> str:
     """One log, summarised from its samples: how many, how they ended, what they cost."""
-    summaries = read_eval_log_sample_summaries(str(path))
+    summaries = await read_eval_log_sample_summaries_async(str(path))
     errors = sum(1 for s in summaries if s.error)
     return f"  {path.name}: {len(summaries)} samples, {errors} errored, ${_cost(summaries):.2f} recorded"
 
@@ -1380,8 +1387,8 @@ def audit(
         raise ValueError("runs must be 'hawk', 'local' or None")
     if box not in ("docker", "k8s"):
         raise ValueError("box must be 'docker' or 'k8s'")
-    if "hawk" in (runs, "k8s" if box == "k8s" else None) and not hawk_api_url:
-        raise ValueError("Hawk work needs hawk_api_url (or HAWK_API_URL)")
+    if runs == "hawk" and not hawk_api_url:
+        raise ValueError("Hawk jobs need hawk_api_url (or HAWK_API_URL)")
     if not repo:
         raise ValueError("audit needs a repo: the benchmark to audit, or a config naming one")
     skill_paths = [str(ASSETS / "skills" / name) for name in AUDIT_SKILLS] + [
@@ -1431,8 +1438,12 @@ def audit(
             else None
         )
         investigation_package = investigation_package or own_package_spec()
-        if not task_package or not investigation_package:
-            raise ValueError("declare task_package and investigation_package for child jobs")
+        # only Hawk installs packages in its jobs; a local job runs in this machine's
+        # environment and never reads them (FRICTION 79c)
+        if runs == "hawk" and (not task_package or not investigation_package):
+            raise ValueError("declare task_package and investigation_package for Hawk jobs")
+        task_package = task_package or ""
+        investigation_package = investigation_package or ""
     supplied = [str(e["remote"]) for e in seed["logs"] if e.get("remote")]
     if runs == "local":
         supplied += [str(e["source"]) for e in seed["logs"] if not e.get("remote")]
@@ -1479,7 +1490,9 @@ def audit(
         # the agent's own calls bill to the Hawk user's key in a pod, to
         # OPENROUTER_API_KEY in a local box; jobs to whichever their backend uses
         budget(
-            hawk_api_url if "hawk" in (runs, "k8s" if box == "k8s" else None) else None,
+            # the Hawk key whenever Hawk is in the picture and its address is known: jobs
+            # on Hawk, or the auditor itself in a Hawk pod (FRICTION 79b; was only the first)
+            hawk_api_url if (runs == "hawk" or box == "k8s") else None,
             openrouter=box == "docker" or runs == "local",
             root=root,
             budget_usd=launch_policy.limits.budget_usd,
@@ -1490,8 +1503,8 @@ def audit(
     ]
     inv = None
     if runs:
-        if task_package is None or investigation_package is None or target_task is None:
-            raise RuntimeError("child-job packages and task were not resolved")
+        if target_task is None:
+            raise RuntimeError("the investigated task was not resolved")
         inv = Audit(
             root=root,
             # local runs outside the per-construction folder: a resumed run must find them
@@ -1503,8 +1516,8 @@ def audit(
             if runs == "hawk"
             else LocalRuns(Path(output_dir).expanduser().resolve() / "runs"),
             task=target_task,
-            task_package=task_package,
-            investigation_package=investigation_package,
+            task_package=task_package or "",
+            investigation_package=investigation_package or "",
             investigator_image=investigator_image,
             supplied=sorted(set(supplied)),
             authorizer=AuditAuthorizer(launch_policy),

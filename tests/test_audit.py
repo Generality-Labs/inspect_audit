@@ -533,8 +533,11 @@ def test_jobs_refuse_to_guess_a_package_they_cannot_derive(tmp_path: Path) -> No
             str(repo),
             output_dir=str(tmp_path / "runs"),
             target_task="benchmark/task",
-            runs="local",
+            runs="hawk",
+            hawk_api_url="https://hawk.example",
         )
+    # a local job runs in this machine's environment and never installs them (FRICTION 79c)
+    audit(str(repo), output_dir=str(tmp_path / "runs"), target_task="benchmark/task", runs="local")
     with pytest.raises(ValueError, match="target_task"):
         audit(str(repo), output_dir=str(tmp_path / "runs"), runs="local")
 

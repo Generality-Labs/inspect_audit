@@ -435,6 +435,40 @@ def test_a_blocked_audit_ends_and_scores_as_blocked() -> None:
     assert store_as_(AuditState).outcome == "blocked"
 
 
+def test_a_blocked_audit_ends_the_sample_as_an_error() -> None:
+    """FRICTION 64: scored, a blocked audit read as a successful eval in Inspect and
+    Hawk. The auditor's last step raises the agent's reason; an unblocked one passes."""
+    from inspect_ai import Task, eval
+    from inspect_ai.dataset import Sample
+    from inspect_ai.solver import Generate, TaskState, solver
+
+    from inspect_audit._report import AuditState, end_if_blocked
+
+    @solver
+    def ends(outcome: str | None):
+        async def solve(state: TaskState, generate: Generate) -> TaskState:
+            audit = state.store_as(AuditState)
+            audit.outcome = outcome
+            audit.outcome_reasons = ["child jobs die at load: Model not found"]
+            return state
+
+        return solve
+
+    def run(outcome: str | None):
+        task = Task(dataset=[Sample(input="x")], solver=[ends(outcome), end_if_blocked()])
+        [log] = eval(task, model="mockllm/model", display="none", log_dir=None)
+        return log
+
+    blocked = run("blocked")
+    assert blocked.status == "error"
+    assert "Model not found" in (
+        blocked.samples[0].error.message
+        if blocked.samples and blocked.samples[0].error
+        else str(blocked.error)
+    )
+    assert run(None).status == "success"
+
+
 def test_every_tool_schema_survives_a_strict_provider(tmp_path: Path) -> None:
     """A schema whose `required` omits a property is refused by OpenAI-strict providers.
 

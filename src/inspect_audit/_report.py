@@ -7,7 +7,7 @@ from typing import Any
 from acp.schema import ElicitationSchema, ElicitationStringPropertySchema
 from inspect_ai.agent import AgentState
 from inspect_ai.scorer import Score, Scorer, Target, frequency, scorer
-from inspect_ai.solver import TaskState
+from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import Tool, ToolError, tool
 from inspect_ai.util import (
     StoreModel,
@@ -105,6 +105,29 @@ def report_blocker() -> Tool:
         return "Recorded as blocked. The audit ends now; the operator sees your reason."
 
     return execute
+
+
+class AuditBlockedError(RuntimeError):
+    """A blocked audit, raised so Inspect and Hawk show the run as failed (FRICTION 64)."""
+
+
+@solver
+def end_if_blocked() -> Solver:
+    """After the auditor stops: a blocked audit ends the sample as an error.
+
+    Scored, a blocked audit read as a successful eval in Inspect and Hawk, and only its
+    outcome score said otherwise (FRICTION 64). The error carries the agent's reason;
+    the store keeps the outcome. Its launch config sets no retries: blocked means our
+    setup failed deterministically, so a rerun would only fail again, at full cost.
+    """
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        audit = state.store_as(AuditState)
+        if audit.outcome == "blocked":
+            raise AuditBlockedError("audit blocked: " + " | ".join(audit.outcome_reasons))
+        return state
+
+    return solve
 
 
 OUTCOMES = ["published_complete", "published_incomplete", "blocked", "unpublished"]

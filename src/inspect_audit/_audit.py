@@ -20,7 +20,7 @@ from uuid import uuid4
 
 import yaml
 from inspect_ai import Task, task
-from inspect_ai.agent import AgentState, react
+from inspect_ai.agent import AgentState, as_solver, react
 from inspect_ai.dataset import Sample
 from inspect_ai.log import EvalSampleSummary, list_eval_logs, read_eval_log_sample_summaries
 from inspect_ai.model import CompactionSummary, GenerateConfig, ModelConfig, get_model
@@ -36,6 +36,7 @@ from ._report import (
     AuditRecord,
     AuditState,
     audit_outcome,
+    end_if_blocked,
     operator_turn,
     report_blocker,
 )
@@ -1563,17 +1564,22 @@ def audit(
             )
         ],
         scorer=audit_outcome(),
-        solver=react(
-            name="auditor",
-            prompt=prompts.AUDIT,
-            submit=False,
-            tools=[phase_tools],
-            # an absolute threshold: 0.8 of a 1.05M-token context fired at ~840k,
-            # long after every turn had become expensive
-            compaction=CompactionSummary(threshold=COMPACTION_TOKENS),
-            truncation="auto",
-            on_continue=on_continue,
-        ),
+        solver=[
+            as_solver(
+                react(
+                    name="auditor",
+                    prompt=prompts.AUDIT,
+                    submit=False,
+                    tools=[phase_tools],
+                    # an absolute threshold: 0.8 of a 1.05M-token context fired at ~840k,
+                    # long after every turn had become expensive
+                    compaction=CompactionSummary(threshold=COMPACTION_TOKENS),
+                    truncation="auto",
+                    on_continue=on_continue,
+                )
+            ),
+            end_if_blocked(),
+        ],
         sandbox=sandbox,
         # a crashed run resumes from its last checkpoint: the conversation, the box's
         # inputs and workspace, and the store's record of launched jobs

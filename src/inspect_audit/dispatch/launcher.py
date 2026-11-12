@@ -122,9 +122,10 @@ class Launcher:
             del key
             record.stage = "installed"
             self.records.save(record)
-            submitted = await self.delivery.submit(
-                {**config, "eval_set_id": record.id}, self.refresh_token()
-            )
+            # a blocked audit ends as an error (FRICTION 64): Inspect's eval-set retries
+            # would rerun the whole audit into the same deterministic failure
+            config = {"retry_attempts": 0, **config, "eval_set_id": record.id}
+            submitted = await self.delivery.submit(config, self.refresh_token())
             record.eval_set_id = submitted
             if submitted != record.id:
                 record.note = f"Hawk named it {submitted}"

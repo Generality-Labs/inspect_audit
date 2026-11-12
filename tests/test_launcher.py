@@ -81,6 +81,7 @@ def test_an_audit_gets_its_own_capped_key_installed_then_launched(tmp_path: Path
     assert (key["name"], key["limit"]) == (record.id, 20.0)
     assert hawk.installed == ["sk-or-secret-h0"]
     assert hawk.submitted[0]["eval_set_id"] == record.id
+    assert hawk.submitted[0]["retry_attempts"] == 0  # FRICTION 64: a blocked audit is not rerun
     # the secret is never written to the record on disk
     assert "sk-or-secret" not in (tmp_path / f"{record.id}.json").read_text()
 

@@ -2,7 +2,7 @@ name: ia-smoke-swebench
 packages:
 - inspect-ai==0.3.285
 - inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
-- inspect-evals[swe_bench] @ git+https://github.com/UKGovernmentBEIS/inspect_evals@50b8b19c3d4765898fa2f35d125389be45af9c3c
+- inspect-evals[swe_bench] @ git+https://github.com/UKGovernmentBEIS/inspect_evals@cf50625d0957566bf19c6a4719708653ddf59bc7
 tasks:
 - package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
   name: inspect_audit
@@ -10,10 +10,10 @@ tasks:
   - name: audit
     args:
       repo: https://github.com/UKGovernmentBEIS/inspect_evals
-      revision: 50b8b19c3d4765898fa2f35d125389be45af9c3c
+      revision: cf50625d0957566bf19c6a4719708653ddf59bc7
       target_task: inspect_evals/swe_bench
       source: inspect_evals.swe_bench.swe_bench
-      task_package: inspect-evals[swe_bench] @ git+https://github.com/UKGovernmentBEIS/inspect_evals@50b8b19c3d4765898fa2f35d125389be45af9c3c
+      task_package: inspect-evals[swe_bench] @ git+https://github.com/UKGovernmentBEIS/inspect_evals@cf50625d0957566bf19c6a4719708653ddf59bc7
       task_args:
         sandbox_type: k8s
       investigation_samples: all

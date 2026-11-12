@@ -18,14 +18,14 @@ Source: Generality-Labs/audit_reports at ad7de89658b6794112c2f65847991c7ed41d9e3
 auditframework.sty and ScoringCriteria.tex. Definitions below are extracted from that registry.
 
 - **A: Construct validity** — Does performance on the eval validly measure the capability or behaviour the eval aims to assess?
-- **A.1: measurement distortion** — flaws in implementation validity dimensions distort measurement of the target construct
-- **A.2: contamination** — benchmark items or their solutions were present in training data or otherwise accessible during training
-- **A.3: memorisation** — performance depends on recalling a memorised solution rather than exercising the intended capability
-- **A.4: eval awareness** — models recognise the evaluation context and alter their behaviour as a result
-- **A.5: sandbagging** — models deliberately or strategically underperform relative to their capability
-- **A.6: confounds** — scores are systematically affected by factors unrelated to the target construct
-- **A.7: proxy measurement** — the measured outcome is only an imperfect proxy for the target capability or behaviour
-- **A.8: capability vs propensity** — the evaluation conflates what a model can do with what it tends to do
+- **A.0: measurement distortion** — flaws in implementation validity dimensions distort measurement of the target construct
+- **A.1: contamination** — benchmark items or their solutions were present in training data or otherwise accessible during training
+- **A.2: memorisation** — performance depends on recalling a memorised solution rather than exercising the intended capability
+- **A.3: eval awareness** — models recognise the evaluation context and alter their behaviour as a result
+- **A.4: sandbagging** — models deliberately or strategically underperform relative to their capability
+- **A.5: confounds** — scores are systematically affected by factors unrelated to the target construct
+- **A.6: proxy measurement** — the measured outcome is only an imperfect proxy for the target capability or behaviour
+- **A.7: capability vs propensity** — the evaluation conflates what a model can do with what it tends to do
 - **B: Content validity** — Do the tasks adequately represent the target domain and situations the evaluation aims to cover?
 - **B.1: coverage gaps** — important parts of the target domain or capability are absent or underrepresented
 - **B.2: unrepresentative task distribution** — the distribution of tasks differs materially from the target domain

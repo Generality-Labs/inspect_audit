@@ -43,8 +43,9 @@ class Models(FrozenModel):
 class Limits(FrozenModel):
     investigation_sample_cost_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     max_concurrent_jobs: int | None = Field(default=None, gt=0, strict=True)
-    # one budget for the auditor's own calls and every job it launches: a launch that
-    # could take the total past it is refused (FRICTION 22)
+    # one budget for the auditor's own calls and every job it launches: launches stop
+    # once measured spend reaches it; nothing is reserved for running jobs, whose
+    # spend the capped key bounds (FRICTION 22, 76)
     budget_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     # "full": findings cannot be submitted while any permitted sample has no take on
     # any policy check; the auditor finishes the work or reports why it cannot

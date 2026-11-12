@@ -55,11 +55,13 @@ launched: check it before launching more.
 
 ## Money
 
-When configured to share one capped OpenRouter key, you and your jobs draw on that
-key; `budget()` reports its remaining allowance. Other provider routes have separate
-credentials and limits. The key balance is not a per-audit usage breakdown. `item_cost_limit` caps one investigated or rescored item. Bound a
-grader's `max_tokens` and check what a smoke job recorded before expanding. Scale in
-bounded batches.
+`budget()` shows measured spend: your own calls, each collected job's recorded cost, what
+the audit budget leaves, and the model key's live balance (which counts running jobs).
+Nothing is reserved for a running job; launches stop only when measured spend reaches the
+budget, and the capped key stops calls past its limit. Once investigations are collected
+it reports their average cost per item and how many more the rest covers: run a small
+batch first, read the measured cost, then scale to cover the work. `item_cost_limit` is
+a safety net for one runaway item, not a budget: set it well above the measured average.
 
 A missing credential, malformed request or broken investigation image is an investigation limitation.
 Record what it prevented, repair once if feasible, and avoid retry loops. Attribute a

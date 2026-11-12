@@ -484,39 +484,48 @@ def budget(
     budget_usd: float | None = None,
 ) -> Tool:
     async def execute() -> str:
-        """What this audit has spent so far, and the model key's remaining allowance.
+        """What this audit has spent so far, what is left, and what an item costs.
 
-        Spent: your own calls, and each collected job's recorded cost (a job not
-        yet collected is listed without one). The key's allowance covers all calls
-        only when the auditor and jobs share that key; calls using it fail when
-        its provider-enforced allowance is exhausted.
+        Spent: your own calls and each collected job's recorded cost. A running job's
+        spend shows once collected; the model key's balance, below, is live and counts
+        everything that bills to it. Nothing is reserved for running jobs: spend what
+        the work needs, watch this as you go, and scale from measured costs.
         """
         from inspect_ai.util import sample_limits
 
         own_limit = sample_limits().cost.limit
         cap = f" of a ${own_limit:.2f} cap" if own_limit is not None else ""
-        own, collected, running, uncapped = committed_spend(root)
+        own, collected, _, _ = committed_spend(root)
         lines = [f"Your own calls: ${own:.2f}{cap}"]
+        items = spent_on_items = 0.0
         for j in store_as(AuditRecord).jobs:
             folder = root / "inputs" / "jobs" / str(j["label"]) if root else None
             files = sorted(folder.rglob("*.eval")) if folder and folder.is_dir() else []
             if files:
-                lines.append(
-                    f"  {j['label']}: ${sum(_recorded_cost(f) for f in files):.2f} recorded"
-                )
-            elif isinstance(j.get("max_cost"), (int, float)):
-                lines.append(f"  {j['label']}: not collected, at most ${float(j['max_cost']):.2f}")
+                cost = sum(_recorded_cost(f) for f in files)
+                lines.append(f"  {j['label']} ({j['kind']}): ${cost:.2f} recorded")
+                if j["kind"] == "investigation":
+                    items += sum(_sample_count(f) for f in files)
+                    spent_on_items += cost
             else:
-                lines.append(f"  {j['label']}: not collected, cost unknown")
-        lines.append(f"Jobs collected so far: ${collected:.2f}")
-        lines.append(f"Spent so far: ${own + collected:.2f}")
-        lines.append(
-            f"Committed (spent, plus running jobs at their caps): ${own + collected + running:.2f}"
-        )
+                limit = j.get("max_cost")
+                bound = f", at most ${float(limit):.2f}" if isinstance(limit, (int, float)) else ""
+                lines.append(f"  {j['label']} ({j['kind']}): not collected yet{bound}")
+        spent = own + collected
+        lines.append(f"Spent so far (measured): ${spent:.2f}")
         if budget_usd is not None:
-            lines.append(f"Audit budget: ${budget_usd:.2f} for your calls and every job")
-        if uncapped:
-            lines.append(f"Jobs with no cap, not counted: {', '.join(uncapped)}")
+            left = budget_usd - spent
+            lines.append(
+                f"Audit budget: ${budget_usd:.2f}; ${left:.2f} ({100 * left / budget_usd:.0f}%) left "
+                "for your calls and every job"
+            )
+            if items:
+                per = spent_on_items / items
+                more = f"; the rest covers about {int(left // per)} more" if per > 0 else ""
+                lines.append(
+                    f"Investigated items so far cost ${per:.2f} each on average "
+                    f"({int(items)} items){more}"
+                )
         lines += await key_balance(
             hawk_api_url, openrouter and str(get_model()).startswith("openrouter/")
         )
@@ -615,19 +624,14 @@ class Audit:
         worst = _worst_case(approved)
         limit = policy.limits.budget_usd
         if limit is not None:
-            own, collected, running, _ = committed_spend(self.root)
-            if worst is None:
+            # measured spend only: nothing is reserved for running jobs (FRICTION 50, 52,
+            # 76); the capped key is the hard stop on what they spend meanwhile
+            own, collected, _, _ = committed_spend(self.root)
+            if own + collected >= limit:
                 raise ToolError(
-                    "this audit has a budget, and this job has no cost cap to count against it"
-                )
-            committed = own + collected + running
-            if committed + worst > limit:
-                raise ToolError(
-                    f"over budget: ${committed:.2f} committed (your calls ${own:.2f}, collected "
-                    f"jobs ${collected:.2f}, running jobs at their caps ${running:.2f}) plus this "
-                    f"job's ${worst:.2f} cap exceeds the ${limit:.2f} audit budget. Collect "
-                    "finished jobs (their recorded cost replaces their cap), lower this job's "
-                    "per-item cap, or select fewer items."
+                    f"the ${limit:.2f} audit budget is spent: ${own + collected:.2f} measured "
+                    f"(your calls ${own:.2f}, collected jobs ${collected:.2f}). Collect what is "
+                    "running and submit findings with the evidence you have."
                 )
         with _platform(f"submitting {job.label!r}"):
             run_id = await self.runs.submit(approved)
@@ -1113,6 +1117,11 @@ async def _import_investigations(inv: Audit, files: list[Path], address: str) ->
 
 def _cost(summaries: list[EvalSampleSummary]) -> float:
     return sum((u.total_cost or 0.0) for s in summaries for u in (s.model_usage or {}).values())
+
+
+def _sample_count(path: Path) -> int:
+    """How many samples one log recorded."""
+    return len(read_eval_log_sample_summaries(str(path)))
 
 
 def _recorded_cost(path: Path) -> float:

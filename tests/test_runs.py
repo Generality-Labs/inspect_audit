@@ -686,17 +686,22 @@ def test_budget_reports_what_the_audit_has_spent(
     folder.mkdir(parents=True)
     (folder / "x.eval").write_bytes(b"")
     monkeypatch.setattr(_audit, "_recorded_cost", lambda path: 9.71)
+    monkeypatch.setattr(_audit, "_sample_count", lambda path: 40)
     monkeypatch.setattr(
         inspect_ai.util,
         "sample_limits",
         lambda: SimpleNamespace(cost=SimpleNamespace(usage=5.82, limit=150.0)),
     )
-    report = asyncio.run(_audit.budget(None, openrouter=False, root=tmp_path)())  # type: ignore[call-arg]
+    report = asyncio.run(
+        _audit.budget(None, openrouter=False, root=tmp_path, budget_usd=100.0)()  # type: ignore[call-arg]
+    )
     assert "Your own calls: $5.82 of a $150.00 cap" in report
-    assert "screen: $9.71 recorded" in report
-    assert "running: not collected, cost unknown" in report
-    assert "Spent so far: $15.53" in report
-    assert "Jobs with no cap, not counted: running" in report
+    assert "screen (investigation): $9.71 recorded" in report
+    assert "running (investigation): not collected yet" in report
+    assert "Spent so far (measured): $15.53" in report
+    assert "$84.47 (84%) left" in report
+    # measured cost per item, and what the rest covers: plan from numbers (FRICTION 25)
+    assert "cost $0.24 each on average (40 items); the rest covers about 347 more" in report
 
 
 def test_fetched_logs_land_in_the_same_folder_on_every_attempt(tmp_path: Path) -> None:
@@ -808,10 +813,11 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
         )
 
 
-def test_a_launch_that_could_cross_the_audit_budget_is_refused(
+def test_launches_stop_only_once_measured_spend_reaches_the_budget(
     tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """One budget for the auditor and its jobs, enforced, not stated (FRICTION 22)."""
+    """No reservations: worst-case caps starved investigations and stopped the auditor
+    with the budget unspent (FRICTION 25, 50, 52, 76). Measured spend alone decides."""
     from types import SimpleNamespace
 
     import inspect_ai.util
@@ -836,10 +842,11 @@ def test_a_launch_that_could_cross_the_audit_budget_is_refused(
         "prices_for_models",
         lambda models: {m: {"input": 1.0, "output": 2.0} for m in models},
     )
+    own = {"usage": 4.0}
     monkeypatch.setattr(
         inspect_ai.util,
         "sample_limits",
-        lambda: SimpleNamespace(cost=SimpleNamespace(usage=4.0, limit=None)),
+        lambda: SimpleNamespace(cost=SimpleNamespace(usage=own["usage"], limit=None)),
     )
     investigate = _audit.send_investigators(inv)
 
@@ -857,15 +864,21 @@ def test_a_launch_that_could_cross_the_audit_budget_is_refused(
             )
         )
 
-    launch("first", ["1", "2"], 2.0)  # $4 spent + $4 at its cap = $8: within $10
-    with pytest.raises(ToolError, match="over budget"):
-        launch("second", ["3"], 2.5)  # $8 + $2.50 > $10
-    # once the first is collected its recorded cost ($1) replaces its $4 cap
+    # $4 spent; a job whose caps add to $40 still launches: nothing is reserved
+    launch("first", [str(i) for i in range(1, 21)], 2.0)
+    launch("second", ["21"], 2.0)
+    # a fresh rerun has no cap, and is no longer refused for it
+    out = asyncio.run(
+        _audit.run_eval(inv)("rerun", ["1"], ["openai/subject"], "{}", 1, [], None, [], None, "")  # type: ignore[arg-type]
+    )
+    assert "Launched" in out
+    # once measured spend reaches the budget, launches stop
     folder = tmp_path / "inputs" / "jobs" / "first"
     folder.mkdir(parents=True)
     (folder / "x.eval").write_bytes(b"")
-    monkeypatch.setattr(_audit, "_recorded_cost", lambda path: 1.0)
-    launch("second", ["3"], 2.5)  # $4 + $1 + $2.50 = $7.50
+    monkeypatch.setattr(_audit, "_recorded_cost", lambda path: 6.5)
+    with pytest.raises(ToolError, match="budget is spent"):
+        launch("third", ["22"], 1.0)
 
 
 def test_full_coverage_holds_submission_until_every_cell_has_a_take(

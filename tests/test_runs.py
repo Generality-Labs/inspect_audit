@@ -240,11 +240,13 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
     inv = _make_audit(tmp_path, runs)
     inv.paper = "https://arxiv.org/abs/2601.00001"
     record.jobs.append({"label": "smoke", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})
-    monkeypatch.setattr(
-        _audit,
-        "prices_for_models",
-        lambda models: {m: {"input": 1.0, "output": 2.0} for m in models},
-    )
+    asked: list[list[str]] = []
+
+    def lookup(models: list[str]) -> dict[str, dict[str, float]]:
+        asked.append(models)
+        return {m: {"input": 1.0, "output": 2.0} for m in models}
+
+    monkeypatch.setattr(_audit, "prices_for", lookup)
     investigation = _audit.send_investigators(inv)
     asyncio.run(
         investigation(  # type: ignore[arg-type]
@@ -271,10 +273,9 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
     # the benchmark goes into the investigators' own boxes as the job installs it (FRICTION 74)
     assert job.task_args["install"][0] == "benchmark"
     assert job.task_args["install"][-1].startswith("inspect-ai==")
-    assert set(job.task_args["model_prices"]) == {
-        "openai/investigator",
-        "openai/judge",
-    }
+    # the audit looks the prices up and hands them over; the restricted child cannot
+    assert asked == [["openai/investigator", "openai/judge"]]
+    assert set(job.task_args["prices"]) == {"openai/investigator", "openai/judge"}
     with pytest.raises(ToolError, match="neither a job of yours nor a supplied source"):
         asyncio.run(
             investigation(
@@ -627,7 +628,6 @@ def test_an_empty_judge_reaches_the_investigation_as_empty(
     """{} means "their grader calls no model"; None means "infer it from the logs"."""
     runs = FakeRuns()
     inv = _make_audit(tmp_path, runs)
-    monkeypatch.setattr(_audit, "prices_for_models", lambda models: {m: {} for m in models})
     asyncio.run(
         _audit.send_investigators(inv)(  # type: ignore[arg-type]
             "a", ["1"], ["gold-answer"], [], None, "{}", 0.5, ""
@@ -778,11 +778,6 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
 
     runs = FakeRuns()
     inv = _make_audit(tmp_path, runs)
-    monkeypatch.setattr(
-        _audit,
-        "prices_for_models",
-        lambda models: {m: {"input": 1.0, "output": 2.0} for m in models},
-    )
     regrade = _audit.run_eval(inv)
     asyncio.run(
         regrade(  # type: ignore[arg-type]
@@ -844,11 +839,6 @@ def test_launches_stop_only_once_measured_spend_reaches_the_budget(
     saved = store_as(PolicyStore)
     saved.policy_json = saved.digest = None  # the fixture's policy, replaced by the budgeted one
     ensure_policy(budgeted, saved, require_existing=False)
-    monkeypatch.setattr(
-        _audit,
-        "prices_for_models",
-        lambda models: {m: {"input": 1.0, "output": 2.0} for m in models},
-    )
     own = {"usage": 4.0}
     monkeypatch.setattr(
         inspect_ai.util,

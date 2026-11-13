@@ -81,7 +81,6 @@ def test_child_investigation_is_collected_once_into_the_register(tmp_path: Path)
                     "judge": {},
                     "investigator_image": "python:3.12-slim",
                     "cost_limit": 0.01,
-                    "model_prices": {"ia_probe/driver": {"input": 1, "output": 1}},
                 },
             )
             await inv.launch(job, "investigation", "API-free lifecycle test")

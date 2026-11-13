@@ -15,6 +15,7 @@ the audit launched and collected, how it ended, what it cost. Paid: run it only 
 import argparse
 import asyncio
 import json
+import os
 import sys
 import tempfile
 import time
@@ -34,6 +35,9 @@ def materialize(case: Path, revision: str) -> Path:
     routine (routine.md) ahead of the case's own notes: every smoke audit presses every
     button and reports on the tool, not the benchmark."""
     config = yaml.safe_load(case.read_text().replace("@SELF", f"@{revision}"))
+    if os.environ.get("IA_SMOKE_KEEP_PODS"):
+        # keep the runner and sandboxes for debugging; `hawk delete` afterwards
+        config.setdefault("runner", {})["cleanup"] = False
     args = config["tasks"][0]["items"][0]["args"]
     args["instructions"] = (HERE / "routine.md").read_text() + "\n" + args.get("instructions", "")
     out = Path(tempfile.mkdtemp(prefix="ia-smoke-")) / case.name

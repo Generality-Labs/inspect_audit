@@ -6,11 +6,10 @@ from pathlib import Path
 
 import pytest
 from inspect_ai.log import read_eval_log
-from inspect_ai.model import GenerateConfig, ModelConfig, ModelCost, ModelInfo
+from inspect_ai.model import GenerateConfig, ModelConfig
 from inspect_ai.tool import ToolError
 from inspect_ai.util import Store
 
-from inspect_audit._prices import prices_for_models
 from inspect_audit.dispatch import COMPLETE, FINISHED, Job, LocalRuns, hawk_config
 from inspect_audit.dispatch.policy import (
     AuditAuthorizer,
@@ -97,55 +96,6 @@ def test_model_settings_are_frozen_and_applied_by_the_authorizer() -> None:
     job.model_configs[name] = ModelConfig(model=name, config=GenerateConfig(temperature=0.9))
     with pytest.raises(ToolError, match="configuration must match"):
         authorizer.authorise(job, "benchmark", set())
-
-
-def test_inspect_pricing_is_used_without_a_router_request(monkeypatch: pytest.MonkeyPatch) -> None:
-    import inspect_ai.model
-
-    from inspect_audit import _prices
-
-    monkeypatch.setattr(
-        inspect_ai.model,
-        "get_model_info",
-        lambda name: ModelInfo(
-            cost=ModelCost(input=1, output=2, input_cache_read=0, input_cache_write=0)
-        ),
-    )
-    monkeypatch.setattr(
-        _prices, "openrouter_prices", lambda names: pytest.fail("unnecessary OpenRouter lookup")
-    )
-    assert prices_for_models(["openai/native"])["openai/native"]["output"] == 2
-
-
-def test_unknown_direct_models_do_not_fall_back_to_openrouter(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import inspect_ai.model
-
-    from inspect_audit import _prices
-
-    monkeypatch.setattr(inspect_ai.model, "get_model_info", lambda name: None)
-    monkeypatch.setattr(_prices, "openrouter_prices", lambda names: pytest.fail("wrong provider"))
-    with pytest.raises(ValueError, match="model_prices"):
-        prices_for_models(["anthropic/native"])
-
-
-def test_only_router_models_use_the_router_price_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
-    import inspect_ai.model
-
-    from inspect_audit import _prices
-
-    monkeypatch.setattr(inspect_ai.model, "get_model_info", lambda name: None)
-    seen = []
-
-    def prices(names):
-        seen.extend(names)
-        return {name: {"input": 1, "output": 2} for name in names}
-
-    monkeypatch.setattr(_prices, "openrouter_prices", prices)
-    name = "openrouter/openai/model"
-    assert set(prices_for_models([name, name])) == {name}
-    assert seen == [name]
 
 
 def test_local_inspect_preserves_primary_and_role_configs(tmp_path: Path) -> None:
@@ -298,47 +248,98 @@ def test_logs_with_different_judge_settings_are_refused(fixture_log: str, tmp_pa
         index_logs(paths, task_name="fixture_task", task_args={}, package=None)
 
 
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
-def test_nonfinite_model_prices_are_rejected(value: float) -> None:
-    from inspect_audit._prices import valid_price
+@pytest.mark.parametrize(
+    "price",
+    [
+        {"input": float("nan"), "output": 1.0},
+        {"input": 1.0, "output": float("inf")},
+        {"input": -1.0, "output": 1.0},  # routers' "depends on the route"
+        {"input": 0.0, "output": 0.0},  # would read every call as free
+    ],
+)
+def test_unusable_prices_are_not_registered(price: dict[str, float]) -> None:
+    from inspect_ai.model import get_model_info
 
-    assert not valid_price({"input": value, "output": 1.0})
-    assert not valid_price({"input": 1.0, "output": value})
+    from inspect_audit._prices import register_price
+
+    register_price("ia-test/unusable", price)
+    assert get_model_info("ia-test/unusable") is None
 
 
-def test_hawk_style_openrouter_names_find_their_catalog_price(
+def test_prices_come_from_hawks_table_under_the_jobs_model_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """On Hawk an OpenRouter model runs as openrouter/openrouter/{org}/{slug}."""
-    import io
-    import json as _json
+    """One table: Hawk's /usage/prices, keyed by Hawk's public name, registered under the
+    name the job calls (FRICTION 84: dated snapshots are priced only there)."""
+    from inspect_ai.model import get_model_info
 
     from inspect_audit import _prices
 
-    listing = {
-        "data": [
-            {
-                "id": "anthropic/claude-x",
-                "pricing": {"prompt": "0.000004", "completion": "0.00002"},
-            },
-            {"id": "openrouter/auto", "pricing": {"prompt": "0.000001", "completion": "0.000002"}},
-        ]
+    rows = {
+        "openrouter/deepseek/snap-20261017": {
+            "model": "openrouter/deepseek/snap-20261017",
+            "input_cost_per_1m": 0.05,
+            "output_cost_per_1m": 0.15,
+            "cache_read_input_cost_per_1m": 0.004,
+            "cache_write_input_cost_per_1m": None,
+        },
+        "claude-x": {"model": "claude-x", "input_cost_per_1m": 5, "output_cost_per_1m": 25},
     }
-    monkeypatch.setattr(
-        _prices.urllib.request, "urlopen", lambda *a, **k: io.BytesIO(_json.dumps(listing).encode())
+    monkeypatch.setenv("HAWK_API_URL", "https://hawk.test")
+    monkeypatch.setattr(_prices, "_hawk_table", lambda url: rows)
+    _prices.price_models(
+        ["openrouter/deepseek/snap-20261017", "anthropic/claude-x", "openai/unlisted-xyz"]
     )
-    prices = _prices.openrouter_prices(
-        [
-            "openrouter/anthropic/claude-x",
-            "openrouter/openrouter/anthropic/claude-x",
-            "openrouter/openrouter/auto",
-        ]
+    cost = get_model_info("openrouter/deepseek/snap-20261017").cost  # type: ignore[union-attr]
+    assert (cost.input, cost.output, cost.input_cache_read, cost.input_cache_write) == (
+        0.05,
+        0.15,
+        0.004,
+        0.0,
     )
-    assert prices["openrouter/openrouter/anthropic/claude-x"]["input"] == pytest.approx(4.0)
-    assert prices["openrouter/anthropic/claude-x"]["output"] == pytest.approx(20.0)
-    assert prices["openrouter/openrouter/auto"]["input"] == pytest.approx(1.0)
-    # Hawk's documented route for an aggregator public name
-    routed = _prices.prices_for_models(["openai-api/openrouter/openrouter/anthropic/claude-x"])
-    assert routed["openai-api/openrouter/openrouter/anthropic/claude-x"]["input"] == pytest.approx(
-        4.0
+    assert get_model_info("anthropic/claude-x").cost.output == 25  # type: ignore[union-attr]
+    # a model Hawk does not price is left to Inspect, which refuses its cost_limit
+
+
+def test_off_hawk_nothing_is_fetched(monkeypatch: pytest.MonkeyPatch) -> None:
+    from inspect_audit import _prices
+
+    monkeypatch.delenv("HAWK_API_URL", raising=False)
+    monkeypatch.setattr(_prices, "_hawk_table", lambda url: pytest.fail("fetched off Hawk"))
+    _prices.price_models(["openai/anything"])
+
+
+def test_child_jobs_register_the_prices_they_are_given_and_never_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Investigation and regrade jobs run with restricted credentials on Hawk, which
+    cannot read Hawk's price list: they only register what the audit handed them."""
+    from inspect_ai import Task
+    from inspect_ai.dataset import Sample
+    from inspect_ai.model import get_model_info
+
+    from inspect_audit import _prices, _registry, _regrade
+
+    monkeypatch.setenv("HAWK_API_URL", "https://hawk.test")
+    monkeypatch.setattr(_prices, "_hawk_table", lambda url: pytest.fail("a child fetched prices"))
+    stub = lambda *a, **k: Task(dataset=[Sample(input="q")])  # noqa: E731
+    monkeypatch.setattr(_registry, "investigation_task", stub)
+    monkeypatch.setattr(_regrade, "regrade_task", stub)
+    monkeypatch.setattr(_registry, "log_files", lambda logs: logs)
+    _registry.investigation(
+        task="b/t",
+        samples=["1"],
+        checks=["gold-answer"],
+        cost_limit=0.2,
+        judge={"grader": "ia-test/judge"},
+        prices={"ia-test/investigator": {"input": 1.0, "output": 2.0}},
     )
+    _registry.regrade(
+        task="b/t",
+        logs=["x.eval"],
+        judge={"grader": "ia-test/judge"},
+        cost_limit=0.2,
+        prices={"ia-test/judge": {"input": 3.0, "output": 4.0}},
+    )
+    assert get_model_info("ia-test/investigator").cost.output == 2  # type: ignore[union-attr]
+    assert get_model_info("ia-test/judge").cost.output == 4  # type: ignore[union-attr]

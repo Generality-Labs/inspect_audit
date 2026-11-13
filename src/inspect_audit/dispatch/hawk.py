@@ -420,6 +420,21 @@ async def middleman_request(
         return await response.json()
 
 
+async def prices(api_url: str) -> list[dict[str, Any]]:
+    """What Hawk's proxy bills each model at: `GET /usage/prices`, per million tokens.
+
+    `HawkClient` has no method for it yet, so this uses its generic JSON request.
+    """
+    from hawk.client import HawkClient
+
+    login = HawkLogin(api_url)
+    async with HawkClient(token=await login.access_token(), api_url=api_url) as client:
+        rows = await client._request_json("GET", "/usage/prices")  # pyright: ignore[reportPrivateUsage]
+    if not isinstance(rows, list):
+        raise RuntimeError(f"Hawk at {api_url} returned no price list")
+    return [r for r in rows if isinstance(r, dict)]
+
+
 async def download(address: str, token: str, out_dir: Path, api_url: str) -> list[Path]:
     """An eval set's logs into `out_dir`: `<eval set>` or `<eval set>/<file>`.
 

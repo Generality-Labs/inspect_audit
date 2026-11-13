@@ -112,15 +112,9 @@ def test_the_investigation_task_fills_its_own_plumbing(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(_registry, "investigation_task", capture)
     monkeypatch.setattr(inspect_ai.model, "get_model", lambda: "openrouter/openai/gpt-6-luna")
-    asked: list[list[str]] = []
-
-    def prices(models: list[str]) -> dict[str, dict[str, float]]:
-        asked.append(models)
-        return {m: {"input": 0.1, "output": 0.5} for m in models}
-
-    monkeypatch.setattr(_registry, "prices_for_models", prices)
-    registered: list[dict[str, dict[str, float]]] = []
-    monkeypatch.setattr(_registry, "register_prices", registered.append)
+    given: list[object] = []
+    monkeypatch.setattr(_registry, "register_prices", given.append)
+    prices = {"openrouter/openai/gpt-6-luna": {"input": 0.1, "output": 0.5}}
 
     _registry.investigation(
         task="b/t",
@@ -129,11 +123,12 @@ def test_the_investigation_task_fills_its_own_plumbing(monkeypatch: pytest.Monke
         logs=[],
         cost_limit=0.2,
         judge={"grader": "openrouter/openai/judge"},
+        prices=prices,
     )
     assert built["logs"] is None
     assert built["investigator_image"] == INVESTIGATOR_IMAGE
-    assert asked == [["openrouter/openai/gpt-6-luna", "openrouter/openai/judge"]]
-    assert set(registered[0]) == {"openrouter/openai/gpt-6-luna", "openrouter/openai/judge"}
+    # the child registers what its launcher looked up; it never fetches prices itself
+    assert given == [prices]
 
     _registry.investigation(
         task="b/t", samples=["1"], checks=["gold-answer"], investigator_image="build"

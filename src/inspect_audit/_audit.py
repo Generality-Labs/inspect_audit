@@ -36,7 +36,7 @@ from inspect_ai.util import CheckpointConfig, sandbox, store_as
 from . import prompts
 from ._image import view_image
 from ._log_sources import fetch_logs, is_remote_logs
-from ._prices import prices_for_models, register_prices
+from ._prices import price_models, prices_for
 from ._report import (
     AuditRecord,
     AuditState,
@@ -792,10 +792,6 @@ def run_eval(inv: Audit) -> Tool:
                 raise ToolError("rescoring needs item_cost_limit: dollars per rescored attempt")
             if samples is None:
                 raise ToolError("rescoring selects the items to score again by sample id")
-            try:
-                prices = prices_for_models(list(judges.values()))
-            except Exception as ex:
-                raise ToolError(f"cannot price the judge for its cost limit: {ex}") from ex
             job = Job(
                 label=label,
                 task="inspect_audit/regrade",
@@ -813,7 +809,7 @@ def run_eval(inv: Audit) -> Tool:
                     "samples": samples,
                     "epochs": epochs,
                     "cost_limit": item_cost_limit,
-                    "model_prices": prices,
+                    "prices": prices_for(list(judges.values())),
                     **({"files": files, "source": policy.source} if files else {}),
                 },
             )
@@ -887,10 +883,6 @@ def send_investigators(inv: Audit) -> Tool:
             raise ToolError(
                 "investigators read the module that defines the task: the operator declares benchmark.source"
             )
-        try:
-            prices = prices_for_models([investigator, *judges.values()])
-        except Exception as ex:
-            raise ToolError(f"cannot price the investigator for its cost limit: {ex}") from ex
         job = Job(
             label=label,
             task="inspect_audit/investigation",
@@ -908,7 +900,7 @@ def send_investigators(inv: Audit) -> Tool:
                 "judge": judges,
                 "investigator_image": inv.investigator_image,
                 "cost_limit": item_cost_limit,
-                "model_prices": prices,
+                "prices": prices_for([investigator, *judges.values()]),
                 "notes": note or None,
                 "paper": inv.paper,
                 # the benchmark into the investigator's own box, as this job installs it
@@ -1195,7 +1187,6 @@ def audit(
     child_secrets: list[str] | None = None,
     benchmark_environment: dict[str, str] | None = None,
     model_configs: dict[str, dict[str, Any]] | None = None,
-    model_prices: dict[str, dict[str, float]] | None = None,
     publisher: str | None = None,
 ) -> Task:
     """Audit a benchmark, submit findings, then use the selected publisher.
@@ -1267,8 +1258,6 @@ def audit(
             Child models and judge roles use these fixed settings.
         publisher: Publishing package, revealed only after findings submission.
             Defaults to latex; installed module:factory packages can replace it.
-        model_prices: Explicit per-million token prices for models without Inspect
-            cost metadata. OpenRouter routes can use their published prices.
     """
     # the file is read before anything else is decided: an argument is "given" only
     # when it is not None, so a value equal to a default is still an override
@@ -1333,9 +1322,13 @@ def audit(
             raise ValueError("model credentials belong in the environment or child_secrets")
         configured[name] = parsed.model_dump(mode="json", exclude_none=True)
     model_configs = configured
-    price_table: dict[str, dict[str, float]] = settings.get("model_prices", model_prices) or {}
-    model_prices = price_table
-    register_prices(price_table)
+    # the auditor's own model: a run-level cost_limit needs its price (FRICTION 84)
+    try:
+        from inspect_ai.model import get_model
+
+        price_models([str(get_model())])
+    except ValueError:
+        pass  # built outside an eval: no model, nothing will price it
     child_secrets = list(settings.get("child_secrets", child_secrets) or [])
     if child_secrets and runs != "hawk":
         raise ValueError("child_secrets require runs='hawk'")
@@ -1464,7 +1457,6 @@ def audit(
         investigation_package=investigation_package,
         investigator_image=investigator_image,
         model_configs_json=canonical(model_configs),
-        model_prices_json=canonical(model_prices),
         models=Models(
             auditor=permissions.models.auditor,
             investigators=tuple(menu.investigators),

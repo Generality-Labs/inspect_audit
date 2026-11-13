@@ -123,7 +123,6 @@ class LaunchPolicy(FrozenModel):
     limits: Limits = Limits()
     credential_mode: Literal["restricted", "user"] = "user"
     model_configs_json: str = "{}"
-    model_prices_json: str = "{}"
     configuration_json: str
 
     @model_validator(mode="after")
@@ -221,7 +220,7 @@ INVESTIGATION_ARGS = frozenset(
         "judge",
         "investigator_image",
         "cost_limit",
-        "model_prices",
+        "prices",
         "notes",
         "paper",
         "install",
@@ -238,7 +237,7 @@ REGRADE_ARGS = frozenset(
         "samples",
         "epochs",
         "cost_limit",
-        "model_prices",
+        "prices",
         "files",
         "source",
     }

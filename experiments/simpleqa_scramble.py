@@ -18,17 +18,14 @@ from inspect_ai.dataset import json_dataset
 from inspect_evals.simpleqa.simpleqa import simpleqa
 
 from inspect_audit._task import investigation_task
-from inspect_audit._prices import register_prices
+from inspect_audit._prices import price_models
 
 HERE = Path(__file__).parent
 
 
 @task
 def investigation(cost_limit: float = 0.10):
-    register_prices({"openrouter/openai/gpt-6-luna": {
-        "input": 0.10, "output": 0.50,
-        "input_cache_read": 0.01, "input_cache_write": 0.125,
-    }})
+    price_models(["openrouter/openai/gpt-6-luna"])
     benchmark = task_with(simpleqa(), dataset=json_dataset(str(HERE / "benchmark.json")))
     return investigation_task(
         benchmark,

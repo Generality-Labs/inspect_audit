@@ -1,100 +1,91 @@
-"""Model prices a job needs: Inspect's own costs, else OpenRouter's published prices."""
+"""Model prices from one table: what Hawk's proxy bills (`GET /usage/prices`).
 
-import json
+Inspect enforces a `cost_limit` and reports cost only for models it has a price for.
+Whoever holds a Hawk login looks prices up (`prices_for`): the audit for its own model
+and for each child job's models, which it hands the child as a task argument. A child
+only registers what it is given (`register_prices`): it runs with restricted
+credentials, which Hawk's API does not accept. A model Hawk does not price is left
+alone, so Inspect refuses its `cost_limit` with its own error. Off Hawk (no
+`HAWK_API_URL`) Inspect's built-in prices are all there is.
+
+Temporary (FRICTION 84): Hawk PR #1542 fills `model_cost_config` from this same table,
+and Inspect's `set_model_cost` refuses models it does not know, hence `set_model_info`
+here. Delete this module when both are fixed upstream.
+"""
+
+import asyncio
+import concurrent.futures
+import functools
 import math
-import urllib.request
+import os
 from typing import Any
 
-PRICE_KEYS = ("input", "output", "input_cache_read", "input_cache_write")
-OPENROUTER = "https://openrouter.ai/api/v1"
+# Inspect's ModelCost field -> Hawk's per-million column
+FIELDS = {
+    "input": "input_cost_per_1m",
+    "output": "output_cost_per_1m",
+    "input_cache_read": "cache_read_input_cost_per_1m",
+    "input_cache_write": "cache_write_input_cost_per_1m",
+}
 
 
-def prices_for_models(models: list[str]) -> dict[str, dict[str, float]]:
-    """Use Inspect's configured costs; query OpenRouter only for its own routes."""
-    from inspect_ai.model import get_model_info
+def prices_for(models: list[str]) -> dict[str, dict[str, float]]:
+    """Hawk's price for each model it prices, keyed by the name the job calls it by.
 
+    Needs a Hawk login (the operator's, or a user-mode runner's); off Hawk, nothing.
+    """
+    api_url = os.environ.get("HAWK_API_URL")
+    if not api_url:
+        return {}
+    from hawk.core.providers import registry_model_name
+
+    table = _hawk_table(api_url)
     prices: dict[str, dict[str, float]] = {}
-    router: list[str] = []
     for model in dict.fromkeys(models):
-        info = get_model_info(model)
-        if info is not None and info.cost is not None:
-            prices[model] = info.cost.model_dump()
-        elif model.startswith(("openrouter/", "openai-api/openrouter/")):
-            router.append(model)
-        else:
-            raise ValueError(
-                f"No Inspect cost data for {model!r}; declare model_prices or configure Inspect model costs"
-            )
-    if router:
-        prices.update(openrouter_prices(router))
+        row = table.get(registry_model_name(model, strict=False)) or table.get(model)
+        if row is not None:
+            prices[model] = {k: row.get(col) or 0.0 for k, col in FIELDS.items()}
     return prices
 
 
-def valid_price(price: Any) -> bool:
-    """A usable per-million price: every field a non-negative number, and input or output set.
-
-    Routers list -1 for "depends on the route", and a price with no input or output
-    rate would let a cost limit read every call as free.
-    """
-    if not isinstance(price, dict):
-        return False
-    values = [price.get(k, 0) for k in PRICE_KEYS]
-    if any(
-        not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v < 0
-        for v in values
-    ):
-        return False
-    return bool(price.get("input") or price.get("output"))
+def price_models(models: list[str]) -> None:
+    """Look up and register prices for this process's own models (needs a Hawk login)."""
+    register_prices(prices_for(models))
 
 
-def register_prices(table: dict[str, dict[str, float]]) -> list[str]:
-    """Give Inspect an entry and a price for each model, before anything prices it.
+def register_prices(prices: dict[str, dict[str, Any]] | None) -> None:
+    """Register prices handed over by the job's launcher."""
+    for model, price in (prices or {}).items():
+        register_price(model, price)
 
-    Hawk applies a job's `model_cost_config` with `set_model_cost`, which refuses a
-    model Inspect has no entry for; `set_model_info` creates the entry. Returns the
-    names registered.
+
+def register_price(model: str, price: dict[str, Any]) -> None:
+    """Give Inspect a price for `model`, creating its entry if Inspect has none.
+
+    A price with a negative or non-numeric field (routers list -1 for "depends on the
+    route"), or with neither an input nor an output rate, is skipped: it would let a
+    cost limit read every call as free.
     """
     from inspect_ai.model import ModelCost, ModelInfo, get_model_info, set_model_info
 
-    registered: list[str] = []
-    for name, price in table.items():
-        if not valid_price(price):
-            continue
-        cost = ModelCost(**{k: float(price.get(k, 0.0)) for k in PRICE_KEYS})
-        info = (get_model_info(name) or ModelInfo()).model_copy(update={"cost": cost})
-        set_model_info(name, info)
-        registered.append(name)
-    return registered
+    values = [price.get(k, 0.0) for k in FIELDS]
+    if any(
+        not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v < 0
+        for v in values
+    ) or not (price.get("input") or price.get("output")):
+        return
+    cost = ModelCost(**{k: float(v) for k, v in zip(FIELDS, values, strict=True)})
+    set_model_info(model, (get_model_info(model) or ModelInfo()).model_copy(update={"cost": cost}))
 
 
-def openrouter_prices(models: list[str]) -> dict[str, dict[str, float]]:
-    """OpenRouter's published per-million prices, by the name Inspect runs each under.
+@functools.cache
+def _hawk_table(api_url: str) -> dict[str, dict[str, Any]]:
+    """Hawk's price rows by public model name, fetched once per process.
 
-    An investigation job caps each item's spend with Inspect's cost limit, which needs a
-    price for the investigator; the job registers these itself.
+    Called while a task loads, which may be inside a running event loop.
     """
-    request = urllib.request.Request(
-        f"{OPENROUTER}/models", headers={"User-Agent": "inspect_audit"}
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        listing = {str(m["id"]): m.get("pricing") or {} for m in json.load(response)["data"]}
-    prices: dict[str, dict[str, float]] = {}
-    for model in models:
-        # the catalog id is the trailing {org}/{slug}; on Hawk the Inspect name is
-        # openrouter/openrouter/{org}/{slug}, since Middleman's public names keep a prefix
-        pricing = listing.get("/".join(model.split("/")[-2:]))
-        if pricing is None:
-            raise ValueError(f"OpenRouter does not list {model!r}")
-        price = {
-            key: float(pricing.get(field) or 0) * 1_000_000
-            for key, field in (
-                ("input", "prompt"),
-                ("output", "completion"),
-                ("input_cache_read", "input_cache_read"),
-                ("input_cache_write", "input_cache_write"),
-            )
-        }
-        if not valid_price(price):
-            raise ValueError(f"OpenRouter lists no usable price for {model!r}")
-        prices[model] = price
-    return prices
+    from .dispatch.hawk import prices
+
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        rows = pool.submit(asyncio.run, prices(api_url)).result()
+    return {str(r["model"]): r for r in rows if r.get("model")}

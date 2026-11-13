@@ -26,7 +26,20 @@ def materialize(config: dict[str, Any], revision: str) -> dict[str, Any]:
     """Test this IA revision while retaining every benchmark's own pinned version."""
     encoded = json.dumps(config)
     encoded = re.sub(re.escape(REPO) + r"@(?:SELF|[0-9a-f]{40})", f"{REPO}@{revision}", encoded)
-    return json.loads(encoded)
+    config = json.loads(encoded)
+    # the declared models' prices, looked up here with the operator's login: the probe's
+    # runner may hold restricted credentials, which cannot read Hawk's price list
+    from inspect_audit._prices import prices_for
+
+    models = [
+        f"{g['name']}/{i['name']}" if g.get("name") else i["name"]
+        for g in config.get("models") or []
+        for i in g["items"]
+    ]
+    for group in config["tasks"]:
+        for item in group["items"]:
+            item.setdefault("args", {}).setdefault("spec", {})["prices"] = prices_for(models)
+    return config
 
 
 def summarize(paths: list[Path]) -> dict[str, Any]:

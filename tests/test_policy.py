@@ -197,3 +197,18 @@ def test_every_policy_limit_refuses_a_job_that_breaks_it(kind: str, change: dict
     job = dataclasses.replace(job, **fields)
     with pytest.raises(ToolError):
         auth.authorise(job, kind, set())
+
+
+def test_a_version_override_cannot_bring_in_new_code() -> None:
+    """`packages` changes the version of something the benchmark already uses; a review
+    had `totally-new-pkg==6.6.6` approved (FRICTION 117)."""
+    from inspect_audit.dispatch.jobs import JobKind
+    from inspect_audit.dispatch.policy import check_overrides
+
+    check_overrides(["pyyaml==6.0.1"], JobKind.BENCHMARK)  # installed: a version change
+    with pytest.raises(ToolError, match="not installed beside the benchmark"):
+        check_overrides(["totally-new-pkg==6.6.6"], JobKind.BENCHMARK)
+    with pytest.raises(ToolError, match="cannot change that package's version"):
+        check_overrides(["inspect-ai==0.3.200"], JobKind.VARIANT)
+    with pytest.raises(ToolError, match="exact pin"):
+        check_overrides(["numpy>=1"], JobKind.BENCHMARK)

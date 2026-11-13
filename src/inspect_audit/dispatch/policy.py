@@ -291,6 +291,36 @@ def cached(configs: dict[str, ModelConfig], names: Any) -> dict[str, ModelConfig
     return out
 
 
+def check_overrides(overrides: list[str], kind: JobKind) -> None:
+    """The one check on a job's version overrides (`packages`).
+
+    Each is an exact pin, one per package, of a package already installed beside the
+    benchmark: an override changes a version, it does not bring in new code (a reviewer
+    had a job approved to install an arbitrary PyPI name, FRICTION 117). This package's
+    own version is fixed, and so is Inspect's for rescores and variants, which run in it.
+    """
+    from importlib.metadata import PackageNotFoundError, distribution
+
+    fixed = {"inspect-audit"} | (
+        {"inspect-ai"} if kind in (JobKind.REGRADE, JobKind.VARIANT) else set()
+    )
+    for spec in overrides:
+        if not re.fullmatch(PINNED, spec):
+            raise ToolError(f"{spec!r}: a version override is an exact pin, name==version")
+        name = package_name(spec)
+        if name in fixed:
+            raise ToolError(f"{spec!r}: this run cannot change that package's version")
+        try:
+            distribution(name)
+        except PackageNotFoundError:
+            raise ToolError(
+                f"{spec!r}: {name} is not installed beside the benchmark; an override "
+                "changes the version of a package it already uses"
+            ) from None
+    if len({package_name(o) for o in overrides}) != len(overrides):
+        raise ToolError("one version override per package")
+
+
 @dataclass(frozen=True)
 class AuditAuthorizer:
     """Approve a complete job before the backend can submit it."""
@@ -312,12 +342,7 @@ class AuditAuthorizer:
         if job.task != JobKind.REGRADE.task or job.package != p.investigation_package:
             raise ToolError("regrade task and package must match the launch policy")
         overrides = list(job.package_overrides)
-        for spec in overrides:
-            if not re.fullmatch(PINNED, spec) or package_name(spec) in (
-                "inspect-ai",
-                "inspect-audit",
-            ):
-                raise ToolError(f"{spec!r}: a rescore may pin other packages, name==version")
+        check_overrides(overrides, JobKind.REGRADE)
         if job.extra_packages != p.benchmark_packages(overrides):
             raise ToolError("job dependencies must match the launch policy")
         if set(args) - REGRADE_ARGS or job.model_roles or job.sample_range is not None:
@@ -375,15 +400,7 @@ class AuditAuthorizer:
         overrides = list(job.package_overrides)
         if overrides and kind is JobKind.INVESTIGATION:
             raise ToolError("investigations run the benchmark as declared: no version overrides")
-        for spec in overrides:
-            if not re.fullmatch(PINNED, spec):
-                raise ToolError(f"{spec!r}: a version override is an exact pin, name==version")
-            if package_name(spec) == "inspect-audit" or (
-                kind is JobKind.VARIANT and package_name(spec) == "inspect-ai"
-            ):
-                raise ToolError(f"{spec!r}: this run cannot change that package's version")
-        if len({package_name(o) for o in overrides}) != len(overrides):
-            raise ToolError("one version override per package")
+        check_overrides(overrides, kind)
         benchmark = p.benchmark_packages(overrides) if p.task_package else []
         if job.extra_packages != (benchmark if ours else benchmark[1:]):
             raise ToolError("job dependencies must match the launch policy")

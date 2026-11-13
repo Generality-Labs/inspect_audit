@@ -4,10 +4,13 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 
-# The build files for the boxes; each takes the INSPECT_VERSION build arg, and the
-# published images below are built from them (see the comment atop each file)
+# The build files for the boxes, each with its hashed requirements (exported from
+# uv.lock), which a build copies in from its context; the published images below are
+# built from them (see the comment atop each file)
 INVESTIGATOR_DOCKERFILE = (HERE / "investigator.Dockerfile").read_text()
+INVESTIGATOR_REQUIREMENTS = (HERE / "investigator.requirements.txt").read_text()
 AUDITOR_DOCKERFILE = (HERE / "auditor.Dockerfile").read_text()
+AUDITOR_REQUIREMENTS = (HERE / "auditor.requirements.txt").read_text()
 
 # Appended to the Helm values for a k8s run: Cilium egress for the auditor's
 # service, DNS plus world, so the "can verify" property holds off Docker.
@@ -27,7 +30,9 @@ AUDITOR_IMAGE = (
 __all__ = [
     "AUDITOR_DOCKERFILE",
     "AUDITOR_IMAGE",
+    "AUDITOR_REQUIREMENTS",
     "EGRESS_POLICY",
     "INVESTIGATOR_DOCKERFILE",
     "INVESTIGATOR_IMAGE",
+    "INVESTIGATOR_REQUIREMENTS",
 ]

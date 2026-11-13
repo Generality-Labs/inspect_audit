@@ -45,6 +45,26 @@ k8s = [
 ]
 
 [dependency-groups]
+# What the boxes' agents work with, pinned in uv.lock like everything else and exported
+# with hashes to src/inspect_audit/containers/*.requirements.txt (tests check they match)
+investigator-box = [
+    "inspect-ai==0.3.285",
+    "pandas",
+    "pyarrow",
+    "pillow",
+    "scipy",
+    "sympy",
+]
+auditor-box = [
+    "inspect-ai==0.3.285",
+    "pandas",
+    "pyarrow",
+    "matplotlib",
+    "pyyaml",
+    "scipy",
+    "sympy",
+    "pytest",
+]
 dev = [
     "pytest>=8.0.0",
     "playwright>=1.49",

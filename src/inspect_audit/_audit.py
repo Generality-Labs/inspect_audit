@@ -45,9 +45,13 @@ from ._report import (
     report_blocker,
 )
 from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS
-from .containers import AUDITOR_DOCKERFILE, AUDITOR_IMAGE, INVESTIGATOR_IMAGE
+from .containers import (
+    AUDITOR_DOCKERFILE,
+    AUDITOR_IMAGE,
+    AUDITOR_REQUIREMENTS,
+    INVESTIGATOR_IMAGE,
+)
 from .dispatch import FINISHED, STUCK, HawkRuns, Job, LocalRuns, Runs, validate_environment
-from .dispatch.jobs import INSPECT_VERSION
 from .dispatch.packages import git_package_spec, own_package_spec
 from .dispatch.policy import (
     AuditAuthorizer,
@@ -431,11 +435,12 @@ def prepare_workspace(
 def docker_box(root: Path) -> tuple[str, str]:
     """The auditor's box on local Docker: built here, nothing mounted."""
     (root / "Dockerfile").write_text(AUDITOR_DOCKERFILE)
-    (root / ".dockerignore").write_text("*\n!Dockerfile\n")
+    (root / "auditor.requirements.txt").write_text(AUDITOR_REQUIREMENTS)
+    (root / ".dockerignore").write_text("*\n!Dockerfile\n!auditor.requirements.txt\n")
     compose = {
         "services": {
             "default": {
-                "build": {"context": ".", "args": {"INSPECT_VERSION": INSPECT_VERSION}},
+                "build": {"context": "."},
                 "command": "sleep infinity",
                 "init": True,
                 "working_dir": "/workspace",

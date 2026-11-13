@@ -1,0 +1,49 @@
+name: Images
+
+# Builds and pushes the auditor's and investigator's boxes from this commit. Run by hand
+# (Actions > Images > Run workflow) only when a box file or its requirements change; then
+# pin the printed digests as AUDITOR_IMAGE / INVESTIGATOR_IMAGE in
+# src/inspect_audit/containers/__init__.py. Plain docker, no third-party actions.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# one build of a ref at a time; a second run waits rather than racing the push
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and push ${{ matrix.box }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # check out the box files
+      packages: write # push the built images to ghcr.io
+    strategy:
+      matrix:
+        box: [auditor, investigator]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Build
+        env:
+          BOX: ${{ matrix.box }}
+        run: |
+          docker build --platform linux/amd64 \
+            -f "src/inspect_audit/containers/${BOX}.Dockerfile" \
+            -t "ghcr.io/generality-labs/inspect-audit-auditor:${BOX}-${GITHUB_SHA}" \
+            src/inspect_audit/containers
+      - name: Push
+        env:
+          BOX: ${{ matrix.box }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "ghcr.io/generality-labs/inspect-audit-auditor:${BOX}-${GITHUB_SHA}"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "ghcr.io/generality-labs/inspect-audit-auditor:${BOX}-${GITHUB_SHA}")
+          echo "${BOX}: ${digest}" | tee -a "$GITHUB_STEP_SUMMARY"

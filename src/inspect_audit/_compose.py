@@ -18,8 +18,7 @@ import yaml
 from inspect_ai.dataset import Sample
 from inspect_ai.util import ComposeConfig, SandboxEnvironmentSpec
 
-from .containers import INVESTIGATOR_DOCKERFILE
-from .dispatch.jobs import INSPECT_VERSION
+from .containers import INVESTIGATOR_DOCKERFILE, INVESTIGATOR_REQUIREMENTS
 
 INVESTIGATOR = "investigator"
 
@@ -134,11 +133,8 @@ def investigation_compose(
         investigator["image"] = investigator_image
     else:
         (stage / "investigator.Dockerfile").write_text(INVESTIGATOR_DOCKERFILE)
-        investigator["build"] = {
-            "context": str(stage),
-            "dockerfile": "investigator.Dockerfile",
-            "args": {"INSPECT_VERSION": INSPECT_VERSION},
-        }
+        (stage / "investigator.requirements.txt").write_text(INVESTIGATOR_REQUIREMENTS)
+        investigator["build"] = {"context": str(stage), "dockerfile": "investigator.Dockerfile"}
         investigator["x-local"] = True
     if benchmark_compose is None:
         # A separate default service prevents the k8s converter from renaming ours.

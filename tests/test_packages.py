@@ -147,3 +147,46 @@ def test_the_investigation_task_fills_its_own_plumbing(monkeypatch: pytest.Monke
         task="b/t", samples=["1"], checks=["gold-answer"], investigator_image="build"
     )
     assert built["investigator_image"] is None
+
+
+@pytest.mark.parametrize("box", ["investigator", "auditor"])
+def test_each_box_installs_exactly_what_the_lock_pins(box: str) -> None:
+    """The boxes' Python packages are uv.lock's, with hashes: the requirements file each
+    Dockerfile installs is `uv export` of its group, so a dependency changes only through
+    the lock (and the Inspect in the box is the one every job runs on)."""
+    import shutil
+    import subprocess
+
+    from inspect_audit.dispatch.jobs import INSPECT_VERSION
+
+    root = Path(__file__).parents[1]
+    committed = (root / f"src/inspect_audit/containers/{box}.requirements.txt").read_text()
+    assert f"\ninspect-ai=={INSPECT_VERSION} \\\n" in committed
+    assert (
+        "--require-hashes" in (root / f"src/inspect_audit/containers/{box}.Dockerfile").read_text()
+    )
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv is not installed")
+    exported = subprocess.run(
+        [uv, "export", "--frozen", "--only-group", f"{box}-box", "--no-emit-project"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+    def pins(text: str) -> list[str]:
+        return [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
+
+    assert pins(exported) == pins(committed), (
+        f"re-export: uv export --frozen --only-group {box}-box --no-emit-project "
+        f"--format requirements-txt -o src/inspect_audit/containers/{box}.requirements.txt"
+    )
+
+
+def test_every_base_image_is_pinned_by_digest() -> None:
+    root = Path(__file__).parents[1] / "src/inspect_audit/containers"
+    for dockerfile in root.glob("*.Dockerfile"):
+        bases = [ln for ln in dockerfile.read_text().splitlines() if ln.startswith("FROM ")]
+        assert bases and all("@sha256:" in ln for ln in bases), dockerfile.name

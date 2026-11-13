@@ -283,9 +283,7 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
     runs = FakeRuns()
     inv = _make_audit(tmp_path, runs)
     benchmark = _audit.run_eval(inv)
-    out = asyncio.run(
-        benchmark("smoke", ["1"], ["openai/subject"], "{}", 1, [], None, [], None, "why")
-    )  # type: ignore[arg-type]
+    out = asyncio.run(benchmark("smoke", ["1"], ["openai/subject"], "{}", 1, [], None, [], "why"))  # type: ignore[arg-type]
     assert "hawk:run-1" in out
     assert record.jobs == [
         {
@@ -300,11 +298,9 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
     from inspect_ai.tool import ToolError
 
     with pytest.raises(ToolError, match="may not be evaluated"):
-        asyncio.run(
-            benchmark("other", None, ["openai/investigator"], "{}", 1, [], None, [], None, "")
-        )  # type: ignore[arg-type]
+        asyncio.run(benchmark("other", None, ["openai/investigator"], "{}", 1, [], None, [], ""))  # type: ignore[arg-type]
     with pytest.raises(ToolError, match="exists"):
-        asyncio.run(benchmark("smoke", None, ["openai/subject"], "{}", 1, [], None, [], None, ""))  # type: ignore[arg-type]
+        asyncio.run(benchmark("smoke", None, ["openai/subject"], "{}", 1, [], None, [], ""))  # type: ignore[arg-type]
 
 
 def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
@@ -316,13 +312,6 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
     inv = _make_audit(tmp_path, runs)
     inv.paper = "https://arxiv.org/abs/2601.00001"
     record.jobs.append({"label": "smoke", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})
-    asked: list[list[str]] = []
-
-    def lookup(models: list[str]) -> dict[str, dict[str, float]]:
-        asked.append(models)
-        return {m: {"input": 1.0, "output": 2.0} for m in models}
-
-    monkeypatch.setattr(_audit, "prices_for", lookup)
     investigation = _audit.send_investigators(inv)
     asyncio.run(
         investigation(  # type: ignore[arg-type]
@@ -332,7 +321,6 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
             ["smoke", "hawk:supplied-logs"],
             "openai/investigator",
             '{"grader": "openai/judge"}',
-            0.5,
             "Check every failed rubric item against the context.",
         )
     )
@@ -344,14 +332,12 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
     assert job.task == "inspect_audit/investigation" and job.extra_packages == ["benchmark"]
     assert job.task_args["logs"] == ["hawk:r", "hawk:supplied-logs"]
     assert job.task_args["judge"] == {"grader": "openai/judge"}
-    assert job.task_args["cost_limit"] == 0.5
     assert job.task_args["source"] == "benchmark.task"
     # the benchmark goes into the investigators' own boxes as the job installs it (FRICTION 74)
     assert job.task_args["install"][0] == "benchmark"
     assert job.task_args["install"][-1].startswith("inspect-ai==")
-    # the audit looks the prices up and hands them over; the restricted child cannot
-    assert asked == [["openai/investigator", "openai/judge"]]
-    assert set(job.task_args["prices"]) == {"openai/investigator", "openai/judge"}
+    # uncapped, and no prices: the audit prices its jobs itself (FRICTION 100)
+    assert "cost_limit" not in job.task_args and "prices" not in job.task_args
     with pytest.raises(ToolError, match="neither a job of yours nor a supplied source"):
         asyncio.run(
             investigation(
@@ -361,37 +347,9 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
                 ["/etc/passwd"],
                 "openai/investigator",
                 "{}",
-                0.5,
                 "",
             )  # type: ignore[arg-type]
         )
-
-
-def test_a_child_on_a_model_hawk_does_not_price_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from inspect_ai.tool import ToolError
-
-    from inspect_audit import _prices
-
-    runs = FakeRuns()
-    inv = _make_audit(tmp_path, runs)
-    monkeypatch.setenv("HAWK_API_URL", "https://hawk.test")
-    monkeypatch.setattr(_prices, "_hawk_table", lambda url: {})
-    with pytest.raises(ToolError, match="no usable price for openai/investigator"):
-        asyncio.run(
-            _audit.send_investigators(inv)(  # type: ignore[arg-type]
-                "a1",
-                ["1"],
-                ["gold-answer"],
-                ["hawk:supplied-logs"],
-                "openai/investigator",
-                "{}",
-                0.5,
-                "",
-            )
-        )
-    assert runs.submitted == []
 
 
 @pytest.mark.parametrize(
@@ -508,7 +466,6 @@ def test_task_arguments_cannot_place_code_or_name_other_models(kind: str) -> Non
                     "investigator_image": "img",
                     "checks": ["gold-answer"],
                     "samples": ["1"],
-                    "cost_limit": 0.1,
                 },
             )
         authorizer = AuditAuthorizer(policy)
@@ -733,7 +690,7 @@ def test_an_empty_judge_reaches_the_investigation_as_empty(
     inv = _make_audit(tmp_path, runs)
     asyncio.run(
         _audit.send_investigators(inv)(  # type: ignore[arg-type]
-            "a", ["1"], ["gold-answer"], [], None, "{}", 0.5, ""
+            "a", ["1"], ["gold-answer"], [], None, "{}", ""
         )
     )
     assert runs.submitted[0].task_args["judge"] == {}
@@ -886,7 +843,6 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
             ["hawk:supplied-logs"],
             None,
             [],
-            0.5,
             "noise",
         )
     )
@@ -898,25 +854,26 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
     # a grader that calls no model (SciCode's tests) is rescored too, under a mock model
     asyncio.run(
         regrade(  # type: ignore[arg-type]
-            "rerun-tests", ["1"], [], "{}", 1, ["hawk:supplied-logs"], None, [], 0.5, "tests"
+            "rerun-tests", ["1"], [], "{}", 1, ["hawk:supplied-logs"], None, [], "tests"
         )
     )
     assert runs.submitted[-1].models == ["mockllm/model"]
     assert runs.submitted[-1].task_args["judge"] == {}
-    # and the mock is priced, or Inspect refuses the job's cost_limit (FRICTION 96)
-    assert runs.submitted[-1].task_args["prices"] == {"mockllm/model": _prices.FREE}
-    with pytest.raises(ToolError, match="1 to 10"):
+    # no per-item cap and no prices: the audit prices its jobs itself (FRICTION 100)
+    assert "cost_limit" not in runs.submitted[-1].task_args
+    assert "prices" not in runs.submitted[-1].task_args
+    # epochs are the auditor's call; only a non-positive count is refused
+    with pytest.raises(ToolError, match="positive whole number"):
         asyncio.run(
             regrade(  # type: ignore[arg-type]
                 "again",
                 ["1"],
                 [],
                 '{"grader": "openai/judge"}',
-                50,
+                0,
                 ["hawk:supplied-logs"],
                 None,
                 [],
-                0.5,
                 "",
             )
         )
@@ -957,7 +914,7 @@ def test_launches_stop_once_spend_so_far_reaches_the_budget(
     )
     investigate = _audit.send_investigators(inv)
 
-    def launch(label: str, samples: list[str], cap: float) -> str:
+    def launch(label: str, samples: list[str]) -> str:
         return asyncio.run(
             investigate(  # type: ignore[arg-type]
                 label,
@@ -966,17 +923,16 @@ def test_launches_stop_once_spend_so_far_reaches_the_budget(
                 ["hawk:supplied-logs"],
                 "openai/investigator",
                 '{"grader": "openai/judge"}',
-                cap,
                 "",
             )
         )
 
-    # $4 spent; a job whose caps add to $40 still launches: nothing is reserved
-    launch("first", [str(i) for i in range(1, 21)], 2.0)
-    launch("second", ["21"], 2.0)
+    # $4 spent; jobs launch, uncapped, nothing reserved
+    launch("first", [str(i) for i in range(1, 21)])
+    launch("second", ["21"])
     # a fresh rerun has no cap, and is no longer refused for it
     out = asyncio.run(
-        _audit.run_eval(inv)("rerun", ["1"], ["openai/subject"], "{}", 1, [], None, [], None, "")  # type: ignore[arg-type]
+        _audit.run_eval(inv)("rerun", ["1"], ["openai/subject"], "{}", 1, [], None, [], "")  # type: ignore[arg-type]
     )
     assert "Launched" in out
     # once spend reaches the budget, launches stop: a running job counts what it has
@@ -984,7 +940,7 @@ def test_launches_stop_once_spend_so_far_reaches_the_budget(
     _prices.register_price("openai/investigator", {"input": 1.0, "output": 1.0})
     runs.used["run-1"] = {"openai/investigator": ModelUsage(input_tokens=6_500_000)}
     with pytest.raises(ToolError, match="budget is spent"):
-        launch("third", ["22"], 1.0)
+        launch("third", ["22"])
 
 
 def test_full_coverage_holds_submission_until_every_cell_has_a_take(
@@ -1027,7 +983,7 @@ def test_a_platform_refusal_reaches_the_auditor_not_the_eval(
     inv = _make_audit(tmp_path, RefusingRuns())
     benchmark = _audit.run_eval(inv)
     with pytest.raises(ToolError, match="Models not found"):
-        asyncio.run(benchmark("smoke", ["1"], ["openai/subject"], "{}", 1, [], None, [], None, ""))  # type: ignore[arg-type]
+        asyncio.run(benchmark("smoke", ["1"], ["openai/subject"], "{}", 1, [], None, [], ""))  # type: ignore[arg-type]
     assert record.jobs == []
 
     record.jobs.append({"label": "old", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})

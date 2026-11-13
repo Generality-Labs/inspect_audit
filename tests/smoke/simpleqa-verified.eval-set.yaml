@@ -34,7 +34,6 @@ tasks:
           logs:
           - hawk:bench-v46e92flztx421dj
         limits:
-          investigation_sample_cost_usd: 0.25
           max_concurrent_jobs: 3
           budget_usd: 2.0
       runs: hawk
@@ -42,14 +41,12 @@ tasks:
       credential_mode: user
       box: k8s
       instructions: 'This case: logs hawk:bench-v46e92flztx421dj (one sample). Jobs: run_eval with rescore
-        on that sample, judge {"grader": "openrouter/openai/gpt-6-luna"}, epochs 2, item_cost_limit 0.05;
+        on that sample, judge {"grader": "openrouter/openai/gpt-6-luna"}, epochs 2;
         run_eval with packages pinning one dependency to another version, fresh attempts on that sample
-        with the subject model; send_investigators on it, check gold-answer, with the supplied logs, item_cost_limit
-        0.25.'
+        with the subject model; send_investigators on it, check gold-answer, with the supplied logs.'
 models:
 - package: inspect-ai
   items:
   - name: openai/openrouter/deepseek/deepseek-v4.1-flash-1017
-cost_limit: 2.0
 message_limit: 400
 retry_attempts: 0

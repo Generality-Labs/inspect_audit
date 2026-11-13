@@ -109,7 +109,7 @@ def test_the_package_pins_the_inspect_every_job_runs_on() -> None:
 
 
 def test_the_investigation_task_fills_its_own_plumbing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No logs key needed, prices looked up for a cost limit, the published image by default."""
+    """No logs key needed, and the published image by default."""
     import inspect_ai.model
 
     from inspect_audit import _registry
@@ -125,23 +125,15 @@ def test_the_investigation_task_fills_its_own_plumbing(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(_registry, "investigation_task", capture)
     monkeypatch.setattr(inspect_ai.model, "get_model", lambda: "openrouter/openai/gpt-6-luna")
-    given: list[object] = []
-    monkeypatch.setattr(_registry, "register_prices", given.append)
-    prices = {"openrouter/openai/gpt-6-luna": {"input": 0.1, "output": 0.5}}
-
     _registry.investigation(
         task="b/t",
         samples=["1"],
         checks=["gold-answer"],
         logs=[],
-        cost_limit=0.2,
         judge={"grader": "openrouter/openai/judge"},
-        prices=prices,
     )
     assert built["logs"] is None
     assert built["investigator_image"] == INVESTIGATOR_IMAGE
-    # the child registers what its launcher looked up; it never fetches prices itself
-    assert given == [prices]
 
     _registry.investigation(
         task="b/t", samples=["1"], checks=["gold-answer"], investigator_image="build"

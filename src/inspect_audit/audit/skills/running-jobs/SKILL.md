@@ -55,13 +55,12 @@ launched: check it before launching more.
 
 ## Money
 
-`budget()` shows measured spend: your own calls, each collected job's recorded cost, what
-the audit budget leaves, and the model key's live balance (which counts running jobs).
-Nothing is reserved for a running job; launches stop only when measured spend reaches the
-budget, and the capped key stops calls past its limit. Once investigations are collected
-it reports their average cost per item and how many more the rest covers: run a small
-batch first, read the measured cost, then scale to cover the work. `item_cost_limit` is
-a safety net for one runaway item, not a budget: set it well above the measured average.
+`budget()` shows what has been spent: your own calls, and each job's spend so far,
+running or finished, with how many of its samples are done; then what the audit budget
+leaves, and the model key's live balance. No job is capped and nothing is reserved:
+launches stop only once spend reaches the budget. Spend is yours to manage: run a small
+batch first, read what it cost per item, then scale to cover the work; watch running
+jobs as you go and stop one (`jobs(action='stop')`) that is costing more than it is worth.
 
 A missing credential, malformed request or broken investigation image is an investigation limitation.
 Record what it prevented, repair once if feasible, and avoid retry loops. Attribute a

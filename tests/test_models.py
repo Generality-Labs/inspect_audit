@@ -214,7 +214,6 @@ def test_investigation_judge_configuration_is_applied_and_cannot_be_supplied_by_
             "checks": ["gold-answer"],
             "samples": ["1"],
             "judge": {"grader": name},
-            "cost_limit": 0.1,
         },
     )
     approved = authorizer.authorise(job, "investigation", set())
@@ -317,14 +316,14 @@ def test_off_hawk_nothing_is_fetched(monkeypatch: pytest.MonkeyPatch) -> None:
     _prices.price_models(["openai/anything"])
 
 
-def test_child_jobs_register_the_prices_they_are_given_and_never_fetch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Investigation and regrade jobs run with restricted credentials on Hawk, which
-    cannot read Hawk's price list: they only register what the audit handed them."""
+def test_child_jobs_need_no_prices_and_never_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Children run uncapped and the audit prices them from their token counts
+    (FRICTION 99, 100): an investigation or regrade neither takes nor looks up prices,
+    which restricted credentials could not read anyway."""
+    import inspect
+
     from inspect_ai import Task
     from inspect_ai.dataset import Sample
-    from inspect_ai.model import get_model_info
 
     from inspect_audit import _prices, _registry, _regrade
 
@@ -334,20 +333,7 @@ def test_child_jobs_register_the_prices_they_are_given_and_never_fetch(
     monkeypatch.setattr(_registry, "investigation_task", stub)
     monkeypatch.setattr(_regrade, "regrade_task", stub)
     monkeypatch.setattr(_registry, "log_files", lambda logs: logs)
-    _registry.investigation(
-        task="b/t",
-        samples=["1"],
-        checks=["gold-answer"],
-        cost_limit=0.2,
-        judge={"grader": "ia-test/judge"},
-        prices={"ia-test/investigator": {"input": 1.0, "output": 2.0}},
-    )
-    _registry.regrade(
-        task="b/t",
-        logs=["x.eval"],
-        judge={"grader": "ia-test/judge"},
-        cost_limit=0.2,
-        prices={"ia-test/judge": {"input": 3.0, "output": 4.0}},
-    )
-    assert get_model_info("ia-test/investigator").cost.output == 2  # type: ignore[union-attr]
-    assert get_model_info("ia-test/judge").cost.output == 4  # type: ignore[union-attr]
+    _registry.investigation(task="b/t", samples=["1"], checks=["gold-answer"])
+    _registry.regrade(task="b/t", logs=["x.eval"], judge={"grader": "ia-test/judge"})
+    for child in (_registry.investigation, _registry.regrade):
+        assert "prices" not in inspect.signature(inspect.unwrap(child)).parameters

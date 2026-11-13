@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import math
 import re
 from copy import deepcopy
 from dataclasses import dataclass
@@ -43,7 +42,6 @@ class Models(FrozenModel):
 
 
 class Limits(FrozenModel):
-    investigation_sample_cost_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     max_concurrent_jobs: int | None = Field(default=None, gt=0, strict=True)
     # one budget for the auditor's own calls and every job it launches: launches stop
     # once measured spend reaches it; nothing is reserved for running jobs, whose
@@ -247,8 +245,6 @@ INVESTIGATION_ARGS = frozenset(
         "logs",
         "judge",
         "investigator_image",
-        "cost_limit",
-        "prices",
         "notes",
         "paper",
         "install",
@@ -264,8 +260,6 @@ REGRADE_ARGS = frozenset(
         "judge",
         "samples",
         "epochs",
-        "cost_limit",
-        "prices",
         "files",
         "source",
     }
@@ -378,19 +372,8 @@ class AuditAuthorizer:
         if p.samples is not None and set(selected) - set(p.samples):
             raise ToolError("sample selection is outside the launch policy")
         epochs = args.get("epochs")
-        if isinstance(epochs, bool) or not isinstance(epochs, int) or not 1 <= epochs <= 10:
-            raise ToolError("regrade epochs must be 1 to 10")
-        cost = args.get("cost_limit")
-        if (
-            isinstance(cost, bool)
-            or not isinstance(cost, (int, float))
-            or not math.isfinite(cost)
-            or cost <= 0
-        ):
-            raise ToolError("regrade cost_limit must be a finite positive number")
-        cap = p.limits.investigation_sample_cost_usd
-        if cap is not None and cost > cap:
-            raise ToolError(f"regrade cost_limit exceeds the policy's ${cap:g} per sample")
+        if isinstance(epochs, bool) or not isinstance(epochs, int) or epochs < 1:
+            raise ToolError("regrade epochs must be a positive whole number")
         approved = deepcopy(job)
         configs = {
             name: ModelConfig.model_validate(value)
@@ -472,19 +455,6 @@ class AuditAuthorizer:
             if p.source is not None and args.get("source") != p.source:
                 raise ToolError("investigation source must match the launch policy")
             roles = args.get("judge") or {}
-            cost = args.get("cost_limit")
-            if (
-                isinstance(cost, bool)
-                or not isinstance(cost, (int, float))
-                or not math.isfinite(cost)
-                or cost <= 0
-            ):
-                raise ToolError("investigation cost_limit must be a finite positive number")
-            cap = p.limits.investigation_sample_cost_usd
-            if cap is not None and cost > cap:
-                raise ToolError(
-                    f"investigation cost_limit exceeds the policy's ${cap:g} per sample"
-                )
             benchmark_args = args.get("task_args", {})
         elif kind is JobKind.VARIANT:
             if set(args) - VARIANT_ARGS or args.get("task") != p.task:

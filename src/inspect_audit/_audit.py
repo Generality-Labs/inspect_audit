@@ -35,7 +35,7 @@ from inspect_ai.util import CheckpointConfig, sandbox, store_as
 from . import prompts
 from ._image import view_image
 from ._log_sources import fetch_logs, is_remote_logs
-from ._prices import UnpricedModelError, cost_of, price_models, prices_for
+from ._prices import cost_of, price_models
 from ._report import (
     AuditRecord,
     AuditState,
@@ -99,14 +99,6 @@ AUDIT_SKILLS = (
 )
 # compact the auditor's context once it passes this many tokens
 COMPACTION_TOKENS = 200_000
-
-
-def _child_prices(models: list[str]) -> dict[str, dict[str, float]]:
-    """The prices a child job is handed; an unpriced model refuses the call."""
-    try:
-        return prices_for(models)
-    except UnpricedModelError as ex:
-        raise ToolError(str(ex)) from None
 
 
 @dataclass(frozen=True)
@@ -689,7 +681,6 @@ def run_eval(inv: Audit) -> Tool:
         rescore: list[str],
         code: str | None,
         packages: list[str],
-        item_cost_limit: float | None,
         note: str,
     ) -> str:
         """Run the benchmark, as it is or changed: new evidence about how it behaves.
@@ -708,7 +699,8 @@ def run_eval(inv: Audit) -> Tool:
                 judge list; "{}" when it has none. When rescoring it must be the model
                 the logs record.
             epochs: Attempts per item and model; when rescoring, how many times each
-                recorded attempt is scored again (1 to 10; disagreeing epochs are judge noise).
+                recorded attempt is scored again (disagreeing epochs are judge noise).
+                Each epoch is a full run: it multiplies the cost.
             rescore: Recorded attempts to score again instead of making new ones: labels
                 of your jobs, or supplied log sources; [] for fresh attempts.
             code: A folder in your box holding the files you changed, each at its path
@@ -717,7 +709,6 @@ def run_eval(inv: Audit) -> Tool:
             packages: Exact versions to install instead of the benchmark's own, as
                 name==version (e.g. ["numpy==1.26.4"]; "inspect-ai==..." changes Inspect,
                 except with `code`); [] for the benchmark's. Hawk runs only.
-            item_cost_limit: Dollars one rescored attempt may spend; null for fresh attempts.
             note: Why you are running this.
         """
         policy = inv.authorizer.policy
@@ -727,8 +718,6 @@ def run_eval(inv: Audit) -> Tool:
         if rescore:
             if models:
                 raise ToolError("rescoring makes no new attempts: models must be []")
-            if item_cost_limit is None:
-                raise ToolError("rescoring needs item_cost_limit: dollars per rescored attempt")
             if samples is None:
                 raise ToolError("rescoring selects the items to score again by sample id")
             job = Job(
@@ -748,8 +737,6 @@ def run_eval(inv: Audit) -> Tool:
                     "judge": judges,
                     "samples": samples,
                     "epochs": epochs,
-                    "cost_limit": item_cost_limit,
-                    "prices": _child_prices(list(judges.values()) or ["mockllm/model"]),
                     **({"files": files, "source": policy.source} if files else {}),
                 },
             )
@@ -791,7 +778,6 @@ def send_investigators(inv: Audit) -> Tool:
         logs: list[str],
         model: str | None,
         judge: str,
-        item_cost_limit: float,
         note: str,
     ) -> str:
         """Send investigators: one agent per item, inside the benchmark's own setup.
@@ -809,7 +795,6 @@ def send_investigators(inv: Audit) -> Tool:
             model: The investigator, from the investigator list; null for its first.
             judge: Role name to model for the benchmark's judge, as a JSON object from
                 the judge list. With logs, the model the logs record; "{}" for none.
-            item_cost_limit: Dollars one investigated item may spend.
             note: Why you are sending them and what to look for: each investigator reads it.
         """
         policy = inv.authorizer.policy
@@ -837,8 +822,6 @@ def send_investigators(inv: Audit) -> Tool:
                 # {} is "their grader calls no model", not "unknown": pass it as given
                 "judge": judges,
                 "investigator_image": inv.investigator_image,
-                "cost_limit": item_cost_limit,
-                "prices": _child_prices([investigator, *judges.values()]),
                 "notes": note or None,
                 "paper": inv.paper,
                 # the benchmark into the investigator's own box, as this job installs it
@@ -1552,6 +1535,9 @@ def audit(
             )
         ],
         scorer=audit_outcome(),
+        # the operator's budget, stated once in the policy, also bounds the auditor's own
+        # calls (an eval set's `cost_limit`, if set, overrides it): FRICTION 100
+        cost_limit=launch_policy.limits.budget_usd,
         solver=[
             as_solver(
                 react(

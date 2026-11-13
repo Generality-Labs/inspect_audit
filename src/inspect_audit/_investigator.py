@@ -19,7 +19,7 @@ from inspect_ai.model import ChatMessage, ChatMessageUser, ContentImage, Model
 from inspect_ai.scorer import Scorer
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import Tool, ToolDef, WebSearchProviders, bash, skill, web_search
-from inspect_ai.util import sample_limits, sandbox, store_as
+from inspect_ai.util import sandbox, store_as
 
 from . import prompts
 from ._compose import INVESTIGATOR
@@ -178,10 +178,6 @@ def investigator(
     )
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        if sample_limits().cost.limit is None:
-            raise RuntimeError(
-                "the investigation is capped in dollars: set cost_limit on the task or the eval"
-            )
         sample_id = str(state.sample_id)
         their_sample = their_samples[sample_id]
         their_messages = list(state.messages)

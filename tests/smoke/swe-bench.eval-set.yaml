@@ -31,7 +31,6 @@ tasks:
         inputs:
           logs: []
         limits:
-          investigation_sample_cost_usd: 0.25
           max_concurrent_jobs: 3
           budget_usd: 2.0
       runs: hawk
@@ -39,12 +38,10 @@ tasks:
       credential_mode: user
       box: k8s
       instructions: 'This case: no supplied logs. Jobs: run_eval fresh attempts on ONE sample with the
-        subject model; then send_investigators on that sample, check gold-answer, with that job''s logs,
-        item_cost_limit 0.25.'
+        subject model; then send_investigators on that sample, check gold-answer, with that job''s logs.'
 models:
 - package: inspect-ai
   items:
   - name: openai/openrouter/deepseek/deepseek-v4.1-flash-1017
-cost_limit: 2.0
 message_limit: 400
 retry_attempts: 0

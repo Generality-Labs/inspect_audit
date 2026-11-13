@@ -149,7 +149,7 @@ def test_run_eval_with_code_launches_a_recorded_variant(
     monkeypatch.setattr(_audit, "sandbox", lambda: box)
     run = _audit.run_eval(inv)
     asyncio.run(
-        run("ablate", ["1"], ["openai/subject"], "{}", 1, [], "/workspace/v", [], None, "prompt")  # type: ignore[arg-type]
+        run("ablate", ["1"], ["openai/subject"], "{}", 1, [], "/workspace/v", [], "prompt")  # type: ignore[arg-type]
     )
     [job] = runs.submitted
     assert job.task == "inspect_audit/variant" and job.package == "inspect_audit"
@@ -236,7 +236,7 @@ def test_rescoring_takes_no_models(tmp_path: Path) -> None:
     run = _audit.run_eval(inv)
     with pytest.raises(ToolError, match="models must be"):
         asyncio.run(
-            run("r", ["1"], ["openai/s"], '{"g": "openai/j"}', 1, ["hawk:logs"], None, [], 0.5, "")
+            run("r", ["1"], ["openai/s"], '{"g": "openai/j"}', 1, ["hawk:logs"], None, [], "")
         )  # type: ignore[arg-type]
 
 

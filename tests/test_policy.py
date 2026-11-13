@@ -109,7 +109,6 @@ def _valid() -> tuple["AuditAuthorizer", Job, Job]:
     from inspect_audit.dispatch.policy import (
         AuditAuthorizer,
         LaunchPolicy,
-        Limits,
         Models,
         canonical,
     )
@@ -127,7 +126,6 @@ def _valid() -> tuple["AuditAuthorizer", Job, Job]:
         task_args_json=canonical(args),
         source="bench.task",
         supplied_logs=("hawk:run",),
-        limits=Limits(investigation_sample_cost_usd=0.5),
         configuration_json="{}",
     )
     investigation = Job(
@@ -145,7 +143,6 @@ def _valid() -> tuple["AuditAuthorizer", Job, Job]:
             "logs": ["hawk:run"],
             "judge": {"grader": "judge"},
             "investigator_image": "img",
-            "cost_limit": 0.2,
         },
     )
     benchmark = Job(
@@ -170,9 +167,7 @@ def test_the_valid_jobs_pass() -> None:
 @pytest.mark.parametrize(
     ("kind", "change"),
     [
-        ("investigation", {"cost_limit": 0.9}),  # above the per-sample cap
-        ("investigation", {"cost_limit": float("inf")}),
-        ("investigation", {"cost_limit": 0}),
+        ("investigation", {"cost_limit": 0.9}),  # no per-item caps: not a job argument
         ("investigation", {"logs": ["hawk:someone-elses-run"]}),
         ("investigation", {"source": "other.module"}),
         ("investigation", {"samples": ["3"]}),

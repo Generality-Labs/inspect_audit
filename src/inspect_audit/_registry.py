@@ -11,7 +11,6 @@ from inspect_ai.tool import WebSearchProviders
 from ._audit import audit as audit
 from ._log_sources import fetch_logs as fetch_logs
 from ._log_sources import log_files as log_files
-from ._prices import register_prices
 from ._publishing import publish as publish
 from ._task import investigation_task
 from .containers import INVESTIGATOR_IMAGE
@@ -50,19 +49,17 @@ def investigation(
     time_limit: int | None = None,
     working_limit: int | None = None,
     install: list[str] | None = None,
-    prices: dict[str, dict[str, float]] | None = None,
 ) -> Task:
     """Investigate a benchmark task from inside its own samples (see `investigation_task` in `_task`).
 
     Everything is declared: `samples` is a list of ids or the literal "all"; `logs` are
     `.eval` files or `hawk:<eval set id>`; `source` is the task's file, a directory, or
-    a module name. The investigator is the eval's own `--model`; `prices` for it and
-    the judges are looked up from Hawk's table by the launching audit (`_prices`).
+    a module name. The investigator is the eval's own `--model`. Uncapped unless the
+    operator sets `cost_limit`: the launching audit prices its jobs itself (`_spend`).
     `investigator_image` defaults to the published image; "build" builds it locally.
     """
     if isinstance(samples, str) and samples != "all":
         raise ValueError('samples must be a list of sample ids or the literal "all"')
-    register_prices(prices)
     return investigation_task(
         task,
         samples=samples if samples == "all" else list(samples),
@@ -100,7 +97,6 @@ def regrade(
     samples: list[str] | None = None,
     epochs: int = 3,
     cost_limit: float | None = None,
-    prices: dict[str, dict[str, float]] | None = None,
     files: dict[str, str] | None = None,
     source: str | None = None,
 ) -> Task:
@@ -111,7 +107,6 @@ def regrade(
     """
     from ._regrade import regrade_task
 
-    register_prices(prices)
     return regrade_task(
         task,
         logs=log_files(logs),

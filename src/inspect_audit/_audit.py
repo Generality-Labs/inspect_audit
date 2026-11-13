@@ -810,7 +810,7 @@ def run_eval(inv: Audit) -> Tool:
                     "samples": samples,
                     "epochs": epochs,
                     "cost_limit": item_cost_limit,
-                    "prices": _child_prices(list(judges.values())),
+                    "prices": _child_prices(list(judges.values()) or ["mockllm/model"]),
                     **({"files": files, "source": policy.source} if files else {}),
                 },
             )

@@ -28,6 +28,9 @@ FIELDS = {
     "input_cache_read": "cache_read_input_cost_per_1m",
     "input_cache_write": "cache_write_input_cost_per_1m",
 }
+# a mock model costs nothing, and its price says so
+MOCK = "mockllm/"
+FREE = dict.fromkeys(FIELDS, 0.0)
 
 
 class UnpricedModelError(ValueError):
@@ -38,19 +41,21 @@ def prices_for(models: list[str]) -> dict[str, dict[str, float]]:
     """Hawk's price for each model, keyed by the name the job calls it by.
 
     Needs a Hawk login (the operator's, or a user-mode runner's); off Hawk, nothing.
-    Raises `UnpricedModelError` naming every model Hawk does not price (mock models aside:
-    they cost nothing).
+    Raises `UnpricedModelError` naming every model Hawk does not price. A mock model
+    costs nothing, and says so: a job run under one (a rescore of a grader that calls no
+    model) still needs a price for its `cost_limit` (smoke round 7, FRICTION 96).
     """
+    mocks = {m: FREE for m in models if m.startswith(MOCK)}
     api_url = os.environ.get("HAWK_API_URL")
     if not api_url:
-        return {}
+        return mocks
     from hawk.core.providers import registry_model_name
 
     table = _hawk_table(api_url)
-    prices: dict[str, dict[str, float]] = {}
+    prices: dict[str, dict[str, float]] = dict(mocks)
     missing: list[str] = []
     for model in dict.fromkeys(models):
-        if model.startswith("mockllm/"):
+        if model.startswith(MOCK):
             continue
         row = table.get(registry_model_name(model, strict=False))
         price = {k: (row or {}).get(col) or 0.0 for k, col in FIELDS.items()}
@@ -97,7 +102,7 @@ def register_price(model: str, price: dict[str, Any]) -> None:
     """
     from inspect_ai.model import ModelCost, ModelInfo, get_model_info, set_model_info
 
-    if not usable(price):
+    if not usable(price) and not (model.startswith(MOCK) and price == FREE):
         raise UnpricedModelError(f"unusable price for {model}: {price}")
     values = [price.get(k, 0.0) for k in FIELDS]
     cost = ModelCost(**{k: float(v) for k, v in zip(FIELDS, values, strict=True)})

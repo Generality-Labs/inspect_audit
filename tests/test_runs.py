@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 from test_helpers.audit import make_audit
 
-from inspect_audit import _audit
+from inspect_audit import _audit, _prices
 from inspect_audit._report import AuditRecord
 from inspect_audit.dispatch import (
     COMPLETE,
@@ -902,6 +902,8 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
     )
     assert runs.submitted[-1].models == ["mockllm/model"]
     assert runs.submitted[-1].task_args["judge"] == {}
+    # and the mock is priced, or Inspect refuses the job's cost_limit (FRICTION 96)
+    assert runs.submitted[-1].task_args["prices"] == {"mockllm/model": _prices.FREE}
     with pytest.raises(ToolError, match="1 to 10"):
         asyncio.run(
             regrade(  # type: ignore[arg-type]

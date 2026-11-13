@@ -300,7 +300,9 @@ def test_prices_come_from_hawks_table_under_the_jobs_model_name(
     # a model Hawk does not price is refused, naming every such model; mock models are free
     with pytest.raises(_prices.UnpricedModelError, match="openai/unlisted-xyz, google/nope"):
         _prices.prices_for(["anthropic/claude-x", "openai/unlisted-xyz", "google/nope"])
-    assert _prices.prices_for(["mockllm/model"]) == {}
+    # a mock model is priced at zero, so a job run under one can carry a cost limit
+    assert _prices.prices_for(["mockllm/model"]) == {"mockllm/model": _prices.FREE}
+    _prices.register_price("mockllm/model", _prices.FREE)
     # a listed row with an unusable price is refused too
     rows["claude-free"] = {"model": "claude-free", "input_cost_per_1m": 0, "output_cost_per_1m": 0}
     with pytest.raises(_prices.UnpricedModelError, match="claude-free"):

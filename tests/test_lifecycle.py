@@ -11,7 +11,8 @@ from inspect_ai.solver import Generate, TaskState, solver
 
 from inspect_audit._audit import Audit, jobs
 from inspect_audit._register import Register, load, save
-from inspect_audit.dispatch import Job, LocalRuns
+from inspect_audit._spend import Spend
+from inspect_audit.dispatch import Job, JobKind, LocalRuns
 from inspect_audit.dispatch.policy import (
     AuditAuthorizer,
     LaunchPolicy,
@@ -41,15 +42,17 @@ def test_child_investigation_is_collected_once_into_the_register(tmp_path: Path)
         environment_json=canonical({"PYTHONPATH": str(fixtures.resolve())}),
         configuration_json="{}",
     )
+    runs = LocalRuns(tmp_path / "children")
     inv = Audit(
         root=root,
-        runs=LocalRuns(tmp_path / "children"),
+        runs=runs,
         task="toy",
         task_package="fixture",
         investigation_package="inspect_audit",
         investigator_image="python:3.12-slim",
         supplied=[],
         authorizer=AuditAuthorizer(policy),
+        spend=Spend(runs, None),
     )
 
     @solver
@@ -59,7 +62,7 @@ def test_child_investigation_is_collected_once_into_the_register(tmp_path: Path)
 
             from inspect_audit._findings import FindingsState, read_bundle, submit_findings
 
-            await save(
+            save(
                 Register(
                     subject={"task": "toy"},
                     checks=["gold-answer"],
@@ -83,7 +86,7 @@ def test_child_investigation_is_collected_once_into_the_register(tmp_path: Path)
                     "cost_limit": 0.01,
                 },
             )
-            await inv.launch(job, "investigation", "API-free lifecycle test")
+            await inv.launch(job, JobKind.INVESTIGATION, "API-free lifecycle test")
             manage = jobs(inv)
             try:
                 from inspect_ai.tool import ToolError
@@ -93,12 +96,12 @@ def test_child_investigation_is_collected_once_into_the_register(tmp_path: Path)
                 await asyncio.wait_for(manage("wait", "child", 3), timeout=190)
                 first = await manage("collect", "child", None)
                 second = await manage("collect", "child", None)
-                takes = load().samples["a"]["gold-answer"]
+                takes = (await load()).samples["a"]["gold-answer"]
                 assert "1 investigator take(s) added" in first
                 assert "0 investigator take(s) added" in second
                 assert len(takes) == 1 and takes[0].label == "UNVERIFIABLE"
                 assert takes[0].by == "investigator" and takes[0].evidence
-                state.metadata["register"] = load().model_dump(mode="json")
+                state.metadata["register"] = (await load()).model_dump(mode="json")
                 state.metadata["jobs"] = json.loads(inv.record().model_dump_json())
                 draft = json.loads(await sandbox().read_file("/workspace/findings.json"))
                 draft["auditor"]["summary"] = "The worker could not establish the reference answer."
@@ -121,7 +124,7 @@ def test_child_investigation_is_collected_once_into_the_register(tmp_path: Path)
                 await sandbox().write_file("/workspace/findings.json", json.dumps(draft))
                 disputed = json.loads(await register_view()("disputed", None))
                 assert disputed[0]["sample"] == "a"
-                assert len(load().samples["a"]["gold-answer"]) == 1
+                assert len((await load()).samples["a"]["gold-answer"]) == 1
                 await submit_findings(root, inv)()
                 submitted = Path(state.store_as(FindingsState).destination)
                 findings, manifest = read_bundle(submitted)

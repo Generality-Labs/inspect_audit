@@ -545,6 +545,8 @@ def test_inputs_are_staged_into_a_plain_box_and_survive_nothing_mounted(tmp_path
         str(git_repo(tmp_path / "repo")),
         logs=[source_log],
         output_dir=str(tmp_path / "runs"),
+        # nothing is published: the LaTeX publisher would refuse a box without TeX at setup
+        publisher="gl",
     )
     compose = tmp_path / "compose.yaml"
     compose.write_text(

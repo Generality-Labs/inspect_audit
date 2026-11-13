@@ -24,7 +24,6 @@ from inspect_ai.dataset import Sample
 from inspect_ai.log import (
     EvalSampleSummary,
     list_eval_logs,
-    read_eval_log_async,
     read_eval_log_sample_summaries_async,
 )
 from inspect_ai.model import CompactionSummary, GenerateConfig, ModelConfig, get_model
@@ -652,9 +651,9 @@ async def _variant_files(inv: Audit, folder: str) -> tuple[dict[str, str], str]:
 
 def _selection(samples: list[str] | None) -> tuple[list[str] | None, tuple[int, int] | None]:
     """Sample ids, or for a benchmark whose items have no ids, a contiguous run of positions."""
-    from ._register import load, started
+    from ._register import population, started
 
-    current = load()
+    current = population()
     if samples is None or not (started(current) and current.subject.get("ids") == "positional"):
         return samples, None
     try:
@@ -932,20 +931,20 @@ async def _job_action(
     raise ToolError("action must be list, status, wait, collect, log or stop")
 
 
-async def start_register(task: str | None, policy: LaunchPolicy) -> int:
+async def start_register(task: str | None, policy: LaunchPolicy, root: Path) -> int:
     """Lay out the register from the launch policy; returns the number of items.
 
     Every permitted item of the benchmark, with an empty cell per policy check.
     """
     from inspect_ai.util import registry_create
 
-    from ._register import Register, load, save, started
+    from ._register import Register, population, save, started
     from ._task import numbered
     from ._verdicts import investigation_items
 
     if not task:
         raise ToolError("the register needs the investigated task: the operator sets target_task")
-    if started(load()):
+    if started(population()):
         raise ToolError("the register is already started; it keeps one population")
     ensure_policy(policy, store_as(PolicyStore), require_existing=True)
     args = json.loads(policy.task_args_json)
@@ -968,7 +967,7 @@ async def start_register(task: str | None, policy: LaunchPolicy) -> int:
         dataset = [s for s in dataset if str(s.id) in policy.samples]
     register = Register(
         subject={
-            **load().subject,
+            **population().subject,
             "task": task,
             "task_args": args,
             "dataset": getattr(their.dataset, "name", None),
@@ -977,12 +976,14 @@ async def start_register(task: str | None, policy: LaunchPolicy) -> int:
         checks=[s.name for s in skills],
         samples={str(s.id): {c.name: [] for c in skills} for s in dataset},
     )
-    await save(register)
+    save(register, results=str(root))
     return len(dataset)
 
 
 @tool(name="register")
-def register_view(task: str | None = None, policy: LaunchPolicy | None = None) -> Tool:
+def register_view(
+    task: str | None = None, policy: LaunchPolicy | None = None, root: Path | None = None
+) -> Tool:
     async def execute(view: str, check: str | None) -> str:
         """The register: every permitted item against every check, and where each stands.
 
@@ -995,16 +996,16 @@ def register_view(task: str | None = None, policy: LaunchPolicy | None = None) -
                 unresolved), "missing" (no take yet) or "disputed" (takes disagree).
             check: Only this check; null for all.
         """
-        from ._register import load, select, started
+        from ._register import load, population, select, started
         from ._verdicts import investigation_items
 
         if view not in ("summary", "flagged", "unresolved", "missing", "disputed"):
             raise ToolError("view is summary, flagged, unresolved, missing or disputed")
-        if not started(load()):
-            if policy is None:
+        if not started(population()):
+            if policy is None or root is None:
                 raise ToolError("no register: this audit has no launch policy to start one from")
-            await start_register(task, policy)
-        current = load()
+            await start_register(task, policy, root)
+        current = await load()
         skills = {s.name: s for s in investigation_items(current.checks)}
         from ._findings import DRAFT, Findings
         from ._register import apply_reviews
@@ -1024,26 +1025,39 @@ def register_view(task: str | None = None, policy: LaunchPolicy | None = None) -
 
 
 async def _import_investigations(inv: Audit, files: list[Path], address: str) -> str:
-    """An investigation job's verdicts into the register, starting it if need be."""
-    from ._register import import_investigation_log, load, save, started
+    """An investigation job's verdicts into the audit's Scout results (`_results`).
+
+    The scan is the record; the register reads it. A verdict on an item outside the
+    population, or for a check the register does not track, refuses the collection.
+    """
+    from ._register import add_takes, population, started
+    from ._results import investigator_takes, record
     from ._verdicts import investigation_items
 
-    if not started(load()):
-        await start_register(inv.task, inv.authorizer.policy)
-    current = load()
-    skills = {s.name: s for s in investigation_items()}
-    flags = {g for s in skills.values() for g in s.flags}
-    added: list[str] = []
+    if not started(population()):
+        await start_register(inv.task, inv.authorizer.policy, inv.root)
+    current = population()
     try:
-        for file in files:
-            added += import_investigation_log(
-                current, await read_eval_log_async(str(file)), address, skills
-            )
+        scan = await record(files, inv.root, current.checks, address)
+        rows = [
+            r for r in await investigator_takes(inv.root, current.checks) if r["run"] == address
+        ]
+        added = add_takes(current, rows)
     except ValueError as ex:
         raise ToolError(f"cannot add this investigation to the register: {ex}") from ex
-    await save(current)
+    from ._audit_workspace import copy_into_box
+
+    # the tables into the box, for the agent's own analysis (pandas reads them)
+    await copy_into_box(
+        sorted(p for p in scan.iterdir() if p.is_file()), f"/inputs/results/{scan.name}"
+    )
+    skills = {s.name: s for s in investigation_items(current.checks)}
+    flags = {g for s in skills.values() for g in s.flags}
     flagged = sum(1 for a in added if a.split("=")[-1] in flags)
-    return f"  register: {len(added)} investigator take(s) added, {flagged} flagged"
+    return (
+        f"  register: {len(added)} investigator verdict(s) recorded as Scout results "
+        f"({scan.name}), {flagged} flagged"
+    )
 
 
 def _cost(summaries: list[EvalSampleSummary]) -> float:
@@ -1442,7 +1456,7 @@ def audit(
         ),
         view_image(),
         report_blocker(),
-        register_view(target_task, launch_policy),
+        register_view(target_task, launch_policy, root),
     ]
     inv = None
     if backend is not None:
@@ -1501,14 +1515,15 @@ def audit(
         async def solve(state: TaskState, generate: Generate) -> TaskState:
             from ._register import Register, save
 
-            await save(
+            save(
                 Register(
                     subject={
                         "repo": seed.get("repo"),
                         "revision": seed.get("revision"),
                         "task": target_task,
                     }
-                )
+                ),
+                results=str(root),
             )
             return state
 

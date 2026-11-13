@@ -971,7 +971,11 @@ def test_full_coverage_holds_submission_until_every_cell_has_a_take(
     gap = _register.Register(
         checks=["gold-answer"], samples={"1": {"gold-answer": []}, "2": {"gold-answer": []}}
     )
-    monkeypatch.setattr(_register, "load", lambda: gap)
+
+    async def loaded() -> _register.Register:
+        return gap
+
+    monkeypatch.setattr(_register, "load", loaded)
     with pytest.raises(ToolError, match="full coverage: 2 of 2"):
         asyncio.run(submit_findings(tmp_path, inv, "b/t")())  # type: ignore[call-arg]
 

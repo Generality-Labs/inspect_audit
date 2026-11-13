@@ -106,24 +106,6 @@ def investigator_results(register: "Register") -> dict[str, Any]:
     }
 
 
-async def sync_draft(register: "Register") -> None:
-    """Refresh collected investigator records without replacing the auditor's draft."""
-    require_audit()
-    try:
-        data = json.loads(await sandbox().read_file(DRAFT))
-    except FileNotFoundError:
-        data = Findings().model_dump(mode="json")
-    except ValueError as ex:
-        raise ToolError(
-            "findings.json is not valid JSON; repair the draft and collect again"
-        ) from ex
-    if not isinstance(data, dict):
-        raise ToolError("findings.json must be an object")
-    data["subject"] = register.subject
-    data["investigators"] = investigator_results(register)
-    await sandbox().write_file(DRAFT, encoded(data))
-
-
 def validate_draft(data: Any, register: "Register") -> Findings:
     """The auditor's draft, with the sections that are the register's taken from it.
 
@@ -388,7 +370,7 @@ def submit_findings(
         lock = audit.launch_lock if audit else asyncio.Lock()
         async with lock:
             require_audit()
-            if (task or (audit and audit.task)) and not load().checks:
+            if (task or (audit and audit.task)) and not (await load()).checks:
                 raise ToolError(
                     'Open the register before submission: register(view="summary") starts it'
                 )
@@ -401,7 +383,7 @@ def submit_findings(
                     if not job.get("collected") and not job.get("collection_error"):
                         raise ToolError(f"Collect job {job['label']} before submitting findings")
                 if audit.authorizer.policy.limits.coverage == "full":
-                    register = load()
+                    register = await load()
                     missing = [
                         f"{sample_id}/{check}"
                         for sample_id, by_check in register.samples.items()
@@ -416,7 +398,7 @@ def submit_findings(
                             "them, or call report_blocker with why they cannot be done."
                         )
             try:
-                draft = validate_draft(json.loads(await sandbox().read_file(DRAFT)), load())
+                draft = validate_draft(json.loads(await sandbox().read_file(DRAFT)), await load())
                 if validate is not None:
                     validate(draft)
                 await freeze(root, draft)

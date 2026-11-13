@@ -114,11 +114,11 @@ def test_invalid_report_grade_is_refused_before_findings_are_frozen(
     from inspect_ai.util._store import init_subtask_store
 
     from inspect_audit import _findings
-    from inspect_audit._register import Register, RegisterStore
+    from inspect_audit._register import Register, save
 
     init_subtask_store(Store())
     draft = _findings.Findings(auditor=_findings.AuditorFindings(summary="Scope established"))
-    store_as(RegisterStore).data = Register().model_dump(mode="json")
+    save(Register())
 
     class Box:
         async def read_file(self, path: str) -> str:

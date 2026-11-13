@@ -25,8 +25,10 @@ The register (register tool) lays out every permitted item against the policy's 
 and starts itself on first use. Every sample/check is visible, including empty cells and unresolved verdicts. Read the
 underlying evidence for consequential claims; worker verdicts are leads. The register
 is the host's worker collection record; findings.json is the combined handoff draft.
-Its `subject` and `investigators` sections are filled from the register on every
-collect and again at submission: write only `auditor`. Record your reviews in
+Write only its `auditor` section: the investigators' verdicts are not yours to copy.
+They are Inspect Scout results, one table per check, in /inputs/results/<scan>/<check>.parquet
+(pandas reads them; each row is one verdict, with the investigated sample, its epoch and
+the investigator's explanation and evidence), and the register tool queries them. Record your reviews in
 auditor.reviews. Missing
 work is missing, not a clean verdict. Explain specific access or execution blockers.
 

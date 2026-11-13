@@ -1,8 +1,10 @@
-"""Host-side investigator collection and shared interpretation of sample/check results.
+"""The register: every permitted item against every check, as a view.
 
-The register retains all collected investigator takes in Inspect's checkpointed store.
-The agent works in findings.json; auditor reviews are applied to a temporary
-register for queries and publication, never written into the collection history.
+Investigators' verdicts live in one place, the audit's Scout results (`_results`); the
+store keeps only the population (subject, checks, sample ids) and where those results
+are. `load` puts the two together whenever it is asked, so there is no second copy of
+any verdict to fall out of step (FRICTION 92, 102). Auditor reviews are laid over a
+loaded view for queries and publication, never written into the results.
 """
 
 from datetime import UTC, datetime
@@ -45,74 +47,91 @@ class Register(BaseModel):
 
 
 class RegisterStore(StoreModel):
-    """The register as the sample store holds it; checkpointed with the sample."""
+    """The population, checkpointed with the sample: never a verdict (those are results)."""
 
-    data: dict[str, Any] = Field(default_factory=dict)
+    subject: dict[str, Any] = Field(default_factory=dict)
+    checks: list[str] = Field(default_factory=list)
+    sample_ids: list[str] = Field(default_factory=list)
+    results: str | None = None
+    """The audit root whose `results/` holds the investigators' Scout results."""
 
 
-def load() -> Register:
-    return Register.model_validate(store_as(RegisterStore).data or {})
+def population() -> Register:
+    """The items and checks, every cell empty: what `load` fills from the results."""
+    stored = store_as(RegisterStore)
+    return Register(
+        subject=stored.subject,
+        checks=list(stored.checks),
+        samples={sample: {check: [] for check in stored.checks} for sample in stored.sample_ids},
+    )
 
 
-async def save(register: Register) -> None:
-    """Refresh the combined draft, then save authoritative investigator history."""
-    from ._findings import sync_draft
+async def load() -> Register:
+    """The register: the population with every investigator verdict in the results."""
+    from pathlib import Path
 
-    await sync_draft(register)
-    store_as(RegisterStore).data = register.model_dump(mode="json", exclude_none=True)
+    from ._results import investigator_takes
+
+    register = population()
+    results = store_as(RegisterStore).results
+    if results and register.checks:
+        add_takes(register, await investigator_takes(Path(results), register.checks))
+    return register
+
+
+def save(register: Register, results: str | None = None) -> None:
+    """Keep the population (subject, checks, sample ids); verdicts are never stored here."""
+    stored = store_as(RegisterStore)
+    stored.subject = dict(register.subject)
+    stored.checks = list(register.checks)
+    stored.sample_ids = list(register.samples)
+    if results is not None:
+        stored.results = results
 
 
 def started(register: Register) -> bool:
     return bool(register.checks)
 
 
-def import_investigation_log(
-    register: Register, log: Any, run: str, checks: dict[str, InvestigationItemSkill]
-) -> list[str]:
-    """Each verdict in an investigation log as an investigator take; returns what was added.
+def add_takes(register: Register, rows: list[dict[str, Any]]) -> list[str]:
+    """Investigator verdicts (`_results.investigator_takes` rows) as takes; returns what was added.
 
-    Every (sample, check) score in the log becomes a take, NO_VERDICT included: an
-    investigator that recorded nothing is a fact about the work, not a gap to hide. A
-    sample outside the population or a check outside the register is refused, and a
-    take already imported from the same run, eval and epoch is not added again.
+    Every verdict becomes a take, NO_VERDICT included: an investigator that recorded
+    nothing is a fact about the work, not a gap to hide. A sample outside the population
+    or a check outside the register is refused, and a verdict from the same run, eval
+    and epoch is counted once however often its job is collected.
     """
     added: list[str] = []
-    for sample in log.samples or []:
-        sample_id = str(sample.id)
+    for row in rows:
+        sample_id, check = row["sample"], row["check"]
         if sample_id not in register.samples:
             raise ValueError(
                 f"investigation sample {sample_id!r} is not in the register's population"
             )
-        for check, score in (sample.scores or {}).items():
-            if check not in checks:
-                continue
-            if check not in register.checks:
-                raise ValueError(
-                    f"the investigation ran {check!r}, which the register does not track"
-                )
-            metadata = dict(score.metadata or {})
-            cell = register.samples[sample_id][check]
-            # collecting a job twice must not count its verdicts twice
-            if any(
-                (t.run, t.eval_id, t.epoch, t.label)
-                == (run, log.eval.eval_id, sample.epoch, str(score.value))
-                for t in cell
-            ):
-                continue
-            cell.append(
-                Take(
-                    by="investigator",
-                    label=str(score.value),
-                    explanation=str(score.explanation or ""),
-                    evidence=[Evidence(**e) for e in metadata.get("evidence") or []],
-                    run=run,
-                    eval_id=log.eval.eval_id,
-                    epoch=sample.epoch,
-                    model=log.eval.model,
-                    record=metadata,
-                )
+        if check not in register.checks:
+            raise ValueError(f"the investigation ran {check!r}, which the register does not track")
+        cell = register.samples[sample_id][check]
+        if any(
+            (t.run, t.eval_id, t.epoch, t.label)
+            == (row["run"], row["eval_id"], row["epoch"], row["label"])
+            for t in cell
+        ):
+            continue
+        metadata = dict(row.get("metadata") or {})
+        cell.append(
+            Take(
+                by="investigator",
+                label=row["label"],
+                explanation=row["explanation"],
+                evidence=[Evidence(**e) for e in metadata.get("evidence") or []],
+                run=row["run"],
+                eval_id=row["eval_id"],
+                epoch=row["epoch"],
+                model=row["model"],
+                record=metadata,
             )
-            added.append(f"{sample_id}/{check}={score.value}")
+        )
+        added.append(f"{sample_id}/{check}={row['label']}")
     return added
 
 

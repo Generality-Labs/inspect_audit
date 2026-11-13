@@ -19,6 +19,7 @@ dependencies = [
     # k8s_sandbox passes newline-terminated Helm output to Version.parse;
     # semver 3.1 rejects that output before any investigation sample can start.
     "semver>=3.0,<3.1",
+    "inspect-scout==0.6.1",
 ]
 
 [project.entry-points.inspect_ai]

@@ -1,9 +1,7 @@
 """The register: one machine-readable record of every take in an audit."""
 
 import asyncio
-import json
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -44,25 +42,27 @@ def box(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     return written
 
 
-def _investigation_log(*scores: tuple[str, int, str, str]) -> Any:
-    """An investigation log as Inspect reads it: (sample, epoch, check, grade) scores."""
-    samples: dict[tuple[str, int], Any] = {}
-    for sample_id, epoch, check, grade in scores:
-        sample = samples.setdefault(
-            (sample_id, epoch), SimpleNamespace(id=sample_id, epoch=epoch, scores={})
-        )
-        sample.scores[check] = SimpleNamespace(
-            value=grade,
-            explanation=f"{grade} because",
-            metadata={"evidence": [{"observed": "o", "source": "s"}], "flagged": False},
-        )
-    return SimpleNamespace(
-        samples=list(samples.values()),
-        eval=SimpleNamespace(eval_id="ev1", model="openrouter/openai/gpt-6-luna"),
-    )
+def _verdicts(run: str, *scores: tuple[str, int, str, str]) -> list[dict[str, Any]]:
+    """Investigator verdicts as `_results.investigator_takes` returns them from the
+    Scout results: (sample, epoch, check, grade)."""
+    return [
+        {
+            "sample": sample_id,
+            "check": check,
+            "label": grade,
+            "explanation": f"{grade} because",
+            "metadata": {"evidence": [{"observed": "o", "source": "s"}], "flagged": False},
+            "run": run,
+            "eval_id": "ev1",
+            "epoch": epoch,
+            "model": "openrouter/openai/gpt-6-luna",
+            "result": f"r-{sample_id}-{epoch}",
+        }
+        for sample_id, epoch, check, grade in scores
+    ]
 
 
-def _start(checks: list[str]) -> str:
+def _start(checks: list[str], root: Path | None = None) -> str:
     """Start the register as the register tool does on first use: from a launch policy."""
     from inspect_ai.util import store_as
 
@@ -80,7 +80,10 @@ def _start(checks: list[str]) -> str:
     saved = store_as(PolicyStore)
     saved.policy_json = saved.digest = None
     ensure_policy(policy, saved, require_existing=False)
-    count = asyncio.run(_audit.start_register("register_fixture", policy))
+    import tempfile
+
+    root = root or Path(tempfile.mkdtemp())
+    count = asyncio.run(_audit.start_register("register_fixture", policy, root))
     return f"{count} items x {len(checks)} checks"
 
 
@@ -88,30 +91,28 @@ def test_the_population_is_the_benchmarks_items_with_an_empty_cell_per_check(
     box: dict[str, str],
 ) -> None:
     assert "3 items x 2 checks" in _start(["gold-answer", "answer-format"])
-    register = _register.load()
+    register = asyncio.run(_register.load())
     assert register.subject["ids"] == "positional"
     assert register.samples == {
         "1": {"gold-answer": [], "answer-format": []},
         "2": {"gold-answer": [], "answer-format": []},
         "3": {"gold-answer": [], "answer-format": []},
     }
-    # the box holds the same thing, for the agent to read and script against
-    from inspect_audit._findings import DRAFT, investigator_results
-
-    assert json.loads(box[DRAFT])["investigators"] == investigator_results(register)
-    assert "/workspace/register.json" not in box
+    # nothing is copied into the agent's draft: the verdicts have one place (FRICTION 102)
+    assert box == {}
     with pytest.raises(ToolError, match="already started"):
         _start(["gold-answer"])
 
 
 def test_investigator_verdicts_arrive_as_takes_with_their_origin_once(box: dict[str, str]) -> None:
     _start(["gold-answer"])
-    register = _register.load()
-    skills = {s.name: s for s in investigation_items()}
-    log = _investigation_log(
-        ("1", 1, "gold-answer", "INCORRECT"), ("2", 1, "gold-answer", "NO_VERDICT")
+    register = asyncio.run(_register.load())
+    rows = _verdicts(
+        "hawk:investigation-1",
+        ("1", 1, "gold-answer", "INCORRECT"),
+        ("2", 1, "gold-answer", "NO_VERDICT"),
     )
-    added = _register.import_investigation_log(register, log, "hawk:investigation-1", skills)
+    added = _register.add_takes(register, rows)
     assert added == ["1/gold-answer=INCORRECT", "2/gold-answer=NO_VERDICT"]
     [take] = register.samples["1"]["gold-answer"]
     assert (take.by, take.label, take.run, take.eval_id, take.epoch) == (
@@ -123,28 +124,22 @@ def test_investigator_verdicts_arrive_as_takes_with_their_origin_once(box: dict[
     )
     assert take.evidence[0].source == "s" and take.record is not None
     # collecting the same job again adds nothing
-    assert _register.import_investigation_log(register, log, "hawk:investigation-1", skills) == []
+    assert _register.add_takes(register, rows) == []
     with pytest.raises(ValueError, match="not in the register"):
-        _register.import_investigation_log(
-            register, _investigation_log(("99", 1, "gold-answer", "CORRECT")), "hawk:a", skills
-        )
+        _register.add_takes(register, _verdicts("hawk:a", ("99", 1, "gold-answer", "CORRECT")))
 
 
 def test_the_views_select_cells_by_state(box: dict[str, str]) -> None:
     _start(["gold-answer"])
-    register = _register.load()
+    register = asyncio.run(_register.load())
     skills = {s.name: s for s in investigation_items()}
-    _register.import_investigation_log(
+    _register.add_takes(
         register,
-        _investigation_log(
-            ("1", 1, "gold-answer", "INCORRECT"), ("2", 1, "gold-answer", "UNVERIFIABLE")
+        _verdicts(
+            "hawk:a", ("1", 1, "gold-answer", "INCORRECT"), ("2", 1, "gold-answer", "UNVERIFIABLE")
         ),
-        "hawk:a",
-        skills,
     )
-    _register.import_investigation_log(
-        register, _investigation_log(("1", 1, "gold-answer", "CORRECT")), "hawk:b", skills
-    )
+    _register.add_takes(register, _verdicts("hawk:b", ("1", 1, "gold-answer", "CORRECT")))
 
     def cells(view: str) -> list[str]:
         rows = _register.select(register, view, skills, None)  # type: ignore[arg-type]
@@ -169,7 +164,8 @@ def test_the_views_select_cells_by_state(box: dict[str, str]) -> None:
 def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
     box: dict[str, str], tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The verdicts come from the .eval file through Inspect's log API, as on Hawk."""
+    """The verdicts come from the real .eval file, through a Scout scan whose results are
+    then the register's only source (FRICTION 102)."""
     from pathlib import Path
 
     from inspect_ai import eval as inspect_eval
@@ -195,7 +191,7 @@ def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
     [log] = inspect_eval(
         investigation, model="mockllm/model", log_dir=str(tmp_path), display="none"
     )
-    _start(["gold-answer"])
+    _start(["gold-answer"], tmp_path)
 
     class Runs:
         async def status(self, run_id: str) -> str:
@@ -223,8 +219,13 @@ def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
         {"label": "a1", "kind": "investigation", "run_id": "r", "address": "hawk:investigation-1"}
     ]
     out = asyncio.run(_audit.jobs(inv)("collect", "a1", None))  # type: ignore[arg-type]
-    assert "2 investigator take(s) added, 1 flagged" in out
-    register = _register.load()
+    assert "2 investigator verdict(s) recorded as Scout results" in out and "1 flagged" in out
+    # the results are real Scout output: one table per check, read back by Scout
+    from inspect_scout import scan_results_df
+
+    [scan] = (tmp_path / "results").glob("scan_id=*")
+    assert len(scan_results_df(str(scan)).scanners["gold_answer"]) == 2
+    register = asyncio.run(_register.load())
     [take] = register.samples["2"]["gold-answer"]
     assert (take.label, take.run, take.evidence[0].observed) == (
         "INCORRECT",

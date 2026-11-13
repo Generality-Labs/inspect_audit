@@ -6,6 +6,11 @@ variant, fresh attempts, investigators), collect them, submit findings and publi
 auditor, investigators and subjects are DeepSeek v4.1 Flash; caps are in each config.
 
     python tests/smoke/run_smoke.py --revision <pushed commit> [--cases simpleqa-verified ...]
+    python tests/smoke/run_smoke.py --revision <pushed commit> --quick
+
+`--quick` is the check after every fix (~15 minutes, cents): SimpleQA Verified only, with
+routine-quick.md (one rescore, one investigation, collect, submit, publish) in place of
+routine.md and the case's own notes. The full round is for milestones.
 
 Submits every case to Hawk at once as the logged-in operator, waits, downloads
 the audit's log, and appends one JSON line per case to tests/smoke/results.jsonl: what
@@ -46,7 +51,10 @@ def at_revision(path: Path, revision: str) -> str:
     ).stdout
 
 
-def materialize(case: Path, revision: str) -> Path:
+QUICK_CASE = "simpleqa-verified"
+
+
+def materialize(case: Path, revision: str, quick: bool = False) -> Path:
     """The case with this inspect_audit revision in place of SELF, and the shared testing
     routine (routine.md) ahead of the case's own notes: every smoke audit presses every
     button and reports on the tool, not the benchmark. Both are read at `revision`."""
@@ -56,7 +64,9 @@ def materialize(case: Path, revision: str) -> Path:
         config.setdefault("runner", {})["cleanup"] = False
     args = config["tasks"][0]["items"][0]["args"]
     args["instructions"] = (
-        at_revision(HERE / "routine.md", revision) + "\n" + args.get("instructions", "")
+        at_revision(HERE / "routine-quick.md", revision)
+        if quick
+        else at_revision(HERE / "routine.md", revision) + "\n" + args.get("instructions", "")
     )
     out = Path(tempfile.mkdtemp(prefix="ia-smoke-")) / case.name
     out.write_text(yaml.safe_dump(config, sort_keys=False))
@@ -129,7 +139,7 @@ def audit_summary(log_dir: Path) -> dict[str, Any]:
     }
 
 
-async def run(case: Path, revision: str, wait_minutes: float) -> dict[str, Any]:
+async def run(case: Path, revision: str, wait_minutes: float, quick: bool) -> dict[str, Any]:
     from inspect_audit.dispatch.hawk import download
 
     started = datetime.now(UTC).isoformat(timespec="seconds")
@@ -137,9 +147,10 @@ async def run(case: Path, revision: str, wait_minutes: float) -> dict[str, Any]:
         "case": case.name.removesuffix(".eval-set.yaml"),
         "revision": revision,
         "started": started,
+        "tier": "quick" if quick else "full",
     }
     try:
-        eval_set_id = await submit(materialize(case, revision))
+        eval_set_id = await submit(materialize(case, revision, quick))
         row["eval_set_id"] = eval_set_id
         print(f"{row['case']}: submitted {eval_set_id}", flush=True)
         deadline = time.monotonic() + 60 * wait_minutes
@@ -164,23 +175,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--revision", required=True, help="a pushed inspect_audit commit")
     parser.add_argument("--cases", nargs="*", help="case names (file stems); default all")
     parser.add_argument("--wait-minutes", type=float, default=180)
+    parser.add_argument("--quick", action="store_true", help="the short check (see above)")
     args = parser.parse_args(argv)
     cases = sorted(HERE.glob("*.eval-set.yaml"))
-    if args.cases:
+    if args.quick:
+        cases = [c for c in cases if c.name.removesuffix(".eval-set.yaml") == QUICK_CASE]
+    elif args.cases:
         cases = [c for c in cases if c.name.removesuffix(".eval-set.yaml") in args.cases]
     for case in cases:
         # refuse a broken or uncommitted config before any spend
         yaml.safe_load(at_revision(case, args.revision))
-    rows = asyncio.run(_all(cases, args.revision, args.wait_minutes))
+    rows = asyncio.run(_all(cases, args.revision, args.wait_minutes, args.quick))
     failed = sum(bool(r.get("error")) or r.get("log_status") != "success" for r in rows)
     return 1 if failed else 0
 
 
-async def _all(cases: list[Path], revision: str, wait_minutes: float) -> list[dict[str, Any]]:
+async def _all(
+    cases: list[Path], revision: str, wait_minutes: float, quick: bool
+) -> list[dict[str, Any]]:
     """Every case at once: the same spend as one after another, a third of the wait."""
 
     async def one(case: Path) -> dict[str, Any]:
-        row = await run(case, revision, wait_minutes)
+        row = await run(case, revision, wait_minutes, quick)
         print(json.dumps(row, indent=1), flush=True)
         return row
 

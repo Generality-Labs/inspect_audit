@@ -6,7 +6,6 @@
   `hawk:` log fetching, key delivery for the launcher).
 - `policy`: the frozen launch policy and the authoriser every child job passes.
 - `packages`: the pip specs a fresh runner installs.
-- `spend`: what the billed keys have left.
 - `launcher`, `openrouter`, `secrets`, `cli`: a capped OpenRouter key per
   audit, always revoked (`inspect-audit-launch`).
 

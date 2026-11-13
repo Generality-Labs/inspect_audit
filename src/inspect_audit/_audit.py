@@ -26,7 +26,7 @@ from inspect_ai.log import (
     list_eval_logs,
     read_eval_log_sample_summaries_async,
 )
-from inspect_ai.model import CompactionSummary, GenerateConfig, ModelConfig, get_model
+from inspect_ai.model import CompactionSummary, GenerateConfig, ModelConfig
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
 from inspect_ai.util import CheckpointConfig, sandbox, store_as
@@ -35,6 +35,7 @@ from . import prompts
 from ._image import view_image
 from ._log_sources import fetch_logs, is_remote_logs
 from ._prices import cost_of, price_models
+from ._register import register_view
 from ._report import (
     AuditRecord,
     AuditState,
@@ -43,7 +44,7 @@ from ._report import (
     operator_turn,
     report_blocker,
 )
-from ._spend import Spend
+from ._spend import Spend, budget
 from ._sync import run
 from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS
 from .containers import (
@@ -78,7 +79,6 @@ from .dispatch.policy import (
 from .dispatch.policy import (
     credential_mode as resolve_credential_mode,
 )
-from .dispatch.spend import key_balance
 
 logger = getLogger(__name__)
 
@@ -388,25 +388,6 @@ def docker_box(root: Path) -> tuple[str, str]:
     }
     (root / "compose.yaml").write_text(yaml.safe_dump(compose))
     return "docker", str(root / "compose.yaml")
-
-
-@tool(name="budget")
-def budget(spend: Spend, hawk_api_url: str | None, openrouter: bool) -> Tool:
-    async def execute() -> str:
-        """What this audit has spent so far, job by job, and what is left.
-
-        Spent: your own calls and every job's spend so far, running or finished, from
-        its token counts. No job is capped and nothing is reserved: decide what the
-        work is worth from these costs, watch this as you go, and stop or stop jobs when
-        it is not. The model key's balance, below, counts everything that bills to it.
-        """
-        lines = await spend.report()
-        lines += await key_balance(
-            hawk_api_url, openrouter and str(get_model()).startswith("openrouter/")
-        )
-        return "\n".join(lines)
-
-    return execute
 
 
 @contextmanager
@@ -855,140 +836,17 @@ async def _job_action(
         await copy_into_box(files, f"/inputs/jobs/{label}")
         lines = [await _log_line(f) for f in files]
         if job["kind"] == JobKind.INVESTIGATION:
-            lines.append(await _import_investigations(inv, files, job["address"]))
+            from ._register import collect_investigation
+
+            lines.append(
+                await collect_investigation(
+                    files, job["address"], inv.root, inv.task, inv.authorizer.policy
+                )
+            )
         record = inv.record()
         record.jobs = [{**j, "collected": True} if j["label"] == label else j for j in record.jobs]
         return f"{label}: {status}; collected to /inputs/jobs/{label}/\n" + "\n".join(lines)
     raise ToolError("action must be list, status, wait, collect, log or stop")
-
-
-async def start_register(task: str | None, policy: LaunchPolicy, root: Path) -> int:
-    """Lay out the register from the launch policy; returns the number of items.
-
-    Every permitted item of the benchmark, with an empty cell per policy check.
-    """
-    from inspect_ai.util import registry_create
-
-    from ._register import Register, population, save, started
-    from ._task import numbered
-    from ._verdicts import investigation_items
-
-    if not task:
-        raise ToolError("the register needs the investigated task: the operator sets target_task")
-    if started(population()):
-        raise ToolError("the register is already started; it keeps one population")
-    ensure_policy(policy, store_as(PolicyStore), require_existing=True)
-    args = json.loads(policy.task_args_json)
-    try:
-        skills = investigation_items(list(policy.checks))
-    except ValueError as ex:
-        raise ToolError(str(ex)) from ex
-    try:
-        their = registry_create("task", task, **args)
-    except Exception as ex:
-        raise ToolError(
-            f"cannot load {task} here to read its dataset ({type(ex).__name__}: {ex}). "
-            "The benchmark's package must be installed beside inspect_audit."
-        ) from ex
-    dataset, positional = numbered(their)
-    if policy.samples is not None:
-        known = {str(s.id) for s in dataset}
-        if set(policy.samples) - known:
-            raise ToolError("launch policy selects sample IDs absent from the benchmark")
-        dataset = [s for s in dataset if str(s.id) in policy.samples]
-    register = Register(
-        subject={
-            **population().subject,
-            "task": task,
-            "task_args": args,
-            "dataset": getattr(their.dataset, "name", None),
-            "ids": "positional" if positional else "declared",
-        },
-        checks=[s.name for s in skills],
-        samples={str(s.id): {c.name: [] for c in skills} for s in dataset},
-    )
-    save(register, results=str(root))
-    return len(dataset)
-
-
-@tool(name="register")
-def register_view(
-    task: str | None = None, policy: LaunchPolicy | None = None, root: Path | None = None
-) -> Tool:
-    async def execute(view: str, check: str | None) -> str:
-        """The register: every permitted item against every check, and where each stands.
-
-        It starts itself from the launch policy on first use. Cells fill as investigation
-        jobs are collected and as you review; an empty cell is work not yet done.
-
-        Args:
-            view: "summary" (counts per check), "flagged" (an investigator flagged a
-                problem you have not reviewed), "unresolved" (the standing take is
-                unresolved), "missing" (no take yet) or "disputed" (takes disagree).
-            check: Only this check; null for all.
-        """
-        from ._register import load, population, select, started
-        from ._verdicts import investigation_items
-
-        if view not in ("summary", "flagged", "unresolved", "missing", "disputed"):
-            raise ToolError("view is summary, flagged, unresolved, missing or disputed")
-        if not started(population()):
-            if policy is None or root is None:
-                raise ToolError("no register: this audit has no launch policy to start one from")
-            await start_register(task, policy, root)
-        current = await load()
-        skills = {s.name: s for s in investigation_items(current.checks)}
-        from ._findings import DRAFT, Findings
-        from ._register import apply_reviews
-
-        try:
-            draft = Findings.model_validate_json(await sandbox().read_file(DRAFT))
-            apply_reviews(current, draft.auditor.reviews, skills)
-        except (ValueError, OSError) as ex:
-            raise ToolError(f"Cannot read draft reviews: {ex}") from ex
-        rows = select(current, view, skills, check)  # type: ignore[arg-type]
-        text = json.dumps(rows, indent=1)
-        if len(text) > 12_000:
-            text = text[:12_000] + f"\n... (read {DRAFT} for the rest)"
-        return text
-
-    return execute
-
-
-async def _import_investigations(inv: Audit, files: list[Path], address: str) -> str:
-    """An investigation job's verdicts into the audit's Scout results (`_results`).
-
-    The scan is the record; the register reads it. A verdict on an item outside the
-    population, or for a check the register does not track, refuses the collection.
-    """
-    from ._register import add_takes, population, started
-    from ._results import investigator_takes, record
-    from ._verdicts import investigation_items
-
-    if not started(population()):
-        await start_register(inv.task, inv.authorizer.policy, inv.root)
-    current = population()
-    try:
-        scan = await record(files, inv.root, current.checks, address)
-        rows = [
-            r for r in await investigator_takes(inv.root, current.checks) if r["run"] == address
-        ]
-        added = add_takes(current, rows)
-    except ValueError as ex:
-        raise ToolError(f"cannot add this investigation to the register: {ex}") from ex
-    from ._box import copy_into_box
-
-    # the tables into the box, for the agent's own analysis (pandas reads them)
-    await copy_into_box(
-        sorted(p for p in scan.iterdir() if p.is_file()), f"/inputs/results/{scan.name}"
-    )
-    skills = {s.name: s for s in investigation_items(current.checks)}
-    flags = {g for s in skills.values() for g in s.flags}
-    flagged = sum(1 for a in added if a.split("=")[-1] in flags)
-    return (
-        f"  register: {len(added)} investigator verdict(s) recorded as Scout results "
-        f"({scan.name}), {flagged} flagged"
-    )
 
 
 def _cost(summaries: list[EvalSampleSummary]) -> float:
@@ -1297,21 +1155,21 @@ def audit(
     require_models(
         [*auditor_model, *models.investigators, *models.subjects, *models.judges], backend
     )
-    spend = Spend(backend, launch_policy.limits.budget_usd)
+    spend = Spend(
+        backend,
+        launch_policy.limits.budget_usd,
+        # the Hawk key whenever Hawk is in the picture and its address is known: jobs
+        # on Hawk, or the auditor itself in a Hawk pod (FRICTION 79b; was only the first)
+        hawk_api_url=hawk_api_url if (runs == "hawk" or box == "k8s") else None,
+        # the auditor's own calls bill to OPENROUTER_API_KEY in a local box, as do local jobs
+        openrouter=box == "docker" or runs == "local",
+    )
     tools: list[Tool] = [
         # a shell dump is the one place the agent routinely wants more than the
         # 32KB default; everything else writes large results to files
         ToolDef(bash(timeout=300), max_output=128 * 1024).as_tool(),
         skill(skill_paths),
-        # the agent's own calls bill to the Hawk user's key in a pod, to
-        # OPENROUTER_API_KEY in a local box; jobs to whichever their backend uses
-        budget(
-            spend,
-            # the Hawk key whenever Hawk is in the picture and its address is known: jobs
-            # on Hawk, or the auditor itself in a Hawk pod (FRICTION 79b; was only the first)
-            hawk_api_url if (runs == "hawk" or box == "k8s") else None,
-            openrouter=box == "docker" or runs == "local",
-        ),
+        budget(spend),
         view_image(),
         report_blocker(),
         register_view(target_task, launch_policy, root),

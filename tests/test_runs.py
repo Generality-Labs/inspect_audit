@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from test_helpers.audit import make_audit
 
-from inspect_audit import _audit, _prices
+from inspect_audit import _audit, _prices, _spend
 from inspect_audit._report import AuditRecord
 from inspect_audit.dispatch import (
     FINISHED,
@@ -679,7 +679,7 @@ def test_a_balance_without_a_number_is_unknown_not_zero(monkeypatch: pytest.Monk
     monkeypatch.setattr(
         urllib.request, "urlopen", lambda request, timeout=None: Response({"data": {"limit": 5}})
     )
-    [line] = asyncio.run(_audit.key_balance(None, openrouter=True))
+    [line] = asyncio.run(_spend.key_balance(None, openrouter=True))
     assert "unknown" in line and "$0.00" not in line
 
 
@@ -758,7 +758,7 @@ def test_budget_reports_what_the_audit_and_each_job_have_spent(
         lambda: SimpleNamespace(cost=SimpleNamespace(usage=5.82, limit=None)),
     )
     spend = Spend(runs, budget_usd=100.0)
-    report = asyncio.run(_audit.budget(spend, None, openrouter=False)())  # type: ignore[call-arg]
+    report = asyncio.run(_spend.budget(spend)())  # type: ignore[call-arg]
     assert "Your own calls: $5.82" in report
     assert "screen (investigation, running): $3.00 so far" in report
     assert "odd (benchmark, running): $0.00 so far; no price for openai/unpriced" in report

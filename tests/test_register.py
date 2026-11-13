@@ -84,7 +84,7 @@ def _start(checks: list[str], root: Path | None = None) -> str:
     import tempfile
 
     root = root or Path(tempfile.mkdtemp())
-    count = asyncio.run(_audit.start_register("register_fixture", policy, root))
+    count = asyncio.run(_register.start_register("register_fixture", policy, root))
     return f"{count} items x {len(checks)} checks"
 
 
@@ -259,7 +259,7 @@ def test_failed_verdict_import_does_not_mark_job_collected(
 
     attempts = []
 
-    async def import_results(inv, files, address):
+    async def import_results(files, address, root, task, policy):
         attempts.append(address)
         if len(attempts) == 1:
             raise ToolError("repair findings.json")
@@ -271,7 +271,7 @@ def test_failed_verdict_import_does_not_mark_job_collected(
         return "worker"
 
     monkeypatch.setattr(_audit, "_log_line", line)
-    monkeypatch.setattr(_audit, "_import_investigations", import_results)
+    monkeypatch.setattr(_register, "collect_investigation", import_results)
     inv = make_audit(
         root=tmp_path,
         runs=Runs(),

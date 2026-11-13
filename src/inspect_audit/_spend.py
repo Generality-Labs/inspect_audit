@@ -9,14 +9,23 @@ each job has cost and decides. The operator's budget is the one stop: no launch 
 what has been spent reaches it.
 """
 
+import asyncio
+import json
+import os
+import urllib.request
 from dataclasses import dataclass
+from typing import Any
 
-from inspect_ai.tool import ToolError
+from inspect_ai.model import get_model
+from inspect_ai.tool import Tool, ToolError, tool
 from inspect_ai.util import store_as
 
 from ._prices import cost_of
 from ._report import AuditRecord
 from .dispatch import Runs
+from .dispatch.hawk import HawkLogin
+
+OPENROUTER = "https://openrouter.ai/api/v1"
 
 
 def usd(amount: float) -> str:
@@ -38,9 +47,18 @@ class JobSpend:
 
 
 class Spend:
-    def __init__(self, runs: Runs | None, budget_usd: float | None) -> None:
+    def __init__(
+        self,
+        runs: Runs | None,
+        budget_usd: float | None,
+        hawk_api_url: str | None = None,
+        openrouter: bool = False,
+    ) -> None:
         self.runs = runs
         self.budget_usd = budget_usd
+        # the keys whose balance `budget` reports: the Hawk user's, OPENROUTER_API_KEY
+        self.hawk_api_url = hawk_api_url
+        self.openrouter = openrouter
 
     def own(self) -> float:
         """The auditor's own calls so far."""
@@ -99,3 +117,72 @@ class Spend:
                 f"({100 * left / self.budget_usd:.0f}%) left for your calls and every job"
             )
         return lines
+
+    async def balances(self) -> list[str]:
+        """What the model keys this audit bills to have left, as their owners say."""
+        return await key_balance(
+            self.hawk_api_url, self.openrouter and str(get_model()).startswith("openrouter/")
+        )
+
+
+@tool(name="budget")
+def budget(spend: Spend) -> Tool:
+    async def execute() -> str:
+        """What this audit has spent so far, job by job, and what is left.
+
+        Spent: your own calls and every job's spend so far, running or finished, from
+        its token counts. No job is capped and nothing is reserved: decide what the
+        work is worth from these costs, watch this as you go, and stop or stop jobs when
+        it is not. The model key's balance, below, counts everything that bills to it.
+        """
+        return "\n".join([*await spend.report(), *await spend.balances()])
+
+    return execute
+
+
+async def key_balance(hawk_api_url: str | None, openrouter: bool) -> list[str]:
+    """What the model keys this audit spends on have left, as their owners say.
+
+    Calls made as a Hawk user (the auditor in a Hawk pod, jobs run on Hawk)
+    bill to that user's key, which Hawk reports. Calls made on OPENROUTER_API_KEY
+    (the auditor in a local box, local jobs) bill to that key, which OpenRouter
+    reports. Which applies is declared by the caller; nothing is computed here.
+    """
+
+    def get(url: str, token: str) -> dict[str, Any]:
+        request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return dict(json.load(response))
+
+    lines: list[str] = []
+    if hawk_api_url:
+        try:
+            login = HawkLogin(hawk_api_url)
+            body = await asyncio.to_thread(
+                get, f"{hawk_api_url.rstrip('/')}/usage/balance", await login.access_token()
+            )
+            remaining = body.get("remaining_usd")
+            if body.get("status") == "shared":
+                lines.append("Hawk: this user has no capped key; spending is not limited by a key")
+            elif isinstance(remaining, (int, float)):
+                lines.append(f"Hawk key: ${float(remaining):.2f} remaining")
+            else:
+                lines.append(f"Hawk key: remaining unknown (Hawk answered {body})")
+        except Exception as ex:
+            lines.append(f"Hawk key: could not ask ({type(ex).__name__}: {ex})")
+    if openrouter:
+        try:
+            key = os.environ["OPENROUTER_API_KEY"]
+            data = (await asyncio.to_thread(get, f"{OPENROUTER}/key", key)).get("data") or {}
+            if data.get("limit") is None:
+                lines.append(f"OpenRouter key: no limit; ${float(data.get('usage') or 0):.2f} used")
+            elif isinstance(data.get("limit_remaining"), (int, float)):
+                lines.append(
+                    f"OpenRouter key: ${float(data['limit_remaining']):.2f} of "
+                    f"${float(data['limit']):.2f} remaining"
+                )
+            else:
+                lines.append(f"OpenRouter key: remaining unknown (OpenRouter answered {data})")
+        except Exception as ex:
+            lines.append(f"OpenRouter key: could not ask ({type(ex).__name__}: {ex})")
+    return lines or ["no model key declared to ask about"]

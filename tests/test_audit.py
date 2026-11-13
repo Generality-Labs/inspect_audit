@@ -17,7 +17,8 @@ from test_helpers.audit import make_audit
 from test_helpers.logs import run_fixture_eval
 
 from inspect_audit._audit import audit
-from inspect_audit._spend import Spend
+from inspect_audit._register import register_view
+from inspect_audit._spend import Spend, budget
 from inspect_audit.dispatch.policy import Models
 
 
@@ -464,7 +465,7 @@ def test_every_tool_schema_survives_a_strict_provider(tmp_path: Path) -> None:
         _audit.run_eval(inv),
         _audit.send_investigators(inv),
         _audit.jobs(inv),
-        _audit.budget(Spend(None, None), None, openrouter=False),
+        budget(Spend(None, None)),
         view_image(),
         submit_findings(tmp_path),
         publish_document(tmp_path, load_publisher("gl")),
@@ -606,12 +607,12 @@ def test_every_agent_tool_schema_meets_openais_strict_rules(tmp_path: Path) -> N
         _audit.run_eval(inv),
         _audit.send_investigators(inv),
         _audit.jobs(inv),
-        _audit.budget(Spend(None, None), None, openrouter=False),
+        budget(Spend(None, None)),
         view_image(),
         submit_findings(tmp_path),
         publish_document(tmp_path, load_publisher("gl")),
         report_blocker(),
-        _audit.register_view(),
+        register_view(),
         figure(),
         preview_report(tmp_path),
         *_investigator_tools(),

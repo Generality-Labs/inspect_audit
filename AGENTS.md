@@ -24,23 +24,23 @@ The investigation is the benchmark's own Inspect task with the investigator in p
 
 One Inspect task: a react agent in its own box, launching benchmark and investigation jobs. It runs wherever Inspect runs it (a Docker container locally, a pod on Hawk); only its jobs' backend differs.
 
-| Module                | Owns                                                                                                          |
-| --------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `_audit.py`           | `audit`: declared inputs staged on the host, the job tools, the budget tool, the task                         |
-| `dispatch/`           | jobs and where they run (`local`, `hawk`), `policy` and the authoriser, `packages`, `spend`, the key launcher |
-| `_log_sources.py`     | every way of naming logs (path, `hawk:`, URL) resolved to local files                                         |
-| `_audit_workspace.py` | the auditor's box (k8s values, staging inputs, installing the benchmark), Hawk artifacts                      |
-| `_box.py`             | the one way into any box: archive, `write_into`/`copy_into_box`, `install`                                    |
-| `_report.py`          | launched-job records, log provenance, operator turn-taking and outcome scoring                                |
-| `_results.py`         | investigators' verdicts as Inspect Scout results (the one record of them), scanned in on collect              |
-| `_register.py`        | the register: the population, with verdicts read from the Scout results on demand                             |
-| `_spend.py`           | the one owner of money: own calls plus every job's spend so far, the budget stop, the `budget` report         |
-| `_prices.py`          | the one price table (Hawk's), the start-of-audit price check, pricing token counts                            |
-| `_framework.py`       | the framework's one source (`audit/framework.json`) and everything derived from it                            |
-| `_findings.py`        | editable draft, trusted submitted bundle, manifest and checkpointed phase                                     |
-| `_publishing.py`      | native dynamic tool source, publisher packages and standalone `publish` task                                  |
-| `publishers/latex.py` | default pinned GL audit template, generated structure and host/image TeX compilation                          |
-| `publishers/gl.py`    | reviewed GL components and static HTML/PDF output                                                             |
+| Module                | Owns                                                                                                  |
+| --------------------- | ----------------------------------------------------------------------------------------------------- |
+| `_audit.py`           | `audit`: declared inputs staged on the host, the job tools, the budget tool, the task                 |
+| `dispatch/`           | jobs and where they run (`local`, `hawk`), `policy` and the authoriser, `packages`, the key launcher  |
+| `_log_sources.py`     | every way of naming logs (path, `hawk:`, URL) resolved to local files                                 |
+| `_audit_workspace.py` | the auditor's box (k8s values, staging inputs, installing the benchmark), Hawk artifacts              |
+| `_box.py`             | the one way into any box: archive, `write_into`/`copy_into_box`, `install`                            |
+| `_report.py`          | launched-job records, log provenance, operator turn-taking and outcome scoring                        |
+| `_results.py`         | investigators' verdicts as Inspect Scout results (the one record of them), scanned in on collect      |
+| `_register.py`        | the register: the population, with verdicts read from the Scout results on demand                     |
+| `_spend.py`           | the one owner of money: own calls plus every job's spend so far, the budget stop, the `budget` report |
+| `_prices.py`          | the one price table (Hawk's), the start-of-audit price check, pricing token counts                    |
+| `_framework.py`       | the framework's one source (`audit/framework.json`) and everything derived from it                    |
+| `_findings.py`        | editable draft, trusted submitted bundle, manifest and checkpointed phase                             |
+| `_publishing.py`      | native dynamic tool source, publisher packages and standalone `publish` task                          |
+| `publishers/latex.py` | default pinned GL audit template, generated structure and host/image TeX compilation                  |
+| `publishers/gl.py`    | reviewed GL components and static HTML/PDF output                                                     |
 
 Money has one owner, `_spend.Spend`: the auditor's own calls plus every job's spend so far, running or finished, priced by the audit from the job's token counts at Hawk's prices. The operator's `budget_usd` is the one stop (launches stop once spend reaches it; it also bounds the auditor's own calls). No job carries a pre-set cap and nothing is reserved: the auditor manages spend from what `budget` shows (FRICTION 99, 100). A capped per-audit OpenRouter key launcher exists in `dispatch/` but has never been configured. Resume is Inspect's checkpointing of `/workspace`, `/inputs` and the store.
 

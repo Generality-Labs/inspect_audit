@@ -19,6 +19,14 @@ from ._report import AuditRecord
 from .dispatch import Runs
 
 
+def usd(amount: float) -> str:
+    """Dollars as the budget shows them.
+
+    Cents, or three places below a cent, so a cheap job never reads as free.
+    """
+    return f"${amount:.2f}" if amount == 0 or amount >= 0.01 else f"${amount:.3f}"
+
+
 @dataclass(frozen=True)
 class JobSpend:
     label: str
@@ -77,13 +85,13 @@ class Spend:
     async def report(self) -> list[str]:
         """The budget tool's lines: own calls, each job, the total, what is left."""
         total, jobs = await self.spent()
-        lines = [f"Your own calls: ${self.own():.2f}"]
+        lines = [f"Your own calls: {usd(self.own())}"]
         for j in jobs:
-            usd = f"${j.usd:.2f} so far" if j.usd is not None else "spend unknown"
+            spent = f"{usd(j.usd)} so far" if j.usd is not None else "spend unknown"
             extra = f"; no price for {', '.join(j.unpriced)}" if j.unpriced else ""
             done = f", {j.samples_done} samples done" if j.samples_done else ""
-            lines.append(f"  {j.label} ({j.kind}, {j.state}): {usd}{done}{extra}")
-        lines.append(f"Spent so far: ${total:.2f} (running jobs count what they have spent)")
+            lines.append(f"  {j.label} ({j.kind}, {j.state}): {spent}{done}{extra}")
+        lines.append(f"Spent so far: {usd(total)} (running jobs count what they have spent)")
         if self.budget_usd is not None:
             left = self.budget_usd - total
             lines.append(

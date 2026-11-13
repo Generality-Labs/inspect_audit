@@ -7,7 +7,7 @@ auditor, investigators and subjects are DeepSeek v4.1 Flash; caps are in each co
 
     python tests/smoke/run_smoke.py --revision <pushed commit> [--cases simpleqa-verified ...]
 
-Submits each case to Hawk as the logged-in operator, waits, downloads
+Submits every case to Hawk at once as the logged-in operator, waits, downloads
 the audit's log, and appends one JSON line per case to tests/smoke/results.jsonl: what
 the audit launched and collected, how it ended, what it cost. Paid: run it only with a go.
 """
@@ -46,6 +46,16 @@ def materialize(case: Path, revision: str) -> Path:
 
 
 API = "https://api.hawk.hawk.generalitylabs.ai"
+# one token refresh at a time: the cases run concurrently, and concurrent refreshes race
+# on the keyring records
+_AUTH = asyncio.Lock()
+
+
+async def token() -> str:
+    from inspect_audit.dispatch.hawk import HawkLogin
+
+    async with _AUTH:
+        return await HawkLogin(API).access_token()
 
 
 async def submit(config: Path) -> str:
@@ -53,23 +63,22 @@ async def submit(config: Path) -> str:
     are restricted by the audit's own policy)."""
     from inspect_audit.dispatch.hawk import HawkLogin, submit_eval_set
 
-    login = HawkLogin(API)
-    token = await login.access_token()
+    async with _AUTH:
+        login = HawkLogin(API)
+        access, refresh = await login.access_token(), await login.refresh_token()
     return await submit_eval_set(
         yaml.safe_load(config.read_text()),
         api_url=API,
-        token=token,
+        token=access,
         credential_mode="user",
-        refresh_token=await login.refresh_token(),
+        refresh_token=refresh,
     )
 
 
 async def status(eval_set_id: str) -> str:
     from hawk.client import HawkClient
 
-    from inspect_audit.dispatch.hawk import HawkLogin
-
-    async with HawkClient(token=await HawkLogin(API).access_token(), api_url=API) as client:
+    async with HawkClient(token=await token(), api_url=API) as client:
         found = await client.get_job_status(eval_set_id)
     return str(found.status).lower() if found is not None else "unknown"
 
@@ -103,7 +112,7 @@ def audit_summary(log_dir: Path) -> dict[str, Any]:
 
 
 async def run(case: Path, revision: str, wait_minutes: float) -> dict[str, Any]:
-    from inspect_audit.dispatch.hawk import HawkLogin, download
+    from inspect_audit.dispatch.hawk import download
 
     started = datetime.now(UTC).isoformat(timespec="seconds")
     row: dict[str, Any] = {
@@ -122,7 +131,7 @@ async def run(case: Path, revision: str, wait_minutes: float) -> dict[str, Any]:
             await asyncio.sleep(60)
         row["hawk_status"] = state
         out = Path(tempfile.mkdtemp(prefix="ia-smoke-logs-"))
-        await download(eval_set_id, await HawkLogin(API).access_token(), out, API)
+        await download(eval_set_id, await token(), out, API)
         row.update(audit_summary(out))
     except Exception as ex:  # a failed case is a result, not a crash
         row["error"] = f"{type(ex).__name__}: {ex}"[:2000]
@@ -143,12 +152,20 @@ def main(argv: list[str] | None = None) -> int:
         cases = [c for c in cases if c.name.removesuffix(".eval-set.yaml") in args.cases]
     for case in cases:
         yaml.safe_load(case.read_text())  # refuse a broken config before any spend
-    failed = 0
-    for case in cases:
-        row = asyncio.run(run(case, args.revision, args.wait_minutes))
-        print(json.dumps(row, indent=1))
-        failed += bool(row.get("error")) or row.get("log_status") != "success"
+    rows = asyncio.run(_all(cases, args.revision, args.wait_minutes))
+    failed = sum(bool(r.get("error")) or r.get("log_status") != "success" for r in rows)
     return 1 if failed else 0
+
+
+async def _all(cases: list[Path], revision: str, wait_minutes: float) -> list[dict[str, Any]]:
+    """Every case at once: the same spend as one after another, a third of the wait."""
+
+    async def one(case: Path) -> dict[str, Any]:
+        row = await run(case, revision, wait_minutes)
+        print(json.dumps(row, indent=1), flush=True)
+        return row
+
+    return list(await asyncio.gather(*(one(c) for c in cases)))
 
 
 if __name__ == "__main__":

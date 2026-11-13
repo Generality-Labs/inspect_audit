@@ -859,6 +859,18 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
     )
     assert runs.submitted[-1].models == ["mockllm/model"]
     assert runs.submitted[-1].task_args["judge"] == {}
+    # a variant's attempts are graded in its own run: rescoring them is refused at once
+    record = _audit.store_as(AuditRecord)
+    record.jobs = [
+        *record.jobs,
+        {"label": "v", "kind": "variant", "run_id": "x", "address": "hawk:x"},
+    ]
+    with pytest.raises(ToolError, match=r"not v \(variant\)"):
+        asyncio.run(
+            regrade(  # type: ignore[arg-type]
+                "rv", ["1"], [], "{}", 1, ["v"], None, [], ""
+            )
+        )
     # no per-item cap and no prices: the audit prices its jobs itself (FRICTION 100)
     assert "cost_limit" not in runs.submitted[-1].task_args
     assert "prices" not in runs.submitted[-1].task_args

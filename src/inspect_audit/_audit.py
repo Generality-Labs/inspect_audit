@@ -718,6 +718,19 @@ def run_eval(inv: Audit) -> Tool:
         if rescore:
             if models:
                 raise ToolError("rescoring makes no new attempts: models must be []")
+            # only the benchmark's own attempts can be graded again: a variant's are
+            # graded in its own run, and the other kinds' logs hold no attempts of the
+            # benchmark (round 8: refused only after launch, FRICTION 101)
+            others = [
+                f"{j['label']} ({j['kind']})"
+                for j in inv.record().jobs
+                if j["label"] in rescore and j["kind"] != JobKind.BENCHMARK
+            ]
+            if others:
+                raise ToolError(
+                    f"rescore takes the benchmark's own runs or the supplied logs, not "
+                    f"{', '.join(others)}: a variant's attempts are graded in its own run"
+                )
             if samples is None:
                 raise ToolError("rescoring selects the items to score again by sample id")
             job = Job(

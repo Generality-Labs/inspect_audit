@@ -3,7 +3,7 @@
 import asyncio
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from test_helpers.audit import make_audit
@@ -1042,9 +1042,6 @@ def test_hawk_says_which_models_it_will_refuse(monkeypatch: pytest.MonkeyPatch) 
 
 def test_an_audit_naming_unservable_models_stops_before_it_spends() -> None:
     # FRICTION 53: v5 learned this at its first regrade, 40 minutes in
-    from inspect_ai.solver import TaskState
-
-    from inspect_audit.dispatch.policy import LaunchPolicy, Models
 
     class Proxy:
         def __init__(self, missing: list[str]) -> None:
@@ -1054,16 +1051,13 @@ def test_an_audit_naming_unservable_models_stops_before_it_spends() -> None:
             self.asked.append(models)
             return self.missing
 
-    policy = LaunchPolicy.model_construct(
-        models=Models(investigators=("openai/gpt-6-luna",), judges=("openai/gpt-5.1",))
-    )
-    state = cast(TaskState, object())
+    named = ["openai/gpt-6-luna", "openai/gpt-5.1"]
     blocked = Proxy(["openai/gpt-5.1"])
-    with pytest.raises(RuntimeError, match=r"openai/gpt-5\.1"):
-        asyncio.run(_audit.check_models(blocked, policy)(state, None))  # type: ignore[arg-type]
-    assert blocked.asked == [["openai/gpt-6-luna", "openai/gpt-5.1"]]
-    assert asyncio.run(_audit.check_models(Proxy([]), policy)(state, None)) is state  # type: ignore[arg-type]
-    assert asyncio.run(_audit.check_models(None, policy)(state, None)) is state  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match=r"openai/gpt-5\.1"):
+        _audit.require_models(named, blocked)  # type: ignore[arg-type]
+    assert blocked.asked == [named]
+    _audit.require_models(named, Proxy([]))  # type: ignore[arg-type]
+    _audit.require_models(named, None)
 
 
 def test_middleman_calls_send_a_supplied_token_and_refuse_redirects(

@@ -521,8 +521,6 @@ def fetch_eval_sets(eval_sets: str) -> str:
     Hawk's API is HAWK_API_URL; the token is this process's own (`HawkLogin`): the
     runner's hook, which a Hawk runner installs before it loads tasks, or the operator's.
     """
-    import concurrent.futures
-
     api = os.environ.get("HAWK_API_URL")
     if not api:
         raise ValueError("fetching hawk: logs needs HAWK_API_URL, Hawk's API address")
@@ -538,9 +536,9 @@ def fetch_eval_sets(eval_sets: str) -> str:
             if not files:
                 raise ValueError(f"No .eval files found in Hawk eval set {address!r}")
 
-    # task construction may already be inside inspect's event loop
-    with concurrent.futures.ThreadPoolExecutor(1) as pool:
-        pool.submit(asyncio.run, fetch()).result()
+    from .._sync import run
+
+    run(fetch())
     return str(fetched)
 
 

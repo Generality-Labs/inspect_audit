@@ -44,6 +44,7 @@ from ._report import (
     report_blocker,
 )
 from ._spend import Spend
+from ._sync import run
 from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS
 from .containers import (
     AUDITOR_DOCKERFILE,
@@ -419,27 +420,22 @@ def _platform(what: str) -> Generator[None]:
         raise ToolError(f"{what} failed: {type(ex).__name__}: {ex}") from ex
 
 
-@solver
-def check_models(runs: Runs | None, policy: LaunchPolicy) -> Solver:
-    """Refuse the audit before it starts when its policy names models the platform won't serve.
+def require_models(models: list[str], runs: Runs | None) -> None:
+    """Every model the audit may use, checked once, before anything starts.
 
-    Otherwise the first job naming one is refused at submission, after the audit has
-    spent (FRICTION 53).
+    Hawk must price each one (`price_models`, which registers the prices `_spend` and the
+    auditor's own cost limit use: FRICTION 84, 90) and serve it to this user under that
+    name (Hawk checks a job's models only when it is submitted, after the audit has
+    spent: FRICTION 53). A failure names every model at fault.
     """
-
-    async def solve(state: TaskState, generate: Generate) -> TaskState:
-        unservable = getattr(runs, "unservable", None)
-        m = policy.models
-        named = [*m.investigators, *m.subjects, *m.judges]
-        if unservable is not None and named and (missing := await unservable(named)):
-            raise RuntimeError(
-                "The policy names models Hawk's proxy does not serve under those names: "
-                f"{', '.join(missing)}. Jobs naming them would be refused. Add them "
-                "(hawk proxy models add) or take them out of the policy."
-            )
-        return state
-
-    return solve
+    price_models(models)
+    unservable = getattr(runs, "unservable", None)
+    if unservable is not None and models and (missing := run(unservable(models))):
+        raise ValueError(
+            "The policy names models Hawk's proxy does not serve under those names: "
+            f"{', '.join(missing)}. Jobs naming them would be refused. Add them "
+            "(hawk proxy models add) or take them out of the policy."
+        )
 
 
 @dataclass
@@ -1176,16 +1172,6 @@ def audit(
     # depends on where it runs (on Hawk an OpenRouter model is
     # `openai/openrouter/<org>/<model>`, FRICTION 89), so there are no defaults
     models = permissions.models
-    # every model the audit may use, its own included, must be priced where it runs, or
-    # the audit does not start (FRICTION 84, 89); the auditor's price is registered for
-    # its run-level cost_limit
-    try:
-        from inspect_ai.model import get_model
-
-        auditor_model = [str(get_model())]
-    except ValueError:
-        auditor_model = []  # built outside an eval: no model of its own
-    price_models([*auditor_model, *models.investigators, *models.subjects, *models.judges])
     if credential_mode == "user" and runs == "hawk":
         logger.warning(USER_CHILDREN_ON_HAWK)
     if isinstance(investigation_samples, str) and investigation_samples != "all":
@@ -1301,6 +1287,16 @@ def audit(
     elif runs:
         # local runs outside the per-construction folder: a resumed run must find them
         backend = LocalRuns(Path(output_dir).expanduser().resolve() / "runs")
+    # every model the audit may use, its own included
+    try:
+        from inspect_ai.model import get_model
+
+        auditor_model = [str(get_model())]
+    except ValueError:
+        auditor_model = []  # built outside an eval: no model of its own
+    require_models(
+        [*auditor_model, *models.investigators, *models.subjects, *models.judges], backend
+    )
     spend = Spend(backend, launch_policy.limits.budget_usd)
     tools: list[Tool] = [
         # a shell dump is the one place the agent routinely wants more than the
@@ -1401,7 +1397,6 @@ def audit(
         setup=[
             preflight_publisher(selected_publisher),
             bind_policy(launch_policy),
-            check_models(inv.runs if inv else None, launch_policy),
             stage_inputs(root),
             *(
                 [install_benchmark(launch_policy.box_install(), launch_policy.source)]

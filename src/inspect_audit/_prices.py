@@ -12,8 +12,6 @@ and Inspect's `set_model_cost` refuses models it does not know, hence `set_model
 here.
 """
 
-import asyncio
-import concurrent.futures
 import functools
 import math
 import os
@@ -113,10 +111,10 @@ def _hawk_table(api_url: str) -> dict[str, dict[str, Any]]:
 
     Called while a task loads, which may be inside a running event loop.
     """
+    from ._sync import run
     from .dispatch.hawk import prices
 
-    with concurrent.futures.ThreadPoolExecutor(1) as pool:
-        rows = pool.submit(asyncio.run, prices(api_url)).result()
+    rows = run(prices(api_url))
     return {str(r["model"]): r for r in rows if r.get("model")}
 
 

@@ -138,9 +138,10 @@ async def submit_eval_set(
 
 
 class HawkLogin:
-    """Hawk credentials for whoever this process runs as.
+    """Hawk credentials for whoever this process runs as: the one place a token is found.
 
-    Inside a Hawk runner, the runner's own refresh hook. Elsewhere, the operator's
+    Inside a Hawk runner, the runner's own refresh hook. Elsewhere, `HAWK_ACCESS_TOKEN`
+    when the operator sets one (a CI job, a borrowed token), else the operator's
     `hawk` login: only the `hawk` binary that wrote it can read it from the keychain
     without asking, so that binary is asked, past the venv's copy `uv run` puts
     first on PATH.
@@ -202,6 +203,8 @@ class HawkLogin:
                 config,
                 refresh_margin_seconds=hook.refresh_margin_seconds,
             )
+        if token := os.environ.get("HAWK_ACCESS_TOKEN"):
+            return token
         # fetched each time, not cached: the login refreshes it, a copy expires
         return await self._hawk("auth", "access-token")
 
@@ -515,9 +518,8 @@ def _api_url(api_url: str) -> Generator[None]:
 def fetch_eval_sets(eval_sets: str) -> str:
     """Download eval sets from the Hawk warehouse to a temporary directory, one folder each.
 
-    Hawk's API is HAWK_API_URL; the token is HAWK_ACCESS_TOKEN when set, else this
-    process's own Hawk credentials (`HawkLogin`): the runner's hook, which a
-    Hawk runner installs before it loads tasks, or the operator's `hawk` login.
+    Hawk's API is HAWK_API_URL; the token is this process's own (`HawkLogin`): the
+    runner's hook, which a Hawk runner installs before it loads tasks, or the operator's.
     """
     import concurrent.futures
 
@@ -529,7 +531,7 @@ def fetch_eval_sets(eval_sets: str) -> str:
     fetched = stable_dir("hawk", eval_sets)
 
     async def fetch() -> None:
-        token = os.environ.get("HAWK_ACCESS_TOKEN") or await HawkLogin(api).access_token()
+        token = await HawkLogin(api).access_token()
         for address in eval_sets.split(","):
             # a folder per eval set: same-named files from two sets cannot collide
             files = await download(address, token, fetched / address.partition("/")[0], api)

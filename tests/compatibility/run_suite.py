@@ -189,7 +189,7 @@ async def run(args: argparse.Namespace) -> int:
 
     async def current_token() -> str:
         async with auth_lock:
-            return os.environ.get("HAWK_ACCESS_TOKEN") or await login.access_token()
+            return await login.access_token()
 
     async def client() -> HawkClient:
         return HawkClient(token=await current_token(), api_url=api)

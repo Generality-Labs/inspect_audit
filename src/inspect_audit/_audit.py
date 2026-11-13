@@ -1,29 +1,23 @@
 """Top-level audit agent, staged inputs and checkpointed child-job records."""
 
 import asyncio
-import errno
 import inspect as inspect_module
 import json
 import os
 import re
 import shutil
-import subprocess
-import tarfile
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
 from typing import Any, Literal
-from uuid import uuid4
 
-import yaml
 from inspect_ai import Task, task
 from inspect_ai.agent import AgentState, as_solver, react
 from inspect_ai.dataset import Sample
 from inspect_ai.log import (
     EvalSampleSummary,
-    list_eval_logs,
     read_eval_log_sample_summaries_async,
 )
 from inspect_ai.model import CompactionSummary, GenerateConfig, ModelConfig
@@ -32,8 +26,8 @@ from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
 from inspect_ai.util import CheckpointConfig, sandbox, store_as
 
 from . import prompts
+from ._audit_workspace import docker_box
 from ._image import view_image
-from ._log_sources import fetch_logs, is_remote_logs
 from ._prices import cost_of, price_models
 from ._register import register_view
 from ._report import (
@@ -44,15 +38,12 @@ from ._report import (
     operator_turn,
     report_blocker,
 )
+from ._repository import only_task, paper_from_metadata, paths_from_metadata
 from ._spend import Spend, budget
+from ._staging import prepare_workspace
 from ._sync import run
 from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS
-from .containers import (
-    AUDITOR_DOCKERFILE,
-    AUDITOR_IMAGE,
-    AUDITOR_REQUIREMENTS,
-    INVESTIGATOR_IMAGE,
-)
+from .containers import AUDITOR_IMAGE, INVESTIGATOR_IMAGE
 from .dispatch import (
     FINISHED,
     HawkRuns,
@@ -84,9 +75,6 @@ logger = getLogger(__name__)
 
 ASSETS = Path(__file__).parent / "audit"
 
-DEFAULT_INVESTIGATOR_IMAGE = INVESTIGATOR_IMAGE
-DEFAULT_AUDITOR_IMAGE = AUDITOR_IMAGE
-
 AUDIT_SKILLS = (
     "auditing",
     "running-jobs",
@@ -97,297 +85,6 @@ AUDIT_SKILLS = (
 )
 # compact the auditor's context once it passes this many tokens
 COMPACTION_TOKENS = 200_000
-
-
-def _snapshot_repo(
-    repo: str, revision: str | None, inputs: Path, paths: list[str] | None
-) -> dict[str, object]:
-    source = Path(repo).expanduser()
-    if source.is_dir():
-        commit = subprocess.check_output(
-            [
-                "git",
-                "-C",
-                str(source),
-                "rev-parse",
-                "--verify",
-                f"{revision or 'HEAD'}^{{commit}}",
-            ],
-            text=True,
-        ).strip()
-        # Limit the snapshot to the declared paths.
-        archive = inputs / "source.tar"
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(source),
-                "archive",
-                "--format=tar",
-                f"--output={archive}",
-                commit,
-                *(["--", *paths] if paths else []),
-            ],
-            check=True,
-        )
-        tree = inputs / "source"
-        tree.mkdir()
-        with tarfile.open(archive) as tar:
-            tar.extractall(tree, filter="data")
-        archive.unlink()
-        return {
-            "repo": str(source.resolve()),
-            "revision": commit,
-            "paths": paths or ["."],
-            "snapshot": "/inputs/source",
-            "source": "committed snapshot; excludes working-tree changes and submodule contents",
-        }
-    if not repo.startswith("https://"):
-        raise ValueError("repo must be a local Git repository or an HTTPS Git URL")
-    return {
-        "repo": repo,
-        "revision": revision or "HEAD",
-        "paths": paths or ["."],
-        "snapshot": None,
-        "source": "remote repository; clone it yourself into /workspace",
-    }
-
-
-def _fetch_paper(paper: str, inputs: Path) -> str:
-    """Stage the paper under inputs/paper/: a local file, or a URL downloaded now.
-
-    An arXiv abstract URL is turned into its PDF. A failed download keeps the URL
-    in the seed so the agent can try itself, with the failure recorded.
-    """
-    from ._paper import paper_file
-
-    (inputs / "paper").mkdir(exist_ok=True)
-    if not Path(paper).expanduser().is_file() and not paper.startswith(("http://", "https://")):
-        return paper
-    try:
-        name, data = paper_file(paper)
-    except Exception as ex:  # network is optional at prep time
-        logger.warning(f"could not download the paper from {paper}: {ex}")
-        return paper
-    (inputs / "paper" / name).write_bytes(data)
-    return f"/inputs/paper/{name}"
-
-
-def _stage_docs(docs: list[str], inputs: Path) -> list[str]:
-    """Copy documentation trees into inputs/docs/<name>/."""
-    staged: list[str] = []
-    for source in docs:
-        path = Path(source).expanduser().resolve()
-        if not path.is_dir():
-            raise ValueError(f"Docs directory does not exist: {source}")
-        dest = inputs / "docs" / path.name
-        shutil.copytree(
-            path,
-            dest,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".git", "node_modules"),
-        )
-        staged.append(f"/inputs/docs/{path.name}")
-    return staged
-
-
-def _link_or_copy(src: Path, dest: Path) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.link(src, dest)
-    except OSError as ex:
-        if ex.errno != errno.EXDEV:
-            raise
-        shutil.copyfile(src, dest)
-
-
-def _only_task(source: Path) -> str | None:
-    """The task, when the repository declares exactly one and nobody said which."""
-    declared: set[str] = set()
-    for path in sorted(source.rglob("*.py")):
-        if any(part in {".git", "tests", "test", "build", ".venv"} for part in path.parts):
-            continue
-        try:
-            text = path.read_text(errors="ignore")
-        except OSError:
-            continue
-        for match in re.finditer(r"@task(?:\([^)]*\))?\s*\ndef\s+(\w+)", text):
-            named = re.search(r'name\s*=\s*["\']([^"\']+)["\']', match.group(0))
-            declared.add(named.group(1) if named else match.group(1))
-    if len(declared) == 1:
-        only = declared.pop()
-        logger.info(f"investigating {only}: the only task {source} declares")
-        return only
-    return None
-
-
-def paths_from_metadata(source: Path, target_task: str | None) -> list[str] | None:
-    """Select the task directory, its local imports and package metadata."""
-    from ._source import collect_source
-
-    directory = _task_directory(source, target_task)
-    if directory is None:
-        return None
-    # what the task's code imports, followed the way the investigator's source copy is
-    base = source.resolve()
-    chosen = {str(directory.relative_to(source))}
-    starts = sorted(directory.rglob("*.py")) if directory.is_dir() else [directory]
-    for start in starts:
-        for file in collect_source(start.resolve()).files:
-            if file.resolve().is_relative_to(base):
-                chosen.add(str(file.resolve().relative_to(base)))
-    for top in ("pyproject.toml", "README.md"):
-        if (source / top).is_file():
-            chosen.add(top)
-    # a file inside a directory already named adds nothing to the snapshot
-    directories = {c for c in chosen if (source / c).is_dir()}
-    return sorted(c for c in chosen if not any(c.startswith(f"{d}/") for d in directories))
-
-
-def _task_directory(source: Path, target_task: str | None) -> Path | None:
-    """Find the task directory through eval.yaml or its @task declaration; return None if unknown."""
-    if not target_task:
-        return None
-    name = target_task.split("/")[-1]
-    for path in sorted(source.rglob("eval.yaml")):
-        tasks = _safe_yaml(path).get("tasks")
-        names = {
-            str(entry.get("name", ""))
-            for entry in (tasks if isinstance(tasks, list) else [])
-            if isinstance(entry, dict)
-        }
-        if name in names or path.parent.name == name:
-            return path.parent
-    return _declaring_file(source, name)
-
-
-# `@task` may name the task itself, or take the function's name. Both spellings, and
-# the registry name may carry spaces where the function has underscores.
-def _declaring_file(source: Path, name: str) -> Path | None:
-    function = re.compile(
-        rf"^\s*def {re.escape(name.replace(' ', '_').lower())}\s*\(", re.MULTILINE
-    )
-    declared = re.compile(rf"@task\([^)]*name\s*=\s*[\"']{re.escape(name)}[\"']", re.DOTALL)
-    fallback: Path | None = None
-    for path in sorted(source.rglob("*.py")):
-        if any(part in {".git", "tests", "test", "build", ".venv"} for part in path.parts):
-            continue
-        try:
-            text = path.read_text(errors="ignore")
-        except OSError:
-            continue
-        if "@task" not in text:
-            continue
-        if declared.search(text):
-            return path.parent
-        if function.search(text) and fallback is None:
-            fallback = path.parent
-    return fallback
-
-
-def _safe_yaml(path: Path) -> dict[str, object]:
-    try:
-        loaded = yaml.safe_load(path.read_text())
-    except (yaml.YAMLError, OSError):
-        return {}
-    return loaded if isinstance(loaded, dict) else {}
-
-
-def paper_from_metadata(source: Path, target_task: str | None) -> str | None:
-    """The paper an eval names in its own metadata, when it names one."""
-    if not target_task:
-        return None
-    directory = _task_directory(source, target_task)
-    if directory is not None:
-        arxiv = str(_safe_yaml(directory / "eval.yaml").get("arxiv") or "").strip()
-        if arxiv:
-            # several papers means the eval was revised; the last is the current one
-            return arxiv.split(",")[-1].strip()
-    return None
-
-
-def prepare_workspace(
-    repo: str,
-    revision: str | None,
-    paths: list[str] | None,
-    logs: list[str],
-    paper: str | None,
-    docs: list[str],
-    overview: str,
-    target_task: str | None,
-    output_dir: str,
-) -> Path:
-    """Stage the declared inputs on the host; the box gets a copy at the start."""
-    root = Path(output_dir).expanduser().resolve() / uuid4().hex
-    inputs = root / "inputs"
-    work = root / "work"
-    inputs.mkdir(parents=True)
-    work.mkdir()
-    seed: dict[str, object] = dict(_snapshot_repo(repo, revision, inputs, paths))
-    log_index = []
-    for index, source in enumerate(logs):
-        # a hawk: source is downloaded now; it keeps its address, so a job can be
-        # pointed at the same logs and a citation names where they live
-        local = Path(fetch_logs(source)) if is_remote_logs(source) else None
-        path = local or Path(source).expanduser().resolve()
-        if not path.exists():
-            raise ValueError(f"Log source does not exist: {source}")
-        files = (
-            [path]
-            if path.is_file()
-            else [
-                Path(info.name.removeprefix("file://")).resolve()
-                for info in list_eval_logs(str(path), recursive=True)
-            ]
-        )
-        if not files:
-            raise ValueError(f"No Inspect logs found: {source}")
-        for file in files:
-            relative = Path(str(index)) / (file.name if path.is_file() else file.relative_to(path))
-            _link_or_copy(file, inputs / "logs" / relative)
-            log_index.append(
-                {
-                    "source": f"{source.rstrip('/')}/{file.name}" if local else str(file),
-                    "staged": f"/inputs/logs/{relative}",
-                    "remote": source if local else None,
-                }
-            )
-    staged_paper = _fetch_paper(paper, inputs) if paper else None
-    staged_docs = _stage_docs(docs, inputs)
-    seed.update(
-        task=target_task,
-        overview=overview,
-        paper=staged_paper,
-        docs=staged_docs,
-        logs=log_index,
-    )
-    (inputs / "seed.json").write_text(json.dumps(seed, indent=2))
-    from ._framework import stage_framework
-
-    stage_framework(work / "analysis")
-    (work / "report").mkdir()
-    (work / "journal.md").write_text(
-        "# Activity journal\n\nAppend actions and corrections with evidence references.\n"
-    )
-    return root
-
-
-def docker_box(root: Path) -> tuple[str, str]:
-    """The auditor's box on local Docker: built here, nothing mounted."""
-    (root / "Dockerfile").write_text(AUDITOR_DOCKERFILE)
-    (root / "auditor.requirements.txt").write_text(AUDITOR_REQUIREMENTS)
-    (root / ".dockerignore").write_text("*\n!Dockerfile\n!auditor.requirements.txt\n")
-    compose = {
-        "services": {
-            "default": {
-                "build": {"context": "."},
-                "command": "sleep infinity",
-                "init": True,
-                "working_dir": "/workspace",
-            }
-        }
-    }
-    (root / "compose.yaml").write_text(yaml.safe_dump(compose))
-    return "docker", str(root / "compose.yaml")
 
 
 @contextmanager
@@ -994,8 +691,8 @@ def audit(
     hawk_api_url = hawk_api_url or os.environ.get("HAWK_API_URL")
     interactive = bool(interactive)
     task_package_pins = list(task_package_pins or [])
-    investigator_image = str(investigator_image or DEFAULT_INVESTIGATOR_IMAGE)
-    auditor_image = str(auditor_image or DEFAULT_AUDITOR_IMAGE)
+    investigator_image = str(investigator_image or INVESTIGATOR_IMAGE)
+    auditor_image = str(auditor_image or AUDITOR_IMAGE)
     permissions = Permissions.model_validate(policy or {})
     benchmark_environment = validate_environment(benchmark_environment or {})
     for name, value in benchmark_environment.items():
@@ -1063,7 +760,7 @@ def audit(
     # commit it is, which directory the task lives in and which paper it comes from
     local_repo = Path(repo).expanduser()
     if local_repo.is_dir():
-        target_task = target_task or _only_task(local_repo)
+        target_task = target_task or only_task(local_repo)
         paths = paths or paths_from_metadata(local_repo, target_task)
         paper = paper or paper_from_metadata(local_repo, target_task)
     # somewhere every machine running this can write, and a person can find

@@ -261,7 +261,7 @@ def test_what_can_be_derived_is_derived(tmp_path: Path, monkeypatch: pytest.Monk
 
 def test_the_task_directory_is_found_without_inspect_evals_conventions(tmp_path: Path) -> None:
     """Not every benchmark ships an eval.yaml; most just declare a task in a file."""
-    from inspect_audit._audit import paths_from_metadata
+    from inspect_audit._repository import paths_from_metadata
 
     repo = tmp_path / "bench"
     (repo / "bench/task/example").mkdir(parents=True)
@@ -310,20 +310,20 @@ def test_an_audit_is_its_task_arguments_and_a_file_of_them_is_inspects(tmp_path:
 
 
 def test_the_only_task_a_repository_declares_needs_no_naming(tmp_path: Path) -> None:
-    from inspect_audit._audit import _only_task
+    from inspect_audit._repository import only_task
 
     one = tmp_path / "one"
     (one / "bench").mkdir(parents=True)
     (one / "bench/task.py").write_text(
         '@task(name="Example Questions")\ndef example_puzzles():\n    ...\n'
     )
-    assert _only_task(one) == "Example Questions"
+    assert only_task(one) == "Example Questions"
 
     several = tmp_path / "several"
     (several / "bench").mkdir(parents=True)
     (several / "bench/a.py").write_text("@task\ndef one_thing():\n    ...\n")
     (several / "bench/b.py").write_text("@task\ndef another():\n    ...\n")
-    assert _only_task(several) is None, "a collection must be told which task to investigation"
+    assert only_task(several) is None, "a collection must be told which task to investigation"
 
 
 def test_bad_settings_are_refused_before_anything_is_built(tmp_path: Path) -> None:
@@ -342,7 +342,7 @@ def test_the_snapshot_follows_what_the_task_imports(tmp_path: Path) -> None:
     A scorer in an ordinary sibling module would have been left out of the snapshot,
     and the agent would have investigated a benchmark with a hole in it.
     """
-    from inspect_audit._audit import paths_from_metadata
+    from inspect_audit._repository import paths_from_metadata
 
     repo = tmp_path / "suite"
     package = repo / "src" / "suite"

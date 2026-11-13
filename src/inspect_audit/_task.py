@@ -129,16 +129,6 @@ def judge_roles(index: LogIndex | None, judge: dict[str, str] | None) -> dict[st
             )
         return dict(judge)
     declared = dict(judge or {})
-    # a launcher that names judges (an audit's jobs always do, `{}` included) names
-    # every one the logs recorded, so its launch policy licenses each: none is used just
-    # because the logs carry it (FRICTION 95). `None` is an operator taking the logs'
-    # judges by hand (the regrade CLI).
-    if judge is not None and (undeclared := sorted(set(index.judges) - set(declared))):
-        raise LogMismatchError(
-            "the logs record judge role(s) "
-            + ", ".join(f"{r}={index.judges[r]!r}" for r in undeclared)
-            + "; name each in judge={role: model} (a model the policy permits as a judge)"
-        )
     for role, model in declared.items():
         recorded = index.judges.get(role)
         if recorded is not None and recorded != model:

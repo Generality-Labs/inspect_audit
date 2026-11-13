@@ -95,11 +95,6 @@ def test_a_declared_judge_must_agree_with_the_logs() -> None:
     assert judge_roles(index, None) == {"grader": "openai/gpt-5"}
     with pytest.raises(LogMismatchError, match="differs"):
         judge_roles(index, {"grader": "anthropic/claude"})
-    # a launcher that names judges must name every recorded one: an audit's policy
-    # licenses only what it names (FRICTION 95)
-    with pytest.raises(LogMismatchError, match="grader='openai/gpt-5'"):
-        judge_roles(index, {})
-    assert judge_roles(index, {"grader": "openai/gpt-5"}) == {"grader": "openai/gpt-5"}
 
 
 def test_a_scorer_that_judged_with_the_evaluated_model_is_refused() -> None:

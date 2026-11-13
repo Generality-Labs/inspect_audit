@@ -13,10 +13,6 @@ from typing import Any
 REGISTRY = Path(__file__).parent / "audit/framework.json"
 
 
-def framework_definitions(analysis: Path) -> dict[str, dict[str, str]]:
-    return json.loads((analysis / "framework/checks.json").read_text())
-
-
 def stage_framework(analysis: Path) -> None:
     """Stage analytical data, without report templates or a second judgment store."""
     source = json.loads(REGISTRY.read_text())

@@ -1,7 +1,5 @@
 """The package's Inspect tasks: `investigation`, `regrade` and `audit`."""
 
-import importlib
-import importlib.util
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +18,12 @@ def resolve_source(source: str | None) -> str | None:
     """`source=` as a path: a file or directory, or a module name resolved by Python."""
     if source is None or Path(source).exists():
         return source
-    spec = importlib.util.find_spec(source)
-    if spec is None or spec.origin is None:
-        raise ValueError(f"source={source!r} is neither a path nor an importable module")
-    return spec.origin
+    from ._source import installed
+
+    try:
+        return str(installed(source)[0])
+    except ValueError as ex:
+        raise ValueError(f"source={source!r} is neither a path nor an importable module") from ex
 
 
 @task

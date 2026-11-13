@@ -43,6 +43,21 @@ class SourceCopy:
         return archive({f"benchmark/{f.relative_to(self.root)}": f for f in self.files})
 
 
+def installed(module: str) -> tuple[Path, Path]:
+    """Where Python finds an installed module: (its file, its top-level package's folder).
+
+    The one place a declared `benchmark.source` module is looked up by import.
+    """
+    import importlib.util
+
+    spec = importlib.util.find_spec(module)
+    top = importlib.util.find_spec(module.split(".")[0])
+    locations = list(top.submodule_search_locations or []) if top else []
+    if spec is None or spec.origin is None or not locations:
+        raise ValueError(f"{module!r} is not a module inside an installed package")
+    return Path(spec.origin), Path(locations[0])
+
+
 def package_root(task_file: Path) -> Path | None:
     """The top-level package directory holding the task file, if it is in one."""
     directory = task_file.parent

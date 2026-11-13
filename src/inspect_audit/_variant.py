@@ -11,7 +11,6 @@ of the installed package with those files laid over it.
 
 import difflib
 import importlib
-import importlib.util
 import os
 import sys
 import tempfile
@@ -40,12 +39,9 @@ def task_package(task: str, source: str) -> tuple[str, Path]:
     # an installed extension package registers `<package>/<name>`; other modules, `<name>`
     if registered.split("/")[-1] != function:
         raise ValueError(f"{source}.{function} registers as {registered!r}, not {task!r}")
-    top = source.split(".")[0]
-    spec = importlib.util.find_spec(top)
-    locations = list(spec.submodule_search_locations or []) if spec else []
-    if not locations:
-        raise ValueError(f"{source!r} is not inside an installed package")
-    return function, Path(locations[0])
+    from ._source import installed
+
+    return function, installed(source)[1]
 
 
 def check_overlay(task: str, source: str, files: dict[str, str]) -> str:

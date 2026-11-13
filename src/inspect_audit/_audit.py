@@ -54,6 +54,7 @@ from .containers import (
 from .dispatch import FINISHED, STUCK, HawkRuns, Job, LocalRuns, Runs, validate_environment
 from .dispatch.packages import git_package_spec, own_package_spec
 from .dispatch.policy import (
+    USER_CHILDREN_ON_HAWK,
     AuditAuthorizer,
     Benchmark,
     Execution,
@@ -787,8 +788,6 @@ def run_eval(inv: Audit) -> Tool:
         if rescore:
             if models:
                 raise ToolError("rescoring makes no new attempts: models must be []")
-            if not judges:
-                raise ToolError('rescoring needs the judge, e.g. {"grader": "openai/gpt-5.1"}')
             if item_cost_limit is None:
                 raise ToolError("rescoring needs item_cost_limit: dollars per rescored attempt")
             if samples is None:
@@ -800,8 +799,9 @@ def run_eval(inv: Audit) -> Tool:
                 extra_packages=policy.benchmark_packages(packages),
                 package_overrides=list(packages),
                 # the judge as the eval's model: never called, but it is how the job
-                # gets the judge's credentials
-                models=list(judges.values())[:1],
+                # gets the judge's credentials; a grader that calls no model (judge {},
+                # e.g. SciCode's tests) still needs a model to run under
+                models=list(judges.values())[:1] or ["mockllm/model"],
                 task_args={
                     "task": inv.task,
                     "task_args": args,
@@ -1336,8 +1336,8 @@ def audit(
     investigation_samples = settings.get("investigation_samples", investigation_samples)
     checks = settings.get("checks", checks)
     source = settings.get("source", source)
-    # Hawk child jobs never carry the operator's login (FRICTION 73): restricted there,
-    # the operator's own credentials only for local jobs
+    # Hawk child jobs are restricted unless the audit states otherwise (FRICTION 73, 93);
+    # local jobs run with the operator's own credentials
     credential_mode = settings.get("credential_mode", credential_mode) or (
         "restricted" if runs == "hawk" else "user"
     )
@@ -1372,7 +1372,7 @@ def audit(
     if credential_mode == "restricted" and runs != "hawk":
         raise ValueError("restricted credentials require runs='hawk'")
     if credential_mode == "user" and runs == "hawk":
-        raise ValueError("Hawk child jobs run with restricted credentials only")
+        logger.warning(USER_CHILDREN_ON_HAWK)
     if isinstance(investigation_samples, str) and investigation_samples != "all":
         raise ValueError("investigation_samples must be a list of IDs or 'all'")
     if investigation_samples is not None and not isinstance(investigation_samples, (str, list)):

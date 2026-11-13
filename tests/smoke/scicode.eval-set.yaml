@@ -43,6 +43,8 @@ tasks:
           max_concurrent_jobs: 3
           budget_usd: 2.0
       runs: hawk
+      # TEMPORARY (FRICTION 93): children with the operator's login until Hawk has its token service
+      credential_mode: user
       box: k8s
       instructions: 'This case: logs hawk:scicode-provider-default-pgcjfyx2vbyas1w5 (65 samples; use ONE).
         Jobs: send_investigators on one sample, check gold-answer, with the supplied logs, item_cost_limit

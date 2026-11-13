@@ -26,20 +26,38 @@ from typing import Any
 import yaml
 
 HERE = Path(__file__).parent
+ROOT = HERE.parents[1]
 RESULTS = HERE / "results.jsonl"
 FINISHED = {"complete", "failed", "deleted", "stuck"}
+
+
+def at_revision(path: Path, revision: str) -> str:
+    """A file as it is at `revision`, not in the working tree: the case and the code it
+    runs must come from the same commit (round 6 read an edited case against old code)."""
+    import subprocess
+
+    relative = path.resolve().relative_to(ROOT)
+    return subprocess.run(
+        ["git", "show", f"{revision}:{relative}"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
 
 
 def materialize(case: Path, revision: str) -> Path:
     """The case with this inspect_audit revision in place of SELF, and the shared testing
     routine (routine.md) ahead of the case's own notes: every smoke audit presses every
-    button and reports on the tool, not the benchmark."""
-    config = yaml.safe_load(case.read_text().replace("@SELF", f"@{revision}"))
+    button and reports on the tool, not the benchmark. Both are read at `revision`."""
+    config = yaml.safe_load(at_revision(case, revision).replace("@SELF", f"@{revision}"))
     if os.environ.get("IA_SMOKE_KEEP_PODS"):
         # keep the runner and sandboxes for debugging; `hawk delete` afterwards
         config.setdefault("runner", {})["cleanup"] = False
     args = config["tasks"][0]["items"][0]["args"]
-    args["instructions"] = (HERE / "routine.md").read_text() + "\n" + args.get("instructions", "")
+    args["instructions"] = (
+        at_revision(HERE / "routine.md", revision) + "\n" + args.get("instructions", "")
+    )
     out = Path(tempfile.mkdtemp(prefix="ia-smoke-")) / case.name
     out.write_text(yaml.safe_dump(config, sort_keys=False))
     return out
@@ -151,7 +169,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cases:
         cases = [c for c in cases if c.name.removesuffix(".eval-set.yaml") in args.cases]
     for case in cases:
-        yaml.safe_load(case.read_text())  # refuse a broken config before any spend
+        # refuse a broken or uncommitted config before any spend
+        yaml.safe_load(at_revision(case, args.revision))
     rows = asyncio.run(_all(cases, args.revision, args.wait_minutes))
     failed = sum(bool(r.get("error")) or r.get("log_status") != "success" for r in rows)
     return 1 if failed else 0

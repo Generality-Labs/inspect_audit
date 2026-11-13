@@ -38,6 +38,8 @@ tasks:
           max_concurrent_jobs: 3
           budget_usd: 2.0
       runs: hawk
+      # TEMPORARY (FRICTION 93): children with the operator's login until Hawk has its token service
+      credential_mode: user
       box: k8s
       instructions: 'This case: logs hawk:bench-v46e92flztx421dj (one sample). Jobs: run_eval with rescore
         on that sample, judge {"grader": "openrouter/openai/gpt-6-luna"}, epochs 2, item_cost_limit 0.05;

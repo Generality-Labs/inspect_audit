@@ -80,6 +80,18 @@ class InvestigationScope(FrozenModel):
     checks: tuple[str, ...] = Field(min_length=1)
 
 
+# TEMPORARY (FRICTION 93): our Hawk has no secure token service yet, so a restricted
+# submission is refused ("Restricted credentials aren't enabled on this deployment") and
+# no child job can start. Until it is enabled, an audit may state `credential_mode: user`
+# for Hawk children: they then run with the operator's own login. James allowed it on
+# 2026-11-13 for the smoke audits (public evals); delete this, and the configs that state
+# it, once restricted launches work.
+USER_CHILDREN_ON_HAWK = (
+    "Child jobs on Hawk run with the operator's own login (credential_mode: user), "
+    "because this Hawk has no secure token service yet (FRICTION 93)"
+)
+
+
 class Execution(FrozenModel):
     backend: Literal["hawk", "local"]
     credential_mode: Literal["restricted", "user"]
@@ -99,10 +111,8 @@ class Execution(FrozenModel):
             raise ValueError(
                 "restricted credentials require Hawk; local execution uses user credentials"
             )
-        # child jobs on Hawk never carry a person's login: each gets its own narrow
-        # execution token (James, 2026-11-12; FRICTION 73)
-        if self.backend == "hawk" and self.credential_mode != "restricted":
-            raise ValueError("Hawk child jobs run with restricted credentials only")
+        # child jobs on Hawk get their own narrow execution token by default (James,
+        # 2026-11-12; FRICTION 73); `user` there must be stated, see USER_CHILDREN_ON_HAWK
         return self
 
 
@@ -355,8 +365,9 @@ class AuditAuthorizer:
         if args.get("task") != p.task or canonical(args.get("task_args", {})) != p.task_args_json:
             raise ToolError("regrade task and task_args are fixed by the launch policy")
         judges = [str(m) for m in (args.get("judge") or {}).values()]
-        if not judges or job.models != judges[:1]:
-            raise ToolError("a regrade names its judge and runs as that judge")
+        # runs as its judge, or, for a grader that calls no model, as a mock model
+        if job.models != (judges[:1] or ["mockllm/model"]):
+            raise ToolError("a regrade runs as its judge (a mock model when it has none)")
         self.allow(judges, p.models.judges, "judges")
         if not args.get("logs") or set(args["logs"]) - (set(p.supplied_logs) | known_logs):
             raise ToolError("regrade inputs are outside the launch policy")

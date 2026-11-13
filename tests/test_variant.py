@@ -164,7 +164,7 @@ def test_run_eval_with_code_launches_a_recorded_variant(
     assert recorded["kind"] == "variant" and '+QUESTION = "ablated"' in recorded["diff"]
 
 
-def test_rescoring_takes_no_models_and_needs_a_judge(tmp_path: Path) -> None:
+def test_rescoring_takes_no_models(tmp_path: Path) -> None:
     from inspect_ai.util import Store, store_as
     from inspect_ai.util._store import init_subtask_store
     from test_helpers.audit import make_audit
@@ -188,14 +188,14 @@ def test_rescoring_takes_no_models_and_needs_a_judge(tmp_path: Path) -> None:
         asyncio.run(
             run("r", ["1"], ["openai/s"], '{"g": "openai/j"}', 1, ["hawk:logs"], None, [], 0.5, "")
         )  # type: ignore[arg-type]
-    with pytest.raises(ToolError, match="needs the judge"):
-        asyncio.run(run("r", ["1"], [], "{}", 1, ["hawk:logs"], None, [], 0.5, ""))  # type: ignore[arg-type]
 
 
-def test_hawk_child_jobs_never_carry_a_persons_login() -> None:
+def test_hawk_child_jobs_are_restricted_unless_the_audit_says_otherwise() -> None:
+    """Restricted by default; `user` only when stated, a temporary allowance while our
+    Hawk has no secure token service (FRICTION 93)."""
     assert Execution.model_validate({"backend": "hawk"}).credential_mode == "restricted"
-    with pytest.raises(ValueError, match="restricted credentials only"):
-        Execution.model_validate({"backend": "hawk", "credential_mode": "user"})
+    stated = Execution.model_validate({"backend": "hawk", "credential_mode": "user"})
+    assert stated.credential_mode == "user"
 
 
 def test_the_benchmark_is_installed_in_the_box_as_its_jobs_install_it(

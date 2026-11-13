@@ -874,6 +874,14 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
     assert job.task_args["judge"] == {"grader": "openai/judge"} and job.task_args["epochs"] == 3
     assert job.task_args["logs"] == ["hawk:supplied-logs"]
     assert set(pyinspect.signature(_registry.regrade).parameters) >= REGRADE_ARGS
+    # a grader that calls no model (SciCode's tests) is rescored too, under a mock model
+    asyncio.run(
+        regrade(  # type: ignore[arg-type]
+            "rerun-tests", ["1"], [], "{}", 1, ["hawk:supplied-logs"], None, [], 0.5, "tests"
+        )
+    )
+    assert runs.submitted[-1].models == ["mockllm/model"]
+    assert runs.submitted[-1].task_args["judge"] == {}
     with pytest.raises(ToolError, match="1 to 10"):
         asyncio.run(
             regrade(  # type: ignore[arg-type]

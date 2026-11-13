@@ -66,9 +66,6 @@ from .dispatch.packages import git_package_spec, own_package_spec
 from .dispatch.policy import (
     USER_CHILDREN_ON_HAWK,
     AuditAuthorizer,
-    Benchmark,
-    Execution,
-    InvestigationScope,
     LaunchPolicy,
     Models,
     Permissions,
@@ -77,6 +74,9 @@ from .dispatch.policy import (
     canonical,
     ensure_model,
     ensure_policy,
+)
+from .dispatch.policy import (
+    credential_mode as resolve_credential_mode,
 )
 from .dispatch.spend import key_balance
 
@@ -207,60 +207,6 @@ def _link_or_copy(src: Path, dest: Path) -> None:
         if ex.errno != errno.EXDEV:
             raise
         shutil.copyfile(src, dest)
-
-
-def _audit_file(config: str, passed: dict[str, Any]) -> dict[str, Any]:
-    """Task settings from a YAML file, so an audit is a document, not a command.
-
-    Every key is a parameter of this task, and an argument given on the command line
-    wins over the file, so a saved audit can be re-run with one thing changed.
-    """
-    path = Path(config).expanduser()
-    if not path.is_file():
-        raise ValueError(f"no such audit file: {config}")
-    loaded = yaml.safe_load(path.read_text()) or {}
-    if not isinstance(loaded, dict):
-        raise ValueError(f"{config} must be a mapping of task settings")
-    # Structured launch sections resolve once, before the immutable policy is made.
-    sections = {
-        "benchmark": (
-            Benchmark,
-            {
-                "task": "target_task",
-                "package": "task_package",
-                "environment": "benchmark_environment",
-            },
-        ),
-        "investigation": (
-            InvestigationScope,
-            {"samples": "investigation_samples", "checks": "checks"},
-        ),
-        "execution": (Execution, {"backend": "runs"}),
-    }
-    for section, (model, names) in sections.items():
-        if section not in loaded:
-            continue
-        values = model.model_validate(loaded.pop(section)).model_dump(
-            mode="json", exclude_unset=True
-        )
-        for key, value in values.items():
-            target = names.get(key, key)
-            if target in loaded:
-                raise ValueError(f"{config} declares {target} both directly and under {section}")
-            loaded[target] = value
-    signature = inspect_module.signature(audit)
-    unknown = set(loaded) - set(signature.parameters) - {"config"}
-    if unknown:
-        raise ValueError(
-            f"{config} sets things this task does not take: {sorted(unknown)}. "
-            f"Available: {sorted(k for k in signature.parameters if k != 'config')}"
-        )
-    # a value given on the command line beats the file. Every overridable parameter
-    # defaults to None, so "given" is "not None": passing the same value the default
-    # would have used is still passing it, and a file cannot turn something back on
-    return {
-        key: value for key, value in loaded.items() if key != "config" and passed.get(key) is None
-    }
 
 
 def _only_task(source: Path) -> str | None:
@@ -1096,7 +1042,6 @@ async def _continue(state: AgentState, interactive: bool) -> bool | str:
 @task
 def audit(
     repo: str | None = None,
-    config: str | None = None,
     logs: list[str] | None = None,
     paper: str | None = None,
     docs: list[str] | None = None,
@@ -1115,9 +1060,6 @@ def audit(
     task_package: str | None = None,
     task_package_pins: list[str] | None = None,
     investigator_image: str | None = None,
-    investigator_models: list[str] | None = None,
-    subject_models: list[str] | None = None,
-    judge_models: list[str] | None = None,
     auditor_image: str | None = None,
     box_resources: dict[str, Any] | None = None,
     artifact_dir: str | None = None,
@@ -1142,8 +1084,6 @@ def audit(
 
     Args:
         repo: Local Git repository or HTTPS Git URL of the benchmark.
-        config: YAML file setting any of these arguments, so an audit can be a
-            document rather than a command line. Anything also passed with -T wins.
         logs: Inspect log files or directories, or hawk:<eval set id> sources.
         paper: Local file or URL; a URL is downloaded now (arXiv abs -> pdf). Defaults to
             the paper the eval names in its own metadata.
@@ -1172,19 +1112,17 @@ def audit(
             job, e.g. its extra's packages from its own uv.lock at that commit
             (`python -m inspect_audit.dispatch.packages REPO COMMIT EXTRA`).
         investigator_image: Published investigator image for investigation jobs on Kubernetes.
-        investigator_models: Full Inspect model names an investigation job may use as its investigator.
-        subject_models: Full Inspect model names a benchmark job may evaluate.
-        judge_models: Full Inspect model names the benchmark's own judges may be. Declare the
-            judges the investigated logs record; none by default.
+
         auditor_image: Published auditor sandbox image for Hawk.
         box_resources: Kubernetes `resources` (requests/limits) for the auditor's box on
             k8s; None uses the deployment's sandbox default.
         artifact_dir: Where the published report is also saved, under this sample:
             on Hawk, the job's S3 artifacts directory. None keeps it on the host only.
         instructions: Operator instructions and scope, separate from benchmark background.
-        policy: Frozen model permissions, declared log inputs and job limits.
-            YAML also accepts benchmark, investigation and execution sections. Permission
-            changes on resume are refused; start a new audit instead.
+        policy: The frozen permissions: `models` (auditor, investigators, subjects,
+            judges: full Inspect names, the only place models are named) and `limits`
+            (budget_usd, max_concurrent_jobs, coverage). Changes on resume are refused;
+            start a new audit instead.
         task_args: Fixed benchmark arguments for every child job and the register.
         investigation_samples: Permitted sample IDs, or "all". Subset requests are allowed.
         checks: Permitted investigation checks; defaults to the package's available checks.
@@ -1203,61 +1141,26 @@ def audit(
         publisher: Publishing package, revealed only after findings submission.
             Defaults to latex; installed module:factory packages can replace it.
     """
-    # the file is read before anything else is decided: an argument is "given" only
-    # when it is not None, so a value equal to a default is still an override
-    settings = _audit_file(config, locals()) if config else {}
     from ._findings import Findings, encoded, submit_findings
     from ._publishing import PhaseTools, load_publisher, preflight_publisher
 
-    publisher = settings.get("publisher", publisher) or "latex"
+    publisher = publisher or "latex"
     selected_publisher = load_publisher(str(publisher))
-    repo = settings.get("repo", repo)
-    logs = settings.get("logs", logs)
-    paper = settings.get("paper", paper)
-    docs = settings.get("docs", docs)
-    overview = settings.get("overview", overview)
-    target_task = settings.get("target_task", target_task)
-    revision = settings.get("revision", revision)
-    paths = settings.get("paths", paths)
-    output_dir = settings.get("output_dir", output_dir)
-    runs = settings.get("runs", runs)
-    box = settings.get("box", box) or "docker"
-    hawk_api_url = settings.get("hawk_api_url", hawk_api_url) or os.environ.get("HAWK_API_URL")
-    token_limit = settings.get("token_limit", token_limit)
-    interactive = bool(settings.get("interactive", interactive))
-    extra_skills = settings.get("extra_skills", extra_skills)
-    investigation_package = settings.get("investigation_package", investigation_package)
-    task_package = settings.get("task_package", task_package)
-    task_package_pins = list(settings.get("task_package_pins", task_package_pins) or [])
-    investigator_image = str(
-        settings.get("investigator_image", investigator_image) or DEFAULT_INVESTIGATOR_IMAGE
-    )
-    # no default models: a model's name depends on where it runs (on Hawk an OpenRouter
-    # model is `openai/openrouter/<org>/<model>`, FRICTION 89), so the audit's author
-    # writes them
-    menu = ModelMenu(
-        investigators=list(settings.get("investigator_models", investigator_models) or []),
-        subjects=list(settings.get("subject_models", subject_models) or []),
-        judges=list(settings.get("judge_models", judge_models) or []),
-    )
-    auditor_image = str(settings.get("auditor_image", auditor_image) or DEFAULT_AUDITOR_IMAGE)
-    box_resources = settings.get("box_resources", box_resources)
-    artifact_dir = settings.get("artifact_dir", artifact_dir)
-    instructions = settings.get("instructions", instructions)
-    policy = settings.get("policy", policy)
+    box = box or "docker"
+    hawk_api_url = hawk_api_url or os.environ.get("HAWK_API_URL")
+    interactive = bool(interactive)
+    task_package_pins = list(task_package_pins or [])
+    investigator_image = str(investigator_image or DEFAULT_INVESTIGATOR_IMAGE)
+    auditor_image = str(auditor_image or DEFAULT_AUDITOR_IMAGE)
     permissions = Permissions.model_validate(policy or {})
-    benchmark_environment = validate_environment(
-        settings.get("benchmark_environment", benchmark_environment) or {}
-    )
+    benchmark_environment = validate_environment(benchmark_environment or {})
     for name, value in benchmark_environment.items():
         if os.environ.get(name) != value:
             raise ValueError(
                 f"benchmark_environment declares {name!r}; set the same value in the "
                 "auditor runner environment so task loading uses the child configuration"
             )
-    requested_configs: dict[str, dict[str, Any]] = (
-        settings.get("model_configs", model_configs) or {}
-    )
+    requested_configs: dict[str, dict[str, Any]] = model_configs or {}
     configured = {}
     for name, value in requested_configs.items():
         parsed = ModelConfig.model_validate({"model": name, **value})
@@ -1267,7 +1170,7 @@ def audit(
             raise ValueError("model credentials belong in the environment or child_secrets")
         configured[name] = parsed.model_dump(mode="json", exclude_none=True)
     model_configs = configured
-    child_secrets = list(settings.get("child_secrets", child_secrets) or [])
+    child_secrets = list(child_secrets or [])
     if child_secrets and runs != "hawk":
         raise ValueError("child_secrets require runs='hawk'")
     for name in child_secrets:
@@ -1277,31 +1180,16 @@ def audit(
             raise ValueError(
                 f"declared child secret {name!r} is missing from the runner environment"
             )
-    task_args = json.loads(canonical(settings.get("task_args", task_args) or {}))
-    investigation_samples = settings.get("investigation_samples", investigation_samples)
-    checks = settings.get("checks", checks)
-    source = settings.get("source", source)
-    # Hawk child jobs are restricted unless the audit states otherwise (FRICTION 73, 93);
-    # local jobs run with the operator's own credentials
-    credential_mode = settings.get("credential_mode", credential_mode) or (
-        "restricted" if runs == "hawk" else "user"
+    task_args = json.loads(canonical(task_args or {}))
+    credential_mode = resolve_credential_mode(runs, credential_mode)
+    # the models are the policy's alone, written by the audit's author: a model's name
+    # depends on where it runs (on Hawk an OpenRouter model is
+    # `openai/openrouter/<org>/<model>`, FRICTION 89), so there are no defaults
+    menu = ModelMenu(
+        investigators=list(permissions.models.investigators),
+        subjects=list(permissions.models.subjects),
+        judges=list(permissions.models.judges),
     )
-    if policy is not None:
-        if any(v is not None for v in (investigator_models, subject_models, judge_models)) or any(
-            key in settings for key in ("investigator_models", "subject_models", "judge_models")
-        ):
-            raise ValueError(
-                "declare models under policy.models or legacy model arguments, not both"
-            )
-        menu = ModelMenu(
-            investigators=list(permissions.models.investigators),
-            subjects=list(permissions.models.subjects),
-            judges=list(permissions.models.judges),
-        )
-        declared_logs = list(permissions.inputs.logs)
-        if logs is not None and logs != declared_logs:
-            raise ValueError("logs and policy.inputs.logs disagree")
-        logs = declared_logs
     # every model the audit may use, its own included, must be priced where it runs, or
     # the audit does not start (FRICTION 84, 89); the auditor's price is registered for
     # its run-level cost_limit
@@ -1312,10 +1200,6 @@ def audit(
     except ValueError:
         auditor_model = []  # built outside an eval: no model of its own
     price_models([*auditor_model, *menu.investigators, *menu.subjects, *menu.judges])
-    if credential_mode not in ("restricted", "user"):
-        raise ValueError("credential_mode must be 'restricted' or 'user'")
-    if credential_mode == "restricted" and runs != "hawk":
-        raise ValueError("restricted credentials require runs='hawk'")
     if credential_mode == "user" and runs == "hawk":
         logger.warning(USER_CHILDREN_ON_HAWK)
     if isinstance(investigation_samples, str) and investigation_samples != "all":
@@ -1335,7 +1219,7 @@ def audit(
     if runs == "hawk" and not hawk_api_url:
         raise ValueError("Hawk jobs need hawk_api_url (or HAWK_API_URL)")
     if not repo:
-        raise ValueError("audit needs a repo: the benchmark to audit, or a config naming one")
+        raise ValueError("audit needs a repo: the benchmark to audit")
     skill_paths = [str(ASSETS / "skills" / name) for name in AUDIT_SKILLS] + [
         str(SKILLS / name) for name in (*LOG_SKILLS, *SUPPORT_SKILLS)
     ]
@@ -1394,9 +1278,7 @@ def audit(
         supplied += [str(e["source"]) for e in seed["logs"] if not e.get("remote")]
     # Keep a value snapshot, never a reference to the caller's configuration dict.
     resolved = locals().copy()
-    configuration = {
-        key: resolved[key] for key in inspect_module.signature(audit).parameters if key != "config"
-    }
+    configuration = {key: resolved[key] for key in inspect_module.signature(audit).parameters}
     configuration["resolved_source"] = {key: seed.get(key) for key in ("repo", "revision", "paths")}
     launch_policy = LaunchPolicy(
         task=target_task,
@@ -1418,7 +1300,7 @@ def audit(
         source=source,
         supplied_logs=tuple(sorted(set(supplied))),
         limits=permissions.limits,
-        credential_mode="restricted" if credential_mode == "restricted" else "user",
+        credential_mode=credential_mode,
         configuration_json=canonical(configuration),
     )
     snapshot = canonical(launch_policy.model_dump(mode="json"))

@@ -10,14 +10,14 @@ from inspect_audit.dispatch import (
     hawk_supports_restricted,
     validate_environment,
 )
-from inspect_audit.dispatch.policy import AuditAuthorizer, Execution, LaunchPolicy, Models
+from inspect_audit.dispatch.policy import AuditAuthorizer, LaunchPolicy, Models, credential_mode
 
 
 def test_execution_declares_its_credentials_by_backend() -> None:
-    assert Execution.model_validate({"backend": "local"}).credential_mode == "user"
-    assert Execution.model_validate({"backend": "hawk"}).credential_mode == "restricted"
-    with pytest.raises(ValueError, match="restricted credentials require Hawk"):
-        Execution.model_validate({"backend": "local", "credential_mode": "restricted"})
+    assert credential_mode("local", None) == "user"
+    assert credential_mode("hawk", None) == "restricted"
+    with pytest.raises(ValueError, match=r"restricted credentials require runs=.hawk."):
+        credential_mode("local", "restricted")
 
 
 @pytest.mark.skipif(hawk_supports_restricted(), reason="this Hawk has restricted credentials")

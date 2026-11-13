@@ -53,30 +53,9 @@ class Limits(FrozenModel):
     coverage: Literal["any", "full"] = "any"
 
 
-class Inputs(FrozenModel):
-    logs: tuple[str, ...] = ()
-
-
 class Permissions(FrozenModel):
     models: Models = Models()
-    inputs: Inputs = Inputs()
     limits: Limits = Limits()
-
-
-class Benchmark(FrozenModel):
-    task: str = Field(min_length=1)
-    package: str | None = None
-    repo: str | None = None
-    revision: str | None = None
-    source: str | None = None
-    # Serialised below into the frozen launch policy; never retained as a mutable dict.
-    task_args: dict[str, Any] = Field(default_factory=dict)
-    environment: dict[str, str] = Field(default_factory=dict)
-
-
-class InvestigationScope(FrozenModel):
-    samples: tuple[str, ...] | Literal["all"] = "all"
-    checks: tuple[str, ...] = Field(min_length=1)
 
 
 # TEMPORARY (FRICTION 93): our Hawk has no secure token service yet, so a restricted
@@ -91,28 +70,18 @@ USER_CHILDREN_ON_HAWK = (
 )
 
 
-class Execution(FrozenModel):
-    backend: Literal["hawk", "local"]
-    credential_mode: Literal["restricted", "user"]
+def credential_mode(runs: str | None, stated: str | None) -> Literal["restricted", "user"]:
+    """How child jobs authenticate: the one place this is decided.
 
-    @model_validator(mode="before")
-    @classmethod
-    def default_credentials(cls, data: Any) -> Any:
-        # restricted on Hawk, the operator's own on a laptop: declared, not inferred later
-        if isinstance(data, dict) and "credential_mode" not in data:
-            backend = data.get("backend")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-            return {**data, "credential_mode": "restricted" if backend == "hawk" else "user"}
-        return data  # pyright: ignore[reportUnknownVariableType]
-
-    @model_validator(mode="after")
-    def local_credentials(self) -> "Execution":
-        if self.backend == "local" and self.credential_mode == "restricted":
-            raise ValueError(
-                "restricted credentials require Hawk; local execution uses user credentials"
-            )
-        # child jobs on Hawk get their own narrow execution token by default (James,
-        # 2026-11-12; FRICTION 73); `user` there must be stated, see USER_CHILDREN_ON_HAWK
-        return self
+    Restricted on Hawk unless the audit states otherwise (FRICTION 73, 93); local jobs
+    run as the operator, since restricted credentials exist only on Hawk.
+    """
+    mode = stated or ("restricted" if runs == "hawk" else "user")
+    if mode not in ("restricted", "user"):
+        raise ValueError("credential_mode must be 'restricted' or 'user'")
+    if mode == "restricted" and runs != "hawk":
+        raise ValueError("restricted credentials require runs='hawk'")
+    return "restricted" if mode == "restricted" else "user"
 
 
 class LaunchPolicy(FrozenModel):

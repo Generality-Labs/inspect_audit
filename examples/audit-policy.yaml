@@ -1,38 +1,40 @@
-# Launch with: inspect eval inspect_audit/audit -T config=examples/audit-policy.yaml --model openrouter/<auditor-model>
-# Replace the example task, repository, full commit, models and source run ID.
-# Configuration is read once. Resume must use the same resolved configuration;
-# permission changes require a new audit.
-benchmark:
-  repo: https://github.com/example/benchmarks
-  revision: "<full-commit-sha>"
-  task: example_benchmarks/task
-  source: example_benchmarks.task
-  task_args: {}
-  # Non-secret settings, also set on the auditor runner. Applied to every child.
-  environment: {}
+# An audit's settings are the audit task's own arguments (FRICTION 107). This file is
+# a set of them, for Inspect's own --task-config:
+#
+#   inspect eval inspect_audit/audit --task-config examples/audit-policy.yaml \
+#     --model openai/openrouter/<org>/<auditor-model>
+#
+# On Hawk the same keys go under the task item's `args` in the eval-set config. Replace
+# the example task, repository, commit, models and source run. Resume must use the same
+# settings; changing permissions means a new audit.
+repo: https://github.com/example/benchmarks
+revision: "<full-commit-sha>"
+target_task: example_benchmarks/task
+source: example_benchmarks.task
+task_args: {}
+# Non-secret settings, also set on the auditor runner. Applied to every child.
+benchmark_environment: {}
 
-investigation:
-  samples: all
-  checks: [gold-answer, answer-format]
+# what the auditor reads, and its jobs may read
+logs: ["hawk:<source-run-id>"]
+investigation_samples: all
+checks: [gold-answer, answer-format]
 
 policy:
+  # the only place models are named, each as Hawk serves it
+  # (an OpenRouter model on Hawk: openai/openrouter/<org>/<model>)
   models:
-    auditor: ["openrouter/<auditor-model>"]
-    investigators: ["openrouter/<investigator-model>"]
-    subjects: ["openrouter/<subject-model>"]
+    auditor: ["openai/openrouter/<org>/<auditor-model>"]
+    investigators: ["openai/openrouter/<org>/<investigator-model>"]
+    subjects: ["openai/openrouter/<org>/<subject-model>"]
     judges: []
-  inputs:
-    logs: ["hawk:<source-run-id>"]
   limits:
-    investigation_sample_cost_usd: 0.25
+    # the one stop: no launch once spend (the auditor's calls and every job's, running
+    # jobs included) reaches it; it also bounds the auditor's own calls
+    budget_usd: 20
     max_concurrent_jobs: 4
-    # A shared total-dollar cap is enforced by the model key, not a policy ledger.
-    # Unsupported fields such as total_cost_usd are rejected.
 
-execution:
-  backend: hawk
-  credential_mode: restricted
-
-# The auditor's own sandbox; independent of the child-job backend.
-box: docker
-# investigation_package defaults to this checkout's published commit. Override only at launch.
+runs: hawk
+# children are restricted by default on Hawk
+# the auditor's own box; independent of where its jobs run
+box: k8s

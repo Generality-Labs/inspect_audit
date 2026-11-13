@@ -30,12 +30,11 @@ tasks:
           - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
           judges:
           - openrouter/openai/gpt-6-luna
-        inputs:
-          logs:
-          - hawk:bench-v46e92flztx421dj
         limits:
           max_concurrent_jobs: 3
           budget_usd: 2.0
+      logs:
+      - hawk:bench-v46e92flztx421dj
       runs: hawk
       # TEMPORARY (FRICTION 93): children with the operator's login until Hawk has its token service
       credential_mode: user

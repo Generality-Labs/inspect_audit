@@ -289,29 +289,21 @@ def test_the_task_directory_is_found_without_inspect_evals_conventions(tmp_path:
     assert paths_from_metadata(repo, "bench/not_here") is None
 
 
-def test_an_audit_can_be_a_file_and_the_command_line_still_wins(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A saved audit is a document; re-running it with one thing changed is -T."""
+def test_an_audit_is_its_task_arguments_and_a_file_of_them_is_inspects(tmp_path: Path) -> None:
+    """One route: an audit's settings are its task arguments, from -T, a Hawk eval-set
+    config, or a YAML file through Inspect's own `--task-config` (FRICTION 107)."""
+    from inspect_ai._util.config import resolve_args
+
     repo = git_repo(tmp_path / "repo")
     config = tmp_path / "audit.yaml"
     config.write_text(
         f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\noverview: read the grader first\n"
     )
-    from_file = audit(config=str(config))
-    seed = json.loads((Path(from_file.metadata["audit_dir"]) / "inputs/seed.json").read_text())
+    built = audit(**resolve_args(str(config)))
+    seed = json.loads((Path(built.metadata["audit_dir"]) / "inputs/seed.json").read_text())
     assert seed["overview"] == "read the grader first"
-
-    overridden = audit(config=str(config), overview="read the dataset first")
-    seed = json.loads((Path(overridden.metadata["audit_dir"]) / "inputs/seed.json").read_text())
-    assert seed["overview"] == "read the dataset first", "the command line beats the file"
-
-    typo = tmp_path / "typo.yaml"
-    typo.write_text(f"repo: {repo}\nbudget: 100\n")
-    with pytest.raises(ValueError, match="sets things this task does not take"):
-        audit(config=str(typo))
-    with pytest.raises(ValueError, match="no such audit file"):
-        audit(config=str(tmp_path / "nowhere.yaml"))
+    with pytest.raises(TypeError):
+        audit(**{**resolve_args(str(config)), "budget": 100})
     with pytest.raises(ValueError, match="needs a repo"):
         audit()
 
@@ -333,41 +325,14 @@ def test_the_only_task_a_repository_declares_needs_no_naming(tmp_path: Path) -> 
     assert _only_task(several) is None, "a collection must be told which task to investigation"
 
 
-def test_the_config_file_decides_before_anything_is_built(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A setting in the file must be able to change what loads, not arrive too late.
-
-    Skills were assembled and the budget validated before the file was read, so
-    `extra_skills` in a config was silently ignored and a bad budget in a config was
-    accepted.
-    """
+def test_bad_settings_are_refused_before_anything_is_built(tmp_path: Path) -> None:
     repo = git_repo(tmp_path / "repo")
-    skill = tmp_path / "house-style"
-    skill.mkdir()
-    (skill / "SKILL.md").write_text(
-        "---\nname: house-style\ndescription: ours\n---\n\nRead this.\n"
-    )
-    config = tmp_path / "audit.yaml"
-    config.write_text(f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\nextra_skills: ['{skill}']\n")
-    assert audit(config=str(config)).metadata["audit_dir"]
-
-    # a skill directory named by the file is checked like one named on the command line;
-    # before the reordering the file's extra_skills were read after the list was built
-    # and went unnoticed entirely
     not_a_skill = tmp_path / "empty"
     not_a_skill.mkdir()
-    broken = tmp_path / "broken.yaml"
-    broken.write_text(
-        f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\nextra_skills: ['{not_a_skill}']\n"
-    )
     with pytest.raises(ValueError, match=r"containing SKILL\.md"):
-        audit(config=str(broken))
-
-    bad = tmp_path / "bad.yaml"
-    bad.write_text(f"repo: {repo}\nruns: elsewhere\noutput_dir: {tmp_path / 'runs'}\n")
+        audit(str(repo), output_dir=str(tmp_path / "runs"), extra_skills=[str(not_a_skill)])
     with pytest.raises(ValueError, match="runs must be"):
-        audit(config=str(bad))
+        audit(str(repo), output_dir=str(tmp_path / "runs"), runs="elsewhere")
 
 
 def test_the_snapshot_follows_what_the_task_imports(tmp_path: Path) -> None:
@@ -567,16 +532,6 @@ def test_the_auditor_checkpoints_its_workspace_and_inputs(tmp_path: Path) -> Non
     assert task.checkpoint.sandbox_paths == {"default": ["/workspace", "/inputs"]}
 
 
-def test_a_value_equal_to_a_default_is_still_an_override(tmp_path: Path) -> None:
-    """ "Given" cannot mean "different from the default", or a file wins arguments it should not."""
-    repo = git_repo(tmp_path / "repo")
-    config = tmp_path / "audit.yaml"
-    config.write_text(f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\ninteractive: true\n")
-    assert audit(config=str(config)).metadata["interactive"] is True
-    # the value the default would have used, passed deliberately, beats the file
-    assert audit(config=str(config), interactive=False).metadata["interactive"] is False
-
-
 @pytest.mark.docker
 def test_inputs_are_staged_into_a_plain_box_and_survive_nothing_mounted(tmp_path: Path) -> None:
     """The box is the only workspace: the staged seed, logs and report skeleton are in it.
@@ -751,7 +706,11 @@ def test_an_audit_with_a_model_hawk_does_not_price_does_not_start(
     with pytest.raises(_prices.UnpricedModelError, match="openrouter/deepseek/gone"):
         audit(
             str(git_repo(tmp_path / "repo")),
-            investigator_models=["openai/openrouter/deepseek/flash"],
-            subject_models=["openai/openrouter/deepseek/gone"],
+            policy={
+                "models": {
+                    "investigators": ["openai/openrouter/deepseek/flash"],
+                    "subjects": ["openai/openrouter/deepseek/gone"],
+                }
+            },
             output_dir=str(tmp_path / "runs"),
         )

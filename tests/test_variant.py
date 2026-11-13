@@ -11,7 +11,7 @@ from inspect_ai.tool import ToolError
 
 from inspect_audit import _audit, _registry
 from inspect_audit._variant import check_overlay, variant_task
-from inspect_audit.dispatch.policy import VARIANT_ARGS, Execution
+from inspect_audit.dispatch.policy import VARIANT_ARGS, credential_mode
 
 TASK_MODULE = """
 from inspect_ai import Task, task
@@ -243,9 +243,8 @@ def test_rescoring_takes_no_models(tmp_path: Path) -> None:
 def test_hawk_child_jobs_are_restricted_unless_the_audit_says_otherwise() -> None:
     """Restricted by default; `user` only when stated, a temporary allowance while our
     Hawk has no secure token service (FRICTION 93)."""
-    assert Execution.model_validate({"backend": "hawk"}).credential_mode == "restricted"
-    stated = Execution.model_validate({"backend": "hawk", "credential_mode": "user"})
-    assert stated.credential_mode == "user"
+    assert credential_mode("hawk", None) == "restricted"
+    assert credential_mode("hawk", "user") == "user"
 
 
 def test_the_benchmark_is_installed_in_the_box_as_its_jobs_install_it(

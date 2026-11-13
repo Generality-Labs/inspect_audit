@@ -35,12 +35,11 @@ tasks:
           subjects:
           - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
           judges: []
-        inputs:
-          logs:
-          - hawk:scicode-provider-default-pgcjfyx2vbyas1w5
         limits:
           max_concurrent_jobs: 3
           budget_usd: 2.0
+      logs:
+      - hawk:scicode-provider-default-pgcjfyx2vbyas1w5
       runs: hawk
       # TEMPORARY (FRICTION 93): children with the operator's login until Hawk has its token service
       credential_mode: user

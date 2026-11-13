@@ -6,12 +6,10 @@ import json
 import os
 import re
 import shutil
-from collections.abc import Generator
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from inspect_ai import Task, task
 from inspect_ai.agent import AgentState, as_solver, react
@@ -87,15 +85,38 @@ AUDIT_SKILLS = (
 COMPACTION_TOKENS = 200_000
 
 
-@contextmanager
-def _platform(what: str) -> Generator[None]:
-    """The platform refusing or failing a call is the auditor's to work around, not a crash."""
-    try:
-        yield
-    except ToolError:
-        raise
-    except Exception as ex:
-        raise ToolError(f"{what} failed: {type(ex).__name__}: {ex}") from ex
+class Platform:
+    """Where jobs run, as the agent's tools see it.
+
+    A backend call that fails reaches the agent as a tool error naming the call, to
+    work around or report, not as a crash.
+
+    Only the backend's calls are wrapped: our own code failing still fails loudly
+    (AGENTS rule 7). A wait, a submission or a status check on a flaky Hawk is the
+    agent's to retry; it no longer ends the audit (FRICTION 115).
+    """
+
+    def __init__(self, runs: Runs) -> None:
+        self.runs = runs
+
+    def address(self, run_id: str) -> str:
+        return self.runs.address(run_id)
+
+    def __getattr__(self, name: str) -> Any:
+        method = getattr(self.runs, name)
+        if not inspect_module.iscoroutinefunction(method):
+            return method
+
+        async def call(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await method(*args, **kwargs)
+            except ToolError:
+                raise
+            except Exception as ex:
+                shown = ", ".join(str(a) for a in args if not isinstance(a, Path))
+                raise ToolError(f"{name}({shown}) failed: {type(ex).__name__}: {ex}") from ex
+
+        return call
 
 
 def require_models(models: list[str], runs: Runs | None, api_url: str | None = None) -> None:
@@ -135,6 +156,11 @@ class Audit:
     paper: str | None = None
     launch_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
+    def __post_init__(self) -> None:
+        # every backend call the tools make reaches the agent as a tool error if it fails
+        if not isinstance(self.runs, Platform):
+            self.runs = cast(Runs, Platform(self.runs))
+
     def record(self) -> AuditRecord:
         return store_as(AuditRecord)
 
@@ -171,8 +197,7 @@ class Audit:
             if active >= cap:
                 raise ToolError(f"the policy permits at most {cap} concurrent jobs")
         await self.spend.refuse_if_spent()
-        with _platform(f"submitting {job.label!r}"):
-            run_id = await self.runs.submit(approved)
+        run_id = await self.runs.submit(approved)
         address = self.runs.address(run_id)
         # assigned back, not appended in place: the store records an assignment
         record = self.record()
@@ -483,8 +508,7 @@ def jobs(inv: Audit) -> Tool:
         if not label:
             raise ToolError(f"action {action!r} needs a label")
         job = inv.job(label)
-        with _platform(f"jobs {action} {label!r}"):
-            return await _job_action(inv, job, action, wait_minutes)
+        return await _job_action(inv, job, action, wait_minutes)
 
     return execute
 

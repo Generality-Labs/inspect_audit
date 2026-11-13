@@ -1168,3 +1168,33 @@ def test_hawk_usage_sums_every_samples_tokens_by_model(monkeypatch: pytest.Monke
     totals, done = asyncio.run(runs.usage("set-1"))
     assert done == 1
     assert (totals["openai/m"].input_tokens, totals["openai/m"].output_tokens) == (200, 20)
+
+
+def test_a_flaky_backend_reaches_the_auditor_wherever_it_is_called(
+    tmp_path: Path, record: AuditRecord
+) -> None:
+    """A status check outside the old per-tool wrapper (the concurrency cap) let a
+    ConnectionError end the sample (FRICTION 115); every backend call is wrapped now."""
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit.dispatch.policy import AuditAuthorizer, Limits
+
+    class Flaky(FakeRuns):
+        async def status(self, run_id: str) -> JobState:
+            raise ConnectionError("hawk dropped the connection")
+
+    inv = _make_audit(tmp_path, Flaky())
+    capped = inv.authorizer.policy.model_copy(update={"limits": Limits(max_concurrent_jobs=1)})
+    from inspect_ai.util import store_as
+
+    from inspect_audit.dispatch.policy import PolicyStore, ensure_policy
+
+    inv.authorizer = AuditAuthorizer(capped)
+    saved = store_as(PolicyStore)
+    saved.policy_json = saved.digest = None
+    ensure_policy(capped, saved, require_existing=False)
+    record.jobs.append({"label": "old", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})
+    with pytest.raises(ToolError, match=r"status\(r\) failed: ConnectionError"):
+        asyncio.run(
+            _audit.run_eval(inv)("new", ["1"], ["openai/subject"], "{}", 1, [], None, [], "")  # type: ignore[arg-type]
+        )

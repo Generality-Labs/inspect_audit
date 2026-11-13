@@ -23,6 +23,7 @@ from inspect_audit._findings import (
 from inspect_audit._publishing import PhaseTools, Publisher, publish
 from inspect_audit._register import Register, Take
 from inspect_audit._verdicts import Evidence
+from inspect_audit.dispatch.policy import Models
 from inspect_audit.publishers.gl import validate_rows
 
 
@@ -241,7 +242,6 @@ PYCODE"""
 
 
 def test_submitted_phase_blocks_direct_job_launches(tmp_path: Path) -> None:
-    from inspect_audit._audit import ModelMenu
     from inspect_audit.dispatch import Job, LocalRuns
 
     init_subtask_store(Store())
@@ -253,7 +253,7 @@ def test_submitted_phase_blocks_direct_job_launches(tmp_path: Path) -> None:
         task_package="bench",
         investigation_package="investigation",
         investigator_image="image",
-        menu=ModelMenu(investigators=[], subjects=["mockllm/model"], judges=[]),
+        menu=Models(investigators=[], subjects=["mockllm/model"], judges=[]),
         supplied=[],
     )
     store_as(FindingsState).phase = "publishing"

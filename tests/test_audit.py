@@ -18,13 +18,13 @@ from test_helpers.logs import run_fixture_eval
 
 from inspect_audit._audit import audit
 from inspect_audit._spend import Spend
+from inspect_audit.dispatch.policy import Models
 
 
 def every(models: list[str]):
     """A model menu letting each model play every part (investigator, subject, judge)."""
-    from inspect_audit._audit import ModelMenu
 
-    return ModelMenu(investigators=list(models), subjects=list(models), judges=list(models))
+    return Models(investigators=list(models), subjects=list(models), judges=list(models))
 
 
 def _snapshot_names(root: Path) -> list[str]:

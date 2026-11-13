@@ -13,6 +13,7 @@ from test_helpers.audit import make_audit
 
 from inspect_audit import _audit, _register
 from inspect_audit._verdicts import investigation_items
+from inspect_audit.dispatch.policy import Models
 
 
 @task
@@ -211,7 +212,7 @@ def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
         task_package="p",
         investigation_package="a",
         investigator_image="i",
-        menu=_audit.ModelMenu(investigators=[], subjects=[], judges=[]),
+        menu=Models(investigators=[], subjects=[], judges=[]),
         supplied=[],
     )
     record = _audit.store_as(_audit.AuditRecord)
@@ -278,7 +279,7 @@ def test_failed_verdict_import_does_not_mark_job_collected(
         task_package="p",
         investigation_package="a",
         investigator_image="i",
-        menu=_audit.ModelMenu(investigators=[], subjects=[], judges=[]),
+        menu=Models(investigators=[], subjects=[], judges=[]),
         supplied=[],
     )
     record = inv.record()

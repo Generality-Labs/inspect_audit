@@ -67,7 +67,6 @@ from .dispatch.policy import (
     USER_CHILDREN_ON_HAWK,
     AuditAuthorizer,
     LaunchPolicy,
-    Models,
     Permissions,
     PolicyStore,
     bind_policy,
@@ -97,15 +96,6 @@ AUDIT_SKILLS = (
 )
 # compact the auditor's context once it passes this many tokens
 COMPACTION_TOKENS = 200_000
-
-
-@dataclass(frozen=True)
-class ModelMenu:
-    """The models an audit may use, by the part each plays."""
-
-    investigators: list[str]
-    subjects: list[str]
-    judges: list[str]
 
 
 def _snapshot_repo(
@@ -1185,11 +1175,7 @@ def audit(
     # the models are the policy's alone, written by the audit's author: a model's name
     # depends on where it runs (on Hawk an OpenRouter model is
     # `openai/openrouter/<org>/<model>`, FRICTION 89), so there are no defaults
-    menu = ModelMenu(
-        investigators=list(permissions.models.investigators),
-        subjects=list(permissions.models.subjects),
-        judges=list(permissions.models.judges),
-    )
+    models = permissions.models
     # every model the audit may use, its own included, must be priced where it runs, or
     # the audit does not start (FRICTION 84, 89); the auditor's price is registered for
     # its run-level cost_limit
@@ -1199,7 +1185,7 @@ def audit(
         auditor_model = [str(get_model())]
     except ValueError:
         auditor_model = []  # built outside an eval: no model of its own
-    price_models([*auditor_model, *menu.investigators, *menu.subjects, *menu.judges])
+    price_models([*auditor_model, *models.investigators, *models.subjects, *models.judges])
     if credential_mode == "user" and runs == "hawk":
         logger.warning(USER_CHILDREN_ON_HAWK)
     if isinstance(investigation_samples, str) and investigation_samples != "all":
@@ -1287,12 +1273,7 @@ def audit(
         investigation_package=investigation_package,
         investigator_image=investigator_image,
         model_configs_json=canonical(model_configs),
-        models=Models(
-            auditor=permissions.models.auditor,
-            investigators=tuple(menu.investigators),
-            subjects=tuple(menu.subjects),
-            judges=tuple(menu.judges),
-        ),
+        models=models,
         samples=tuple(investigation_samples) if isinstance(investigation_samples, list) else None,
         checks=permitted_checks,
         task_args_json=canonical(task_args),
@@ -1360,9 +1341,9 @@ def audit(
         seed["jobs"] = {
             "runs": runs,
             "task": target_task,
-            "investigator_models": menu.investigators,
-            "subject_models": menu.subjects,
-            "judge_models": menu.judges,
+            "investigator_models": list(models.investigators),
+            "subject_models": list(models.subjects),
+            "judge_models": list(models.judges),
             "supplied_logs": inv.supplied,
         }
     tools.append(submit_findings(root, inv, target_task, selected_publisher.validate))

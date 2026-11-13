@@ -11,7 +11,7 @@ from inspect_ai.tool import ToolError
 
 from inspect_audit import _audit, _registry
 from inspect_audit._variant import check_overlay, variant_task
-from inspect_audit.dispatch.policy import VARIANT_ARGS, credential_mode
+from inspect_audit.dispatch.policy import VARIANT_ARGS, Models, credential_mode
 
 TASK_MODULE = """
 from inspect_ai import Task, task
@@ -140,7 +140,7 @@ def test_run_eval_with_code_launches_a_recorded_variant(
         task_package="varbench",
         investigation_package="inspect_audit",
         investigator_image="image",
-        menu=_audit.ModelMenu(investigators=[], subjects=["openai/subject"], judges=[]),
+        menu=Models(investigators=[], subjects=["openai/subject"], judges=[]),
         supplied=[],
         source="varbench.tasks",
     )
@@ -202,7 +202,7 @@ def test_a_code_change_skips_bytecode_and_names_other_binaries(
         task_package="varbench",
         investigation_package="inspect_audit",
         investigator_image="image",
-        menu=_audit.ModelMenu(investigators=[], subjects=["openai/subject"], judges=[]),
+        menu=Models(investigators=[], subjects=["openai/subject"], judges=[]),
         supplied=[],
         source="varbench.tasks",
     )
@@ -229,7 +229,7 @@ def test_rescoring_takes_no_models(tmp_path: Path) -> None:
         task_package="b",
         investigation_package="inspect_audit",
         investigator_image="image",
-        menu=_audit.ModelMenu(investigators=[], subjects=["openai/s"], judges=["openai/j"]),
+        menu=Models(investigators=[], subjects=["openai/s"], judges=["openai/j"]),
         supplied=["hawk:logs"],
     )
     ensure_policy(inv.authorizer.policy, store_as(PolicyStore), require_existing=False)

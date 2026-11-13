@@ -19,6 +19,7 @@ from inspect_audit.dispatch import (
     LocalRuns,
     hawk_config,
 )
+from inspect_audit.dispatch.policy import Models
 
 TASK_FILE = """
 from inspect_ai import Task, task
@@ -231,7 +232,7 @@ def _make_audit(tmp_path: Path, runs: Any) -> _audit.Audit:
         task_package="benchmark",
         investigation_package="inspect_audit",
         investigator_image="image",
-        menu=_audit.ModelMenu(
+        menu=Models(
             investigators=["openai/investigator"],
             subjects=["openai/subject"],
             judges=["openai/judge"],

@@ -39,6 +39,3 @@ time_limit: 1200
 retry_attempts: 0
 max_retries: 2
 epochs: 1
-runner:
-  environment:
-    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

@@ -87,6 +87,41 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
     return config
 
 
+async def submit_eval_set(
+    config: dict[str, Any],
+    *,
+    api_url: str,
+    token: str,
+    credential_mode: Literal["restricted", "user"],
+    refresh_token: str | None = None,
+    secrets: dict[str, str] | None = None,
+) -> str:
+    """Every submission to Hawk goes through here (FRICTION 86); Hawk's eval set id back.
+
+    The credential mode is always stated: left out, Hawk uses a deployment feature flag.
+    A user-mode job renews with `refresh_token`; a restricted one carries no login. The
+    runner is told where Hawk's API is (Hawk does not), for jobs that read Hawk.
+    """
+    from hawk.client import HawkClient
+    from hawk.core.types import EvalSetConfig
+
+    if (credential_mode == "user") != (refresh_token is not None):
+        raise ValueError("a user-mode job needs a refresh token; a restricted one takes none")
+    config = json.loads(json.dumps(config))
+    runner = config.setdefault("runner", None) or {}
+    config["runner"] = runner
+    environment = runner.get("environment") or {}
+    runner["environment"] = {**environment, "HAWK_API_URL": api_url}
+    options: dict[str, Any] = {"credential_mode": credential_mode}
+    if refresh_token is not None:
+        options["refresh_token"] = refresh_token
+    if secrets:
+        options["secrets"] = secrets
+    async with HawkClient(token=token, api_url=api_url) as client:
+        created = await client.create_eval_set(EvalSetConfig.model_validate(config), **options)
+    return str(created["eval_set_id"])
+
+
 class HawkLogin:
     """Hawk credentials for whoever this process runs as.
 
@@ -195,7 +230,7 @@ class HawkRuns:
         secrets: dict[str, str] | None = None,
     ) -> None:
         self.login = HawkLogin(api_url)
-        self.credential_mode = credential_mode
+        self.credential_mode: Literal["restricted", "user"] = credential_mode
         self.secrets = dict(secrets or {})
         if credential_mode == "restricted" and not hawk_supports_restricted():
             # refused now, not at the first child job an hour into an audit
@@ -214,31 +249,17 @@ class HawkRuns:
             yield client
 
     async def submit(self, job: Job) -> str:
-        from hawk.client import HawkClient
-        from hawk.core.types import EvalSetConfig
-
         restricted = self.credential_mode == "restricted"
-        settings = hawk_config(job, restricted=restricted)
-        # the job's own code may read Hawk (an investigation fetching hawk: logs); Hawk does
-        # not tell a runner where its API is
-        settings["runner"]["environment"]["HAWK_API_URL"] = self.login.api_url
-        config = EvalSetConfig.model_validate(settings)
         # the access token first: refreshing it may rotate the refresh token
         token = await self.login.access_token()
-        async with HawkClient(token=token, api_url=self.login.api_url) as client:
-            if restricted:
-                # No fallback: old clients/deployments must refuse this mode.
-                options: dict[str, Any] = {"credential_mode": "restricted"}
-                if self.secrets:
-                    options["secrets"] = self.secrets
-                created = await client.create_eval_set(config, **options)
-            else:
-                refresh_token = await self.login.refresh_token()
-                options = {"refresh_token": refresh_token}
-                if self.secrets:
-                    options["secrets"] = self.secrets
-                created = await client.create_eval_set(config, **options)
-        return created["eval_set_id"]
+        return await submit_eval_set(
+            hawk_config(job, restricted=restricted),
+            api_url=self.login.api_url,
+            token=token,
+            credential_mode=self.credential_mode,
+            refresh_token=None if restricted else await self.login.refresh_token(),
+            secrets=self.secrets,
+        )
 
     async def unservable(self, models: list[str]) -> list[str]:
         """Which of `models` Hawk would refuse in a job: names its proxy does not serve.
@@ -351,20 +372,16 @@ class HawkDelivery:
 
     async def submit(self, config: dict[str, Any], refresh_token: str) -> str:
         """Submit the audit's eval set as the auditor user; Hawk's id back."""
-        from hawk.client import HawkClient
-        from hawk.core.types import EvalSetConfig
-
         token, refresh_token = self.auditor_tokens(refresh_token)
-        async with HawkClient(token=token, api_url=self.api_url) as client:
-            # the audit itself runs as the auditor user: it needs that user's token to
-            # launch its (restricted) children, so its mode is never left to Hawk's
-            # server default (FRICTION 79d)
-            created = await client.create_eval_set(
-                EvalSetConfig.model_validate(config),
-                refresh_token=refresh_token,
-                credential_mode="user",
-            )
-        return created["eval_set_id"]
+        # the audit itself runs as the auditor user: it needs that user's token to
+        # launch its (restricted) children (FRICTION 79d)
+        return await submit_eval_set(
+            config,
+            api_url=self.api_url,
+            token=token,
+            credential_mode="user",
+            refresh_token=refresh_token,
+        )
 
     async def running(self, eval_set_id: str, operator_token: str) -> bool | None:
         """Whether Hawk still runs this audit; None when Hawk does not say.

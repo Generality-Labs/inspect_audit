@@ -22,6 +22,7 @@ from typing import Any
 
 import yaml
 
+from .._prices import prices_for
 from .hawk import hawk_config
 from .jobs import Job
 from .packages import locked_extra_pins, own_package_spec
@@ -70,6 +71,8 @@ def investigation_config(
             args["logs"] = logs
         if cost_limit is not None:
             args["cost_limit"] = cost_limit
+            # the job cannot look prices up itself (restricted credentials): hand them over
+            args["prices"] = prices_for([model, *judges.values()])
         return Job(
             label=label,
             task="inspect_audit/investigation",

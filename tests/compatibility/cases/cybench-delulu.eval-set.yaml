@@ -38,5 +38,4 @@ max_retries: 2
 epochs: 1
 runner:
   environment:
-    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai
     CYBENCH_ACKNOWLEDGE_RISKS: '1'

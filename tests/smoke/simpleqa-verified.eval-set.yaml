@@ -23,11 +23,11 @@ tasks:
       policy:
         models:
           auditor:
-          - openrouter/deepseek/deepseek-v4.1-flash-20261017
+          - openrouter/deepseek/deepseek-v4.1-flash-1017
           investigators:
-          - openrouter/deepseek/deepseek-v4.1-flash-20261017
+          - openrouter/deepseek/deepseek-v4.1-flash-1017
           subjects:
-          - openrouter/deepseek/deepseek-v4.1-flash-20261017
+          - openrouter/deepseek/deepseek-v4.1-flash-1017
           judges:
           - openrouter/openai/gpt-6-luna
         inputs:
@@ -47,10 +47,7 @@ tasks:
 models:
 - package: inspect-ai
   items:
-  - name: openrouter/deepseek/deepseek-v4.1-flash-20261017
+  - name: openrouter/deepseek/deepseek-v4.1-flash-1017
 cost_limit: 2.0
 message_limit: 400
 retry_attempts: 0
-runner:
-  environment:
-    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

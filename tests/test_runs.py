@@ -104,6 +104,55 @@ def test_a_child_job_runs_as_this_runs_user_with_its_current_credentials(
     # the child's own code may read Hawk; Hawk does not tell a runner its API
     assert received["config"].runner.environment == {"HAWK_API_URL": "https://hawk.example"}
     assert "secrets" not in received, "no provider key travels with a child job"
+    # the mode is always stated: left out, Hawk falls back to a deployment flag (FRICTION 86)
+    assert received["credential_mode"] == "user"
+
+
+def test_every_submission_states_its_mode_and_matches_its_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hawk.client
+
+    from inspect_audit.dispatch.hawk import submit_eval_set
+
+    received: dict[str, Any] = {}
+
+    class Client:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "Client":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def create_eval_set(self, config: Any, **kwargs: Any) -> dict[str, Any]:
+            received.clear()
+            received.update(kwargs, config=config)
+            return {"eval_set_id": "job"}
+
+    monkeypatch.setattr(hawk.client, "HawkClient", Client)
+    config = {
+        "tasks": [{"package": "p", "name": "p", "items": [{"name": "t"}]}],
+        "runner": {"environment": {"KEEP": "1"}},
+    }
+    submit = lambda **kw: asyncio.run(  # noqa: E731
+        submit_eval_set(config, api_url="https://hawk.example", token="t", **kw)
+    )
+    assert submit(credential_mode="restricted") == "job"
+    assert received["credential_mode"] == "restricted" and "refresh_token" not in received
+    assert received["config"].runner.environment == {
+        "KEEP": "1",
+        "HAWK_API_URL": "https://hawk.example",
+    }
+    assert config["runner"]["environment"] == {"KEEP": "1"}, "the caller's config is not changed"
+    submit(credential_mode="user", refresh_token="r")
+    assert received["credential_mode"] == "user" and received["refresh_token"] == "r"
+    with pytest.raises(ValueError, match="refresh token"):
+        submit(credential_mode="user")
+    with pytest.raises(ValueError, match="refresh token"):
+        submit(credential_mode="restricted", refresh_token="r")
 
 
 def test_a_laptop_asks_the_operators_own_hawk_past_the_venvs(

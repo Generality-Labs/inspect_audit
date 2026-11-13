@@ -51,19 +51,17 @@ API = "https://api.hawk.hawk.generalitylabs.ai"
 async def submit(config: Path) -> str:
     """Submit as the logged-in operator; the audit itself in user mode (its children
     are restricted by the audit's own policy)."""
-    from hawk.client import HawkClient
-    from hawk.core.types import EvalSetConfig
-
-    from inspect_audit.dispatch.hawk import HawkLogin
+    from inspect_audit.dispatch.hawk import HawkLogin, submit_eval_set
 
     login = HawkLogin(API)
-    async with HawkClient(token=await login.access_token(), api_url=API) as client:
-        created = await client.create_eval_set(
-            EvalSetConfig.model_validate(yaml.safe_load(config.read_text())),
-            refresh_token=await login.refresh_token(),
-            credential_mode="user",
-        )
-    return str(created["eval_set_id"])
+    token = await login.access_token()
+    return await submit_eval_set(
+        yaml.safe_load(config.read_text()),
+        api_url=API,
+        token=token,
+        credential_mode="user",
+        refresh_token=await login.refresh_token(),
+    )
 
 
 async def status(eval_set_id: str) -> str:

@@ -16,6 +16,7 @@ from inspect_ai.event import ModelEvent
 from inspect_ai.log import read_eval_log
 
 from inspect_audit.dispatch import HawkLogin
+from inspect_audit.dispatch.hawk import download, submit_eval_set
 
 ROOT = Path(__file__).resolve().parents[2]
 CASES = Path(__file__).parent / "cases"
@@ -180,9 +181,7 @@ async def run(args: argparse.Namespace) -> int:
     if not api:
         raise ValueError("HAWK_API_URL is required")
     login = HawkLogin(api)
-    # Authenticate once before concurrent submissions. Independent CLI refreshes
-    # otherwise race while updating the same system-keyring token records.
-    access_token = os.environ.get("HAWK_ACCESS_TOKEN") or await login.access_token()
+    # one token refresh at a time: concurrent refreshes race on the keyring records
     auth_lock = asyncio.Lock()
     rows: list[dict[str, Any]] = []
     if args.resume:
@@ -230,7 +229,6 @@ async def run(args: argparse.Namespace) -> int:
             if not row.get("job"):
                 spec = config["tasks"][0]["items"][0]["args"]["spec"]
                 environment = dict(os.environ)
-                environment["HAWK_ACCESS_TOKEN"] = access_token
                 secrets = spec.get("child_secrets", [])
                 if "HF_TOKEN" in secrets and not environment.get("HF_TOKEN"):
                     from huggingface_hub import get_token
@@ -243,26 +241,21 @@ async def run(args: argparse.Namespace) -> int:
                         status="blocked", reason=f"Missing declared secrets: {', '.join(missing)}"
                     )
                     return
-                command = [login.binary, "eval-set", str(config_path)]
-                for secret in secrets:
-                    command += ["--secret", secret]
-                launched = await asyncio.to_thread(
-                    subprocess.run,
-                    command,
-                    capture_output=True,
-                    text=True,
-                    env=environment,
-                    timeout=180,
-                    check=False,
-                )
-                if launched.returncode:
+                try:
+                    # restricted, as production investigation jobs run; prices are in
+                    # the spec (materialize), so the probe needs no login of its own
+                    job_id = await submit_eval_set(
+                        config,
+                        api_url=api,
+                        token=await current_token(),
+                        credential_mode="restricted",
+                        secrets={s: environment[s] for s in secrets},
+                    )
+                except Exception as ex:
                     row.update(status="blocked", reason="Hawk submission failed")
-                    (directory / "submission.txt").write_text(launched.stdout + launched.stderr)
+                    (directory / "submission.txt").write_text(f"{type(ex).__name__}: {ex}")
                     return
-                match = re.search(r"Eval set ID: (\S+)", launched.stdout)
-                if match is None:
-                    raise RuntimeError("Hawk returned no eval-set ID")
-                row.update(job=match[1], status="submitted", submitted_at=time.time())
+                row.update(job=job_id, status="submitted", submitted_at=time.time())
                 row.pop("reason", None)
                 print(f"{name}: {row['job']}", flush=True)
                 write_results(output, rows)
@@ -280,17 +273,11 @@ async def run(args: argparse.Namespace) -> int:
                     await hawk.stop_eval_set(row["job"], error=True)
                 row.update(status="timed_out", reason="Suite deadline reached; stop requested")
                 return
-            downloaded = await asyncio.to_thread(
-                subprocess.run,
-                [login.binary, "download", row["job"], "-o", str(directory / "logs"), "--force"],
-                env={**os.environ, "HAWK_ACCESS_TOKEN": await current_token()},
-                capture_output=True,
-                text=True,
-                timeout=180,
-                check=False,
-            )
-            paths = list((directory / "logs").glob("*.eval"))
-            if downloaded.returncode or not paths:
+            try:
+                paths = await download(row["job"], await current_token(), directory / "logs", api)
+            except Exception:
+                paths = []
+            if not paths:
                 row.update(
                     status="failed",
                     reason="No completed Inspect logs; inspect Hawk runner diagnostics",

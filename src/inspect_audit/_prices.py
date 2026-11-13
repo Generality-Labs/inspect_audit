@@ -33,17 +33,18 @@ class UnpricedModelError(ValueError):
     """A model Hawk has no usable price for: it is refused rather than run unmetered."""
 
 
-def prices_for(models: list[str]) -> dict[str, dict[str, float]]:
+def prices_for(models: list[str], api_url: str | None = None) -> dict[str, dict[str, float]]:
     """Hawk's price for each model, keyed by the name the job calls it by.
 
-    Needs a Hawk login (the operator's, or a user-mode runner's); off Hawk, nothing.
+    Hawk's API is `api_url`, else `HAWK_API_URL`; needs a Hawk login (the operator's, or
+    a user-mode runner's). Off Hawk, nothing.
     Raises `UnpricedModelError` naming every model Hawk does not price. A mock model
     costs nothing, and says so: a job run under one (a rescore of a grader that calls no
     model) still needs a price for its `cost_limit` (smoke round 7, FRICTION 96).
     """
     mocks = {m: FREE for m in models if m.startswith(MOCK)}
-    api_url = os.environ.get("HAWK_API_URL")
-    if not api_url:
+    api_url = api_url or os.environ.get("HAWK_API_URL")
+    if not api_url or all(m.startswith(MOCK) for m in models):
         return mocks
     from hawk.core.providers import registry_model_name
 
@@ -80,9 +81,9 @@ def usable(price: dict[str, Any]) -> bool:
     ) and bool(price.get("input") or price.get("output"))
 
 
-def price_models(models: list[str]) -> None:
+def price_models(models: list[str], api_url: str | None = None) -> None:
     """Look up and register prices for this process's own models (needs a Hawk login)."""
-    register_prices(prices_for(models))
+    register_prices(prices_for(models, api_url))
 
 
 def register_prices(prices: dict[str, dict[str, Any]] | None) -> None:

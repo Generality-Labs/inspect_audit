@@ -89,10 +89,20 @@ class Spend:
         return self.own() + sum(j.usd or 0.0 for j in jobs), jobs
 
     async def refuse_if_spent(self) -> None:
-        """The one stop: refuse a launch once spend has reached the operator's budget."""
+        """The one stop: refuse a launch once spend has reached the operator's budget.
+
+        Spend that cannot be read (a failed lookup, a model with no price) is unknown, not
+        free: with a budget, a launch is refused until it can be read (FRICTION 114).
+        """
         if self.budget_usd is None:
             return
-        total, _ = await self.spent()
+        total, jobs = await self.spent()
+        unknown = [j.label for j in jobs if j.usd is None or j.unpriced]
+        if unknown:
+            raise ToolError(
+                f"cannot read what {', '.join(unknown)} spent, so the ${self.budget_usd:.2f} "
+                "budget cannot be checked: try again shortly, or stop those jobs"
+            )
         if total >= self.budget_usd:
             raise ToolError(
                 f"the ${self.budget_usd:.2f} audit budget is spent (${total:.2f} so far, "

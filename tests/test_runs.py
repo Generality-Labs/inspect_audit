@@ -1104,3 +1104,67 @@ def test_hawk_status_words_are_read_in_one_place() -> None:
     assert hawk_state("pending") is JobState.RUNNING
     assert JobKind.of("inspect_audit/regrade") is JobKind.REGRADE
     assert JobKind.of("inspect_evals/anything") is None and JobKind.BENCHMARK.task is None
+
+
+def test_spend_that_cannot_be_read_stops_launches(
+    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed lookup counted as $0: a review launched a job at $9 of $10 with Hawk
+    unreachable. Unknown spend is unknown, and the budget cannot be checked (FRICTION 114)."""
+    from types import SimpleNamespace
+
+    import inspect_ai.util
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit._spend import Spend
+
+    class Unreachable(FakeRuns):
+        async def usage(self, run_id: str) -> tuple[dict[str, Any], int]:
+            raise ConnectionError("hawk is down")
+
+    monkeypatch.setattr(
+        inspect_ai.util,
+        "sample_limits",
+        lambda: SimpleNamespace(cost=SimpleNamespace(usage=9.0, limit=None)),
+    )
+    record.jobs.append({"label": "running", "kind": "benchmark", "run_id": "r1", "address": "a"})
+    spend = Spend(Unreachable(), 10.0)
+    with pytest.raises(ToolError, match="cannot read what running spent"):
+        asyncio.run(spend.refuse_if_spent())
+    assert "running (benchmark, running): spend unknown" in "\n".join(asyncio.run(spend.report()))
+
+
+def test_hawk_usage_sums_every_samples_tokens_by_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live spend comes from Hawk's eval-set status: each sample's usage so far."""
+    from types import SimpleNamespace
+
+    usage = SimpleNamespace(
+        model_dump=lambda: {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110}
+    )
+    status = SimpleNamespace(
+        tasks=[
+            SimpleNamespace(
+                samples=[
+                    SimpleNamespace(completed=True, model_usage={"openai/m": usage}),
+                    SimpleNamespace(completed=False, model_usage={"openai/m": usage}),
+                    SimpleNamespace(completed=False, model_usage=None),
+                ]
+            )
+        ]
+    )
+
+    class Client:
+        async def __aenter__(self) -> "Client":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get_eval_set_status(self, run_id: str) -> Any:
+            return status
+
+    runs = HawkRuns("https://hawk.test", credential_mode="user")
+    monkeypatch.setattr(runs, "_client", Client)
+    totals, done = asyncio.run(runs.usage("set-1"))
+    assert done == 1
+    assert (totals["openai/m"].input_tokens, totals["openai/m"].output_tokens) == (200, 20)

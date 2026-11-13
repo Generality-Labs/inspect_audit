@@ -98,7 +98,7 @@ def _platform(what: str) -> Generator[None]:
         raise ToolError(f"{what} failed: {type(ex).__name__}: {ex}") from ex
 
 
-def require_models(models: list[str], runs: Runs | None) -> None:
+def require_models(models: list[str], runs: Runs | None, api_url: str | None = None) -> None:
     """Every model the audit may use, checked once, before anything starts.
 
     Hawk must price each one (`price_models`, which registers the prices `_spend` and the
@@ -106,7 +106,7 @@ def require_models(models: list[str], runs: Runs | None) -> None:
     name (Hawk checks a job's models only when it is submitted, after the audit has
     spent: FRICTION 53). A failure names every model at fault.
     """
-    price_models(models)
+    price_models(models, api_url)
     unservable = getattr(runs, "unservable", None)
     if unservable is not None and models and (missing := run(unservable(models))):
         raise ValueError(
@@ -869,7 +869,9 @@ def audit(
     except ValueError:
         auditor_model = []  # built outside an eval: no model of its own
     require_models(
-        [*auditor_model, *models.investigators, *models.subjects, *models.judges], backend
+        [*auditor_model, *models.investigators, *models.subjects, *models.judges],
+        backend,
+        hawk_api_url,
     )
     spend = Spend(
         backend,

@@ -25,7 +25,7 @@ def test_latex_requires_recorded_grade_and_criterion() -> None:
         latex.validate(findings)
     findings.auditor.findings.clear()
     findings.auditor.ratings.pop("overall")
-    with pytest.raises(ValueError, match="A-D"):
+    with pytest.raises(ValueError, match=r"overall takes a grade \(A, B, C, D\)"):
         latex.validate(findings)
     with pytest.raises(ValidationError):
         latex.Prose.model_validate({"grade": "A"})

@@ -17,6 +17,7 @@ from test_helpers.audit import make_audit
 from test_helpers.logs import run_fixture_eval
 
 from inspect_audit._audit import audit
+from inspect_audit._spend import Spend
 
 
 def every(models: list[str]):
@@ -498,7 +499,7 @@ def test_every_tool_schema_survives_a_strict_provider(tmp_path: Path) -> None:
         _audit.run_eval(inv),
         _audit.send_investigators(inv),
         _audit.jobs(inv),
-        _audit.budget(None, openrouter=False),
+        _audit.budget(Spend(None, None), None, openrouter=False),
         view_image(),
         submit_findings(tmp_path),
         publish_document(tmp_path, load_publisher("gl")),
@@ -650,7 +651,7 @@ def test_every_agent_tool_schema_meets_openais_strict_rules(tmp_path: Path) -> N
         _audit.run_eval(inv),
         _audit.send_investigators(inv),
         _audit.jobs(inv),
-        _audit.budget(None, openrouter=False),
+        _audit.budget(Spend(None, None), None, openrouter=False),
         view_image(),
         submit_findings(tmp_path),
         publish_document(tmp_path, load_publisher("gl")),

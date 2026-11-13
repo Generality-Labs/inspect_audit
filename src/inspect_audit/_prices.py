@@ -120,3 +120,39 @@ def _hawk_table(api_url: str) -> dict[str, dict[str, Any]]:
     with concurrent.futures.ThreadPoolExecutor(1) as pool:
         rows = pool.submit(asyncio.run, prices(api_url)).result()
     return {str(r["model"]): r for r in rows if r.get("model")}
+
+
+def cost_of(usage: dict[str, Any]) -> tuple[float, list[str]]:
+    """What token counts cost at the prices registered here, and the models unpriced.
+
+    Unpriced models' tokens are not counted in the total.
+
+    The audit registers a price for every model it may use when it starts (`price_models`),
+    so this prices any job it launched, on any backend, from the job's token counts.
+    """
+    from inspect_ai.model import ModelUsage, compute_model_cost, get_model_info
+
+    total = 0.0
+    unpriced: list[str] = []
+    for model, counts in usage.items():
+        info = get_model_info(model)
+        if info is None or info.cost is None:
+            unpriced.append(model)
+            continue
+        tokens = counts if isinstance(counts, ModelUsage) else ModelUsage.model_validate(counts)
+        total += compute_model_cost(info.cost, tokens)
+    return total, sorted(unpriced)
+
+
+def add_usage(total: dict[str, Any], usage: dict[str, Any]) -> None:
+    """Add one sample's token counts by model into `total`, leaving cost out.
+
+    What the tokens cost is `cost_of`'s to say, at the audit's prices.
+    """
+    from inspect_ai.model import ModelUsage
+
+    for model, counts in usage.items():
+        tokens = (
+            counts if isinstance(counts, ModelUsage) else ModelUsage.model_validate(counts)
+        ).model_copy(update={"total_cost": None})
+        total[model] = total[model] + tokens if model in total else tokens

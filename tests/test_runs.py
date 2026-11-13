@@ -254,10 +254,18 @@ class FakeRuns:
 
     def __init__(self) -> None:
         self.submitted: list[Job] = []
+        # what each run has used so far, as a backend reports it (token counts by model)
+        self.used: dict[str, dict[str, Any]] = {}
 
     async def submit(self, job: Job) -> str:
         self.submitted.append(job)
         return f"run-{len(self.submitted)}"
+
+    async def status(self, run_id: str) -> JobState:
+        return JobState.RUNNING
+
+    async def usage(self, run_id: str) -> tuple[dict[str, Any], int]:
+        return self.used.get(run_id, {}), 0
 
 
 @pytest.fixture
@@ -287,7 +295,6 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
             "address": "hawk:run-1",
             "note": "why",
             "policy_sha256": inv.authorizer.policy.digest,
-            "max_cost": None,  # a benchmark rerun declares no per-item cap
         }
     ]
     from inspect_ai.tool import ToolError
@@ -766,45 +773,39 @@ def test_even_an_empty_configuration_requires_a_bound_policy(
     assert not runs.submitted
 
 
-def test_budget_reports_what_the_audit_has_spent(
+def test_budget_reports_what_the_audit_and_each_job_have_spent(
     tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Measured spend, not only a key's allowance: CL-bench planned against caps (FRICTION 25)."""
+    """One owner (`Spend`): own calls plus every job's spend so far, running or not,
+    priced from its token counts at the audit's prices (FRICTION 25, 99)."""
     from types import SimpleNamespace
 
     import inspect_ai.util
+    from inspect_ai.model import ModelUsage
 
+    from inspect_audit._spend import Spend
+
+    _prices.register_price("openai/investigator", {"input": 1.0, "output": 2.0})
+    runs = FakeRuns()
+    runs.used = {
+        # 1M in + 1M out at $1/$2 per M: $3, while still running
+        "r1": {"openai/investigator": ModelUsage(input_tokens=1_000_000, output_tokens=1_000_000)},
+        "r2": {"openai/unpriced": ModelUsage(input_tokens=5)},
+    }
     record.jobs.append({"label": "screen", "kind": "investigation", "run_id": "r1", "address": "a"})
-    record.jobs.append(
-        {"label": "running", "kind": "investigation", "run_id": "r2", "address": "b"}
-    )
-    folder = tmp_path / "inputs" / "jobs" / "screen"
-    folder.mkdir(parents=True)
-    (folder / "x.eval").write_bytes(b"")
-
-    async def cost(path: Path) -> float:
-        return 9.71
-
-    async def count(path: Path) -> int:
-        return 40
-
-    monkeypatch.setattr(_audit, "_recorded_cost", cost)
-    monkeypatch.setattr(_audit, "_sample_count", count)
+    record.jobs.append({"label": "odd", "kind": "benchmark", "run_id": "r2", "address": "b"})
     monkeypatch.setattr(
         inspect_ai.util,
         "sample_limits",
-        lambda: SimpleNamespace(cost=SimpleNamespace(usage=5.82, limit=150.0)),
+        lambda: SimpleNamespace(cost=SimpleNamespace(usage=5.82, limit=None)),
     )
-    report = asyncio.run(
-        _audit.budget(None, openrouter=False, root=tmp_path, budget_usd=100.0)()  # type: ignore[call-arg]
-    )
-    assert "Your own calls: $5.82 of a $150.00 cap" in report
-    assert "screen (investigation): $9.71 recorded" in report
-    assert "running (investigation): not collected yet" in report
-    assert "Spent so far (measured): $15.53" in report
-    assert "$84.47 (84%) left" in report
-    # measured cost per item, and what the rest covers: plan from numbers (FRICTION 25)
-    assert "cost $0.24 each on average (40 items); the rest covers about 347 more" in report
+    spend = Spend(runs, budget_usd=100.0)
+    report = asyncio.run(_audit.budget(spend, None, openrouter=False)())  # type: ignore[call-arg]
+    assert "Your own calls: $5.82" in report
+    assert "screen (investigation, running): $3.00 so far" in report
+    assert "odd (benchmark, running): $0.00 so far; no price for openai/unpriced" in report
+    assert "Spent so far: $8.82" in report
+    assert "$91.18 (91%) left" in report
 
 
 def test_fetched_logs_land_in_the_same_folder_on_every_attempt(tmp_path: Path) -> None:
@@ -921,7 +922,7 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
         )
 
 
-def test_launches_stop_only_once_measured_spend_reaches_the_budget(
+def test_launches_stop_once_spend_so_far_reaches_the_budget(
     tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No reservations: worst-case caps starved investigations and stopped the auditor
@@ -937,11 +938,14 @@ def test_launches_stop_only_once_measured_spend_reaches_the_budget(
     inv = _make_audit(tmp_path, runs)
     policy = inv.authorizer.policy
     budgeted = policy.model_copy(update={"limits": Limits(budget_usd=10.0)})
+    from inspect_ai.model import ModelUsage
     from inspect_ai.util import store_as
 
+    from inspect_audit._spend import Spend
     from inspect_audit.dispatch.policy import AuditAuthorizer, PolicyStore, ensure_policy
 
     inv.authorizer = AuditAuthorizer(budgeted)
+    inv.spend = Spend(runs, 10.0)
     saved = store_as(PolicyStore)
     saved.policy_json = saved.digest = None  # the fixture's policy, replaced by the budgeted one
     ensure_policy(budgeted, saved, require_existing=False)
@@ -975,15 +979,10 @@ def test_launches_stop_only_once_measured_spend_reaches_the_budget(
         _audit.run_eval(inv)("rerun", ["1"], ["openai/subject"], "{}", 1, [], None, [], None, "")  # type: ignore[arg-type]
     )
     assert "Launched" in out
-    # once measured spend reaches the budget, launches stop
-    folder = tmp_path / "inputs" / "jobs" / "first"
-    folder.mkdir(parents=True)
-    (folder / "x.eval").write_bytes(b"")
-
-    async def spent(path: Path) -> float:
-        return 6.5
-
-    monkeypatch.setattr(_audit, "_recorded_cost", spent)
+    # once spend reaches the budget, launches stop: a running job counts what it has
+    # spent so far, not only once collected (FRICTION 99)
+    _prices.register_price("openai/investigator", {"input": 1.0, "output": 1.0})
+    runs.used["run-1"] = {"openai/investigator": ModelUsage(input_tokens=6_500_000)}
     with pytest.raises(ToolError, match="budget is spent"):
         launch("third", ["22"], 1.0)
 

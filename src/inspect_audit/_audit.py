@@ -35,7 +35,7 @@ from inspect_ai.util import CheckpointConfig, sandbox, store_as
 from . import prompts
 from ._image import view_image
 from ._log_sources import fetch_logs, is_remote_logs
-from ._prices import UnpricedModelError, price_models, prices_for
+from ._prices import UnpricedModelError, add_usage, cost_of, price_models, prices_for
 from ._report import (
     AuditRecord,
     AuditState,
@@ -44,6 +44,7 @@ from ._report import (
     operator_turn,
     report_blocker,
 )
+from ._spend import Spend
 from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS
 from .containers import (
     AUDITOR_DOCKERFILE,
@@ -461,88 +462,17 @@ def docker_box(root: Path) -> tuple[str, str]:
     return "docker", str(root / "compose.yaml")
 
 
-def _worst_case(job: Job) -> float | None:
-    """The most a job can spend: its per-item cap times its items (times epochs)."""
-    cap = job.task_args.get("cost_limit")
-    if not isinstance(cap, (int, float)):
-        return None
-    kind = JobKind.of(job.task)
-    if kind in (JobKind.INVESTIGATION, JobKind.REGRADE):
-        items = len(job.task_args.get("samples") or [])
-        epochs = job.task_args.get("epochs", 1) if kind is JobKind.REGRADE else 1
-        return float(cap) * items * int(epochs)
-    return None
-
-
-async def committed_spend(root: Path | None) -> tuple[float, float, float, list[str]]:
-    """(own calls, collected jobs' recorded cost, running jobs at their caps, uncapped labels)."""
-    from inspect_ai.util import sample_limits
-
-    own = float(sample_limits().cost.usage)
-    collected = running = 0.0
-    uncapped: list[str] = []
-    for j in store_as(AuditRecord).jobs:
-        folder = root / "inputs" / "jobs" / str(j["label"]) if root else None
-        files = sorted(folder.rglob("*.eval")) if folder and folder.is_dir() else []
-        if files:
-            collected += sum([await _recorded_cost(f) for f in files])
-        elif isinstance(j.get("max_cost"), (int, float)):
-            running += float(j["max_cost"])
-        else:
-            uncapped.append(str(j["label"]))
-    return own, collected, running, uncapped
-
-
 @tool(name="budget")
-def budget(
-    hawk_api_url: str | None,
-    openrouter: bool,
-    root: Path | None = None,
-    budget_usd: float | None = None,
-) -> Tool:
+def budget(spend: Spend, hawk_api_url: str | None, openrouter: bool) -> Tool:
     async def execute() -> str:
-        """What this audit has spent so far, what is left, and what an item costs.
+        """What this audit has spent so far, job by job, and what is left.
 
-        Spent: your own calls and each collected job's recorded cost. A running job's
-        spend shows once collected; the model key's balance, below, is live and counts
-        everything that bills to it. Nothing is reserved for running jobs: spend what
-        the work needs, watch this as you go, and scale from measured costs.
+        Spent: your own calls and every job's spend so far, running or finished, from
+        its token counts. No job is capped and nothing is reserved: decide what the
+        work is worth from these costs, watch this as you go, and stop or stop jobs when
+        it is not. The model key's balance, below, counts everything that bills to it.
         """
-        from inspect_ai.util import sample_limits
-
-        own_limit = sample_limits().cost.limit
-        cap = f" of a ${own_limit:.2f} cap" if own_limit is not None else ""
-        own, collected, _, _ = await committed_spend(root)
-        lines = [f"Your own calls: ${own:.2f}{cap}"]
-        items = spent_on_items = 0.0
-        for j in store_as(AuditRecord).jobs:
-            folder = root / "inputs" / "jobs" / str(j["label"]) if root else None
-            files = sorted(folder.rglob("*.eval")) if folder and folder.is_dir() else []
-            if files:
-                cost = sum([await _recorded_cost(f) for f in files])
-                lines.append(f"  {j['label']} ({j['kind']}): ${cost:.2f} recorded")
-                if j["kind"] == JobKind.INVESTIGATION:
-                    items += sum([await _sample_count(f) for f in files])
-                    spent_on_items += cost
-            else:
-                limit = j.get("max_cost")
-                bound = f", at most ${float(limit):.2f}" if isinstance(limit, (int, float)) else ""
-                lines.append(f"  {j['label']} ({j['kind']}): not collected yet{bound}")
-        spent = own + collected
-        lines.append(f"Spent so far (measured): ${spent:.2f}")
-        if budget_usd is not None:
-            left = budget_usd - spent
-            lines.append(
-                f"Audit budget: ${budget_usd:.2f}; ${left:.2f} ({100 * left / budget_usd:.0f}%) left "
-                "for your calls and every job"
-            )
-            if items:
-                per = spent_on_items / items
-                more = f"; the rest covers about {int(left // per)} more" if per > 0 else ""
-                lines.append(
-                    f"Investigated items so far cost ${per:.2f} each on average "
-                    f"({int(items)} items){more}"
-                )
+        lines = await spend.report()
         lines += await key_balance(
             hawk_api_url, openrouter and str(get_model()).startswith("openrouter/")
         )
@@ -597,6 +527,7 @@ class Audit:
     investigator_image: str
     supplied: list[str]  # log sources the operator gave, as addresses a job can read
     authorizer: AuditAuthorizer
+    spend: Spend
     # exact pins installed beside the benchmark in every child job (its lockfile's)
     task_pins: list[str] = field(default_factory=list)
     # the operator's paper (path or URL), passed on so investigators read it too
@@ -638,18 +569,7 @@ class Audit:
             )
             if active >= cap:
                 raise ToolError(f"the policy permits at most {cap} concurrent jobs")
-        worst = _worst_case(approved)
-        limit = policy.limits.budget_usd
-        if limit is not None:
-            # measured spend only: nothing is reserved for running jobs (FRICTION 50, 52,
-            # 76); the capped key is the hard stop on what they spend meanwhile
-            own, collected, _, _ = await committed_spend(self.root)
-            if own + collected >= limit:
-                raise ToolError(
-                    f"the ${limit:.2f} audit budget is spent: ${own + collected:.2f} measured "
-                    f"(your calls ${own:.2f}, collected jobs ${collected:.2f}). Collect what is "
-                    "running and submit findings with the evidence you have."
-                )
+        await self.spend.refuse_if_spent()
         with _platform(f"submitting {job.label!r}"):
             run_id = await self.runs.submit(approved)
         address = self.runs.address(run_id)
@@ -659,12 +579,11 @@ class Audit:
             *record.jobs,
             {
                 "label": job.label,
-                "kind": kind,
+                "kind": kind.value,
                 "run_id": run_id,
                 "address": address,
                 "note": note,
                 "policy_sha256": policy.digest,
-                "max_cost": worst,
                 # a variant's change, kept with the job so findings can cite it exactly
                 **({"diff": diff} if diff else {}),
                 **({"packages": job.package_overrides} if job.package_overrides else {}),
@@ -1131,21 +1050,18 @@ async def _import_investigations(inv: Audit, files: list[Path], address: str) ->
 
 
 def _cost(summaries: list[EvalSampleSummary]) -> float:
-    return sum((u.total_cost or 0.0) for s in summaries for u in (s.model_usage or {}).values())
+    """What these samples' tokens cost at the audit's prices.
+
+    The one pricing (`_prices.cost_of`), whatever prices the child itself held.
+    """
+    usage: dict[str, Any] = {}
+    for summary in summaries:
+        add_usage(usage, summary.model_usage or {})
+    return cost_of(usage)[0]
 
 
 # Inspect's async readers, never the sync ones: those start their own event loop, which
 # inside the auditor's async tools is the race that blocked CL-bench v4 (FRICTION 44, 79)
-async def _sample_count(path: Path) -> int:
-    """How many samples one log recorded."""
-    return len(await read_eval_log_sample_summaries_async(str(path)))
-
-
-async def _recorded_cost(path: Path) -> float:
-    """What one log's samples recorded spending."""
-    return _cost(await read_eval_log_sample_summaries_async(str(path)))
-
-
 async def _log_line(path: Path) -> str:
     """One log, summarised from its samples: how many, how they ended, what they cost."""
     summaries = await read_eval_log_sample_summaries_async(str(path))
@@ -1500,6 +1416,19 @@ def audit(
     (root / "inputs" / "policy.json").write_text(snapshot)
     seed["policy"] = {"path": "/inputs/policy.json", "sha256": launch_policy.digest}
 
+    # where jobs run, built once: the job tools launch through it and `Spend` reads
+    # every job's spend from it
+    backend: Runs | None = None
+    if runs == "hawk":
+        backend = HawkRuns(
+            hawk_api_url or "",
+            credential_mode=launch_policy.credential_mode,
+            secrets={name: os.environ[name] for name in child_secrets},
+        )
+    elif runs:
+        # local runs outside the per-construction folder: a resumed run must find them
+        backend = LocalRuns(Path(output_dir).expanduser().resolve() / "runs")
+    spend = Spend(backend, launch_policy.limits.budget_usd)
     tools: list[Tool] = [
         # a shell dump is the one place the agent routinely wants more than the
         # 32KB default; everything else writes large results to files
@@ -1508,37 +1437,30 @@ def audit(
         # the agent's own calls bill to the Hawk user's key in a pod, to
         # OPENROUTER_API_KEY in a local box; jobs to whichever their backend uses
         budget(
+            spend,
             # the Hawk key whenever Hawk is in the picture and its address is known: jobs
             # on Hawk, or the auditor itself in a Hawk pod (FRICTION 79b; was only the first)
             hawk_api_url if (runs == "hawk" or box == "k8s") else None,
             openrouter=box == "docker" or runs == "local",
-            root=root,
-            budget_usd=launch_policy.limits.budget_usd,
         ),
         view_image(),
         report_blocker(),
         register_view(target_task, launch_policy),
     ]
     inv = None
-    if runs:
+    if backend is not None:
         if target_task is None:
             raise RuntimeError("the investigated task was not resolved")
         inv = Audit(
             root=root,
-            # local runs outside the per-construction folder: a resumed run must find them
-            runs=HawkRuns(
-                hawk_api_url or "",
-                credential_mode=launch_policy.credential_mode,
-                secrets={name: os.environ[name] for name in child_secrets},
-            )
-            if runs == "hawk"
-            else LocalRuns(Path(output_dir).expanduser().resolve() / "runs"),
+            runs=backend,
             task=target_task,
             task_package=task_package or "",
             investigation_package=investigation_package or "",
             investigator_image=investigator_image,
             supplied=sorted(set(supplied)),
             authorizer=AuditAuthorizer(launch_policy),
+            spend=spend,
             task_pins=task_package_pins,
             paper=paper,
         )

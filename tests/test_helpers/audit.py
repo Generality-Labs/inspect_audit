@@ -3,6 +3,7 @@
 from typing import Any
 
 from inspect_audit._audit import Audit
+from inspect_audit._spend import Spend
 from inspect_audit._verdicts import investigation_items
 from inspect_audit.dispatch.policy import AuditAuthorizer, LaunchPolicy, Models
 
@@ -25,4 +26,5 @@ def make_audit(**args: Any) -> Audit:
         supplied_logs=tuple(args["supplied"]),
         configuration_json="{}",
     )
-    return Audit(**args, authorizer=AuditAuthorizer(policy))
+    spend = Spend(args.get("runs"), args.pop("budget_usd", None))
+    return Audit(**args, authorizer=AuditAuthorizer(policy), spend=spend)

@@ -293,6 +293,20 @@ class HawkRuns:
             found = await client.get_job_status(run_id)
         return hawk_state(found.status if found is not None else None)
 
+    async def usage(self, run_id: str) -> tuple[dict[str, Any], int]:
+        """From Hawk's live status: each sample's usage so far (its summary's once done)."""
+        from .._prices import add_usage
+
+        async with self._client() as client:
+            status = await client.get_eval_set_status(run_id)
+        total: dict[str, Any] = {}
+        done = 0
+        for task in status.tasks:
+            for sample in task.samples or []:
+                done += bool(sample.completed)
+                add_usage(total, {m: c.model_dump() for m, c in (sample.model_usage or {}).items()})
+        return total, done
+
     async def logs(self, run_id: str, out_dir: Path) -> list[Path]:
         return await download(run_id, await self.login.access_token(), out_dir, self.login.api_url)
 

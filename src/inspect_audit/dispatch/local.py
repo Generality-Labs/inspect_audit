@@ -154,6 +154,20 @@ class LocalRuns:
             return JobState.FAILED  # gone without a done record: it died mid-flight
         return JobState.RUNNING
 
+    async def usage(self, run_id: str) -> tuple[dict[str, Any], int]:
+        """From the job's logs on disk: finished samples only (none while it runs)."""
+        from inspect_ai.log import read_eval_log_sample_summaries_async
+
+        from .._prices import add_usage
+
+        total: dict[str, Any] = {}
+        done = 0
+        for log in sorted((self._dir(run_id) / "logs").glob("*.eval")):
+            for sample in await read_eval_log_sample_summaries_async(str(log)):
+                done += 1
+                add_usage(total, sample.model_usage or {})
+        return total, done
+
     async def logs(self, run_id: str, out_dir: Path) -> list[Path]:
         return sorted((self._dir(run_id) / "logs").glob("*.eval"))
 

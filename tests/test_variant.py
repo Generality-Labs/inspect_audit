@@ -164,6 +164,56 @@ def test_run_eval_with_code_launches_a_recorded_variant(
     assert recorded["kind"] == "variant" and '+QUESTION = "ablated"' in recorded["diff"]
 
 
+def test_a_code_change_skips_bytecode_and_names_other_binaries(
+    varbench: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Importing a change to test it writes __pycache__ beside it; that is not part of the
+    change. Any other non-text file is refused by name (smoke round 7, FRICTION 97)."""
+    import subprocess
+    from types import SimpleNamespace
+
+    from inspect_ai.tool import ToolError
+    from inspect_ai.util import Store
+    from inspect_ai.util._store import init_subtask_store
+    from test_helpers.audit import make_audit
+
+    init_subtask_store(Store())
+
+    class LocalBox:
+        """The box's `find` and file reads, on this machine's file system."""
+
+        async def exec(self, cmd: list[str], **kwargs: Any) -> Any:
+            done = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True)
+            return SimpleNamespace(
+                success=done.returncode == 0, stdout=done.stdout, stderr=done.stderr
+            )
+
+        async def read_file(self, path: str) -> str:
+            return (await asyncio.to_thread(Path(path).read_bytes)).decode("utf-8")
+
+    change = tmp_path / "change" / "varbench"
+    (change / "__pycache__").mkdir(parents=True)
+    (change / "prompts.py").write_text('QUESTION = "ablated"\n')
+    (change / "__pycache__" / "prompts.cpython-313.pyc").write_bytes(b"\xa7\r\r\n\x00\xff")
+    inv = make_audit(
+        root=tmp_path / "audit",
+        runs=None,
+        task="varbench/bench",
+        task_package="varbench",
+        investigation_package="inspect_audit",
+        investigator_image="image",
+        menu=_audit.ModelMenu(investigators=[], subjects=["openai/subject"], judges=[]),
+        supplied=[],
+        source="varbench.tasks",
+    )
+    monkeypatch.setattr(_audit, "sandbox", LocalBox)
+    files, _ = asyncio.run(_audit._variant_files(inv, str(tmp_path / "change")))
+    assert files == {"varbench/prompts.py": 'QUESTION = "ablated"\n'}
+    (change / "data.bin").write_bytes(b"\xff\xfe\x00")
+    with pytest.raises(ToolError, match=r"data\.bin is not text"):
+        asyncio.run(_audit._variant_files(inv, str(tmp_path / "change")))
+
+
 def test_rescoring_takes_no_models(tmp_path: Path) -> None:
     from inspect_ai.util import Store, store_as
     from inspect_ai.util._store import init_subtask_store

@@ -705,14 +705,23 @@ async def _variant_files(inv: Audit, folder: str) -> tuple[dict[str, str], str]:
             "modified code needs the module that defines the task: the operator declares benchmark.source"
         )
     root = folder.rstrip("/")
-    listed = await sandbox().exec(["find", root, "-type", "f"])
+    # Python's bytecode caches, written when the auditor imports its change to test it,
+    # are not part of the change (smoke round 7: a .pyc crashed the read, FRICTION 97)
+    listed = await sandbox().exec(
+        ["find", root, "-name", "__pycache__", "-prune", "-o", "-type", "f", "-print"]
+    )
     if not listed.success:
         raise ToolError(f"cannot list {root}: {listed.stderr.strip()}")
-    files = {
-        path[len(root) + 1 :]: await sandbox().read_file(path)
-        for path in sorted(listed.stdout.split("\n"))
-        if path.strip()
-    }
+    files: dict[str, str] = {}
+    for path in sorted(listed.stdout.split("\n")):
+        if not path.strip():
+            continue
+        try:
+            files[path[len(root) + 1 :]] = await sandbox().read_file(path)
+        except UnicodeDecodeError:
+            raise ToolError(
+                f"{path} is not text: a code change replaces source files only; remove it"
+            ) from None
     try:
         return files, check_overlay(inv.task, source, files)
     except ValueError as ex:

@@ -64,6 +64,26 @@ def test_a_job_renders_as_a_config_hawk_accepts() -> None:
     assert config.retry_attempts == 0
 
 
+def test_an_investigations_judges_get_credentials_in_either_mode() -> None:
+    """The benchmark's judge is built when the investigation loads; Hawk gives a job
+    credentials only for the models its config declares (smoke round 7: "No
+    OPENROUTER_API_KEY defined", FRICTION 94)."""
+    from hawk.core.types import EvalSetConfig
+
+    job = Job(
+        label="inv",
+        task="inspect_audit/investigation",
+        package="inspect-audit@git+https://example.org/ia@abc",
+        models=["openai/openrouter/deepseek/flash"],
+        task_args={"judge": {"grader": "openrouter/openai/gpt-6-luna"}, "logs": ["hawk:x"]},
+    )
+    for restricted in (False, True):
+        config = EvalSetConfig.model_validate(hawk_config(job, restricted=restricted))
+        assert [i.name for g in config.additional_models or [] for i in g.items] == [
+            "openrouter/openai/gpt-6-luna"
+        ]
+
+
 def test_a_child_job_runs_as_this_runs_user_with_its_current_credentials(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

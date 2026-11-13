@@ -67,13 +67,14 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
         "retry_attempts": 0,
         "runner": {"environment": validate_environment(job.environment)},
     }
+    # Judges selected through task arguments are outside the eval model grid: declared
+    # here, in either credential mode, so Hawk gives the job their provider's credentials
+    # (smoke round 7: an investigation's OpenRouter judge failed to load, "No
+    # OPENROUTER_API_KEY defined", under user credentials; FRICTION 94)
+    judges = (job.task_args.get("judge") or {}) if job.task == "inspect_audit/investigation" else {}
+    if judges:
+        config["additional_models"] = [group(str(m)) for m in dict.fromkeys(judges.values())]
     if restricted:
-        # Judges selected through task arguments are outside the eval model grid.
-        judges = (
-            (job.task_args.get("judge") or {}) if job.task == "inspect_audit/investigation" else {}
-        )
-        if judges:
-            config["additional_models"] = [group(str(m)) for m in dict.fromkeys(judges.values())]
         sources = (
             (job.task_args.get("logs") or []) if job.task == "inspect_audit/investigation" else []
         )

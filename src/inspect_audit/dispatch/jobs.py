@@ -119,6 +119,18 @@ def validate_environment(environment: dict[str, str]) -> dict[str, str]:
     return dict(environment)
 
 
+def add_usage(total: dict[str, Any], usage: dict[str, Any]) -> None:
+    """Add one sample's token counts by model into `total`, leaving cost out.
+
+    What the tokens cost is the audit's to say, at its own prices (`_prices.cost_of`).
+    """
+    for model, counts in usage.items():
+        tokens = (
+            counts if isinstance(counts, ModelUsage) else ModelUsage.model_validate(counts)
+        ).model_copy(update={"total_cost": None})
+        total[model] = total[model] + tokens if model in total else tokens
+
+
 class Runs(Protocol):
     """A place jobs run. Ids are the backend's own."""
 

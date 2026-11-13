@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .jobs import FINISHED, Job, JobState, validate_environment
+from .jobs import FINISHED, Job, JobState, add_usage, validate_environment
 
 
 class LocalRuns:
@@ -157,8 +157,6 @@ class LocalRuns:
     async def usage(self, run_id: str) -> tuple[dict[str, Any], int]:
         """From the job's logs on disk: finished samples only (none while it runs)."""
         from inspect_ai.log import read_eval_log_sample_summaries_async
-
-        from .._prices import add_usage
 
         total: dict[str, Any] = {}
         done = 0

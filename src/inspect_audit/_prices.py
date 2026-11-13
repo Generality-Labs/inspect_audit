@@ -142,17 +142,3 @@ def cost_of(usage: dict[str, Any]) -> tuple[float, list[str]]:
         tokens = counts if isinstance(counts, ModelUsage) else ModelUsage.model_validate(counts)
         total += compute_model_cost(info.cost, tokens)
     return total, sorted(unpriced)
-
-
-def add_usage(total: dict[str, Any], usage: dict[str, Any]) -> None:
-    """Add one sample's token counts by model into `total`, leaving cost out.
-
-    What the tokens cost is `cost_of`'s to say, at the audit's prices.
-    """
-    from inspect_ai.model import ModelUsage
-
-    for model, counts in usage.items():
-        tokens = (
-            counts if isinstance(counts, ModelUsage) else ModelUsage.model_validate(counts)
-        ).model_copy(update={"total_cost": None})
-        total[model] = total[model] + tokens if model in total else tokens

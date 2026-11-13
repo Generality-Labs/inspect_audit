@@ -16,7 +16,15 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Any, Literal
 
-from .jobs import FINISHED, INSPECT_VERSION, Job, JobKind, JobState, validate_environment
+from .jobs import (
+    FINISHED,
+    INSPECT_VERSION,
+    Job,
+    JobKind,
+    JobState,
+    add_usage,
+    validate_environment,
+)
 from .jobs import package_name as distribution_name
 
 
@@ -295,8 +303,6 @@ class HawkRuns:
 
     async def usage(self, run_id: str) -> tuple[dict[str, Any], int]:
         """From Hawk's live status: each sample's usage so far (its summary's once done)."""
-        from .._prices import add_usage
-
         async with self._client() as client:
             status = await client.get_eval_set_status(run_id)
         total: dict[str, Any] = {}

@@ -35,7 +35,7 @@ from inspect_ai.util import CheckpointConfig, sandbox, store_as
 from . import prompts
 from ._image import view_image
 from ._log_sources import fetch_logs, is_remote_logs
-from ._prices import UnpricedModelError, add_usage, cost_of, price_models, prices_for
+from ._prices import UnpricedModelError, cost_of, price_models, prices_for
 from ._report import (
     AuditRecord,
     AuditState,
@@ -62,6 +62,7 @@ from .dispatch import (
     Runs,
     validate_environment,
 )
+from .dispatch.jobs import add_usage
 from .dispatch.packages import git_package_spec, own_package_spec
 from .dispatch.policy import (
     USER_CHILDREN_ON_HAWK,

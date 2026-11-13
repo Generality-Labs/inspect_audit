@@ -29,11 +29,11 @@ tasks:
       policy:
         models:
           auditor:
-          - openrouter/deepseek/deepseek-v4.1-flash-1017
+          - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
           investigators:
-          - openrouter/deepseek/deepseek-v4.1-flash-1017
+          - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
           subjects:
-          - openrouter/deepseek/deepseek-v4.1-flash-1017
+          - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
           judges: []
         inputs:
           logs:
@@ -51,7 +51,7 @@ tasks:
 models:
 - package: inspect-ai
   items:
-  - name: openrouter/deepseek/deepseek-v4.1-flash-1017
+  - name: openai/openrouter/deepseek/deepseek-v4.1-flash-1017
 cost_limit: 2.0
 message_limit: 400
 retry_attempts: 0

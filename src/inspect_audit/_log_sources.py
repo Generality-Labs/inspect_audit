@@ -5,7 +5,6 @@ Hawk inputs first, else the warehouse), or an `s3://`, `gs://` or `http(s)://` U
 Reading a log, once it is local, is `_logs`' business.
 """
 
-import shutil
 from pathlib import Path
 
 from inspect_ai.log import list_eval_logs
@@ -48,25 +47,12 @@ def log_files(logs: list[str]) -> list[str]:
 _FETCHED: dict[str, str] = {}
 
 
-def fetch_logs(logs: str | list[str]) -> str:
-    """Resolve a `logs` argument to something inspect can read locally.
+def fetch_logs(logs: str) -> str:
+    """Resolve one log source to something inspect can read locally.
 
     `hawk:<eval-set-id>[,<id>...]` downloads an eval set from the Hawk warehouse;
     anything else (a path, an `s3://` dir inspect reads natively) passes through.
     """
-    if isinstance(logs, list):
-        combined = stable_dir("corpus", "\n".join(logs))
-        for index, source in enumerate(logs):
-            resolved = fetch_logs(source)
-            files = (
-                [resolved]
-                if resolved.endswith(".eval")
-                else [i.name for i in list_eval_logs(resolved)]
-            )
-            for filename in files:
-                source_path = Path(filename.removeprefix("file://"))
-                shutil.copyfile(source_path, combined / f"{index}_{source_path.name}")
-        return str(combined)
     if logs.startswith("hawk:"):
         # Hawk 4 resolves declared inputs in place; anything else is downloaded with this
         # runner's own user token. Declaring inputs requires restricted credentials, and a

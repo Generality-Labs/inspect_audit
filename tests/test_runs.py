@@ -769,15 +769,10 @@ def test_budget_reports_what_the_audit_and_each_job_have_spent(
 def test_fetched_logs_land_in_the_same_folder_on_every_attempt(tmp_path: Path) -> None:
     """Their paths reach the investigation's plan and so its identity: a random folder
     made a restarted runner a different task that eval_set refused to resume (FRICTION 42)."""
-    from inspect_audit._log_sources import fetch_logs, stable_dir
+    from inspect_audit._log_sources import stable_dir
 
     assert stable_dir("hawk", "set-a") == stable_dir("hawk", "set-a")
     assert stable_dir("hawk", "set-a") != stable_dir("hawk", "set-b")
-    first = tmp_path / "a.eval"
-    first.write_bytes(b"x")
-    combined = fetch_logs([str(first)])
-    assert fetch_logs([str(first)]) == combined  # a second attempt, same corpus, same path
-    assert [p.name for p in Path(combined).iterdir()] == ["0_a.eval"]
 
 
 def test_the_outcome_tells_the_operator_where_the_results_are() -> None:

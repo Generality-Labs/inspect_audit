@@ -570,7 +570,9 @@ def test_inputs_are_staged_into_a_plain_box_and_survive_nothing_mounted(tmp_path
     )
     target = task_with(target, sandbox=("docker", str(compose)), checkpoint=None)
     log = eval(target, model=model, display="none", log_dir=str(tmp_path / "logs"))[0]
-    assert log.status == "success", log.error
+    # the scripted model ends the audit with report_blocker: a blocked audit is an error
+    assert log.samples and log.samples[0].error, log.status
+    assert "test ends here" in log.samples[0].error.message
     from inspect_ai.model import ChatMessageTool
 
     [staged, budget, _] = [m for m in log.samples[0].messages if isinstance(m, ChatMessageTool)]

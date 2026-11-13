@@ -83,7 +83,6 @@ def test_child_investigation_is_collected_once_into_the_register(tmp_path: Path)
                     "source": "toy_benchmark.toy",
                     "judge": {},
                     "investigator_image": "python:3.12-slim",
-                    "cost_limit": 0.01,
                 },
             )
             await inv.launch(job, JobKind.INVESTIGATION, "API-free lifecycle test")

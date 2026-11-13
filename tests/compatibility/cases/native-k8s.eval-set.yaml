@@ -24,7 +24,7 @@ tasks:
 models:
 - package: inspect-ai
   items:
-  - name: openrouter/openai/gpt-6-luna
+  - name: openai/openrouter/openai/gpt-6-luna
 cost_limit: 0.01
 time_limit: 1200
 retry_attempts: 0

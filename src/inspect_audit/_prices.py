@@ -1,12 +1,13 @@
 """Model prices from one table: what Hawk's proxy bills (`GET /usage/prices`).
 
 Inspect enforces a `cost_limit` and reports cost only for models it has a price for.
-Whoever holds a Hawk login looks prices up (`prices_for`): the audit for its own model
-and for each child job's models, which it hands the child as a task argument. A child
-only registers what it is given (`register_prices`): it runs with restricted
-credentials, which Hawk's API does not accept. A model Hawk does not price is left
-alone, so Inspect refuses its `cost_limit` with its own error. Off Hawk (no
-`HAWK_API_URL`) Inspect's built-in prices are all there is.
+Whoever holds a Hawk login looks prices up (`prices_for`): the audit for every model
+it may use, when it starts, and for each child job's models, which it hands the child as
+a task argument. A child only registers what it is given (`register_prices`): it runs
+with restricted credentials, which Hawk's API does not accept. On Hawk a model without
+a usable price on Hawk's list is refused: nothing runs on it (James, 2026-11-13: "just
+don't run if you can't find the model"). Off Hawk (no `HAWK_API_URL`) Inspect's
+built-in prices are all there is, and Inspect refuses a `cost_limit` it cannot price.
 
 Temporary (FRICTION 84): Hawk PR #1542 fills `model_cost_config` from this same table,
 and Inspect's `set_model_cost` refuses models it does not know, hence `set_model_info`
@@ -29,10 +30,16 @@ FIELDS = {
 }
 
 
+class UnpricedModelError(ValueError):
+    """A model Hawk has no usable price for: it is refused rather than run unmetered."""
+
+
 def prices_for(models: list[str]) -> dict[str, dict[str, float]]:
-    """Hawk's price for each model it prices, keyed by the name the job calls it by.
+    """Hawk's price for each model, keyed by the name the job calls it by.
 
     Needs a Hawk login (the operator's, or a user-mode runner's); off Hawk, nothing.
+    Raises `UnpricedModelError` naming every model Hawk does not price (mock models aside:
+    they cost nothing).
     """
     api_url = os.environ.get("HAWK_API_URL")
     if not api_url:
@@ -41,11 +48,35 @@ def prices_for(models: list[str]) -> dict[str, dict[str, float]]:
 
     table = _hawk_table(api_url)
     prices: dict[str, dict[str, float]] = {}
+    missing: list[str] = []
     for model in dict.fromkeys(models):
-        row = table.get(registry_model_name(model, strict=False)) or table.get(model)
-        if row is not None:
-            prices[model] = {k: row.get(col) or 0.0 for k, col in FIELDS.items()}
+        if model.startswith("mockllm/"):
+            continue
+        row = table.get(registry_model_name(model, strict=False))
+        price = {k: (row or {}).get(col) or 0.0 for k, col in FIELDS.items()}
+        if row is None or not usable(price):
+            missing.append(model)
+        else:
+            prices[model] = price
+    if missing:
+        raise UnpricedModelError(
+            f"Hawk has no usable price for {', '.join(missing)}: write each model as Hawk "
+            "serves it (an OpenRouter model is openai/openrouter/<org>/<model>)"
+        )
     return prices
+
+
+def usable(price: dict[str, Any]) -> bool:
+    """Whether a cost limit can rely on this price.
+
+    Every field must be a finite non-negative number (routers list -1 for "depends on
+    the route"), with an input or output rate (all zeros would read every call as free).
+    """
+    values = [price.get(k, 0.0) for k in FIELDS]
+    return all(
+        isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
+        for v in values
+    ) and bool(price.get("input") or price.get("output"))
 
 
 def price_models(models: list[str]) -> None:
@@ -62,18 +93,13 @@ def register_prices(prices: dict[str, dict[str, Any]] | None) -> None:
 def register_price(model: str, price: dict[str, Any]) -> None:
     """Give Inspect a price for `model`, creating its entry if Inspect has none.
 
-    A price with a negative or non-numeric field (routers list -1 for "depends on the
-    route"), or with neither an input nor an output rate, is skipped: it would let a
-    cost limit read every call as free.
+    An unusable price (see `usable`) is refused, as `prices_for` refuses it.
     """
     from inspect_ai.model import ModelCost, ModelInfo, get_model_info, set_model_info
 
+    if not usable(price):
+        raise UnpricedModelError(f"unusable price for {model}: {price}")
     values = [price.get(k, 0.0) for k in FIELDS]
-    if any(
-        not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v < 0
-        for v in values
-    ) or not (price.get("input") or price.get("output")):
-        return
     cost = ModelCost(**{k: float(v) for k, v in zip(FIELDS, values, strict=True)})
     set_model_info(model, (get_model_info(model) or ModelInfo()).model_copy(update={"cost": cost}))
 

@@ -257,12 +257,13 @@ def test_logs_with_different_judge_settings_are_refused(fixture_log: str, tmp_pa
         {"input": 0.0, "output": 0.0},  # would read every call as free
     ],
 )
-def test_unusable_prices_are_not_registered(price: dict[str, float]) -> None:
+def test_unusable_prices_are_refused(price: dict[str, float]) -> None:
     from inspect_ai.model import get_model_info
 
-    from inspect_audit._prices import register_price
+    from inspect_audit._prices import UnpricedModelError, register_price
 
-    register_price("ia-test/unusable", price)
+    with pytest.raises(UnpricedModelError):
+        register_price("ia-test/unusable", price)
     assert get_model_info("ia-test/unusable") is None
 
 
@@ -287,10 +288,8 @@ def test_prices_come_from_hawks_table_under_the_jobs_model_name(
     }
     monkeypatch.setenv("HAWK_API_URL", "https://hawk.test")
     monkeypatch.setattr(_prices, "_hawk_table", lambda url: rows)
-    _prices.price_models(
-        ["openrouter/deepseek/snap-20261017", "anthropic/claude-x", "openai/unlisted-xyz"]
-    )
-    cost = get_model_info("openrouter/deepseek/snap-20261017").cost  # type: ignore[union-attr]
+    _prices.price_models(["openai/openrouter/deepseek/snap-20261017", "anthropic/claude-x"])
+    cost = get_model_info("openai/openrouter/deepseek/snap-20261017").cost  # type: ignore[union-attr]
     assert (cost.input, cost.output, cost.input_cache_read, cost.input_cache_write) == (
         0.05,
         0.15,
@@ -298,7 +297,14 @@ def test_prices_come_from_hawks_table_under_the_jobs_model_name(
         0.0,
     )
     assert get_model_info("anthropic/claude-x").cost.output == 25  # type: ignore[union-attr]
-    # a model Hawk does not price is left to Inspect, which refuses its cost_limit
+    # a model Hawk does not price is refused, naming every such model; mock models are free
+    with pytest.raises(_prices.UnpricedModelError, match="openai/unlisted-xyz, google/nope"):
+        _prices.prices_for(["anthropic/claude-x", "openai/unlisted-xyz", "google/nope"])
+    assert _prices.prices_for(["mockllm/model"]) == {}
+    # a listed row with an unusable price is refused too
+    rows["claude-free"] = {"model": "claude-free", "input_cost_per_1m": 0, "output_cost_per_1m": 0}
+    with pytest.raises(_prices.UnpricedModelError, match="claude-free"):
+        _prices.prices_for(["anthropic/claude-free"])
 
 
 def test_off_hawk_nothing_is_fetched(monkeypatch: pytest.MonkeyPatch) -> None:

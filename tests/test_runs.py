@@ -340,6 +340,33 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
         )
 
 
+def test_a_child_on_a_model_hawk_does_not_price_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit import _prices
+
+    runs = FakeRuns()
+    inv = _make_audit(tmp_path, runs)
+    monkeypatch.setenv("HAWK_API_URL", "https://hawk.test")
+    monkeypatch.setattr(_prices, "_hawk_table", lambda url: {})
+    with pytest.raises(ToolError, match="no usable price for openai/investigator"):
+        asyncio.run(
+            _audit.send_investigators(inv)(  # type: ignore[arg-type]
+                "a1",
+                ["1"],
+                ["gold-answer"],
+                ["hawk:supplied-logs"],
+                "openai/investigator",
+                "{}",
+                0.5,
+                "",
+            )
+        )
+    assert runs.submitted == []
+
+
 @pytest.mark.parametrize(
     ("model", "credential"),
     [

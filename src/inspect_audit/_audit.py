@@ -35,7 +35,7 @@ from inspect_ai.util import CheckpointConfig, sandbox, store_as
 from . import prompts
 from ._image import view_image
 from ._log_sources import fetch_logs, is_remote_logs
-from ._prices import price_models, prices_for
+from ._prices import UnpricedModelError, price_models, prices_for
 from ._report import (
     AuditRecord,
     AuditState,
@@ -85,6 +85,14 @@ AUDIT_SKILLS = (
 COMPACTION_TOKENS = 200_000
 
 
+def _child_prices(models: list[str]) -> dict[str, dict[str, float]]:
+    """The prices a child job is handed; an unpriced model refuses the call."""
+    try:
+        return prices_for(models)
+    except UnpricedModelError as ex:
+        raise ToolError(str(ex)) from None
+
+
 @dataclass(frozen=True)
 class ModelMenu:
     """The models an audit may use, by the part each plays."""
@@ -92,15 +100,6 @@ class ModelMenu:
     investigators: list[str]
     subjects: list[str]
     judges: list[str]
-
-
-DEFAULT_WORKERS = [
-    "openrouter/openai/gpt-5.6-luna",
-    "openrouter/google/gemini-3.6-flash",
-    "openrouter/openai/gpt-5.6-sol",
-    "openrouter/openai/gpt-5.6-terra",
-    "openrouter/openai/gpt-6-astra",
-]
 
 
 def _snapshot_repo(
@@ -806,7 +805,7 @@ def run_eval(inv: Audit) -> Tool:
                     "samples": samples,
                     "epochs": epochs,
                     "cost_limit": item_cost_limit,
-                    "prices": prices_for(list(judges.values())),
+                    "prices": _child_prices(list(judges.values())),
                     **({"files": files, "source": policy.source} if files else {}),
                 },
             )
@@ -895,7 +894,7 @@ def send_investigators(inv: Audit) -> Tool:
                 "judge": judges,
                 "investigator_image": inv.investigator_image,
                 "cost_limit": item_cost_limit,
-                "prices": prices_for([investigator, *judges.values()]),
+                "prices": _child_prices([investigator, *judges.values()]),
                 "notes": note or None,
                 "paper": inv.paper,
                 # the benchmark into the investigator's own box, as this job installs it
@@ -1283,11 +1282,12 @@ def audit(
     investigator_image = str(
         settings.get("investigator_image", investigator_image) or DEFAULT_INVESTIGATOR_IMAGE
     )
+    # no default models: a model's name depends on where it runs (on Hawk an OpenRouter
+    # model is `openai/openrouter/<org>/<model>`, FRICTION 89), so the audit's author
+    # writes them
     menu = ModelMenu(
-        investigators=list(
-            settings.get("investigator_models", investigator_models) or DEFAULT_WORKERS
-        ),
-        subjects=list(settings.get("subject_models", subject_models) or DEFAULT_WORKERS),
+        investigators=list(settings.get("investigator_models", investigator_models) or []),
+        subjects=list(settings.get("subject_models", subject_models) or []),
         judges=list(settings.get("judge_models", judge_models) or []),
     )
     auditor_image = str(settings.get("auditor_image", auditor_image) or DEFAULT_AUDITOR_IMAGE)
@@ -1317,13 +1317,6 @@ def audit(
             raise ValueError("model credentials belong in the environment or child_secrets")
         configured[name] = parsed.model_dump(mode="json", exclude_none=True)
     model_configs = configured
-    # the auditor's own model: a run-level cost_limit needs its price (FRICTION 84)
-    try:
-        from inspect_ai.model import get_model
-
-        price_models([str(get_model())])
-    except ValueError:
-        pass  # built outside an eval: no model, nothing will price it
     child_secrets = list(settings.get("child_secrets", child_secrets) or [])
     if child_secrets and runs != "hawk":
         raise ValueError("child_secrets require runs='hawk'")
@@ -1359,6 +1352,16 @@ def audit(
         if logs is not None and logs != declared_logs:
             raise ValueError("logs and policy.inputs.logs disagree")
         logs = declared_logs
+    # every model the audit may use, its own included, must be priced where it runs, or
+    # the audit does not start (FRICTION 84, 89); the auditor's price is registered for
+    # its run-level cost_limit
+    try:
+        from inspect_ai.model import get_model
+
+        auditor_model = [str(get_model())]
+    except ValueError:
+        auditor_model = []  # built outside an eval: no model of its own
+    price_models([*auditor_model, *menu.investigators, *menu.subjects, *menu.judges])
     if credential_mode not in ("restricted", "user"):
         raise ValueError("credential_mode must be 'restricted' or 'user'")
     if credential_mode == "restricted" and runs != "hawk":

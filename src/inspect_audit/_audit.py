@@ -94,7 +94,6 @@ AUDIT_SKILLS = (
     "investigate-dataset",
     "security-audit-eval",
     "check-trajectories-workflow",
-    "read-eval-logs",
 )
 # compact the auditor's context once it passes this many tokens
 COMPACTION_TOKENS = 200_000

@@ -58,7 +58,7 @@ Structured YAML accepts `benchmark`, `investigation`, `policy` and `execution` s
 6. **Override, never inherit.** Every limit, the generate config, epochs, metrics and approval of theirs is replaced explicitly in `investigation_task`.
 7. **Fail loudly.** Unsupported inputs raise with the reason. A value the source never recorded is unknown, never a default.
 8. **Private Inspect imports in the investigator live in `_reset.py` only.** Everything else uses Inspect's public API. If you need an internal, the answer is an upstream request, not an import.
-9. **Logs never enter a box.** They are read on the host. Only what the investigator asks to export is written, and only into its own box.
+9. **Only an investigator's own sample enters its box.** The host indexes and checks the declared logs; each investigator gets just its sample's epochs, sliced into an Inspect log in its own box (`/audit/logs/`), never another sample's.
 
 ## Unsupported, on purpose
 

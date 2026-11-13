@@ -11,6 +11,7 @@ per sandbox, so their box has it during an investigation too; the investigator i
 """
 
 import os
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -133,7 +134,11 @@ def investigation_compose(
         investigator["image"] = investigator_image
     else:
         (stage / "investigator.Dockerfile").write_text(INVESTIGATOR_DOCKERFILE)
-        investigator["build"] = {"context": str(stage), "dockerfile": "investigator.Dockerfile"}
+        investigator["build"] = {
+            "context": str(stage),
+            "dockerfile": "investigator.Dockerfile",
+            "args": {"INSPECT_VERSION": version("inspect-ai")},
+        }
         investigator["x-local"] = True
     if benchmark_compose is None:
         # A separate default service prevents the k8s converter from renaming ours.

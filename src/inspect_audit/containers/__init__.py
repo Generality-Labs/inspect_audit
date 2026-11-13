@@ -4,9 +4,10 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 
-# The investigator's own box, beside the benchmark's: analysis tools, no benchmark packages
-# (the benchmark's code runs in its own task; its source is copied in to read).
+# The build files for the boxes; each takes the INSPECT_VERSION build arg, and the
+# published images below are built from them (see the comment atop each file)
 INVESTIGATOR_DOCKERFILE = (HERE / "investigator.Dockerfile").read_text()
+AUDITOR_DOCKERFILE = (HERE / "auditor.Dockerfile").read_text()
 
 # Appended to the Helm values for a k8s run: Cilium egress for the auditor's
 # service, DNS plus world, so the "can verify" property holds off Docker.
@@ -23,4 +24,10 @@ AUDITOR_IMAGE = (
     "f0ed82536bde7b211a4973dc3b1b779431774922d8e1fef25931610d7c064b98"
 )
 
-__all__ = ["AUDITOR_IMAGE", "EGRESS_POLICY", "INVESTIGATOR_DOCKERFILE", "INVESTIGATOR_IMAGE"]
+__all__ = [
+    "AUDITOR_DOCKERFILE",
+    "AUDITOR_IMAGE",
+    "EGRESS_POLICY",
+    "INVESTIGATOR_DOCKERFILE",
+    "INVESTIGATOR_IMAGE",
+]

@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import math
 import re
 from copy import deepcopy
 from dataclasses import dataclass
@@ -14,7 +13,17 @@ from inspect_ai.tool import ToolError
 from inspect_ai.util import StoreModel
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .jobs import Job, validate_environment
+from .jobs import (
+    INSPECT_VERSION,
+    PINNED,
+    VARIANT_MAX_BYTES,
+    VARIANT_MAX_FILES,
+    Job,
+    JobKind,
+    package_name,
+    validate_environment,
+    with_overrides,
+)
 
 
 def canonical(value: Any) -> str:
@@ -33,10 +42,10 @@ class Models(FrozenModel):
 
 
 class Limits(FrozenModel):
-    investigation_sample_cost_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     max_concurrent_jobs: int | None = Field(default=None, gt=0, strict=True)
-    # one budget for the auditor's own calls and every job it launches: a launch that
-    # could take the total past it is refused (FRICTION 22)
+    # one budget for the auditor's own calls and every job it launches: launches stop
+    # once measured spend reaches it; nothing is reserved for running jobs, whose
+    # spend the capped key bounds (FRICTION 22, 76)
     budget_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     # "full": findings cannot be submitted while any permitted sample has no take on
     # any policy check; the auditor finishes the work or reports why it cannot
@@ -44,52 +53,35 @@ class Limits(FrozenModel):
     coverage: Literal["any", "full"] = "any"
 
 
-class Inputs(FrozenModel):
-    logs: tuple[str, ...] = ()
-
-
 class Permissions(FrozenModel):
     models: Models = Models()
-    inputs: Inputs = Inputs()
     limits: Limits = Limits()
 
 
-class Benchmark(FrozenModel):
-    task: str = Field(min_length=1)
-    package: str | None = None
-    repo: str | None = None
-    revision: str | None = None
-    source: str | None = None
-    # Serialised below into the frozen launch policy; never retained as a mutable dict.
-    task_args: dict[str, Any] = Field(default_factory=dict)
-    environment: dict[str, str] = Field(default_factory=dict)
+# TEMPORARY (FRICTION 93): our Hawk has no secure token service yet, so a restricted
+# submission is refused ("Restricted credentials aren't enabled on this deployment") and
+# no child job can start. Until it is enabled, an audit may state `credential_mode: user`
+# for Hawk children: they then run with the operator's own login. James allowed it on
+# 2026-11-13 for the smoke audits (public evals); delete this, and the configs that state
+# it, once restricted launches work.
+USER_CHILDREN_ON_HAWK = (
+    "Child jobs on Hawk run with the operator's own login (credential_mode: user), "
+    "because this Hawk has no secure token service yet (FRICTION 93)"
+)
 
 
-class InvestigationScope(FrozenModel):
-    samples: tuple[str, ...] | Literal["all"] = "all"
-    checks: tuple[str, ...] = Field(min_length=1)
+def credential_mode(runs: str | None, stated: str | None) -> Literal["restricted", "user"]:
+    """How child jobs authenticate: the one place this is decided.
 
-
-class Execution(FrozenModel):
-    backend: Literal["hawk", "local"]
-    credential_mode: Literal["restricted", "user"]
-
-    @model_validator(mode="before")
-    @classmethod
-    def default_credentials(cls, data: Any) -> Any:
-        # restricted on Hawk, the operator's own on a laptop: declared, not inferred later
-        if isinstance(data, dict) and "credential_mode" not in data:
-            backend = data.get("backend")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-            return {**data, "credential_mode": "restricted" if backend == "hawk" else "user"}
-        return data  # pyright: ignore[reportUnknownVariableType]
-
-    @model_validator(mode="after")
-    def local_credentials(self) -> "Execution":
-        if self.backend == "local" and self.credential_mode == "restricted":
-            raise ValueError(
-                "restricted credentials require Hawk; local execution uses user credentials"
-            )
-        return self
+    Restricted on Hawk unless the audit states otherwise (FRICTION 73, 93); local jobs
+    run as the operator, since restricted credentials exist only on Hawk.
+    """
+    mode = stated or ("restricted" if runs == "hawk" else "user")
+    if mode not in ("restricted", "user"):
+        raise ValueError("credential_mode must be 'restricted' or 'user'")
+    if mode == "restricted" and runs != "hawk":
+        raise ValueError("restricted credentials require runs='hawk'")
+    return "restricted" if mode == "restricted" else "user"
 
 
 class LaunchPolicy(FrozenModel):
@@ -110,8 +102,23 @@ class LaunchPolicy(FrozenModel):
     limits: Limits = Limits()
     credential_mode: Literal["restricted", "user"] = "user"
     model_configs_json: str = "{}"
-    model_prices_json: str = "{}"
     configuration_json: str
+
+    def benchmark_packages(self, overrides: list[str] | tuple[str, ...] = ()) -> list[str]:
+        """The benchmark as its jobs install it; the one place this list is built.
+
+        Its package, then its pins with any version overrides applied.
+        """
+        if not self.task_package:
+            raise ToolError("the launch policy names no benchmark package")
+        return [self.task_package, *with_overrides(list(self.task_pins), list(overrides))]
+
+    def box_install(self) -> list[str]:
+        """The benchmark for a box (the auditor's or an investigator's).
+
+        As its jobs install it, on the Inspect every job runs on.
+        """
+        return [*self.benchmark_packages(), f"inspect-ai=={INSPECT_VERSION}"]
 
     @model_validator(mode="after")
     def unique_scope(self) -> "LaunchPolicy":
@@ -207,17 +214,111 @@ INVESTIGATION_ARGS = frozenset(
         "logs",
         "judge",
         "investigator_image",
-        "cost_limit",
-        "model_prices",
         "notes",
         "paper",
+        "install",
     }
 )
 
 # the same for a regrade job, against the registered `regrade` task
 REGRADE_ARGS = frozenset(
-    {"task", "task_args", "logs", "judge", "samples", "epochs", "cost_limit", "model_prices"}
+    {
+        "task",
+        "task_args",
+        "logs",
+        "judge",
+        "samples",
+        "epochs",
+        "files",
+        "source",
+    }
 )
+
+# a variant job: the benchmark with replacement files laid over its package (FRICTION 73)
+VARIANT_ARGS = frozenset({"task", "task_args", "files", "source"})
+
+
+def files_problem(files: Any) -> str | None:
+    """Why `files` is not a small set of replacement files, or None.
+
+    The same limits as `_variant`'s, so a job built by hand is refused here too.
+    """
+    if not isinstance(files, dict) or not files:
+        return "a variant carries its replacement files"
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items()):
+        return "variant files map paths to text"
+    if (
+        len(files) > VARIANT_MAX_FILES
+        or sum(len(v.encode()) for v in files.values()) > VARIANT_MAX_BYTES
+    ):
+        return "variant files exceed the size limit"
+    return None
+
+
+def with_caching(name: str, configured: ModelConfig | None) -> ModelConfig | None:
+    """Anthropic models through OpenRouter: cache the conversation, not only the prompt.
+
+    Inspect's OpenRouter provider marks cache breakpoints only on list-content messages,
+    and an agent's messages are strings, so each turn re-bought the whole history
+    (FRICTION 17; UKGovernmentBEIS/inspect_ai#5873, fix PR #6283 unmerged on
+    2026-11-12). The workaround: Inspect's markers off, OpenRouter's automatic caching
+    on. An operator's own `cache_prompt` or `extra_body` is left as declared.
+    """
+    if not name.startswith("openrouter/anthropic/"):
+        return configured
+    current = configured or ModelConfig(model=name)
+    config = current.config
+    if config.cache_prompt is not None or config.extra_body is not None:
+        return current
+    return current.model_copy(
+        update={
+            "config": config.model_copy(
+                update={
+                    "cache_prompt": False,
+                    "extra_body": {"cache_control": {"type": "ephemeral"}},
+                }
+            )
+        }
+    )
+
+
+def cached(configs: dict[str, ModelConfig], names: Any) -> dict[str, ModelConfig]:
+    """`configs` with `with_caching` applied to every model in `names`."""
+    out = dict(configs)
+    for name in names:
+        if (config := with_caching(str(name), out.get(str(name)))) is not None:
+            out[str(name)] = config
+    return out
+
+
+def check_overrides(overrides: list[str], kind: JobKind) -> None:
+    """The one check on a job's version overrides (`packages`).
+
+    Each is an exact pin, one per package, of a package already installed beside the
+    benchmark: an override changes a version, it does not bring in new code (a reviewer
+    had a job approved to install an arbitrary PyPI name, FRICTION 117). This package's
+    own version is fixed, and so is Inspect's for rescores and variants, which run in it.
+    """
+    from importlib.metadata import PackageNotFoundError, distribution
+
+    fixed = {"inspect-audit"} | (
+        {"inspect-ai"} if kind in (JobKind.REGRADE, JobKind.VARIANT) else set()
+    )
+    for spec in overrides:
+        if not re.fullmatch(PINNED, spec):
+            raise ToolError(f"{spec!r}: a version override is an exact pin, name==version")
+        name = package_name(spec)
+        if name in fixed:
+            raise ToolError(f"{spec!r}: this run cannot change that package's version")
+        try:
+            distribution(name)
+        except PackageNotFoundError:
+            raise ToolError(
+                f"{spec!r}: {name} is not installed beside the benchmark; an override "
+                "changes the version of a package it already uses"
+            ) from None
+    if len({package_name(o) for o in overrides}) != len(overrides):
+        raise ToolError("one version override per package")
 
 
 @dataclass(frozen=True)
@@ -238,17 +339,24 @@ class AuditAuthorizer:
         """A regrade: the benchmark's own scorers on recorded attempts, judges only."""
         p = self.policy
         args = job.task_args
-        if job.task != "inspect_audit/regrade" or job.package != p.investigation_package:
+        if job.task != JobKind.REGRADE.task or job.package != p.investigation_package:
             raise ToolError("regrade task and package must match the launch policy")
-        if job.extra_packages != [p.task_package, *p.task_pins]:
+        overrides = list(job.package_overrides)
+        check_overrides(overrides, JobKind.REGRADE)
+        if job.extra_packages != p.benchmark_packages(overrides):
             raise ToolError("job dependencies must match the launch policy")
         if set(args) - REGRADE_ARGS or job.model_roles or job.sample_range is not None:
             raise ToolError("regrade job contains configuration outside the launch contract")
+        if "files" in args and (problem := files_problem(args["files"])):
+            raise ToolError(problem)
+        if "files" in args and (p.source is None or args.get("source") != p.source):
+            raise ToolError("a variant needs the policy's declared benchmark.source module")
         if args.get("task") != p.task or canonical(args.get("task_args", {})) != p.task_args_json:
             raise ToolError("regrade task and task_args are fixed by the launch policy")
         judges = [str(m) for m in (args.get("judge") or {}).values()]
-        if not judges or job.models != judges[:1]:
-            raise ToolError("a regrade names its judge and runs as that judge")
+        # runs as its judge, or, for a grader that calls no model, as a mock model
+        if job.models != (judges[:1] or ["mockllm/model"]):
+            raise ToolError("a regrade runs as its judge (a mock model when it has none)")
         self.allow(judges, p.models.judges, "judges")
         if not args.get("logs") or set(args["logs"]) - (set(p.supplied_logs) | known_logs):
             raise ToolError("regrade inputs are outside the launch policy")
@@ -258,56 +366,56 @@ class AuditAuthorizer:
         if p.samples is not None and set(selected) - set(p.samples):
             raise ToolError("sample selection is outside the launch policy")
         epochs = args.get("epochs")
-        if isinstance(epochs, bool) or not isinstance(epochs, int) or not 1 <= epochs <= 10:
-            raise ToolError("regrade epochs must be 1 to 10")
-        cost = args.get("cost_limit")
-        if (
-            isinstance(cost, bool)
-            or not isinstance(cost, (int, float))
-            or not math.isfinite(cost)
-            or cost <= 0
-        ):
-            raise ToolError("regrade cost_limit must be a finite positive number")
-        cap = p.limits.investigation_sample_cost_usd
-        if cap is not None and cost > cap:
-            raise ToolError(f"regrade cost_limit exceeds the policy's ${cap:g} per sample")
+        if isinstance(epochs, bool) or not isinstance(epochs, int) or epochs < 1:
+            raise ToolError("regrade epochs must be a positive whole number")
         approved = deepcopy(job)
         configs = {
             name: ModelConfig.model_validate(value)
             for name, value in json.loads(p.model_configs_json).items()
         }
-        approved.model_configs = {name: configs[name] for name in job.models if name in configs}
+        approved.model_configs = cached(
+            {name: configs[name] for name in job.models if name in configs}, job.models
+        )
         approved.environment = json.loads(p.environment_json)
         return approved
 
-    def authorise(self, job: Job, kind: str, known_logs: set[str]) -> Job:
+    def authorise(self, job: Job, kind: JobKind, known_logs: set[str]) -> Job:
         p = self.policy
         if job.environment and canonical(job.environment) != p.environment_json:
             raise ToolError("job environment must match the launch policy")
         # a run folder's and a Hawk eval set's name: no paths, nothing Hawk would refuse
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}", job.label):
             raise ToolError("a label is letters, digits, - and _, at most 48 characters")
-        if kind not in ("investigation", "benchmark", "regrade"):
-            raise ToolError(f"unknown job kind: {kind}")
-        if kind == "regrade":
+        try:
+            kind = JobKind(kind)
+        except ValueError:
+            raise ToolError(f"unknown job kind: {kind}") from None
+        if kind is JobKind.REGRADE:
             return self._regrade(job, known_logs)
-        expected_task = "inspect_audit/investigation" if kind == "investigation" else p.task
-        expected_package = p.investigation_package if kind == "investigation" else p.task_package
+        ours = kind in (JobKind.INVESTIGATION, JobKind.VARIANT)
+        expected_task = kind.task or p.task
+        expected_package = p.investigation_package if ours else p.task_package
         if job.task != expected_task or job.package != expected_package:
             raise ToolError("job task and package must match the launch policy")
-        pins = list(p.task_pins)
-        if job.extra_packages != ([p.task_package, *pins] if kind == "investigation" else pins):
+        overrides = list(job.package_overrides)
+        if overrides and kind is JobKind.INVESTIGATION:
+            raise ToolError("investigations run the benchmark as declared: no version overrides")
+        check_overrides(overrides, kind)
+        benchmark = p.benchmark_packages(overrides) if p.task_package else []
+        if job.extra_packages != (benchmark if ours else benchmark[1:]):
             raise ToolError("job dependencies must match the launch policy")
-        allowed = p.models.investigators if kind == "investigation" else p.models.subjects
+        allowed = p.models.investigators if kind is JobKind.INVESTIGATION else p.models.subjects
         if not job.models:
             raise ToolError("a job must declare its models")
         self.allow(
-            job.models, allowed, "the investigator" if kind == "investigation" else "evaluated"
+            job.models,
+            allowed,
+            "the investigator" if kind is JobKind.INVESTIGATION else "evaluated",
         )
         if isinstance(job.epochs, bool) or not isinstance(job.epochs, int) or job.epochs < 1:
             raise ToolError("epochs must be positive")
         args = job.task_args
-        if kind == "investigation":
+        if kind is JobKind.INVESTIGATION:
             if set(args) - INVESTIGATION_ARGS or job.model_roles or job.sample_range is not None:
                 raise ToolError(
                     "investigation job contains configuration outside the launch contract"
@@ -333,20 +441,19 @@ class AuditAuthorizer:
             if p.source is not None and args.get("source") != p.source:
                 raise ToolError("investigation source must match the launch policy")
             roles = args.get("judge") or {}
-            cost = args.get("cost_limit")
-            if (
-                isinstance(cost, bool)
-                or not isinstance(cost, (int, float))
-                or not math.isfinite(cost)
-                or cost <= 0
-            ):
-                raise ToolError("investigation cost_limit must be a finite positive number")
-            cap = p.limits.investigation_sample_cost_usd
-            if cap is not None and cost > cap:
-                raise ToolError(
-                    f"investigation cost_limit exceeds the policy's ${cap:g} per sample"
-                )
             benchmark_args = args.get("task_args", {})
+        elif kind is JobKind.VARIANT:
+            if set(args) - VARIANT_ARGS or args.get("task") != p.task:
+                raise ToolError("variant job contains configuration outside the launch contract")
+            if p.source is None or args.get("source") != p.source:
+                raise ToolError("a variant needs the policy's declared benchmark.source module")
+            if problem := files_problem(args.get("files")):
+                raise ToolError(problem)
+            selected = job.sample_ids
+            roles = job.model_roles
+            benchmark_args = args.get("task_args", {})
+            if job.sample_ids is not None and job.sample_range is not None:
+                raise ToolError("select sample IDs or a sample range, not both")
         else:
             selected = job.sample_ids
             roles = job.model_roles
@@ -376,8 +483,8 @@ class AuditAuthorizer:
         expected_configs = {name: configs[name] for name in selected_models if name in configs}
         if job.model_configs and job.model_configs != expected_configs:
             raise ToolError("model configuration must match the launch policy")
-        approved.model_configs = expected_configs
-        if kind == "investigation" and expected_configs:
+        approved.model_configs = cached(expected_configs, selected_models)
+        if kind is JobKind.INVESTIGATION and expected_configs:
             approved.task_args["judge_configs"] = {
                 role: configs[name].model_dump(mode="json", exclude_none=True)
                 for role, name in roles.items()

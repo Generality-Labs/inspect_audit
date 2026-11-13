@@ -1,100 +1,141 @@
-"""Model prices a job needs: Inspect's own costs, else OpenRouter's published prices."""
+"""Model prices from one table: what Hawk's proxy bills (`GET /usage/prices`).
 
-import json
+The audit, which holds a Hawk login, looks up a price for every model it may use when it
+starts and refuses any it cannot price (`price_models`; James, 2026-11-13: "just don't
+run if you can't find the model"). Those prices are the one pricing: the auditor's own
+`cost_limit` (its budget), and every job's spend, computed from the job's token counts
+(`cost_of`, used by `_spend`). Children get no prices and carry no caps (FRICTION 99,
+100). Off Hawk (no `HAWK_API_URL`) Inspect's built-in prices are all there is.
+
+Temporary (FRICTION 84): Hawk PR #1542 fills `model_cost_config` from this same table,
+and Inspect's `set_model_cost` refuses models it does not know, hence `set_model_info`
+here.
+"""
+
+import functools
 import math
-import urllib.request
+import os
 from typing import Any
 
-PRICE_KEYS = ("input", "output", "input_cache_read", "input_cache_write")
-OPENROUTER = "https://openrouter.ai/api/v1"
+# Inspect's ModelCost field -> Hawk's per-million column
+FIELDS = {
+    "input": "input_cost_per_1m",
+    "output": "output_cost_per_1m",
+    "input_cache_read": "cache_read_input_cost_per_1m",
+    "input_cache_write": "cache_write_input_cost_per_1m",
+}
+# a mock model costs nothing, and its price says so
+MOCK = "mockllm/"
+FREE = dict.fromkeys(FIELDS, 0.0)
 
 
-def prices_for_models(models: list[str]) -> dict[str, dict[str, float]]:
-    """Use Inspect's configured costs; query OpenRouter only for its own routes."""
-    from inspect_ai.model import get_model_info
+class UnpricedModelError(ValueError):
+    """A model Hawk has no usable price for: it is refused rather than run unmetered."""
 
-    prices: dict[str, dict[str, float]] = {}
-    router: list[str] = []
+
+def prices_for(models: list[str], api_url: str | None = None) -> dict[str, dict[str, float]]:
+    """Hawk's price for each model, keyed by the name the job calls it by.
+
+    Hawk's API is `api_url`, else `HAWK_API_URL`; needs a Hawk login (the operator's, or
+    a user-mode runner's). Off Hawk, nothing.
+    Raises `UnpricedModelError` naming every model Hawk does not price. A mock model
+    costs nothing, and says so: a job run under one (a rescore of a grader that calls no
+    model) still needs a price for its `cost_limit` (smoke round 7, FRICTION 96).
+    """
+    mocks = {m: FREE for m in models if m.startswith(MOCK)}
+    api_url = api_url or os.environ.get("HAWK_API_URL")
+    if not api_url or all(m.startswith(MOCK) for m in models):
+        return mocks
+    from hawk.core.providers import registry_model_name
+
+    table = _hawk_table(api_url)
+    prices: dict[str, dict[str, float]] = dict(mocks)
+    missing: list[str] = []
     for model in dict.fromkeys(models):
-        info = get_model_info(model)
-        if info is not None and info.cost is not None:
-            prices[model] = info.cost.model_dump()
-        elif model.startswith(("openrouter/", "openai-api/openrouter/")):
-            router.append(model)
+        if model.startswith(MOCK):
+            continue
+        row = table.get(registry_model_name(model, strict=False))
+        price = {k: (row or {}).get(col) or 0.0 for k, col in FIELDS.items()}
+        if row is None or not usable(price):
+            missing.append(model)
         else:
-            raise ValueError(
-                f"No Inspect cost data for {model!r}; declare model_prices or configure Inspect model costs"
-            )
-    if router:
-        prices.update(openrouter_prices(router))
+            prices[model] = price
+    if missing:
+        raise UnpricedModelError(
+            f"Hawk has no usable price for {', '.join(missing)}: write each model as Hawk "
+            "serves it (an OpenRouter model is openai/openrouter/<org>/<model>)"
+        )
     return prices
 
 
-def valid_price(price: Any) -> bool:
-    """A usable per-million price: every field a non-negative number, and input or output set.
+def usable(price: dict[str, Any]) -> bool:
+    """Whether a cost limit can rely on this price.
 
-    Routers list -1 for "depends on the route", and a price with no input or output
-    rate would let a cost limit read every call as free.
+    Every field must be a finite non-negative number (routers list -1 for "depends on
+    the route"), with an input or output rate (all zeros would read every call as free).
     """
-    if not isinstance(price, dict):
-        return False
-    values = [price.get(k, 0) for k in PRICE_KEYS]
-    if any(
-        not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v < 0
+    values = [price.get(k, 0.0) for k in FIELDS]
+    return all(
+        isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
         for v in values
-    ):
-        return False
-    return bool(price.get("input") or price.get("output"))
+    ) and bool(price.get("input") or price.get("output"))
 
 
-def register_prices(table: dict[str, dict[str, float]]) -> list[str]:
-    """Give Inspect an entry and a price for each model, before anything prices it.
+def price_models(models: list[str], api_url: str | None = None) -> None:
+    """Look up and register prices for this process's own models (needs a Hawk login)."""
+    register_prices(prices_for(models, api_url))
 
-    Hawk applies a job's `model_cost_config` with `set_model_cost`, which refuses a
-    model Inspect has no entry for; `set_model_info` creates the entry. Returns the
-    names registered.
+
+def register_prices(prices: dict[str, dict[str, Any]] | None) -> None:
+    """Register prices handed over by the job's launcher."""
+    for model, price in (prices or {}).items():
+        register_price(model, price)
+
+
+def register_price(model: str, price: dict[str, Any]) -> None:
+    """Give Inspect a price for `model`, creating its entry if Inspect has none.
+
+    An unusable price (see `usable`) is refused, as `prices_for` refuses it.
     """
     from inspect_ai.model import ModelCost, ModelInfo, get_model_info, set_model_info
 
-    registered: list[str] = []
-    for name, price in table.items():
-        if not valid_price(price):
-            continue
-        cost = ModelCost(**{k: float(price.get(k, 0.0)) for k in PRICE_KEYS})
-        info = (get_model_info(name) or ModelInfo()).model_copy(update={"cost": cost})
-        set_model_info(name, info)
-        registered.append(name)
-    return registered
+    if not usable(price) and not (model.startswith(MOCK) and price == FREE):
+        raise UnpricedModelError(f"unusable price for {model}: {price}")
+    values = [price.get(k, 0.0) for k in FIELDS]
+    cost = ModelCost(**{k: float(v) for k, v in zip(FIELDS, values, strict=True)})
+    set_model_info(model, (get_model_info(model) or ModelInfo()).model_copy(update={"cost": cost}))
 
 
-def openrouter_prices(models: list[str]) -> dict[str, dict[str, float]]:
-    """OpenRouter's published per-million prices, by the name Inspect runs each under.
+@functools.cache
+def _hawk_table(api_url: str) -> dict[str, dict[str, Any]]:
+    """Hawk's price rows by public model name, fetched once per process.
 
-    An investigation job caps each item's spend with Inspect's cost limit, which needs a
-    price for the investigator; the job registers these itself.
+    Called while a task loads, which may be inside a running event loop.
     """
-    request = urllib.request.Request(
-        f"{OPENROUTER}/models", headers={"User-Agent": "inspect_audit"}
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        listing = {str(m["id"]): m.get("pricing") or {} for m in json.load(response)["data"]}
-    prices: dict[str, dict[str, float]] = {}
-    for model in models:
-        # the catalog id is the trailing {org}/{slug}; on Hawk the Inspect name is
-        # openrouter/openrouter/{org}/{slug}, since Middleman's public names keep a prefix
-        pricing = listing.get("/".join(model.split("/")[-2:]))
-        if pricing is None:
-            raise ValueError(f"OpenRouter does not list {model!r}")
-        price = {
-            key: float(pricing.get(field) or 0) * 1_000_000
-            for key, field in (
-                ("input", "prompt"),
-                ("output", "completion"),
-                ("input_cache_read", "input_cache_read"),
-                ("input_cache_write", "input_cache_write"),
-            )
-        }
-        if not valid_price(price):
-            raise ValueError(f"OpenRouter lists no usable price for {model!r}")
-        prices[model] = price
-    return prices
+    from ._sync import run
+    from .dispatch.hawk import prices
+
+    rows = run(prices(api_url))
+    return {str(r["model"]): r for r in rows if r.get("model")}
+
+
+def cost_of(usage: dict[str, Any]) -> tuple[float, list[str]]:
+    """What token counts cost at the prices registered here, and the models unpriced.
+
+    Unpriced models' tokens are not counted in the total.
+
+    The audit registers a price for every model it may use when it starts (`price_models`),
+    so this prices any job it launched, on any backend, from the job's token counts.
+    """
+    from inspect_ai.model import ModelUsage, compute_model_cost, get_model_info
+
+    total = 0.0
+    unpriced: list[str] = []
+    for model, counts in usage.items():
+        info = get_model_info(model)
+        if info is None or info.cost is None:
+            unpriced.append(model)
+            continue
+        tokens = counts if isinstance(counts, ModelUsage) else ModelUsage.model_validate(counts)
+        total += compute_model_cost(info.cost, tokens)
+    return total, sorted(unpriced)

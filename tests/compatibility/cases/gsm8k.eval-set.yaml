@@ -23,14 +23,11 @@ tasks:
       limit: 1
 models:
 - package: openai
-  name: openrouter
+  name: openai
   items:
-  - name: openai/gpt-6-luna
+  - name: openrouter/openai/gpt-6-luna
 cost_limit: 0.01
 time_limit: 1200
 retry_attempts: 0
 max_retries: 2
 epochs: 1
-runner:
-  environment:
-    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

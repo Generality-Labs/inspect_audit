@@ -6,11 +6,10 @@ reads explicitly selected findings evidence and stages immutable submitted bundl
 checkpointing carries the box and the sample store across a crash.
 """
 
-import io
 import json
 import logging
-import tarfile
 from pathlib import Path
+from typing import Any
 
 import anyio
 import anyio.to_thread
@@ -19,25 +18,28 @@ from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import ToolError
 from inspect_ai.util import sandbox
 
+from ._box import archive, install, write_into
 from .containers import EGRESS_POLICY
 
 logger = logging.getLogger(__name__)
 
 
-def configure(root: Path, image: str) -> tuple[str, str]:
-    """The auditor's box as a Kubernetes pod: no mounts, no service account."""
+def configure(root: Path, image: str, resources: dict[str, Any] | None = None) -> tuple[str, str]:
+    """The auditor's box as a Kubernetes pod: no mounts, no service account.
+
+    Its size is the deployment's default for a sandbox's default service unless the
+    operator gives Kubernetes `resources` (requests/limits): nothing is reserved that
+    the audit did not ask for (James, 2026-11-12; FRICTION 80).
+    """
+    service: dict[str, Any] = {
+        "image": image,
+        "command": ["sleep", "infinity"],
+        "workingDir": "/workspace",
+    }
+    if resources:
+        service["resources"] = resources
     values = {
-        "services": {
-            "default": {
-                "image": image,
-                "command": ["sleep", "infinity"],
-                "workingDir": "/workspace",
-                "resources": {
-                    "requests": {"cpu": "2", "memory": "8Gi"},
-                    "limits": {"cpu": "4", "memory": "16Gi"},
-                },
-            }
-        },
+        "services": {"default": service},
         "automountServiceAccountToken": False,
     }
     path = root / "auditor.values.yaml"
@@ -117,13 +119,18 @@ async def persist(root: Path, source: Path, name: str) -> str:
     raise ToolError(f"Could not save {name} to {destination}: {last}. Try again.")
 
 
-@solver
 def stage_inputs(root: Path) -> Solver:
     """Lay the staged inputs and the starting workspace into a fresh box, once.
 
     A resumed sample skips this: checkpointing restores /inputs and /workspace as
-    the interrupted run left them.
+    the interrupted run left them. The host folder is not a registered argument: Inspect
+    hashes a task's setup arguments into its identity, and the folder is new every time
+    the task is built, so an audit could never be resumed (FRICTION 113).
     """
+
+    @solver(name="stage_inputs")
+    def staged() -> Solver:
+        return solve
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         settings_path = root / "artifacts.json"
@@ -134,34 +141,48 @@ def stage_inputs(root: Path) -> Solver:
         marker = await sandbox().exec(["test", "-e", "/workspace/.staged"])
         if marker.success:
             return state
-        stream = io.BytesIO()
-        with tarfile.open(fileobj=stream, mode="w:gz", dereference=True) as archive:
-            archive.add(root / "inputs", arcname="inputs")
-            archive.add(root / "work", arcname="workspace")
-        await write_into(stream.getvalue(), "/")
+        await write_into(archive({"inputs": root / "inputs", "workspace": root / "work"}), "/")
         await sandbox().exec(["touch", "/workspace/.staged"])
+        return state
+
+    return staged()
+
+
+INSTALL_RECORD = "/inputs/benchmark-install.json"
+
+
+@solver
+def install_benchmark(specs: list[str], source: str | None) -> Solver:
+    """Install the benchmark into the auditor's box, as its jobs install it.
+
+    The agent's shell is in the box; without this it could read the benchmark but not
+    import its task, load its dataset, call its scorer or try a change without a paid
+    job. The same pip specs as the jobs (the benchmark, its lockfile pins, the jobs'
+    Inspect), so what the agent runs here is what its jobs run. A failed install is
+    recorded for the agent, not fatal: the audit can still read and launch. Packages
+    are not checkpointed, so a resumed box installs again unless `source` imports.
+    """
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        if source and (await sandbox().exec(["python", "-c", f"import {source}"])).success:
+            return state
+        await install(specs, INSTALL_RECORD, source=source)
         return state
 
     return solve
 
 
-async def write_into(archive: bytes, destination: str) -> None:
-    """Unpack a gzipped tar into the box at `destination`."""
-    await sandbox().write_file("/tmp/staged.tar.gz", archive)
-    result = await sandbox().exec(
-        ["tar", "-xzf", "/tmp/staged.tar.gz", "-C", destination, "--no-same-owner"],
-        timeout=600,
-    )
-    await sandbox().exec(["rm", "-f", "/tmp/staged.tar.gz"])
-    if not result.success:
-        raise ToolError(f"Could not stage files into the box: {result.stderr}")
-
-
-async def copy_into_box(files: list[Path], destination: str) -> None:
-    """Copy host files into one box directory, as one archive."""
-    stream = io.BytesIO()
-    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
-        for file in files:
-            archive.add(file, arcname=file.name)
-    await sandbox().exec(["mkdir", "-p", destination])
-    await write_into(stream.getvalue(), destination)
+def docker_box(root: Path, image: str) -> tuple[str, str]:
+    """The auditor's box on local Docker: the published image Hawk runs, nothing mounted."""
+    compose = {
+        "services": {
+            "default": {
+                "image": image,
+                "command": "sleep infinity",
+                "init": True,
+                "working_dir": "/workspace",
+            }
+        }
+    }
+    (root / "compose.yaml").write_text(yaml.safe_dump(compose))
+    return "docker", str(root / "compose.yaml")

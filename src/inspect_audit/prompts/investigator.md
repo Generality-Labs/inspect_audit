@@ -31,7 +31,9 @@ surface oddity that serves the intent is not a fault: an empty recorded answer w
 grader scores by running the submission is the design working, so do not report the
 absence of a thing the grader never uses.
 
-You can run code, not just read it. When a verdict turns on a fact you could compute or
+You can run code, not just read it. The benchmark is installed in your own box as its
+job installed it (/audit/benchmark-install.json says whether that worked): import its
+task, load its data, call its functions there. When a verdict turns on a fact you could compute or
 check -- a count, a value, whether an answer parses, whether a solution runs -- establish
 it programmatically: write the script, run it, install what you need, iterate until it
 holds. Do not settle such a fact by eye, and do not trust the recorded answer because

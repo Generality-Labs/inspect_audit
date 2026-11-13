@@ -10,23 +10,73 @@ environment and so its key. Both hand back finished logs as local files.
 
 import re
 from dataclasses import dataclass, field
+from enum import StrEnum
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Protocol
 
-from inspect_ai.model import ModelConfig
+from inspect_ai.model import ModelConfig, ModelUsage
 
-# The Inspect every job runs on, and the one this package is tested against. Hawk
-# swaps in its own build unless a job names one, so every job names this.
-INSPECT_VERSION = "0.3.285"
+# The Inspect every job and box runs on: the one installed here, which pyproject pins
+# exactly. Hawk swaps in its own build unless a job names one, so every job names this.
+INSPECT_VERSION = version("inspect-ai")
 
-# a job's lifecycle as both backends report it
-RUNNING = "running"
-COMPLETE = "complete"
-FAILED = "failed"
-STOPPED = "stopped"
-# Hawk's own verdict that a job has stopped making progress: worth a person's look
-STUCK = "stuck"
-FINISHED = frozenset({COMPLETE, FAILED, STOPPED})
+# A variant job's replacement files (FRICTION 73): a change to the benchmark, not a
+# second benchmark carried in a job config
+VARIANT_MAX_FILES = 50
+VARIANT_MAX_BYTES = 256 * 1024
+
+
+class JobState(StrEnum):
+    """A job's lifecycle: the one vocabulary every backend reports in.
+
+    Each backend translates its own words in one place (`hawk.hawk_state`,
+    `local.LocalRuns.status`).
+    """
+
+    RUNNING = "running"
+    COMPLETE = "complete"
+    FAILED = "failed"
+    STOPPED = "stopped"
+    # Hawk's own verdict that a job has stopped making progress: worth a person's look
+    STUCK = "stuck"
+    # the backend does not know the job (Hawk answers 404): not finished, not failed
+    UNKNOWN = "unknown"
+
+
+FINISHED = frozenset({JobState.COMPLETE, JobState.FAILED, JobState.STOPPED})
+
+
+def settled(state: JobState, stop_requested: bool) -> bool:
+    """Whether a job can produce nothing more, so findings may be submitted without it.
+
+    Finished, stuck (Hawk says it makes no progress), or stopped by the auditor and no
+    longer known to the backend.
+    """
+    return (
+        state in FINISHED
+        or state is JobState.STUCK
+        or (state is JobState.UNKNOWN and stop_requested)
+    )
+
+
+class JobKind(StrEnum):
+    """What a job is for, as the auditor launches it and its record keeps it."""
+
+    BENCHMARK = "benchmark"  # the benchmark's own task: fresh attempts
+    VARIANT = "variant"  # the benchmark with changed code
+    REGRADE = "regrade"  # the benchmark's scorers on recorded attempts
+    INVESTIGATION = "investigation"  # an investigator per item
+
+    @property
+    def task(self) -> str | None:
+        """The task this package runs for the kind; a plain run is the benchmark's own."""
+        return None if self is JobKind.BENCHMARK else f"inspect_audit/{self.value}"
+
+    @classmethod
+    def of(cls, task: str) -> "JobKind | None":
+        """The kind whose task this is; None for the benchmark's own task."""
+        return next((k for k in cls if k.task == task), None)
 
 
 @dataclass
@@ -45,8 +95,28 @@ class Job:
     sample_range: tuple[int, int] | None = None
     epochs: int = 1
     extra_packages: list[str] = field(default_factory=list)
+    # exact versions this run installs in place of the benchmark's lockfile pins (and
+    # the jobs' Inspect): `name==version`; a run's results may turn on them
+    package_overrides: list[str] = field(default_factory=list)
     environment: dict[str, str] = field(default_factory=dict)
     model_configs: dict[str, ModelConfig] = field(default_factory=dict)
+
+
+PINNED = r"[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9][A-Za-z0-9.+!_-]*"
+
+
+def package_name(spec: str) -> str:
+    """The canonical distribution name of a `name==version` or `name @ url` spec."""
+    import re
+
+    name = re.split(r"[\s=<>!~@\[;]", spec.strip(), maxsplit=1)[0]
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def with_overrides(pins: list[str], overrides: list[str]) -> list[str]:
+    """`pins` with every package an override names replaced by that override."""
+    replaced = {package_name(o) for o in overrides}
+    return [p for p in pins if package_name(p) not in replaced] + list(overrides)
 
 
 def validate_environment(environment: dict[str, str]) -> dict[str, str]:
@@ -64,12 +134,28 @@ def validate_environment(environment: dict[str, str]) -> dict[str, str]:
     return dict(environment)
 
 
+def add_usage(total: dict[str, Any], usage: dict[str, Any]) -> None:
+    """Add one sample's token counts by model into `total`, leaving cost out.
+
+    What the tokens cost is the audit's to say, at its own prices (`_prices.cost_of`).
+    """
+    for model, counts in usage.items():
+        tokens = (
+            counts if isinstance(counts, ModelUsage) else ModelUsage.model_validate(counts)
+        ).model_copy(update={"total_cost": None})
+        total[model] = total[model] + tokens if model in total else tokens
+
+
 class Runs(Protocol):
     """A place jobs run. Ids are the backend's own."""
 
     async def submit(self, job: Job) -> str: ...
     def address(self, run_id: str) -> str: ...
-    async def status(self, run_id: str) -> str: ...
+    async def status(self, run_id: str) -> JobState: ...
+    async def usage(self, run_id: str) -> tuple[dict[str, ModelUsage], int]:
+        """Tokens by model so far, running or finished, and how many samples finished."""
+        ...
+
     async def logs(self, run_id: str, out_dir: Path) -> list[Path]: ...
     async def runner_log(self, run_id: str) -> str: ...
     async def stop(self, run_id: str) -> None: ...

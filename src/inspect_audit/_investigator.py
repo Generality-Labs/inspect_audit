@@ -19,7 +19,7 @@ from inspect_ai.model import ChatMessage, ChatMessageUser, ContentImage, Model
 from inspect_ai.scorer import Scorer
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import Tool, ToolDef, WebSearchProviders, bash, skill, web_search
-from inspect_ai.util import sample_limits, sandbox, store_as
+from inspect_ai.util import sandbox, store_as
 
 from . import prompts
 from ._compose import INVESTIGATOR
@@ -97,18 +97,22 @@ async def stage_item(
     }
     await box.write_file(f"{INVESTIGATION_ROOT}/item.json", json.dumps(item, indent=2, default=str))
     if source is not None:
-        await box.write_file(f"{INVESTIGATION_ROOT}/benchmark.tar.gz", source.archive())
-        unpacked = await box.exec(
-            ["tar", "-xzf", f"{INVESTIGATION_ROOT}/benchmark.tar.gz", "-C", INVESTIGATION_ROOT]
-        )
-        if not unpacked.success:
-            raise RuntimeError(f"could not unpack the benchmark source: {unpacked.stderr}")
+        from ._box import write_into
+
+        await write_into(source.archive(), INVESTIGATION_ROOT, INVESTIGATOR)
 
 
 def _bash(name: str, service: str | None, description: str, timeout: int) -> Tool:
     return ToolDef(
         bash(timeout=timeout, sandbox=service), name=name, description=description
     ).as_tool()
+
+
+async def install_into_box(specs: list[str]) -> None:
+    """Install the benchmark into the investigator's box; record, never fail, the outcome."""
+    from ._box import install
+
+    await install(specs, f"{INVESTIGATION_ROOT}/benchmark-install.json", service=INVESTIGATOR)
 
 
 @solver
@@ -128,8 +132,14 @@ def investigator(
     paper: str | None = None,
     search: WebSearchProviders | None = None,
     model: Model | None = None,
+    install: Sequence[str] = (),
 ) -> Solver:
-    """Investigate the sample this solver runs in, in place of the benchmark's solver."""
+    """Investigate the sample this solver runs in, in place of the benchmark's solver.
+
+    `install` are the pip specs its job installed the benchmark with: the same go into
+    the investigator's own box, so it can import and run the benchmark's code there
+    (FRICTION 74), with the outcome in /audit/benchmark-install.json.
+    """
     granted = {name for check in checks for name in check.tools}
     skill_dirs = [
         str(path)
@@ -154,15 +164,13 @@ def investigator(
     )
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        if sample_limits().cost.limit is None:
-            raise RuntimeError(
-                "the investigation is capped in dollars: set cost_limit on the task or the eval"
-            )
         sample_id = str(state.sample_id)
         their_sample = their_samples[sample_id]
         their_messages = list(state.messages)
         store_as(AssessmentUnits).ids = list((assessment_ids or {}).get(sample_id) or [sample_id])
         await stage_item(state, their_sample, source, redact)
+        if install:
+            await install_into_box(list(install))
         if paper:
             from ._paper import paper_file
 

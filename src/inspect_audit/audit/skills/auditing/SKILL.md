@@ -13,6 +13,11 @@ unequal constraint effects concerns how a constraint binds different models. Rel
 observations can be findings without answering those checks. Do not assign a clean rating
 merely because no worker reported a problem.
 
+The logs you can read are the supplied ones under /inputs/logs and those of your own
+jobs under /inputs/jobs/<label>/; investigators' verdicts are scores in their jobs'
+logs, and the register tool shows them. Read logs with the `reading-logs` skill (Inspect's log API and its
+traps) and analyse them with `analyzing-logs`; there is no browser for a log viewer.
+
 
 Establish what the benchmark claims to measure from the paper and README. Trace the
 implementation: dataset, model-visible information, tools/environment, submission,

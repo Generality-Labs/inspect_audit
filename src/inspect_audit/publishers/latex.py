@@ -65,20 +65,33 @@ def tex(value: object) -> str:
     return "".join(word(w) for w in re.split(r"(\s+)", str(value))).replace("\n\n", "\\par ")
 
 
+RULE = (
+    "ratings.overall takes a grade ({grades}); every dimension (A-I) and criterion "
+    "(e.g. C.3) takes an assessment ({assessments}), never a letter grade"
+)
+
+
 def validate(findings: Findings) -> None:
-    definitions = json.loads(REGISTRY.read_text())["dimensions"]
+    registry = json.loads(REGISTRY.read_text())
+    definitions, grades, assessments = (
+        registry["dimensions"],
+        registry["grades"],
+        registry["assessments"],
+    )
+    rule = RULE.format(grades=", ".join(grades), assessments=", ".join(assessments))
     ratings = findings.auditor.ratings
-    if (
-        "overall" not in ratings
-        or ratings["overall"].label not in "ABCD"
-        or len(ratings["overall"].label) != 1
-    ):
+    if "overall" not in ratings or ratings["overall"].label not in grades:
         raise ValueError(
-            "LaTeX publication needs ratings.overall with an A-D label, explanation and evidence before submission"
+            "LaTeX publication needs ratings.overall, with its explanation and evidence, "
+            f"before submission: {rule}"
         )
     for key, rating in ratings.items():
-        if key != "overall" and (key not in definitions or rating.label not in ASSESSMENTS):
-            raise ValueError(f"Unknown framework criterion or assessment: {key}={rating.label}")
+        if key == "overall":
+            continue
+        if key not in definitions:
+            raise ValueError(f"Unknown framework criterion {key!r}: IDs are A-I and A.1, C.3, ...")
+        if rating.label not in assessments:
+            raise ValueError(f"{key}={rating.label} is not an assessment: {rule}")
     for finding in findings.auditor.findings:
         if finding.criterion not in definitions:
             raise ValueError(

@@ -106,32 +106,19 @@ def investigator_results(register: "Register") -> dict[str, Any]:
     }
 
 
-async def sync_draft(register: "Register") -> None:
-    """Refresh collected investigator records without replacing the auditor's draft."""
-    require_audit()
-    try:
-        data = json.loads(await sandbox().read_file(DRAFT))
-    except FileNotFoundError:
-        data = Findings().model_dump(mode="json")
-    except ValueError as ex:
-        raise ToolError(
-            "findings.json is not valid JSON; repair the draft and collect again"
-        ) from ex
-    if not isinstance(data, dict):
-        raise ToolError("findings.json must be an object")
-    data["subject"] = register.subject
-    data["investigators"] = investigator_results(register)
-    await sandbox().write_file(DRAFT, encoded(data))
-
-
 def validate_draft(data: Any, register: "Register") -> Findings:
+    """The auditor's draft, with the sections that are the register's taken from it.
+
+    `subject` and `investigators` are copies of the register: whatever the draft holds
+    there is replaced, so an auditor that rewrites the whole file (smoke round 6: seven
+    refused submissions, FRICTION 92) cannot fall out of step with its own results.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("findings.json must be an object")
+    data = {**data, "subject": register.subject, "investigators": investigator_results(register)}
     draft = Findings.model_validate(data)
     if not draft.auditor.summary.strip():
         raise ValueError("The auditor summary must explain what the audit established")
-    if draft.investigators != investigator_results(register) or draft.subject != register.subject:
-        raise ValueError(
-            "Investigator records and subject must match the collected results; collect again to refresh them"
-        )
     samples = set(register.samples)
     for finding in draft.auditor.findings:
         if len(finding.sample_ids) != len(set(finding.sample_ids)):
@@ -205,12 +192,17 @@ async def freeze(root: Path, draft: Findings) -> Path:
     from ._report import AuditRecord, job_addresses, log_address
 
     files: dict[str, bytes] = {"findings.json": encoded(draft.model_dump(mode="json"))}
-    refs: list[dict[str, Any]] = []
-    # Native logs stay at their original address. Hash trusted collected files in
-    # chunks instead of loading large transcripts into the store or report bundle.
+    # Native logs stay at their original address. Collected jobs' logs are cited from
+    # their job records, kept in the checkpointed store at collection (FRICTION 113); the
+    # operator's supplied logs are staged afresh on the host whenever the task is built.
+    refs: list[dict[str, Any]] = [
+        {k: ref[k] for k in ("source", "address", "sha256", "bytes")}
+        for job in store_as(AuditRecord).jobs
+        for ref in job.get("logs") or []
+    ]
     native_paths = [
         p
-        for folder in (root / "inputs/logs", root / "inputs/jobs")
+        for folder in (root / "inputs/logs",)
         if folder.exists()
         for p in folder.rglob("*")
         if p.is_file() and p.suffix in (".eval", ".json")
@@ -294,15 +286,9 @@ async def freeze(root: Path, draft: Findings) -> Path:
 
 
 async def stage_bundle(bundle: Path) -> None:
-    import io
-    import tarfile
+    from ._box import archive, write_into
 
-    from ._audit_workspace import write_into
-
-    stream = io.BytesIO()
-    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
-        archive.add(bundle, arcname="findings", recursive=True)
-    await write_into(stream.getvalue(), "/inputs")
+    await write_into(archive({"findings": bundle}), "/inputs")
 
 
 def read_bundle(bundle: Path) -> tuple[Findings, dict[str, Any]]:
@@ -378,23 +364,27 @@ def submit_findings(
         fresh publisher in auditor.artifacts. Submission cannot be reopened.
         """
         from ._register import load
-        from .dispatch import FINISHED
+        from .dispatch.jobs import settled
 
         lock = audit.launch_lock if audit else asyncio.Lock()
         async with lock:
             require_audit()
-            if (task or (audit and audit.task)) and not load().checks:
-                raise ToolError("Start the sample population with start_register before submission")
+            if (task or (audit and audit.task)) and not (await load()).checks:
+                raise ToolError(
+                    'Open the register before submission: register(view="summary") starts it'
+                )
             if audit:
                 for job in audit.record().jobs:
-                    if await audit.runs.status(job["run_id"]) not in FINISHED:
+                    state = await audit.runs.status(job["run_id"])
+                    if not settled(state, bool(job.get("stop_requested"))):
                         raise ToolError(
-                            f"Finish or stop job {job['label']} before submitting findings"
+                            f"Job {job['label']} is {state}: wait for it, or stop it, before "
+                            "submitting findings"
                         )
                     if not job.get("collected") and not job.get("collection_error"):
                         raise ToolError(f"Collect job {job['label']} before submitting findings")
                 if audit.authorizer.policy.limits.coverage == "full":
-                    register = load()
+                    register = await load()
                     missing = [
                         f"{sample_id}/{check}"
                         for sample_id, by_check in register.samples.items()
@@ -409,7 +399,7 @@ def submit_findings(
                             "them, or call report_blocker with why they cannot be done."
                         )
             try:
-                draft = validate_draft(json.loads(await sandbox().read_file(DRAFT)), load())
+                draft = validate_draft(json.loads(await sandbox().read_file(DRAFT)), await load())
                 if validate is not None:
                     validate(draft)
                 await freeze(root, draft)

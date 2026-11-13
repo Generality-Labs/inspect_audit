@@ -20,7 +20,7 @@ from typing import Any
 import anyio.to_thread
 from inspect_ai import Task, score_async
 from inspect_ai.dataset import Sample
-from inspect_ai.log import EvalLog, read_eval_log, read_eval_log_sample
+from inspect_ai.log import EvalLog, read_eval_log_async, read_eval_log_sample
 from inspect_ai.model import Model
 from inspect_ai.scorer import CORRECT, INCORRECT, NOANSWER, PARTIAL, Scorer, Value
 from inspect_ai.scorer._scorer import unique_scorer_name
@@ -125,7 +125,10 @@ async def regrade_async(
         their = registry_create("task", task, **(task_args or {}))
         name = registry_info(their).name
         package = name.split("/")[0] if "/" in name else None
-    index = index_logs(logs, task_name=name, task_args=dict(task_args or {}), package=package)
+    # off the event loop: the sync header readers start their own (FRICTION 44, 79)
+    index = await anyio.to_thread.run_sync(
+        lambda: index_logs(logs, task_name=name, task_args=dict(task_args or {}), package=package)
+    )
     roles = configured_judges(index, judge_roles(index, judge))
     scorers: list[Scorer] = (
         list(their.scorer) if isinstance(their.scorer, list) else [s for s in [their.scorer] if s]
@@ -136,7 +139,7 @@ async def regrade_async(
 
     rows: list[Regrade] = []
     for path in logs:
-        log = read_eval_log(path)
+        log = await read_eval_log_async(path)
         samples = log.samples or []
         try:
             rescored = await _rescore(log, scorers, roles)
@@ -293,6 +296,8 @@ def regrade_task(
     samples: list[str] | None = None,
     epochs: int = 3,
     cost_limit: float | None = None,
+    files: dict[str, str] | None = None,
+    source: str | None = None,
 ) -> Task:
     """Re-grade recorded attempts with the benchmark's own scorers, as an Inspect task.
 
@@ -302,11 +307,20 @@ def regrade_task(
     disagreement. Run on Hawk with the judge as the eval's model, the job gets the
     judge's credentials, which the auditor's own box does not have (FRICTION 20).
     Each sample's metadata keeps the recorded grades under `inspect_audit_regrade`.
+    With `files`, the scorers are a variant's: the benchmark with those files laid over
+    its package (`_variant`), so a regrade can ask what a changed scorer says.
     """
     if isinstance(task, Task):
         their, name, package = task, task.name, None
     else:
-        their = registry_create("task", task, **(task_args or {}))
+        if files:
+            from ._variant import variant_task
+
+            if not source:
+                raise ValueError("a variant regrade needs the module that defines the task")
+            their = variant_task(task, source, dict(task_args or {}), files)
+        else:
+            their = registry_create("task", task, **(task_args or {}))
         name = registry_info(their).name
         package = name.split("/")[0] if "/" in name else None
     index = index_logs(logs, task_name=name, task_args=dict(task_args or {}), package=package)

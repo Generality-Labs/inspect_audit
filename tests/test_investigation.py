@@ -112,10 +112,10 @@ def priced_mockllm() -> Iterator[None]:
     and put it back, so tests elsewhere in this worker still see it unpriced."""
     from inspect_ai.model import ModelInfo, get_model_info, set_model_info
 
-    from inspect_audit._prices import register_prices
+    from inspect_audit._prices import register_price
 
     before = get_model_info("mockllm/model")
-    register_prices({"mockllm/model": {"input": 1.0, "output": 1.0}})
+    register_price("mockllm/model", {"input": 1.0, "output": 1.0})
     yield
     set_model_info("mockllm/model", before or ModelInfo())
 

@@ -113,6 +113,11 @@ def test_a_docker_box_is_a_container_with_nothing_mounted(tmp_path):
     assert task.sandbox.type == "docker"
     compose = yaml.safe_load(Path(task.sandbox.config).read_text())
     assert "volumes" not in compose["services"]["default"]
+    # the published box Hawk runs, not a local build
+    from inspect_audit.containers import AUDITOR_IMAGE
+
+    assert compose["services"]["default"]["image"] == AUDITOR_IMAGE
+    assert "build" not in compose["services"]["default"]
 
 
 def test_artifacts_land_where_hawks_viewer_looks_for_the_sample(tmp_path):

@@ -23,6 +23,7 @@ from inspect_audit._findings import (
 from inspect_audit._publishing import PhaseTools, Publisher, publish
 from inspect_audit._register import Register, Take
 from inspect_audit._verdicts import Evidence
+from inspect_audit.dispatch.policy import Models
 from inspect_audit.publishers.gl import validate_rows
 
 
@@ -49,10 +50,12 @@ def test_draft_keeps_investigators_and_requires_explained_findings() -> None:
         auditor=AuditorFindings(summary="Reference missing"),
     )
     assert validate_draft(draft.model_dump(mode="json"), register) == draft
+    # the register's sections come from the register, whatever the draft holds there:
+    # an auditor that rewrites the file cannot fall out of step (FRICTION 92)
     data = draft.model_dump(mode="json")
-    data["investigators"]["samples"]["a"]["gold-answer"] = []
-    with pytest.raises(ValueError, match="collected results"):
-        validate_draft(data, register)
+    data["investigators"] = {"checks": {}, "samples": {}}
+    del data["subject"]
+    assert validate_draft(data, register) == draft
     data = draft.model_dump(mode="json")
     data["auditor"]["findings"] = [
         {
@@ -239,7 +242,6 @@ PYCODE"""
 
 
 def test_submitted_phase_blocks_direct_job_launches(tmp_path: Path) -> None:
-    from inspect_audit._audit import ModelMenu
     from inspect_audit.dispatch import Job, LocalRuns
 
     init_subtask_store(Store())
@@ -251,7 +253,7 @@ def test_submitted_phase_blocks_direct_job_launches(tmp_path: Path) -> None:
         task_package="bench",
         investigation_package="investigation",
         investigator_image="image",
-        menu=ModelMenu(investigators=[], subjects=["mockllm/model"], judges=[]),
+        menu=Models(investigators=[], subjects=["mockllm/model"], judges=[]),
         supplied=[],
     )
     store_as(FindingsState).phase = "publishing"
@@ -532,3 +534,50 @@ def test_invalid_publication_records_do_not_mark_a_report_published(
         asyncio.run(_publishing.publish_document(tmp_path, Publisher(skills=[], build=build))())
     assert store_as(AuditState).published is None
     assert store_as(AuditState).outcome is None
+
+
+def test_frozen_findings_cite_collected_logs_from_the_job_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resumed audit runs on a new machine without the first one's copies of the logs:
+    the job record (checkpointed) is what the bundle cites them from (FRICTION 113)."""
+    import json
+
+    from inspect_audit import _findings
+    from inspect_audit._report import AuditRecord
+
+    init_subtask_store(Store())
+    store_as(AuditRecord).jobs = [
+        {
+            "label": "inv",
+            "kind": "investigation",
+            "run_id": "r",
+            "address": "hawk:inv-1",
+            "logs": [
+                {
+                    "source": "/inputs/jobs/inv/a.eval",
+                    "address": "hawk:inv-1/a.eval",
+                    "sha256": "0" * 64,
+                    "bytes": 10,
+                }
+            ],
+        }
+    ]
+
+    async def staged(bundle: Path) -> None:
+        pass
+
+    monkeypatch.setattr(_findings, "stage_bundle", staged)
+    destination = asyncio.run(
+        _findings.freeze(tmp_path, Findings(auditor=AuditorFindings(summary="s")))
+    )
+    manifest = json.loads((destination / "manifest.json").read_text())
+    assert manifest["log_references"] == [
+        {
+            "source": "/inputs/jobs/inv/a.eval",
+            "address": "hawk:inv-1/a.eval",
+            "sha256": "0" * 64,
+            "bytes": 10,
+        }
+    ]
+    assert not (tmp_path / "inputs").exists()

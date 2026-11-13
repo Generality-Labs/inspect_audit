@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .jobs import COMPLETE, FAILED, FINISHED, RUNNING, STOPPED, Job, validate_environment
+from .jobs import FINISHED, Job, JobState, add_usage, validate_environment
 
 
 class LocalRuns:
@@ -41,6 +41,11 @@ class LocalRuns:
         return str(self._dir(run_id) / "logs")
 
     async def submit(self, job: Job) -> str:
+        if job.package_overrides:
+            raise ValueError(
+                "a local run uses this machine's Python environment: package version "
+                "overrides need the Hawk backend"
+            )
         run_dir = Path(tempfile.mkdtemp(prefix=f"{job.label}-", dir=self.root))
         args = [
             sys.executable,
@@ -137,17 +142,29 @@ class LocalRuns:
                 return record
         return None
 
-    async def status(self, run_id: str) -> str:
+    async def status(self, run_id: str) -> JobState:
         done = self._done(run_id)
         if done is not None:
             if (self._dir(run_id) / "stopped").exists():
-                return STOPPED
-            return COMPLETE if done.get("success") else FAILED
+                return JobState.STOPPED
+            return JobState.COMPLETE if done.get("success") else JobState.FAILED
         try:
             os.kill(int(self._launch(run_id)["pid"]), 0)
         except (OSError, KeyError, TypeError, ValueError):
-            return FAILED  # gone without a done record: it died mid-flight
-        return RUNNING
+            return JobState.FAILED  # gone without a done record: it died mid-flight
+        return JobState.RUNNING
+
+    async def usage(self, run_id: str) -> tuple[dict[str, Any], int]:
+        """From the job's logs on disk: finished samples only (none while it runs)."""
+        from inspect_ai.log import read_eval_log_sample_summaries_async
+
+        total: dict[str, Any] = {}
+        done = 0
+        for log in sorted((self._dir(run_id) / "logs").glob("*.eval")):
+            for sample in await read_eval_log_sample_summaries_async(str(log)):
+                done += 1
+                add_usage(total, sample.model_usage or {})
+        return total, done
 
     async def logs(self, run_id: str, out_dir: Path) -> list[Path]:
         return sorted((self._dir(run_id) / "logs").glob("*.eval"))

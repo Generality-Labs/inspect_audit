@@ -6,7 +6,7 @@ import random
 from inspect_ai import Task, task
 
 from inspect_audit import _audit
-from inspect_audit._prices import register_prices
+from inspect_audit._prices import price_models
 
 BENCHMARK_COMMIT = "369d6ae1de4a7870b4c4119d12bd49a6e484ed64"
 BENCHMARK_REPO = "https://github.com/xantheocracy/inspect_evals"
@@ -27,9 +27,7 @@ def audit(investigation_package: str) -> Task:
     """Audit SciCode with Luna; investigate eight seeded samples on Hawk."""
     from inspect_evals.scicode.scicode import scicode
 
-    register_prices(
-        {f"openrouter/{LUNA}": {"input": 0.10, "output": 0.50, "input_cache_read": 0.01}}
-    )
+    price_models([f"openrouter/{LUNA}"])
     task_args = {
         "provide_scientific_background": False,
         "timeout": 1800,

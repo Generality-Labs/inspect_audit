@@ -1,20 +1,26 @@
-"""Host-side investigator collection and shared interpretation of sample/check results.
+"""The register: every permitted item against every check.
 
-The register retains all collected investigator takes in Inspect's checkpointed store.
-The agent works in findings.json; auditor reviews are applied to a temporary
-register for queries and publication, never written into the collection history.
+Investigators' verdicts are scores in their jobs' logs. Collecting a job reads them once
+(the logs' sample summaries) into the sample store, which Inspect checkpoints, so the
+register survives a resume with the conversation (FRICTION 113). The store holds the
+population and those verdict rows; `load` builds the view from them. Auditor reviews
+are laid over a loaded view for queries and publication, never stored here.
 """
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from inspect_ai.util import StoreModel, store_as
+from inspect_ai.tool import Tool, ToolError, tool
+from inspect_ai.util import StoreModel, sandbox, store_as
 from pydantic import BaseModel, Field, JsonValue
 
 from ._verdicts import Evidence, InvestigationItemSkill
 
 if TYPE_CHECKING:
     from ._findings import Review
+    from .dispatch.policy import LaunchPolicy
 
 
 def now() -> str:
@@ -45,74 +51,113 @@ class Register(BaseModel):
 
 
 class RegisterStore(StoreModel):
-    """The register as the sample store holds it; checkpointed with the sample."""
+    """The population and every collected verdict, checkpointed with the sample."""
 
-    data: dict[str, Any] = Field(default_factory=dict)
+    subject: dict[str, Any] = Field(default_factory=dict)
+    checks: list[str] = Field(default_factory=list)
+    sample_ids: list[str] = Field(default_factory=list)
+    verdicts: list[dict[str, Any]] = Field(default_factory=list)
+    """One row per verdict read from a collected investigation log (see `verdicts_in`)."""
 
 
-def load() -> Register:
-    return Register.model_validate(store_as(RegisterStore).data or {})
+def population() -> Register:
+    """The items and checks, every cell empty: what `load` fills with the verdicts."""
+    stored = store_as(RegisterStore)
+    return Register(
+        subject=stored.subject,
+        checks=list(stored.checks),
+        samples={sample: {check: [] for check in stored.checks} for sample in stored.sample_ids},
+    )
 
 
-async def save(register: Register) -> None:
-    """Refresh the combined draft, then save authoritative investigator history."""
-    from ._findings import sync_draft
+async def load() -> Register:
+    """The register: the population with every collected investigator verdict."""
+    register = population()
+    add_takes(register, store_as(RegisterStore).verdicts)
+    return register
 
-    await sync_draft(register)
-    store_as(RegisterStore).data = register.model_dump(mode="json", exclude_none=True)
+
+def save(register: Register) -> None:
+    """Keep the population (subject, checks, sample ids); verdicts are added by collection."""
+    stored = store_as(RegisterStore)
+    stored.subject = dict(register.subject)
+    stored.checks = list(register.checks)
+    stored.sample_ids = list(register.samples)
+
+
+async def verdicts_in(files: list[Path], address: str, checks: list[str]) -> list[dict[str, Any]]:
+    """Every verdict the investigation logs record, one row each.
+
+    The score of each check on each sample, read from the logs' sample summaries.
+    """
+    from inspect_ai.log import read_eval_log_async, read_eval_log_sample_summaries_async
+
+    rows: list[dict[str, Any]] = []
+    for file in files:
+        header = await read_eval_log_async(str(file), header_only=True)
+        for sample in await read_eval_log_sample_summaries_async(str(file)):
+            for check, score in (sample.scores or {}).items():
+                if check not in checks:
+                    continue
+                rows.append(
+                    {
+                        "sample": str(sample.id),
+                        "check": check,
+                        "label": str(score.value),
+                        "explanation": str(score.explanation or ""),
+                        "metadata": dict(score.metadata or {}),
+                        "run": address,
+                        "eval_id": header.eval.eval_id,
+                        "epoch": sample.epoch,
+                        "model": header.eval.model,
+                    }
+                )
+    return rows
 
 
 def started(register: Register) -> bool:
     return bool(register.checks)
 
 
-def import_investigation_log(
-    register: Register, log: Any, run: str, checks: dict[str, InvestigationItemSkill]
-) -> list[str]:
-    """Each verdict in an investigation log as an investigator take; returns what was added.
+def add_takes(register: Register, rows: list[dict[str, Any]]) -> list[str]:
+    """Investigator verdicts (`verdicts_in` rows) as takes; returns what was added.
 
-    Every (sample, check) score in the log becomes a take, NO_VERDICT included: an
-    investigator that recorded nothing is a fact about the work, not a gap to hide. A
-    sample outside the population or a check outside the register is refused, and a
-    take already imported from the same run, eval and epoch is not added again.
+    Every verdict becomes a take, NO_VERDICT included: an investigator that recorded
+    nothing is a fact about the work, not a gap to hide. A sample outside the population
+    or a check outside the register is refused, and a verdict from the same run, eval
+    and epoch is counted once however often its job is collected.
     """
     added: list[str] = []
-    for sample in log.samples or []:
-        sample_id = str(sample.id)
+    for row in rows:
+        sample_id, check = row["sample"], row["check"]
         if sample_id not in register.samples:
             raise ValueError(
                 f"investigation sample {sample_id!r} is not in the register's population"
             )
-        for check, score in (sample.scores or {}).items():
-            if check not in checks:
-                continue
-            if check not in register.checks:
-                raise ValueError(
-                    f"the investigation ran {check!r}, which the register does not track"
-                )
-            metadata = dict(score.metadata or {})
-            cell = register.samples[sample_id][check]
-            # collecting a job twice must not count its verdicts twice
-            if any(
-                (t.run, t.eval_id, t.epoch, t.label)
-                == (run, log.eval.eval_id, sample.epoch, str(score.value))
-                for t in cell
-            ):
-                continue
-            cell.append(
-                Take(
-                    by="investigator",
-                    label=str(score.value),
-                    explanation=str(score.explanation or ""),
-                    evidence=[Evidence(**e) for e in metadata.get("evidence") or []],
-                    run=run,
-                    eval_id=log.eval.eval_id,
-                    epoch=sample.epoch,
-                    model=log.eval.model,
-                    record=metadata,
-                )
+        if check not in register.checks:
+            raise ValueError(f"the investigation ran {check!r}, which the register does not track")
+        cell = register.samples[sample_id][check]
+        if any(
+            (t.run, t.eval_id, t.epoch, t.label)
+            == (row["run"], row["eval_id"], row["epoch"], row["label"])
+            for t in cell
+        ):
+            continue
+        metadata = dict(row.get("metadata") or {})
+        cell.append(
+            Take(
+                by="investigator",
+                label=row["label"],
+                explanation=row["explanation"],
+                evidence=[Evidence(**e) for e in metadata.get("evidence") or []],
+                run=row["run"],
+                eval_id=row["eval_id"],
+                epoch=row["epoch"],
+                model=row["model"],
+                record=metadata,
             )
-            added.append(f"{sample_id}/{check}={score.value}")
+        )
+        added.append(f"{sample_id}/{check}={row['label']}")
     return added
 
 
@@ -198,3 +243,127 @@ def select(
         for sample_id, name, takes in cells
         if view in cell_states(takes, checks.get(name))
     ]
+
+
+async def start_register(task: str | None, policy: "LaunchPolicy") -> int:
+    """Lay out the register from the launch policy; returns the number of items.
+
+    Every permitted item of the benchmark, with an empty cell per policy check.
+    """
+    from inspect_ai.util import registry_create
+
+    from ._task import numbered
+    from ._verdicts import investigation_items
+    from .dispatch.policy import PolicyStore, ensure_policy
+
+    if not task:
+        raise ToolError("the register needs the investigated task: the operator sets target_task")
+    if started(population()):
+        raise ToolError("the register is already started; it keeps one population")
+    ensure_policy(policy, store_as(PolicyStore), require_existing=True)
+    args = json.loads(policy.task_args_json)
+    try:
+        skills = investigation_items(list(policy.checks))
+    except ValueError as ex:
+        raise ToolError(str(ex)) from ex
+    try:
+        their = registry_create("task", task, **args)
+    except Exception as ex:
+        raise ToolError(
+            f"cannot load {task} here to read its dataset ({type(ex).__name__}: {ex}). "
+            "The benchmark's package must be installed beside inspect_audit."
+        ) from ex
+    dataset, positional = numbered(their)
+    if policy.samples is not None:
+        known = {str(s.id) for s in dataset}
+        if set(policy.samples) - known:
+            raise ToolError("launch policy selects sample IDs absent from the benchmark")
+        dataset = [s for s in dataset if str(s.id) in policy.samples]
+    register = Register(
+        subject={
+            **population().subject,
+            "task": task,
+            "task_args": args,
+            "dataset": getattr(their.dataset, "name", None),
+            "ids": "positional" if positional else "declared",
+        },
+        checks=[s.name for s in skills],
+        samples={str(s.id): {c.name: [] for c in skills} for s in dataset},
+    )
+    save(register)
+    return len(dataset)
+
+
+@tool(name="register")
+def register_view(task: str | None = None, policy: "LaunchPolicy | None" = None) -> Tool:
+    async def execute(view: str, check: str | None) -> str:
+        """The register: every permitted item against every check, and where each stands.
+
+        It starts itself from the launch policy on first use. Cells fill as investigation
+        jobs are collected and as you review; an empty cell is work not yet done.
+
+        Args:
+            view: "summary" (counts per check), "flagged" (an investigator flagged a
+                problem you have not reviewed), "unresolved" (the standing take is
+                unresolved), "missing" (no take yet) or "disputed" (takes disagree).
+            check: Only this check; null for all.
+        """
+        from ._verdicts import investigation_items
+
+        if view not in ("summary", "flagged", "unresolved", "missing", "disputed"):
+            raise ToolError("view is summary, flagged, unresolved, missing or disputed")
+        if not started(population()):
+            if policy is None:
+                raise ToolError("no register: this audit has no launch policy to start one from")
+            await start_register(task, policy)
+        current = await load()
+        skills = {s.name: s for s in investigation_items(current.checks)}
+        from ._findings import DRAFT, Findings
+
+        try:
+            draft = Findings.model_validate_json(await sandbox().read_file(DRAFT))
+            apply_reviews(current, draft.auditor.reviews, skills)
+        except (ValueError, OSError) as ex:
+            raise ToolError(f"Cannot read draft reviews: {ex}") from ex
+        rows = select(current, view, skills, check)  # type: ignore[arg-type]
+        text = json.dumps(rows, indent=1)
+        if len(text) > 12_000:
+            text = text[:12_000] + f"\n... (read {DRAFT} for the rest)"
+        return text
+
+    return execute
+
+
+async def collect_investigation(
+    files: list[Path], address: str, task: str, policy: "LaunchPolicy"
+) -> str:
+    """An investigation job's verdicts into the register.
+
+    A verdict on an item outside the population, or for a check the register does not
+    track, refuses the collection and nothing is kept; collecting a job again adds nothing.
+    """
+    from ._verdicts import investigation_items
+
+    if not started(population()):
+        await start_register(task, policy)
+    current = population()
+    rows = await verdicts_in(files, address, current.checks)
+    try:
+        add_takes(await load(), rows)  # validated against what is already held
+        added = add_takes(current, rows)
+    except ValueError as ex:
+        raise ToolError(f"cannot add this investigation to the register: {ex}") from ex
+    stored = store_as(RegisterStore)
+    held = {(r["run"], r["eval_id"], r["epoch"], r["sample"], r["check"]) for r in stored.verdicts}
+    stored.verdicts = [
+        *stored.verdicts,
+        *(
+            r
+            for r in rows
+            if (r["run"], r["eval_id"], r["epoch"], r["sample"], r["check"]) not in held
+        ),
+    ]
+    skills = {s.name: s for s in investigation_items(current.checks)}
+    flags = {g for s in skills.values() for g in s.flags}
+    flagged = sum(1 for a in added if a.split("=")[-1] in flags)
+    return f"  register: {len(added)} investigator verdict(s) added, {flagged} flagged"

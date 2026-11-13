@@ -17,13 +17,15 @@ from test_helpers.audit import make_audit
 from test_helpers.logs import run_fixture_eval
 
 from inspect_audit._audit import audit
+from inspect_audit._register import register_view
+from inspect_audit._spend import Spend, budget
+from inspect_audit.dispatch.policy import Models
 
 
 def every(models: list[str]):
     """A model menu letting each model play every part (investigator, subject, judge)."""
-    from inspect_audit._audit import ModelMenu
 
-    return ModelMenu(investigators=list(models), subjects=list(models), judges=list(models))
+    return Models(investigators=list(models), subjects=list(models), judges=list(models))
 
 
 def _snapshot_names(root: Path) -> list[str]:
@@ -259,7 +261,7 @@ def test_what_can_be_derived_is_derived(tmp_path: Path, monkeypatch: pytest.Monk
 
 def test_the_task_directory_is_found_without_inspect_evals_conventions(tmp_path: Path) -> None:
     """Not every benchmark ships an eval.yaml; most just declare a task in a file."""
-    from inspect_audit._audit import paths_from_metadata
+    from inspect_audit._repository import paths_from_metadata
 
     repo = tmp_path / "bench"
     (repo / "bench/task/example").mkdir(parents=True)
@@ -288,85 +290,50 @@ def test_the_task_directory_is_found_without_inspect_evals_conventions(tmp_path:
     assert paths_from_metadata(repo, "bench/not_here") is None
 
 
-def test_an_audit_can_be_a_file_and_the_command_line_still_wins(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A saved audit is a document; re-running it with one thing changed is -T."""
+def test_an_audit_is_its_task_arguments_and_a_file_of_them_is_inspects(tmp_path: Path) -> None:
+    """One route: an audit's settings are its task arguments, from -T, a Hawk eval-set
+    config, or a YAML file through Inspect's own `--task-config` (FRICTION 107)."""
+    from inspect_ai._util.config import resolve_args
+
     repo = git_repo(tmp_path / "repo")
     config = tmp_path / "audit.yaml"
     config.write_text(
         f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\noverview: read the grader first\n"
     )
-    from_file = audit(config=str(config))
-    seed = json.loads((Path(from_file.metadata["audit_dir"]) / "inputs/seed.json").read_text())
+    built = audit(**resolve_args(str(config)))
+    seed = json.loads((Path(built.metadata["audit_dir"]) / "inputs/seed.json").read_text())
     assert seed["overview"] == "read the grader first"
-
-    overridden = audit(config=str(config), overview="read the dataset first")
-    seed = json.loads((Path(overridden.metadata["audit_dir"]) / "inputs/seed.json").read_text())
-    assert seed["overview"] == "read the dataset first", "the command line beats the file"
-
-    typo = tmp_path / "typo.yaml"
-    typo.write_text(f"repo: {repo}\nbudget: 100\n")
-    with pytest.raises(ValueError, match="sets things this task does not take"):
-        audit(config=str(typo))
-    with pytest.raises(ValueError, match="no such audit file"):
-        audit(config=str(tmp_path / "nowhere.yaml"))
+    with pytest.raises(TypeError):
+        audit(**{**resolve_args(str(config)), "budget": 100})
     with pytest.raises(ValueError, match="needs a repo"):
         audit()
 
 
 def test_the_only_task_a_repository_declares_needs_no_naming(tmp_path: Path) -> None:
-    from inspect_audit._audit import _only_task
+    from inspect_audit._repository import only_task
 
     one = tmp_path / "one"
     (one / "bench").mkdir(parents=True)
     (one / "bench/task.py").write_text(
         '@task(name="Example Questions")\ndef example_puzzles():\n    ...\n'
     )
-    assert _only_task(one) == "Example Questions"
+    assert only_task(one) == "Example Questions"
 
     several = tmp_path / "several"
     (several / "bench").mkdir(parents=True)
     (several / "bench/a.py").write_text("@task\ndef one_thing():\n    ...\n")
     (several / "bench/b.py").write_text("@task\ndef another():\n    ...\n")
-    assert _only_task(several) is None, "a collection must be told which task to investigation"
+    assert only_task(several) is None, "a collection must be told which task to investigation"
 
 
-def test_the_config_file_decides_before_anything_is_built(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A setting in the file must be able to change what loads, not arrive too late.
-
-    Skills were assembled and the budget validated before the file was read, so
-    `extra_skills` in a config was silently ignored and a bad budget in a config was
-    accepted.
-    """
+def test_bad_settings_are_refused_before_anything_is_built(tmp_path: Path) -> None:
     repo = git_repo(tmp_path / "repo")
-    skill = tmp_path / "house-style"
-    skill.mkdir()
-    (skill / "SKILL.md").write_text(
-        "---\nname: house-style\ndescription: ours\n---\n\nRead this.\n"
-    )
-    config = tmp_path / "audit.yaml"
-    config.write_text(f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\nextra_skills: ['{skill}']\n")
-    assert audit(config=str(config)).metadata["audit_dir"]
-
-    # a skill directory named by the file is checked like one named on the command line;
-    # before the reordering the file's extra_skills were read after the list was built
-    # and went unnoticed entirely
     not_a_skill = tmp_path / "empty"
     not_a_skill.mkdir()
-    broken = tmp_path / "broken.yaml"
-    broken.write_text(
-        f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\nextra_skills: ['{not_a_skill}']\n"
-    )
     with pytest.raises(ValueError, match=r"containing SKILL\.md"):
-        audit(config=str(broken))
-
-    bad = tmp_path / "bad.yaml"
-    bad.write_text(f"repo: {repo}\nruns: elsewhere\noutput_dir: {tmp_path / 'runs'}\n")
+        audit(str(repo), output_dir=str(tmp_path / "runs"), extra_skills=[str(not_a_skill)])
     with pytest.raises(ValueError, match="runs must be"):
-        audit(config=str(bad))
+        audit(str(repo), output_dir=str(tmp_path / "runs"), runs="elsewhere")
 
 
 def test_the_snapshot_follows_what_the_task_imports(tmp_path: Path) -> None:
@@ -375,7 +342,7 @@ def test_the_snapshot_follows_what_the_task_imports(tmp_path: Path) -> None:
     A scorer in an ordinary sibling module would have been left out of the snapshot,
     and the agent would have investigated a benchmark with a hole in it.
     """
-    from inspect_audit._audit import paths_from_metadata
+    from inspect_audit._repository import paths_from_metadata
 
     repo = tmp_path / "suite"
     package = repo / "src" / "suite"
@@ -495,11 +462,10 @@ def test_every_tool_schema_survives_a_strict_provider(tmp_path: Path) -> None:
         supplied=[],
     )
     ours = [
-        _audit.run_benchmark(inv),
-        _audit.run_investigation(inv),
-        _audit.run_regrade(inv),
+        _audit.run_eval(inv),
+        _audit.send_investigators(inv),
         _audit.jobs(inv),
-        _audit.budget(None, openrouter=False),
+        budget(Spend(None, None)),
         view_image(),
         submit_findings(tmp_path),
         publish_document(tmp_path, load_publisher("gl")),
@@ -534,8 +500,11 @@ def test_jobs_refuse_to_guess_a_package_they_cannot_derive(tmp_path: Path) -> No
             str(repo),
             output_dir=str(tmp_path / "runs"),
             target_task="benchmark/task",
-            runs="local",
+            runs="hawk",
+            hawk_api_url="https://hawk.example",
         )
+    # a local job runs in this machine's environment and never installs them (FRICTION 79c)
+    audit(str(repo), output_dir=str(tmp_path / "runs"), target_task="benchmark/task", runs="local")
     with pytest.raises(ValueError, match="target_task"):
         audit(str(repo), output_dir=str(tmp_path / "runs"), runs="local")
 
@@ -564,16 +533,6 @@ def test_the_auditor_checkpoints_its_workspace_and_inputs(tmp_path: Path) -> Non
     assert task.checkpoint.sandbox_paths == {"default": ["/workspace", "/inputs"]}
 
 
-def test_a_value_equal_to_a_default_is_still_an_override(tmp_path: Path) -> None:
-    """ "Given" cannot mean "different from the default", or a file wins arguments it should not."""
-    repo = git_repo(tmp_path / "repo")
-    config = tmp_path / "audit.yaml"
-    config.write_text(f"repo: {repo}\noutput_dir: {tmp_path / 'runs'}\ninteractive: true\n")
-    assert audit(config=str(config)).metadata["interactive"] is True
-    # the value the default would have used, passed deliberately, beats the file
-    assert audit(config=str(config), interactive=False).metadata["interactive"] is False
-
-
 @pytest.mark.docker
 def test_inputs_are_staged_into_a_plain_box_and_survive_nothing_mounted(tmp_path: Path) -> None:
     """The box is the only workspace: the staged seed, logs and report skeleton are in it.
@@ -586,6 +545,8 @@ def test_inputs_are_staged_into_a_plain_box_and_survive_nothing_mounted(tmp_path
         str(git_repo(tmp_path / "repo")),
         logs=[source_log],
         output_dir=str(tmp_path / "runs"),
+        # nothing is published: the LaTeX publisher would refuse a box without TeX at setup
+        publisher="gl",
     )
     compose = tmp_path / "compose.yaml"
     compose.write_text(
@@ -609,7 +570,9 @@ def test_inputs_are_staged_into_a_plain_box_and_survive_nothing_mounted(tmp_path
     )
     target = task_with(target, sandbox=("docker", str(compose)), checkpoint=None)
     log = eval(target, model=model, display="none", log_dir=str(tmp_path / "logs"))[0]
-    assert log.status == "success", log.error
+    # the scripted model ends the audit with report_blocker: a blocked audit is an error
+    assert log.samples and log.samples[0].error, log.status
+    assert "test ends here" in log.samples[0].error.message
     from inspect_ai.model import ChatMessageTool
 
     [staged, budget, _] = [m for m in log.samples[0].messages if isinstance(m, ChatMessageTool)]
@@ -645,17 +608,15 @@ def test_every_agent_tool_schema_meets_openais_strict_rules(tmp_path: Path) -> N
         supplied=[],
     )
     tools = [
-        _audit.run_benchmark(inv),
-        _audit.run_investigation(inv),
-        _audit.run_regrade(inv),
+        _audit.run_eval(inv),
+        _audit.send_investigators(inv),
         _audit.jobs(inv),
-        _audit.budget(None, openrouter=False),
+        budget(Spend(None, None)),
         view_image(),
         submit_findings(tmp_path),
         publish_document(tmp_path, load_publisher("gl")),
         report_blocker(),
-        _audit.start_register("b/t"),
-        _audit.register_view(),
+        register_view(),
         figure(),
         preview_report(tmp_path),
         *_investigator_tools(),
@@ -734,3 +695,67 @@ def test_the_auditor_builds_from_a_directory_it_cannot_write(tmp_path: Path) -> 
             os.environ["HOME"] = old_home
         readonly.chmod(stat.S_IRWXU)
     assert Path(task.metadata["audit_dir"]).is_relative_to(home)
+
+
+def test_an_audit_with_a_model_hawk_does_not_price_does_not_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """James, 2026-11-13: "just don't run if you can't find the model". On Hawk every
+    model the audit may use must be on Hawk's price list before anything starts; the
+    plain `openrouter/...` spelling, which Hawk's proxy cannot route, is not (FRICTION 89)."""
+    from inspect_audit import _prices
+
+    monkeypatch.setenv("HAWK_API_URL", "https://hawk.test")
+    row = {"input_cost_per_1m": 0.038, "output_cost_per_1m": 0.5}
+    monkeypatch.setattr(_prices, "_hawk_table", lambda url: {"openrouter/deepseek/flash": row})
+    with pytest.raises(_prices.UnpricedModelError, match="openrouter/deepseek/gone"):
+        audit(
+            str(git_repo(tmp_path / "repo")),
+            policy={
+                "models": {
+                    "investigators": ["openai/openrouter/deepseek/flash"],
+                    "subjects": ["openai/openrouter/deepseek/gone"],
+                }
+            },
+            output_dir=str(tmp_path / "runs"),
+        )
+
+
+def test_rebuilding_an_audit_keeps_its_identity_so_it_can_resume(tmp_path: Path) -> None:
+    """Inspect pairs a task with its earlier log by an identity that hashes the setup
+    steps' arguments. A host folder new on every build made every audit a new task, so
+    an interrupted audit could never be resumed (FRICTION 113)."""
+    from inspect_ai._eval.evalset import EvalSetArgsInTaskIdentifier, task_identifier
+    from inspect_ai._eval.loader import resolve_tasks
+    from inspect_ai.model import GenerateConfig, get_model
+
+    repo = git_repo(tmp_path / "repo")
+    identities = []
+    for _ in range(2):
+        built = audit(str(repo), output_dir=str(tmp_path / "runs"))
+        [resolved] = resolve_tasks([built], {}, get_model("mockllm/model"), None, None, None)
+        identities.append(
+            task_identifier(resolved, EvalSetArgsInTaskIdentifier(config=GenerateConfig()))
+        )
+    assert identities[0] == identities[1]
+
+
+def test_a_task_at_a_repositorys_root_does_not_snapshot_its_git_folder(tmp_path: Path) -> None:
+    """The source walk took every file under the task's folder, .git included, and
+    `git archive` then refused the paths (FRICTION 113)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "bench.py").write_text("from inspect_ai import task\n@task\ndef t():\n    ...\n")
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.email=a@b", "-c", "user.name=x", "commit", "-qm", "i"],
+        check=True,
+    )
+    from inspect_audit._repository import paths_from_metadata
+
+    paths = paths_from_metadata(repo, "t") or []
+    assert not any(p.startswith(".git") for p in paths)
+    assert audit(str(repo), target_task="t", output_dir=str(tmp_path / "runs")).metadata[
+        "audit_dir"
+    ]

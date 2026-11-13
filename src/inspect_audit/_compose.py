@@ -11,7 +11,6 @@ per sandbox, so their box has it during an investigation too; the investigator i
 """
 
 import os
-from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +19,7 @@ from inspect_ai.dataset import Sample
 from inspect_ai.util import ComposeConfig, SandboxEnvironmentSpec
 
 from .containers import INVESTIGATOR_DOCKERFILE
+from .dispatch.jobs import INSPECT_VERSION
 
 INVESTIGATOR = "investigator"
 
@@ -137,7 +137,7 @@ def investigation_compose(
         investigator["build"] = {
             "context": str(stage),
             "dockerfile": "investigator.Dockerfile",
-            "args": {"INSPECT_VERSION": version("inspect-ai")},
+            "args": {"INSPECT_VERSION": INSPECT_VERSION},
         }
         investigator["x-local"] = True
     if benchmark_compose is None:

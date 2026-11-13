@@ -10,14 +10,15 @@ environment and so its key. Both hand back finished logs as local files.
 
 import re
 from dataclasses import dataclass, field
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Protocol
 
 from inspect_ai.model import ModelConfig
 
-# The Inspect every job runs on, and the one this package is tested against. Hawk
-# swaps in its own build unless a job names one, so every job names this.
-INSPECT_VERSION = "0.3.285"
+# The Inspect every job and box runs on: the one installed here, which pyproject pins
+# exactly. Hawk swaps in its own build unless a job names one, so every job names this.
+INSPECT_VERSION = version("inspect-ai")
 
 # A variant job's replacement files (FRICTION 73): a change to the benchmark, not a
 # second benchmark carried in a job config

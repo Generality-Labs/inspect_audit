@@ -15,6 +15,7 @@ from inspect_ai.util import StoreModel
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .jobs import (
+    INSPECT_VERSION,
     PINNED,
     VARIANT_MAX_BYTES,
     VARIANT_MAX_FILES,
@@ -124,6 +125,22 @@ class LaunchPolicy(FrozenModel):
     credential_mode: Literal["restricted", "user"] = "user"
     model_configs_json: str = "{}"
     configuration_json: str
+
+    def benchmark_packages(self, overrides: list[str] | tuple[str, ...] = ()) -> list[str]:
+        """The benchmark as its jobs install it; the one place this list is built.
+
+        Its package, then its pins with any version overrides applied.
+        """
+        if not self.task_package:
+            raise ToolError("the launch policy names no benchmark package")
+        return [self.task_package, *with_overrides(list(self.task_pins), list(overrides))]
+
+    def box_install(self) -> list[str]:
+        """The benchmark for a box (the auditor's or an investigator's).
+
+        As its jobs install it, on the Inspect every job runs on.
+        """
+        return [*self.benchmark_packages(), f"inspect-ai=={INSPECT_VERSION}"]
 
     @model_validator(mode="after")
     def unique_scope(self) -> "LaunchPolicy":
@@ -327,7 +344,7 @@ class AuditAuthorizer:
                 "inspect-audit",
             ):
                 raise ToolError(f"{spec!r}: a rescore may pin other packages, name==version")
-        if job.extra_packages != [p.task_package, *with_overrides(list(p.task_pins), overrides)]:
+        if job.extra_packages != p.benchmark_packages(overrides):
             raise ToolError("job dependencies must match the launch policy")
         if set(args) - REGRADE_ARGS or job.model_roles or job.sample_range is not None:
             raise ToolError("regrade job contains configuration outside the launch contract")
@@ -404,8 +421,8 @@ class AuditAuthorizer:
                 raise ToolError(f"{spec!r}: this run cannot change that package's version")
         if len({package_name(o) for o in overrides}) != len(overrides):
             raise ToolError("one version override per package")
-        pins = with_overrides(list(p.task_pins), overrides)
-        if job.extra_packages != ([p.task_package, *pins] if ours else pins):
+        benchmark = p.benchmark_packages(overrides) if p.task_package else []
+        if job.extra_packages != (benchmark if ours else benchmark[1:]):
             raise ToolError("job dependencies must match the launch policy")
         allowed = p.models.investigators if kind == "investigation" else p.models.subjects
         if not job.models:

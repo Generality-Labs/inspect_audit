@@ -12,7 +12,6 @@ import tarfile
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from importlib.metadata import version
 from logging import getLogger
 from pathlib import Path
 from typing import Any, Literal
@@ -48,7 +47,7 @@ from ._report import (
 from ._verdicts import LOG_SKILLS, SKILLS, SUPPORT_SKILLS
 from .containers import AUDITOR_DOCKERFILE, AUDITOR_IMAGE, INVESTIGATOR_IMAGE
 from .dispatch import FINISHED, STUCK, HawkRuns, Job, LocalRuns, Runs, validate_environment
-from .dispatch.jobs import INSPECT_VERSION, with_overrides
+from .dispatch.jobs import INSPECT_VERSION
 from .dispatch.packages import git_package_spec, own_package_spec
 from .dispatch.policy import (
     AuditAuthorizer,
@@ -437,7 +436,7 @@ def docker_box(root: Path) -> tuple[str, str]:
     compose = {
         "services": {
             "default": {
-                "build": {"context": ".", "args": {"INSPECT_VERSION": version("inspect-ai")}},
+                "build": {"context": ".", "args": {"INSPECT_VERSION": INSPECT_VERSION}},
                 "command": "sleep infinity",
                 "init": True,
                 "working_dir": "/workspace",
@@ -794,7 +793,7 @@ def run_eval(inv: Audit) -> Tool:
                 label=label,
                 task="inspect_audit/regrade",
                 package=inv.investigation_package,
-                extra_packages=[inv.task_package, *with_overrides(list(inv.task_pins), packages)],
+                extra_packages=policy.benchmark_packages(packages),
                 package_overrides=list(packages),
                 # the judge as the eval's model: never called, but it is how the job
                 # gets the judge's credentials
@@ -820,11 +819,9 @@ def run_eval(inv: Audit) -> Tool:
             label=label,
             task="inspect_audit/variant" if variant else inv.task,
             package=inv.investigation_package if variant else inv.task_package,
-            extra_packages=(
-                [inv.task_package, *with_overrides(list(inv.task_pins), packages)]
-                if variant
-                else with_overrides(list(inv.task_pins), packages)
-            ),
+            # a variant job is ours, with the benchmark as an extra; a plain run is the
+            # benchmark's own package with its pins
+            extra_packages=policy.benchmark_packages(packages)[0 if variant else 1 :],
             package_overrides=list(packages),
             task_args=(
                 {"task": inv.task, "source": policy.source, "task_args": args, "files": files}
@@ -885,7 +882,7 @@ def send_investigators(inv: Audit) -> Tool:
             label=label,
             task="inspect_audit/investigation",
             package=inv.investigation_package,
-            extra_packages=[inv.task_package, *inv.task_pins],
+            extra_packages=policy.benchmark_packages(),
             models=[investigator],
             task_args={
                 "task": inv.task,
@@ -902,7 +899,7 @@ def send_investigators(inv: Audit) -> Tool:
                 "notes": note or None,
                 "paper": inv.paper,
                 # the benchmark into the investigator's own box, as this job installs it
-                "install": [inv.task_package, *inv.task_pins, f"inspect-ai=={INSPECT_VERSION}"],
+                "install": policy.box_install(),
             },
         )
         return await inv.launch(job, "investigation", note)
@@ -1584,12 +1581,7 @@ def audit(
             check_models(inv.runs if inv else None, launch_policy),
             stage_inputs(root),
             *(
-                [
-                    install_benchmark(
-                        [task_package, *task_package_pins, f"inspect-ai=={INSPECT_VERSION}"],
-                        launch_policy.source,
-                    )
-                ]
+                [install_benchmark(launch_policy.box_install(), launch_policy.source)]
                 if task_package
                 else []
             ),

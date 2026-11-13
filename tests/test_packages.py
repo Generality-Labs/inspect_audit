@@ -91,8 +91,21 @@ def test_the_package_pins_the_inspect_every_job_runs_on() -> None:
 
     from inspect_audit.dispatch.jobs import INSPECT_VERSION
 
-    project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
+    root = Path(__file__).parents[1]
+    project = tomllib.loads((root / "pyproject.toml").read_text())
     assert f"inspect-ai=={INSPECT_VERSION}" in project["project"]["dependencies"]
+    # and the hand-written Hawk configs that run this package (smoke, compatibility)
+    configs = [
+        *root.glob("tests/smoke/*.eval-set.yaml"),
+        *root.glob("tests/compatibility/cases/*.yaml"),
+    ]
+    stale = [
+        c.name
+        for c in configs
+        if "inspect-ai==" in c.read_text()
+        and f"inspect-ai=={INSPECT_VERSION}\n" not in c.read_text()
+    ]
+    assert configs and not stale, f"pin inspect-ai=={INSPECT_VERSION} in {stale}"
 
 
 def test_the_investigation_task_fills_its_own_plumbing(monkeypatch: pytest.MonkeyPatch) -> None:

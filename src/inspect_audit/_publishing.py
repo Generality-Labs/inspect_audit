@@ -226,9 +226,8 @@ def publish(
 
     if box not in ("docker", "k8s"):
         raise ValueError("box must be docker or k8s")
-    environment = (
-        docker_box(root) if box == "docker" else configure(root, auditor_image or AUDITOR_IMAGE)
-    )
+    image = auditor_image or AUDITOR_IMAGE
+    environment = docker_box(root, image) if box == "docker" else configure(root, image)
     return Task(
         dataset=[
             Sample(

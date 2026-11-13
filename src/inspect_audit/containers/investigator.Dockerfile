@@ -1,9 +1,8 @@
-# The investigator's own box, beside the benchmark's. Built in place for a local Docker
-# run; published for Kubernetes (Hawk), where images must be pullable, by
-# the `images` workflow (.github/workflows/images.yml) builds and pushes it; then pin its
-# digest as INVESTIGATOR_IMAGE in __init__.py. Every Python package is pinned with hashes
-# in investigator.requirements.txt, exported from uv.lock (group `investigator-box`), and
-# the base image by digest; only the Debian packages float with the base image's apt.
+# The investigator's own box, beside the benchmark's, pulled by digest on Docker and
+# Kubernetes alike (INVESTIGATOR_IMAGE in __init__.py). The `images` workflow
+# (.github/workflows/images.yml) builds it, first exporting investigator.requirements.txt
+# with hashes from uv.lock (group `investigator-box`); the base image is pinned by digest;
+# only the Debian packages float with the base image's apt.
 # The benchmark's packages are not installed here: its grader runs in the benchmark's
 # own task, and its source is copied in for reading (or installed per job, FRICTION 74).
 # With internet, the investigator can install anything else it needs.

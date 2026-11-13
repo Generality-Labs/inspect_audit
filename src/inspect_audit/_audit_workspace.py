@@ -19,7 +19,7 @@ from inspect_ai.tool import ToolError
 from inspect_ai.util import sandbox
 
 from ._box import archive, install, write_into
-from .containers import AUDITOR_DOCKERFILE, AUDITOR_REQUIREMENTS, EGRESS_POLICY
+from .containers import EGRESS_POLICY
 
 logger = logging.getLogger(__name__)
 
@@ -172,15 +172,12 @@ def install_benchmark(specs: list[str], source: str | None) -> Solver:
     return solve
 
 
-def docker_box(root: Path) -> tuple[str, str]:
-    """The auditor's box on local Docker: built here, nothing mounted."""
-    (root / "Dockerfile").write_text(AUDITOR_DOCKERFILE)
-    (root / "auditor.requirements.txt").write_text(AUDITOR_REQUIREMENTS)
-    (root / ".dockerignore").write_text("*\n!Dockerfile\n!auditor.requirements.txt\n")
+def docker_box(root: Path, image: str) -> tuple[str, str]:
+    """The auditor's box on local Docker: the published image Hawk runs, nothing mounted."""
     compose = {
         "services": {
             "default": {
-                "build": {"context": "."},
+                "image": image,
                 "command": "sleep infinity",
                 "init": True,
                 "working_dir": "/workspace",

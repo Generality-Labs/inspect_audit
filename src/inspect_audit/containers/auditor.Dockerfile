@@ -1,8 +1,7 @@
-# The auditor's box. Built in place for a local Docker run; for Kubernetes (Hawk) the
-# `images` workflow (.github/workflows/images.yml) builds and pushes it, then pin its
-# digest as AUDITOR_IMAGE in __init__.py. Python packages are pinned with hashes in
-# auditor.requirements.txt, exported from uv.lock (group `auditor-box`); the base image by
-# digest; only the Debian packages float with the base image's apt.
+# The auditor's box, pulled by digest on Docker and Kubernetes alike (AUDITOR_IMAGE in
+# __init__.py). The `images` workflow (.github/workflows/images.yml) builds it, first
+# exporting auditor.requirements.txt with hashes from uv.lock (group `auditor-box`); the
+# base image is pinned by digest; only the Debian packages float with the base's apt.
 FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
 # TeX draws the LaTeX report here, in the box, wherever the audit runs (75f9361); the
 # GL publisher's Chromium is installed on its first render instead (54d0d19)

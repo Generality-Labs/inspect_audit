@@ -1001,7 +1001,11 @@ def audit(
 
     from ._audit_workspace import configure, install_benchmark, stage_inputs
 
-    sandbox = configure(root, auditor_image, box_resources) if box == "k8s" else docker_box(root)
+    sandbox = (
+        configure(root, auditor_image, box_resources)
+        if box == "k8s"
+        else docker_box(root, auditor_image)
+    )
     if artifact_dir:
         (root / "artifacts.json").write_text(json.dumps({"artifact_dir": artifact_dir}))
     elif box == "k8s":

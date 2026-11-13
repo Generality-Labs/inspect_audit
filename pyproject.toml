@@ -45,8 +45,8 @@ k8s = [
 ]
 
 [dependency-groups]
-# What the boxes' agents work with, pinned in uv.lock like everything else and exported
-# with hashes to src/inspect_audit/containers/*.requirements.txt (tests check they match)
+# What the boxes' agents work with, pinned in uv.lock like everything else; the `images`
+# workflow exports each group with hashes when it builds that box
 investigator-box = [
     "inspect-ai==0.3.285",
     "pandas",

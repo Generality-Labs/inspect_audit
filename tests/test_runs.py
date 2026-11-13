@@ -1244,3 +1244,19 @@ def test_a_job_is_settled_only_when_it_can_produce_nothing_more() -> None:
     assert settled(JobState.STUCK, False)
     assert not settled(JobState.UNKNOWN, False) and settled(JobState.UNKNOWN, True)
     assert not settled(JobState.RUNNING, True)
+
+
+def test_a_selection_is_never_empty_and_positions_start_at_1(record: AuditRecord) -> None:
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit._register import Register, save
+
+    # an empty filter would reach Hawk as no filter: every item
+    with pytest.raises(ToolError, match="empty"):
+        _audit._selection([])
+    save(Register(subject={"ids": "positional"}, checks=["c"], samples={"1": {}, "2": {}}))
+    with pytest.raises(ToolError, match="empty"):
+        _audit._selection([])
+    with pytest.raises(ToolError, match="from 1"):
+        _audit._selection(["0", "1"])
+    assert _audit._selection(["2", "1"]) == (None, (1, 2))

@@ -314,6 +314,9 @@ def _selection(samples: list[str] | None) -> tuple[list[str] | None, tuple[int, 
     """Sample ids, or for a benchmark whose items have no ids, a contiguous run of positions."""
     from ._register import population, started
 
+    if samples is not None and not samples:
+        # an empty filter reads as none at all downstream: every item, at full cost
+        raise ToolError("samples is empty: name the items, or leave it out to run every item")
     current = population()
     if samples is None or not (started(current) and current.subject.get("ids") == "positional"):
         return samples, None
@@ -323,9 +326,9 @@ def _selection(samples: list[str] | None) -> tuple[list[str] | None, tuple[int, 
         raise ToolError(
             "this benchmark's items have no ids: select them by position, 1, 2, ..."
         ) from ex
-    if numbers != list(range(numbers[0], numbers[-1] + 1)):
+    if numbers[0] < 1 or numbers != list(range(numbers[0], numbers[-1] + 1)):
         raise ToolError(
-            "this benchmark's items have no ids: select one contiguous run of positions"
+            "this benchmark's items have no ids: select one contiguous run of positions, from 1"
         )
     return None, (numbers[0], numbers[-1])
 
@@ -475,6 +478,8 @@ def send_investigators(inv: Audit) -> Tool:
         investigator = model or (policy.models.investigators or [None])[0]
         if not investigator:
             raise ToolError("the launch policy names no investigator model")
+        if not samples or not checks:
+            raise ToolError("name at least one sample and one check")
         if not policy.source:
             raise ToolError(
                 "investigators read the module that defines the task: the operator declares benchmark.source"

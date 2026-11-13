@@ -364,7 +364,7 @@ def submit_findings(
         fresh publisher in auditor.artifacts. Submission cannot be reopened.
         """
         from ._register import load
-        from .dispatch import FINISHED
+        from .dispatch.jobs import settled
 
         lock = audit.launch_lock if audit else asyncio.Lock()
         async with lock:
@@ -375,9 +375,11 @@ def submit_findings(
                 )
             if audit:
                 for job in audit.record().jobs:
-                    if await audit.runs.status(job["run_id"]) not in FINISHED:
+                    state = await audit.runs.status(job["run_id"])
+                    if not settled(state, bool(job.get("stop_requested"))):
                         raise ToolError(
-                            f"Finish or stop job {job['label']} before submitting findings"
+                            f"Job {job['label']} is {state}: wait for it, or stop it, before "
+                            "submitting findings"
                         )
                     if not job.get("collected") and not job.get("collection_error"):
                         raise ToolError(f"Collect job {job['label']} before submitting findings")

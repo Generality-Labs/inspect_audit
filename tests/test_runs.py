@@ -1099,7 +1099,9 @@ def test_hawk_status_words_are_read_in_one_place() -> None:
     from inspect_audit.dispatch.hawk import hawk_state
 
     assert hawk_state("complete") is JobState.COMPLETE
-    assert hawk_state("failed") is hawk_state("deleted") is hawk_state(None) is JobState.FAILED
+    assert hawk_state("failed") is hawk_state("deleted") is JobState.FAILED
+    # a 404 is unknown, not failed: a job Hawk briefly loses is not done (FRICTION 116)
+    assert hawk_state(None) is JobState.UNKNOWN and JobState.UNKNOWN not in FINISHED
     assert hawk_state("stuck") is JobState.STUCK and JobState.STUCK not in FINISHED
     assert hawk_state("pending") is JobState.RUNNING
     assert JobKind.of("inspect_audit/regrade") is JobKind.REGRADE
@@ -1198,3 +1200,15 @@ def test_a_flaky_backend_reaches_the_auditor_wherever_it_is_called(
         asyncio.run(
             _audit.run_eval(inv)("new", ["1"], ["openai/subject"], "{}", 1, [], None, [], "")  # type: ignore[arg-type]
         )
+
+
+def test_a_job_is_settled_only_when_it_can_produce_nothing_more() -> None:
+    """Submission waits for settled jobs: finished, stuck (Hawk says it makes no progress),
+    or stopped by the auditor and gone from Hawk. A 404 alone is not settled, and a stuck
+    job no longer blocks submission for ever (FRICTION 116)."""
+    from inspect_audit.dispatch.jobs import settled
+
+    assert all(settled(s, False) for s in (JobState.COMPLETE, JobState.FAILED, JobState.STOPPED))
+    assert settled(JobState.STUCK, False)
+    assert not settled(JobState.UNKNOWN, False) and settled(JobState.UNKNOWN, True)
+    assert not settled(JobState.RUNNING, True)

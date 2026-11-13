@@ -47,12 +47,11 @@ from .dispatch import (
     HawkRuns,
     Job,
     JobKind,
-    JobState,
     LocalRuns,
     Runs,
     validate_environment,
 )
-from .dispatch.jobs import add_usage
+from .dispatch.jobs import add_usage, settled
 from .dispatch.packages import git_package_spec, own_package_spec
 from .dispatch.policy import (
     USER_CHILDREN_ON_HAWK,
@@ -521,7 +520,7 @@ async def _job_action(
         return f"{label}: {await inv.runs.status(run_id)}"
     if action == "wait":
         deadline = asyncio.get_running_loop().time() + 60 * (wait_minutes or 20)
-        while (status := await inv.runs.status(run_id)) not in (*FINISHED, JobState.STUCK):
+        while not settled(status := await inv.runs.status(run_id), bool(job.get("stop_requested"))):
             if asyncio.get_running_loop().time() > deadline:
                 break
             await asyncio.sleep(30)
@@ -530,6 +529,10 @@ async def _job_action(
         return await inv.runs.runner_log(run_id)
     if action == "stop":
         await inv.runs.stop(run_id)
+        record = inv.record()
+        record.jobs = [
+            {**j, "stop_requested": True} if j["label"] == label else j for j in record.jobs
+        ]
         return (
             f"stop requested for {label}; wait for it to finish before collecting. "
             "Completed samples remain in its logs."
@@ -539,7 +542,17 @@ async def _job_action(
 
         status = await inv.runs.status(run_id)
         if status not in FINISHED:
-            raise ToolError(f"{label} is {status}; wait for it before collecting")
+            if not settled(status, bool(job.get("stop_requested"))):
+                raise ToolError(f"{label} is {status}; wait for it before collecting")
+            # stuck, or stopped and gone: nothing will come; recorded, so findings can go on
+            record = inv.record()
+            record.jobs = [
+                {**j, "collection_error": f"{status}: nothing to collect"}
+                if j["label"] == label
+                else j
+                for j in record.jobs
+            ]
+            return f"{label} is {status} and will produce nothing more; recorded as not collected"
         host = inv.root / "inputs" / "jobs" / label
         files = await inv.runs.logs(run_id, host)
         if not files:

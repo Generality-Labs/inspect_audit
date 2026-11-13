@@ -40,9 +40,24 @@ class JobState(StrEnum):
     STOPPED = "stopped"
     # Hawk's own verdict that a job has stopped making progress: worth a person's look
     STUCK = "stuck"
+    # the backend does not know the job (Hawk answers 404): not finished, not failed
+    UNKNOWN = "unknown"
 
 
 FINISHED = frozenset({JobState.COMPLETE, JobState.FAILED, JobState.STOPPED})
+
+
+def settled(state: JobState, stop_requested: bool) -> bool:
+    """Whether a job can produce nothing more, so findings may be submitted without it.
+
+    Finished, stuck (Hawk says it makes no progress), or stopped by the auditor and no
+    longer known to the backend.
+    """
+    return (
+        state in FINISHED
+        or state is JobState.STUCK
+        or (state is JobState.UNKNOWN and stop_requested)
+    )
 
 
 class JobKind(StrEnum):

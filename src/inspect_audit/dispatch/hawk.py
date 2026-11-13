@@ -90,11 +90,13 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
 def hawk_state(word: Any) -> JobState:
     """Hawk's word for a job's status, in ours: the one place Hawk's vocabulary is read.
 
-    A job Hawk does not know (None) has failed; one it deleted has failed; anything not
-    yet finished or stuck is running.
+    A job Hawk does not know (None: it answered 404) is unknown, not failed, so a job
+    Hawk briefly loses track of is neither collected as failed nor counted as done
+    (FRICTION 116); one it deleted has failed; anything not yet finished or stuck is
+    running.
     """
     return {
-        None: JobState.FAILED,
+        None: JobState.UNKNOWN,
         "complete": JobState.COMPLETE,
         "failed": JobState.FAILED,
         "deleted": JobState.FAILED,

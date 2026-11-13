@@ -9,15 +9,12 @@ import json
 import os
 import shutil
 import sys
-import urllib.parse
-import urllib.request
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
 from .jobs import (
-    FINISHED,
     INSPECT_VERSION,
     Job,
     JobKind,
@@ -333,96 +330,6 @@ class HawkRuns:
     async def stop(self, run_id: str) -> None:
         async with self._client() as client:
             await client.stop_eval_set(run_id)
-
-
-# Launcher delivery: installing an audit's key and submitting as the auditor user
-
-SECRET_NAME = "AUDITOR_OPENROUTER_KEY"
-
-
-class HawkDelivery:
-    def __init__(self) -> None:
-        # the hawk CLI's own settings: environment, ~/.config/hawk-cli/env, then the
-        # API's /auth/config for whatever is not set locally (middleman's URL)
-        from hawk.cli.config import discover_server_config, get_config
-
-        config = get_config()
-        self.api_url = config.require_api_url().rstrip("/")
-        if not config.middleman_url:
-            raise RuntimeError("Hawk did not say where middleman is: set HAWK_MIDDLEMAN_URL")
-        # cached per API, so a second deployment's identity provider is never used here
-        self.server = discover_server_config(self.api_url)
-
-    async def operator_token(self) -> str:
-        """The operator's own access token: an admin, needed to install the key."""
-        return await HawkLogin(self.api_url).access_token()
-
-    async def install(self, operator_token: str, key: str, secret_name: str = SECRET_NAME) -> None:
-        """Make `key` the auditor user's provider key: middleman's admin secret store."""
-        path = f"/admin/secrets/provider-keys/{secret_name}"
-        await middleman_request(self.api_url, "put", path, operator_token, {"value": key})
-
-    def auditor_tokens(self, refresh_token: str) -> tuple[str, str]:
-        """Exchange the auditor user's refresh token: (access token, refresh token to use).
-
-        An identity provider that rotates refresh tokens retires the one it was given,
-        so the job must be handed the new one, and the stored one no longer works.
-        """
-        from hawk.cli.util.auth import TokenResponse
-
-        body = urllib.parse.urlencode(
-            {
-                "grant_type": "refresh_token",
-                "client_id": self.server.client_id,
-                "refresh_token": refresh_token,
-            }
-        ).encode()
-        request = urllib.request.Request(
-            self.server.token_endpoint,
-            data=body,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        with urllib.request.urlopen(request, timeout=60) as response:
-            reply = TokenResponse.model_validate(json.load(response))
-        current = reply.refresh_token or refresh_token
-        if current != refresh_token:
-            print(
-                "warning: the identity provider rotated the auditor user's refresh token; "
-                "the stored one no longer works: store the new one before the next launch",
-                file=sys.stderr,
-            )
-        return reply.access_token, current
-
-    async def submit(self, config: dict[str, Any], refresh_token: str) -> str:
-        """Submit the audit's eval set as the auditor user; Hawk's id back."""
-        token, refresh_token = self.auditor_tokens(refresh_token)
-        # the audit itself runs as the auditor user: it needs that user's token to
-        # launch its (restricted) children (FRICTION 79d)
-        return await submit_eval_set(
-            config,
-            api_url=self.api_url,
-            token=token,
-            credential_mode="user",
-            refresh_token=refresh_token,
-        )
-
-    async def running(self, eval_set_id: str, operator_token: str) -> bool | None:
-        """Whether Hawk still runs this audit; None when Hawk does not say.
-
-        Only a status Hawk reports as finished means not running. Unknown to Hawk, or a
-        refused or failed lookup, is not evidence it stopped: `reap` must not disable a
-        live audit's key on a transient 404 or 403 (FRICTION 79e).
-        """
-        from hawk.client import HawkClient
-
-        try:
-            async with HawkClient(token=operator_token, api_url=self.api_url) as client:
-                status = await client.get_job_status(eval_set_id)
-        except Exception:
-            return None
-        if status is None:
-            return None
-        return hawk_state(status.status) not in FINISHED
 
 
 async def middleman_request(

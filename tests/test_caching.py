@@ -9,7 +9,6 @@ from inspect_ai.model import GenerateConfig, ModelConfig
 
 from inspect_audit.dispatch.hawk import hawk_config
 from inspect_audit.dispatch.jobs import Job
-from inspect_audit.dispatch.launcher import cache_conversations
 from inspect_audit.dispatch.policy import (
     AuditAuthorizer,
     LaunchPolicy,
@@ -49,12 +48,3 @@ def test_child_jobs_on_opus_send_the_workaround_to_hawk() -> None:
     items = {g["items"][0]["name"]: g["items"][0] for g in config["models"]}
     assert items[OPUS]["args"]["config"] == WORKAROUND
     assert "args" not in items["openai/gpt-6-luna"]
-
-
-def test_the_auditors_own_opus_config_gets_it_at_launch() -> None:
-    submitted = cache_conversations(
-        {"models": [{"package": "inspect-ai", "items": [{"name": OPUS}, {"name": "openai/x"}]}]}
-    )
-    [opus, other] = submitted["models"][0]["items"]
-    assert opus["args"]["config"] == WORKAROUND
-    assert "args" not in other

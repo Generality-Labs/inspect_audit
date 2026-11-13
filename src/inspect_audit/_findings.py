@@ -192,12 +192,17 @@ async def freeze(root: Path, draft: Findings) -> Path:
     from ._report import AuditRecord, job_addresses, log_address
 
     files: dict[str, bytes] = {"findings.json": encoded(draft.model_dump(mode="json"))}
-    refs: list[dict[str, Any]] = []
-    # Native logs stay at their original address. Hash trusted collected files in
-    # chunks instead of loading large transcripts into the store or report bundle.
+    # Native logs stay at their original address. Collected jobs' logs are cited from
+    # their job records, kept in the checkpointed store at collection (FRICTION 113); the
+    # operator's supplied logs are staged afresh on the host whenever the task is built.
+    refs: list[dict[str, Any]] = [
+        {k: ref[k] for k in ("source", "address", "sha256", "bytes")}
+        for job in store_as(AuditRecord).jobs
+        for ref in job.get("logs") or []
+    ]
     native_paths = [
         p
-        for folder in (root / "inputs/logs", root / "inputs/jobs")
+        for folder in (root / "inputs/logs",)
         if folder.exists()
         for p in folder.rglob("*")
         if p.is_file() and p.suffix in (".eval", ".json")

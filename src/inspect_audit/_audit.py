@@ -536,14 +536,33 @@ async def _job_action(
             from ._register import collect_investigation
 
             lines.append(
-                await collect_investigation(
-                    files, job["address"], inv.root, inv.task, inv.authorizer.policy
-                )
+                await collect_investigation(files, job["address"], inv.task, inv.authorizer.policy)
             )
+        # each file's identity kept with the job (the store is checkpointed; the host's
+        # copy is not), so the frozen findings can cite it after a resume (FRICTION 113)
+        collected = [
+            {
+                "source": f"/inputs/jobs/{label}/{f.name}",
+                "address": f"{job['address'].rstrip('/')}/{f.name}",
+                "sha256": _digest(f),
+                "bytes": f.stat().st_size,
+            }
+            for f in files
+        ]
         record = inv.record()
-        record.jobs = [{**j, "collected": True} if j["label"] == label else j for j in record.jobs]
+        record.jobs = [
+            {**j, "collected": True, "logs": collected} if j["label"] == label else j
+            for j in record.jobs
+        ]
         return f"{label}: {status}; collected to /inputs/jobs/{label}/\n" + "\n".join(lines)
     raise ToolError("action must be list, status, wait, collect, log or stop")
+
+
+def _digest(path: Path) -> str:
+    import hashlib
+
+    with path.open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
 def _cost(summaries: list[EvalSampleSummary]) -> float:
@@ -869,7 +888,7 @@ def audit(
         budget(spend),
         view_image(),
         report_blocker(),
-        register_view(target_task, launch_policy, root),
+        register_view(target_task, launch_policy),
     ]
     inv = None
     if backend is not None:
@@ -936,7 +955,6 @@ def audit(
                         "task": target_task,
                     }
                 ),
-                results=str(root),
             )
             return state
 

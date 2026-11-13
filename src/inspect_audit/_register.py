@@ -1,10 +1,10 @@
-"""The register: every permitted item against every check, as a view.
+"""The register: every permitted item against every check.
 
-Investigators' verdicts live in one place, the audit's Scout results (`_results`); the
-store keeps only the population (subject, checks, sample ids) and where those results
-are. `load` puts the two together whenever it is asked, so there is no second copy of
-any verdict to fall out of step (FRICTION 92, 102). Auditor reviews are laid over a
-loaded view for queries and publication, never written into the results.
+Investigators' verdicts are scores in their jobs' logs. Collecting a job reads them once
+(the logs' sample summaries) into the sample store, which Inspect checkpoints, so the
+register survives a resume with the conversation (FRICTION 113). The store holds the
+population and those verdict rows; `load` builds the view from them. Auditor reviews
+are laid over a loaded view for queries and publication, never stored here.
 """
 
 import json
@@ -51,17 +51,17 @@ class Register(BaseModel):
 
 
 class RegisterStore(StoreModel):
-    """The population, checkpointed with the sample: never a verdict (those are results)."""
+    """The population and every collected verdict, checkpointed with the sample."""
 
     subject: dict[str, Any] = Field(default_factory=dict)
     checks: list[str] = Field(default_factory=list)
     sample_ids: list[str] = Field(default_factory=list)
-    results: str | None = None
-    """The audit root whose `results/` holds the investigators' Scout results."""
+    verdicts: list[dict[str, Any]] = Field(default_factory=list)
+    """One row per verdict read from a collected investigation log (see `verdicts_in`)."""
 
 
 def population() -> Register:
-    """The items and checks, every cell empty: what `load` fills from the results."""
+    """The items and checks, every cell empty: what `load` fills with the verdicts."""
     stored = store_as(RegisterStore)
     return Register(
         subject=stored.subject,
@@ -71,26 +71,48 @@ def population() -> Register:
 
 
 async def load() -> Register:
-    """The register: the population with every investigator verdict in the results."""
-    from pathlib import Path
-
-    from ._results import investigator_takes
-
+    """The register: the population with every collected investigator verdict."""
     register = population()
-    results = store_as(RegisterStore).results
-    if results and register.checks:
-        add_takes(register, await investigator_takes(Path(results), register.checks))
+    add_takes(register, store_as(RegisterStore).verdicts)
     return register
 
 
-def save(register: Register, results: str | None = None) -> None:
-    """Keep the population (subject, checks, sample ids); verdicts are never stored here."""
+def save(register: Register) -> None:
+    """Keep the population (subject, checks, sample ids); verdicts are added by collection."""
     stored = store_as(RegisterStore)
     stored.subject = dict(register.subject)
     stored.checks = list(register.checks)
     stored.sample_ids = list(register.samples)
-    if results is not None:
-        stored.results = results
+
+
+async def verdicts_in(files: list[Path], address: str, checks: list[str]) -> list[dict[str, Any]]:
+    """Every verdict the investigation logs record, one row each.
+
+    The score of each check on each sample, read from the logs' sample summaries.
+    """
+    from inspect_ai.log import read_eval_log_async, read_eval_log_sample_summaries_async
+
+    rows: list[dict[str, Any]] = []
+    for file in files:
+        header = await read_eval_log_async(str(file), header_only=True)
+        for sample in await read_eval_log_sample_summaries_async(str(file)):
+            for check, score in (sample.scores or {}).items():
+                if check not in checks:
+                    continue
+                rows.append(
+                    {
+                        "sample": str(sample.id),
+                        "check": check,
+                        "label": str(score.value),
+                        "explanation": str(score.explanation or ""),
+                        "metadata": dict(score.metadata or {}),
+                        "run": address,
+                        "eval_id": header.eval.eval_id,
+                        "epoch": sample.epoch,
+                        "model": header.eval.model,
+                    }
+                )
+    return rows
 
 
 def started(register: Register) -> bool:
@@ -98,7 +120,7 @@ def started(register: Register) -> bool:
 
 
 def add_takes(register: Register, rows: list[dict[str, Any]]) -> list[str]:
-    """Investigator verdicts (`_results.investigator_takes` rows) as takes; returns what was added.
+    """Investigator verdicts (`verdicts_in` rows) as takes; returns what was added.
 
     Every verdict becomes a take, NO_VERDICT included: an investigator that recorded
     nothing is a fact about the work, not a gap to hide. A sample outside the population
@@ -223,7 +245,7 @@ def select(
     ]
 
 
-async def start_register(task: str | None, policy: "LaunchPolicy", root: Path) -> int:
+async def start_register(task: str | None, policy: "LaunchPolicy") -> int:
     """Lay out the register from the launch policy; returns the number of items.
 
     Every permitted item of the benchmark, with an empty cell per policy check.
@@ -268,14 +290,12 @@ async def start_register(task: str | None, policy: "LaunchPolicy", root: Path) -
         checks=[s.name for s in skills],
         samples={str(s.id): {c.name: [] for c in skills} for s in dataset},
     )
-    save(register, results=str(root))
+    save(register)
     return len(dataset)
 
 
 @tool(name="register")
-def register_view(
-    task: str | None = None, policy: "LaunchPolicy | None" = None, root: Path | None = None
-) -> Tool:
+def register_view(task: str | None = None, policy: "LaunchPolicy | None" = None) -> Tool:
     async def execute(view: str, check: str | None) -> str:
         """The register: every permitted item against every check, and where each stands.
 
@@ -293,9 +313,9 @@ def register_view(
         if view not in ("summary", "flagged", "unresolved", "missing", "disputed"):
             raise ToolError("view is summary, flagged, unresolved, missing or disputed")
         if not started(population()):
-            if policy is None or root is None:
+            if policy is None:
                 raise ToolError("no register: this audit has no launch policy to start one from")
-            await start_register(task, policy, root)
+            await start_register(task, policy)
         current = await load()
         skills = {s.name: s for s in investigation_items(current.checks)}
         from ._findings import DRAFT, Findings
@@ -315,35 +335,35 @@ def register_view(
 
 
 async def collect_investigation(
-    files: list[Path], address: str, root: Path, task: str, policy: "LaunchPolicy"
+    files: list[Path], address: str, task: str, policy: "LaunchPolicy"
 ) -> str:
-    """An investigation job's verdicts into the audit's Scout results (`_results`).
+    """An investigation job's verdicts into the register.
 
-    The scan is the record; the register reads it. A verdict on an item outside the
-    population, or for a check the register does not track, refuses the collection.
+    A verdict on an item outside the population, or for a check the register does not
+    track, refuses the collection and nothing is kept; collecting a job again adds nothing.
     """
-    from ._results import investigator_takes, record
     from ._verdicts import investigation_items
 
     if not started(population()):
-        await start_register(task, policy, root)
+        await start_register(task, policy)
     current = population()
+    rows = await verdicts_in(files, address, current.checks)
     try:
-        scan = await record(files, root, current.checks, address)
-        rows = [r for r in await investigator_takes(root, current.checks) if r["run"] == address]
+        add_takes(await load(), rows)  # validated against what is already held
         added = add_takes(current, rows)
     except ValueError as ex:
         raise ToolError(f"cannot add this investigation to the register: {ex}") from ex
-    from ._box import copy_into_box
-
-    # the tables into the box, for the agent's own analysis (pandas reads them)
-    await copy_into_box(
-        sorted(p for p in scan.iterdir() if p.is_file()), f"/inputs/results/{scan.name}"
-    )
+    stored = store_as(RegisterStore)
+    held = {(r["run"], r["eval_id"], r["epoch"], r["sample"], r["check"]) for r in stored.verdicts}
+    stored.verdicts = [
+        *stored.verdicts,
+        *(
+            r
+            for r in rows
+            if (r["run"], r["eval_id"], r["epoch"], r["sample"], r["check"]) not in held
+        ),
+    ]
     skills = {s.name: s for s in investigation_items(current.checks)}
     flags = {g for s in skills.values() for g in s.flags}
     flagged = sum(1 for a in added if a.split("=")[-1] in flags)
-    return (
-        f"  register: {len(added)} investigator verdict(s) recorded as Scout results "
-        f"({scan.name}), {flagged} flagged"
-    )
+    return f"  register: {len(added)} investigator verdict(s) added, {flagged} flagged"

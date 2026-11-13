@@ -31,9 +31,9 @@ investigating recorded attempts it must be the model those logs record.
 ## The register
 
 The register lays out every permitted item against the policy's checks; it starts itself the
-first time you view it or collect an investigation. Collecting an investigation records its
-verdicts as Inspect Scout results (/inputs/results/<scan>/<check>.parquet, one row per
-verdict, with the job, eval and epoch it came from); the register reads them. Work the
+first time you view it or collect an investigation. Collecting an investigation adds its
+verdicts (each check's score on each sample, with the job, eval and epoch it came from).
+Work the
 flagged cells with register(view="flagged"), and record your own reviews in findings.json
 under auditor.reviews. Empty cells are work not done.
 

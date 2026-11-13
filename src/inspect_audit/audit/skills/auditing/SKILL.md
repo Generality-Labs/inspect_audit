@@ -14,8 +14,8 @@ observations can be findings without answering those checks. Do not assign a cle
 merely because no worker reported a problem.
 
 The logs you can read are the supplied ones under /inputs/logs and those of your own
-jobs under /inputs/jobs/<label>/; investigators' verdicts are Scout results under
-/inputs/results/. Read logs with the `reading-logs` skill (Inspect's log API and its
+jobs under /inputs/jobs/<label>/; investigators' verdicts are scores in their jobs'
+logs, and the register tool shows them. Read logs with the `reading-logs` skill (Inspect's log API and its
 traps) and analyse them with `analyzing-logs`; there is no browser for a log viewer.
 
 

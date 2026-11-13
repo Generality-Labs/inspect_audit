@@ -715,3 +715,43 @@ def test_an_audit_with_a_model_hawk_does_not_price_does_not_start(
             },
             output_dir=str(tmp_path / "runs"),
         )
+
+
+def test_rebuilding_an_audit_keeps_its_identity_so_it_can_resume(tmp_path: Path) -> None:
+    """Inspect pairs a task with its earlier log by an identity that hashes the setup
+    steps' arguments. A host folder new on every build made every audit a new task, so
+    an interrupted audit could never be resumed (FRICTION 113)."""
+    from inspect_ai._eval.evalset import EvalSetArgsInTaskIdentifier, task_identifier
+    from inspect_ai._eval.loader import resolve_tasks
+    from inspect_ai.model import GenerateConfig, get_model
+
+    repo = git_repo(tmp_path / "repo")
+    identities = []
+    for _ in range(2):
+        built = audit(str(repo), output_dir=str(tmp_path / "runs"))
+        [resolved] = resolve_tasks([built], {}, get_model("mockllm/model"), None, None, None)
+        identities.append(
+            task_identifier(resolved, EvalSetArgsInTaskIdentifier(config=GenerateConfig()))
+        )
+    assert identities[0] == identities[1]
+
+
+def test_a_task_at_a_repositorys_root_does_not_snapshot_its_git_folder(tmp_path: Path) -> None:
+    """The source walk took every file under the task's folder, .git included, and
+    `git archive` then refused the paths (FRICTION 113)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "bench.py").write_text("from inspect_ai import task\n@task\ndef t():\n    ...\n")
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.email=a@b", "-c", "user.name=x", "commit", "-qm", "i"],
+        check=True,
+    )
+    from inspect_audit._repository import paths_from_metadata
+
+    paths = paths_from_metadata(repo, "t") or []
+    assert not any(p.startswith(".git") for p in paths)
+    assert audit(str(repo), target_task="t", output_dir=str(tmp_path / "runs")).metadata[
+        "audit_dir"
+    ]

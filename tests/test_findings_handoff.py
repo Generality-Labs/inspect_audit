@@ -534,3 +534,50 @@ def test_invalid_publication_records_do_not_mark_a_report_published(
         asyncio.run(_publishing.publish_document(tmp_path, Publisher(skills=[], build=build))())
     assert store_as(AuditState).published is None
     assert store_as(AuditState).outcome is None
+
+
+def test_frozen_findings_cite_collected_logs_from_the_job_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resumed audit runs on a new machine without the first one's copies of the logs:
+    the job record (checkpointed) is what the bundle cites them from (FRICTION 113)."""
+    import json
+
+    from inspect_audit import _findings
+    from inspect_audit._report import AuditRecord
+
+    init_subtask_store(Store())
+    store_as(AuditRecord).jobs = [
+        {
+            "label": "inv",
+            "kind": "investigation",
+            "run_id": "r",
+            "address": "hawk:inv-1",
+            "logs": [
+                {
+                    "source": "/inputs/jobs/inv/a.eval",
+                    "address": "hawk:inv-1/a.eval",
+                    "sha256": "0" * 64,
+                    "bytes": 10,
+                }
+            ],
+        }
+    ]
+
+    async def staged(bundle: Path) -> None:
+        pass
+
+    monkeypatch.setattr(_findings, "stage_bundle", staged)
+    destination = asyncio.run(
+        _findings.freeze(tmp_path, Findings(auditor=AuditorFindings(summary="s")))
+    )
+    manifest = json.loads((destination / "manifest.json").read_text())
+    assert manifest["log_references"] == [
+        {
+            "source": "/inputs/jobs/inv/a.eval",
+            "address": "hawk:inv-1/a.eval",
+            "sha256": "0" * 64,
+            "bytes": 10,
+        }
+    ]
+    assert not (tmp_path / "inputs").exists()

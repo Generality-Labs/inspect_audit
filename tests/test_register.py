@@ -63,7 +63,7 @@ def _verdicts(run: str, *scores: tuple[str, int, str, str]) -> list[dict[str, An
     ]
 
 
-def _start(checks: list[str], root: Path | None = None) -> str:
+def _start(checks: list[str]) -> str:
     """Start the register as the register tool does on first use: from a launch policy."""
     from inspect_ai.util import store_as
 
@@ -81,10 +81,7 @@ def _start(checks: list[str], root: Path | None = None) -> str:
     saved = store_as(PolicyStore)
     saved.policy_json = saved.digest = None
     ensure_policy(policy, saved, require_existing=False)
-    import tempfile
-
-    root = root or Path(tempfile.mkdtemp())
-    count = asyncio.run(_register.start_register("register_fixture", policy, root))
+    count = asyncio.run(_register.start_register("register_fixture", policy))
     return f"{count} items x {len(checks)} checks"
 
 
@@ -99,7 +96,7 @@ def test_the_population_is_the_benchmarks_items_with_an_empty_cell_per_check(
         "2": {"gold-answer": [], "answer-format": []},
         "3": {"gold-answer": [], "answer-format": []},
     }
-    # nothing is copied into the agent's draft: the verdicts have one place (FRICTION 102)
+    # nothing is copied into the agent's draft: the verdicts have one place (FRICTION 113)
     assert box == {}
     with pytest.raises(ToolError, match="already started"):
         _start(["gold-answer"])
@@ -165,8 +162,8 @@ def test_the_views_select_cells_by_state(box: dict[str, str]) -> None:
 def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
     box: dict[str, str], tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The verdicts come from the real .eval file, through a Scout scan whose results are
-    then the register's only source (FRICTION 102)."""
+    """The verdicts come from the real .eval file into the checkpointed store, so they
+    survive a resume on a new machine; the job keeps each log's identity (FRICTION 113)."""
     from pathlib import Path
 
     from inspect_ai import eval as inspect_eval
@@ -192,7 +189,7 @@ def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
     [log] = inspect_eval(
         investigation, model="mockllm/model", log_dir=str(tmp_path), display="none"
     )
-    _start(["gold-answer"], tmp_path)
+    _start(["gold-answer"])
 
     class Runs:
         async def status(self, run_id: str) -> str:
@@ -220,13 +217,18 @@ def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
         {"label": "a1", "kind": "investigation", "run_id": "r", "address": "hawk:investigation-1"}
     ]
     out = asyncio.run(_audit.jobs(inv)("collect", "a1", None))  # type: ignore[arg-type]
-    assert "2 investigator verdict(s) recorded as Scout results" in out and "1 flagged" in out
-    # the results are real Scout output: one table per check, read back by Scout
-    from inspect_scout import scan_results_df
+    assert "2 investigator verdict(s) added, 1 flagged" in out
+    # a resume runs on another machine: the host's copies are gone, the store is not
+    import shutil
 
-    [scan] = (tmp_path / "results").glob("scan_id=*")
-    assert len(scan_results_df(str(scan)).scanners["gold_answer"]) == 2
+    shutil.rmtree(tmp_path / "inputs", ignore_errors=True)
+    Path(log.location).rename(Path(log.location).with_suffix(".moved"))
     register = asyncio.run(_register.load())
+    [cited] = record.jobs[0]["logs"]
+    assert cited["address"].startswith("hawk:investigation-1/") and len(cited["sha256"]) == 64
+    from inspect_audit._register import RegisterStore
+
+    assert len(_audit.store_as(RegisterStore).verdicts) == 2
     [take] = register.samples["2"]["gold-answer"]
     assert (take.label, take.run, take.evidence[0].observed) == (
         "INCORRECT",
@@ -259,7 +261,7 @@ def test_failed_verdict_import_does_not_mark_job_collected(
 
     attempts = []
 
-    async def import_results(files, address, root, task, policy):
+    async def import_results(files, address, task, policy):
         attempts.append(address)
         if len(attempts) == 1:
             raise ToolError("repair findings.json")

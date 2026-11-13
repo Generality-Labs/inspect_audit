@@ -119,13 +119,18 @@ async def persist(root: Path, source: Path, name: str) -> str:
     raise ToolError(f"Could not save {name} to {destination}: {last}. Try again.")
 
 
-@solver
 def stage_inputs(root: Path) -> Solver:
     """Lay the staged inputs and the starting workspace into a fresh box, once.
 
     A resumed sample skips this: checkpointing restores /inputs and /workspace as
-    the interrupted run left them.
+    the interrupted run left them. The host folder is not a registered argument: Inspect
+    hashes a task's setup arguments into its identity, and the folder is new every time
+    the task is built, so an audit could never be resumed (FRICTION 113).
     """
+
+    @solver(name="stage_inputs")
+    def staged() -> Solver:
+        return solve
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         settings_path = root / "artifacts.json"
@@ -140,7 +145,7 @@ def stage_inputs(root: Path) -> Solver:
         await sandbox().exec(["touch", "/workspace/.staged"])
         return state
 
-    return solve
+    return staged()
 
 
 INSTALL_RECORD = "/inputs/benchmark-install.json"

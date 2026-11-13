@@ -120,17 +120,28 @@ def _install_spec(dist: str) -> str:
     return f"{dist}=={version(dist)}"
 
 
+def _skipped(path: Path) -> bool:
+    """Not part of a benchmark's source: bytecode caches and hidden folders.
+
+    Hidden folders include .git, which a task file at a repository's root would otherwise
+    pull in whole.
+    """
+    return any(part == "__pycache__" or part.startswith(".") for part in path.parts)
+
+
 def _data_files(directory: Path, copied_dirs: set[Path]) -> list[Path]:
     """Non-Python files in a code folder, and everything in its data-only subfolders."""
     found: list[Path] = []
     for path in sorted(directory.iterdir()):
-        if path.name == "__pycache__":
+        if _skipped(path.relative_to(directory)):
             continue
         if path.is_file() and path.suffix != ".py":
             found.append(path)
         elif path.is_dir() and path not in copied_dirs:
             inside = [
-                p for p in sorted(path.rglob("*")) if p.is_file() and "__pycache__" not in p.parts
+                p
+                for p in sorted(path.rglob("*"))
+                if p.is_file() and not _skipped(p.relative_to(directory))
             ]
             # a data folder holds no code; one with Python under it is someone else's module
             if not any(p.suffix == ".py" for p in inside):
@@ -180,7 +191,9 @@ def collect_source(task_file: Path) -> SourceCopy:
     task_dir = task_file.resolve().parent
     copied_dirs = {m.parent for m in modules}
     files = set(modules)
-    files.update(p for p in task_dir.rglob("*") if p.is_file() and "__pycache__" not in p.parts)
+    files.update(
+        p for p in task_dir.rglob("*") if p.is_file() and not _skipped(p.relative_to(task_dir))
+    )
     for directory in copied_dirs:
         files.update(_data_files(directory, copied_dirs))
     copy.files = sorted(files)
@@ -199,7 +212,9 @@ def collect_directory(directory: Path) -> SourceCopy:
     """A declared source directory, whole."""
     copy = SourceCopy(root=directory)
     copy.files = [
-        p for p in sorted(directory.rglob("*")) if p.is_file() and "__pycache__" not in p.parts
+        p
+        for p in sorted(directory.rglob("*"))
+        if p.is_file() and not _skipped(p.relative_to(directory))
     ]
     return _capped(copy)
 

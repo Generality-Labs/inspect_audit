@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from inspect_ai.tool import ToolError
+from test_helpers.box import local_box
 
 from inspect_audit import _audit, _registry
 from inspect_audit._variant import check_overlay, variant_task
@@ -94,21 +95,6 @@ def test_the_variant_task_takes_what_the_authoriser_allows() -> None:
     assert set(pyinspect.signature(_registry.variant).parameters) >= VARIANT_ARGS
 
 
-class Box:
-    """The auditor's box as `run_eval` reads a variant folder from it."""
-
-    def __init__(self, files: dict[str, str]) -> None:
-        self.files = files
-
-    async def exec(self, cmd: list[str], **kwargs: Any) -> Any:
-        from types import SimpleNamespace
-
-        return SimpleNamespace(success=True, stdout="\n".join(self.files), stderr="")
-
-    async def read_file(self, path: str) -> str:
-        return self.files[path]
-
-
 def test_run_eval_with_code_launches_a_recorded_variant(
     varbench: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -145,12 +131,16 @@ def test_run_eval_with_code_launches_a_recorded_variant(
         source="varbench.tasks",
     )
     ensure_policy(inv.authorizer.policy, store_as(PolicyStore), require_existing=False)
-    box = Box({"/workspace/v/varbench/prompts.py": 'QUESTION = "ablated"\n'})
-    monkeypatch.setattr(_audit, "sandbox", lambda: box)
+    # the change, in a folder of the box; the box imports the installed benchmark
+    change = tmp_path / "v" / "varbench"
+    change.mkdir(parents=True)
+    (change / "prompts.py").write_text('QUESTION = "ablated"\n')
+    monkeypatch.setenv("PYTHONPATH", str(varbench))
     run = _audit.run_eval(inv)
-    asyncio.run(
-        run("ablate", ["1"], ["openai/subject"], "{}", 1, [], "/workspace/v", [], "prompt")  # type: ignore[arg-type]
-    )
+    with local_box():
+        asyncio.run(
+            run("ablate", ["1"], ["openai/subject"], "{}", 1, [], str(tmp_path / "v"), [], "prompt")  # type: ignore[arg-type]
+        )
     [job] = runs.submitted
     assert job.task == "inspect_audit/variant" and job.package == "inspect_audit"
     assert job.extra_packages == ["varbench"]
@@ -169,8 +159,6 @@ def test_a_code_change_skips_bytecode_and_names_other_binaries(
 ) -> None:
     """Importing a change to test it writes __pycache__ beside it; that is not part of the
     change. Any other non-text file is refused by name (smoke round 7, FRICTION 97)."""
-    import subprocess
-    from types import SimpleNamespace
 
     from inspect_ai.tool import ToolError
     from inspect_ai.util import Store
@@ -178,18 +166,6 @@ def test_a_code_change_skips_bytecode_and_names_other_binaries(
     from test_helpers.audit import make_audit
 
     init_subtask_store(Store())
-
-    class LocalBox:
-        """The box's `find` and file reads, on this machine's file system."""
-
-        async def exec(self, cmd: list[str], **kwargs: Any) -> Any:
-            done = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True)
-            return SimpleNamespace(
-                success=done.returncode == 0, stdout=done.stdout, stderr=done.stderr
-            )
-
-        async def read_file(self, path: str) -> str:
-            return (await asyncio.to_thread(Path(path).read_bytes)).decode("utf-8")
 
     change = tmp_path / "change" / "varbench"
     (change / "__pycache__").mkdir(parents=True)
@@ -206,12 +182,13 @@ def test_a_code_change_skips_bytecode_and_names_other_binaries(
         supplied=[],
         source="varbench.tasks",
     )
-    monkeypatch.setattr(_audit, "sandbox", LocalBox)
-    files, _ = asyncio.run(_audit._variant_files(inv, str(tmp_path / "change")))
-    assert files == {"varbench/prompts.py": 'QUESTION = "ablated"\n'}
-    (change / "data.bin").write_bytes(b"\xff\xfe\x00")
-    with pytest.raises(ToolError, match=r"data\.bin is not text"):
-        asyncio.run(_audit._variant_files(inv, str(tmp_path / "change")))
+    monkeypatch.setenv("PYTHONPATH", str(varbench))
+    with local_box():
+        files, _ = asyncio.run(_audit._variant_files(inv, str(tmp_path / "change")))
+        assert files == {"varbench/prompts.py": 'QUESTION = "ablated"\n'}
+        (change / "data.bin").write_bytes(b"\xff\xfe\x00")
+        with pytest.raises(ToolError, match=r"data\.bin is not text"):
+            asyncio.run(_audit._variant_files(inv, str(tmp_path / "change")))
 
 
 def test_rescoring_takes_no_models(tmp_path: Path) -> None:

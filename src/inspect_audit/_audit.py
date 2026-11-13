@@ -279,7 +279,8 @@ def _logs_named(inv: Audit, names: list[str]) -> list[str]:
 
 async def _variant_files(inv: Audit, folder: str) -> tuple[dict[str, str], str]:
     """The replacement files in a folder of the box, checked; and their diff."""
-    from ._variant import check_overlay
+    from ._in_box import installed_package
+    from ._variant import check_shape, missing_folder, overlay_diff
 
     source = inv.authorizer.policy.source
     if not source:
@@ -304,8 +305,20 @@ async def _variant_files(inv: Audit, folder: str) -> tuple[dict[str, str], str]:
             raise ToolError(
                 f"{path} is not text: a code change replaces source files only; remove it"
             ) from None
+    # the benchmark's code is imported in the box, never here (`_in_box`)
+    package = await installed_package(inv.task, source)
     try:
-        return files, check_overlay(inv.task, source, files)
+        check_shape(package.name, files)
+        before: dict[str, str | None] = {}
+        for name in files:
+            installed = package.parent / name
+            if not (await sandbox().exec(["test", "-d", str(installed.parent)])).success:
+                raise missing_folder(name, package.name)
+            try:
+                before[name] = await sandbox().read_file(str(installed))
+            except FileNotFoundError:
+                before[name] = None
+        return files, overlay_diff(files, before)
     except ValueError as ex:
         raise ToolError(str(ex)) from ex
 
@@ -1021,8 +1034,12 @@ def audit(
     @solver
     def begin_findings() -> Solver:
         async def solve(state: TaskState, generate: Generate) -> TaskState:
-            from ._register import Register, save
+            from ._register import Register, population, save, start_register, started
 
+            # Inspect runs setup again on resume, after restoring the store: the register
+            # it restored is kept, not reset (FRICTION 124)
+            if started(population()):
+                return state
             save(
                 Register(
                     subject={
@@ -1032,6 +1049,15 @@ def audit(
                     }
                 ),
             )
+            # The items are read now, in the box, before the agent's first turn: the agent
+            # works in that box and could otherwise shape the population it is judged on
+            if task_package and target_task:
+                try:
+                    count = await start_register(target_task, launch_policy, before_agent=True)
+                    logger.info("register: %d items read before the agent started", count)
+                except ToolError as ex:
+                    # it starts on first use instead, and its subject says so
+                    logger.warning("the register could not start in setup: %s", ex)
             return state
 
         return solve

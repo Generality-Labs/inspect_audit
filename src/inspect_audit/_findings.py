@@ -281,15 +281,9 @@ async def freeze(root: Path, draft: Findings) -> Path:
 
 
 async def stage_bundle(bundle: Path) -> None:
-    import io
-    import tarfile
+    from ._box import archive, write_into
 
-    from ._audit_workspace import write_into
-
-    stream = io.BytesIO()
-    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
-        archive.add(bundle, arcname="findings", recursive=True)
-    await write_into(stream.getvalue(), "/inputs")
+    await write_into(archive({"findings": bundle}), "/inputs")
 
 
 def read_bundle(bundle: Path) -> tuple[Findings, dict[str, Any]]:

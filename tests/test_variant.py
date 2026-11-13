@@ -272,7 +272,11 @@ def test_the_benchmark_is_installed_in_the_box_as_its_jobs_install_it(
         async def write_file(self, path: str, text: str) -> None:
             written[path] = text
 
+    from inspect_audit import _box
+
+    # the readiness check is the workspace's; the install itself is the shared `_box` one
     monkeypatch.setattr(_audit_workspace, "sandbox", InstallBox)
+    monkeypatch.setattr(_box, "sandbox", lambda *service: InstallBox())
     specs = ["bench @ git+https://x/bench@abc", "numpy==2.1.0", "inspect-ai==0.3.285"]
     solve = _audit_workspace.install_benchmark(specs, "bench.tasks")
     asyncio.run(solve(None, None))  # type: ignore[arg-type]

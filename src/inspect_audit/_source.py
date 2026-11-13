@@ -5,10 +5,8 @@ for dependencies outside the copied package.
 """
 
 import ast
-import io
 import json
 import sys
-import tarfile
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, distribution, packages_distributions, version
 from pathlib import Path
@@ -40,11 +38,9 @@ class SourceCopy:
         }
 
     def archive(self) -> bytes:
-        buffer = io.BytesIO()
-        with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-            for file in self.files:
-                tar.add(file, arcname=f"benchmark/{file.relative_to(self.root)}")
-        return buffer.getvalue()
+        from ._box import archive
+
+        return archive({f"benchmark/{f.relative_to(self.root)}": f for f in self.files})
 
 
 def package_root(task_file: Path) -> Path | None:

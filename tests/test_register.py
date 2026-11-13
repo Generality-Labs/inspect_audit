@@ -171,7 +171,7 @@ def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
     from inspect_ai import eval as inspect_eval
     from inspect_ai.scorer import Score, scorer
 
-    from inspect_audit import _audit_workspace
+    from inspect_audit import _box
 
     @scorer(metrics=[], name="gold-answer")
     def verdict():
@@ -203,7 +203,7 @@ def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
     async def nowhere(files: list[Path], destination: str) -> None:
         pass
 
-    monkeypatch.setattr(_audit_workspace, "copy_into_box", nowhere)
+    monkeypatch.setattr(_box, "copy_into_box", nowhere)
     inv = make_audit(
         root=tmp_path,
         runs=Runs(),  # type: ignore[arg-type]
@@ -240,7 +240,7 @@ def test_failed_verdict_import_does_not_mark_job_collected(
 ) -> None:
     from inspect_ai.tool import ToolError
 
-    from inspect_audit import _audit_workspace
+    from inspect_audit import _box
 
     _start(["gold-answer"])
     log = tmp_path / "worker.eval"
@@ -264,7 +264,7 @@ def test_failed_verdict_import_does_not_mark_job_collected(
             raise ToolError("repair findings.json")
         return "imported"
 
-    monkeypatch.setattr(_audit_workspace, "copy_into_box", copy)
+    monkeypatch.setattr(_box, "copy_into_box", copy)
 
     async def line(path: Any) -> str:
         return "worker"

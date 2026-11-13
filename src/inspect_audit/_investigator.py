@@ -97,12 +97,9 @@ async def stage_item(
     }
     await box.write_file(f"{INVESTIGATION_ROOT}/item.json", json.dumps(item, indent=2, default=str))
     if source is not None:
-        await box.write_file(f"{INVESTIGATION_ROOT}/benchmark.tar.gz", source.archive())
-        unpacked = await box.exec(
-            ["tar", "-xzf", f"{INVESTIGATION_ROOT}/benchmark.tar.gz", "-C", INVESTIGATION_ROOT]
-        )
-        if not unpacked.success:
-            raise RuntimeError(f"could not unpack the benchmark source: {unpacked.stderr}")
+        from ._box import write_into
+
+        await write_into(source.archive(), INVESTIGATION_ROOT, INVESTIGATOR)
 
 
 def _bash(name: str, service: str | None, description: str, timeout: int) -> Tool:
@@ -113,20 +110,9 @@ def _bash(name: str, service: str | None, description: str, timeout: int) -> Too
 
 async def install_into_box(specs: list[str]) -> None:
     """Install the benchmark into the investigator's box; record, never fail, the outcome."""
-    import json
+    from ._box import install
 
-    result = await sandbox(INVESTIGATOR).exec(
-        ["python", "-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check", *specs],
-        timeout=1800,
-    )
-    record = {
-        "installed": result.success,
-        "specs": specs,
-        "log_tail": (result.stdout + result.stderr)[-4000:],
-    }
-    await sandbox(INVESTIGATOR).write_file(
-        f"{INVESTIGATION_ROOT}/benchmark-install.json", json.dumps(record, indent=2)
-    )
+    await install(specs, f"{INVESTIGATION_ROOT}/benchmark-install.json", service=INVESTIGATOR)
 
 
 @solver

@@ -902,7 +902,7 @@ async def _job_action(
             "Completed samples remain in its logs."
         )
     if action == "collect":
-        from ._audit_workspace import copy_into_box
+        from ._box import copy_into_box
 
         status = await inv.runs.status(run_id)
         if status not in FINISHED:
@@ -1045,7 +1045,7 @@ async def _import_investigations(inv: Audit, files: list[Path], address: str) ->
         added = add_takes(current, rows)
     except ValueError as ex:
         raise ToolError(f"cannot add this investigation to the register: {ex}") from ex
-    from ._audit_workspace import copy_into_box
+    from ._box import copy_into_box
 
     # the tables into the box, for the agent's own analysis (pandas reads them)
     await copy_into_box(

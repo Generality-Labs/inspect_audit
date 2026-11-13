@@ -6,10 +6,8 @@ reads explicitly selected findings evidence and stages immutable submitted bundl
 checkpointing carries the box and the sample store across a crash.
 """
 
-import io
 import json
 import logging
-import tarfile
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +18,7 @@ from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import ToolError
 from inspect_ai.util import sandbox
 
+from ._box import archive, install, write_into
 from .containers import EGRESS_POLICY
 
 logger = logging.getLogger(__name__)
@@ -137,11 +136,7 @@ def stage_inputs(root: Path) -> Solver:
         marker = await sandbox().exec(["test", "-e", "/workspace/.staged"])
         if marker.success:
             return state
-        stream = io.BytesIO()
-        with tarfile.open(fileobj=stream, mode="w:gz", dereference=True) as archive:
-            archive.add(root / "inputs", arcname="inputs")
-            archive.add(root / "work", arcname="workspace")
-        await write_into(stream.getvalue(), "/")
+        await write_into(archive({"inputs": root / "inputs", "workspace": root / "work"}), "/")
         await sandbox().exec(["touch", "/workspace/.staged"])
         return state
 
@@ -166,51 +161,7 @@ def install_benchmark(specs: list[str], source: str | None) -> Solver:
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         if source and (await sandbox().exec(["python", "-c", f"import {source}"])).success:
             return state
-        result = await sandbox().exec(
-            [
-                "python",
-                "-m",
-                "pip",
-                "install",
-                "--no-cache-dir",
-                "--disable-pip-version-check",
-                *specs,
-            ],
-            timeout=1800,
-        )
-        imported = None
-        if source and result.success:
-            imported = (await sandbox().exec(["python", "-c", f"import {source}"])).success
-        record = {
-            "installed": result.success,
-            "specs": specs,
-            "source_module": source,
-            "imports": imported,
-            "log_tail": (result.stdout + result.stderr)[-4000:],
-        }
-        await sandbox().write_file(INSTALL_RECORD, json.dumps(record, indent=2))
+        await install(specs, INSTALL_RECORD, source=source)
         return state
 
     return solve
-
-
-async def write_into(archive: bytes, destination: str) -> None:
-    """Unpack a gzipped tar into the box at `destination`."""
-    await sandbox().write_file("/tmp/staged.tar.gz", archive)
-    result = await sandbox().exec(
-        ["tar", "-xzf", "/tmp/staged.tar.gz", "-C", destination, "--no-same-owner"],
-        timeout=600,
-    )
-    await sandbox().exec(["rm", "-f", "/tmp/staged.tar.gz"])
-    if not result.success:
-        raise ToolError(f"Could not stage files into the box: {result.stderr}")
-
-
-async def copy_into_box(files: list[Path], destination: str) -> None:
-    """Copy host files into one box directory, as one archive."""
-    stream = io.BytesIO()
-    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
-        for file in files:
-            archive.add(file, arcname=file.name)
-    await sandbox().exec(["mkdir", "-p", destination])
-    await write_into(stream.getvalue(), destination)

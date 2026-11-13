@@ -16,15 +16,7 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Any, Literal
 
-from .jobs import (
-    COMPLETE,
-    FAILED,
-    INSPECT_VERSION,
-    RUNNING,
-    STUCK,
-    Job,
-    validate_environment,
-)
+from .jobs import FINISHED, INSPECT_VERSION, Job, JobKind, JobState, validate_environment
 from .jobs import package_name as distribution_name
 
 
@@ -71,13 +63,12 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
     # here, in either credential mode, so Hawk gives the job their provider's credentials
     # (smoke round 7: an investigation's OpenRouter judge failed to load, "No
     # OPENROUTER_API_KEY defined", under user credentials; FRICTION 94)
-    judges = (job.task_args.get("judge") or {}) if job.task == "inspect_audit/investigation" else {}
+    investigation = JobKind.of(job.task) is JobKind.INVESTIGATION
+    judges = (job.task_args.get("judge") or {}) if investigation else {}
     if judges:
         config["additional_models"] = [group(str(m)) for m in dict.fromkeys(judges.values())]
     if restricted:
-        sources = (
-            (job.task_args.get("logs") or []) if job.task == "inspect_audit/investigation" else []
-        )
+        sources = (job.task_args.get("logs") or []) if investigation else []
         if any(not str(source).startswith("hawk:") for source in sources):
             raise ValueError("restricted investigation jobs require Hawk transcript sources")
         ids = list(dict.fromkeys(s.removeprefix("hawk:") for s in sources))
@@ -86,6 +77,21 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
         if ids:
             config["transcripts"] = {"sources": [{"eval_set_id": sid} for sid in ids]}
     return config
+
+
+def hawk_state(word: Any) -> JobState:
+    """Hawk's word for a job's status, in ours: the one place Hawk's vocabulary is read.
+
+    A job Hawk does not know (None) has failed; one it deleted has failed; anything not
+    yet finished or stuck is running.
+    """
+    return {
+        None: JobState.FAILED,
+        "complete": JobState.COMPLETE,
+        "failed": JobState.FAILED,
+        "deleted": JobState.FAILED,
+        "stuck": JobState.STUCK,
+    }.get(None if word is None else str(word), JobState.RUNNING)
 
 
 async def submit_eval_set(
@@ -282,19 +288,10 @@ class HawkRuns:
     def address(self, run_id: str) -> str:
         return f"hawk:{run_id}"
 
-    async def status(self, run_id: str) -> str:
+    async def status(self, run_id: str) -> JobState:
         async with self._client() as client:
             found = await client.get_job_status(run_id)
-        if found is None:
-            return FAILED
-        status = str(found.status)
-        if status == "complete":
-            return COMPLETE
-        if status in ("failed", "deleted"):
-            return FAILED
-        if status == "stuck":
-            return STUCK
-        return RUNNING
+        return hawk_state(found.status if found is not None else None)
 
     async def logs(self, run_id: str, out_dir: Path) -> list[Path]:
         return await download(run_id, await self.login.access_token(), out_dir, self.login.api_url)
@@ -400,7 +397,7 @@ class HawkDelivery:
             return None
         if status is None:
             return None
-        return str(status.status) not in ("complete", "failed", "deleted")
+        return hawk_state(status.status) not in FINISHED
 
 
 async def middleman_request(

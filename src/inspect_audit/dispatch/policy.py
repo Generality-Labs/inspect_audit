@@ -20,6 +20,7 @@ from .jobs import (
     VARIANT_MAX_BYTES,
     VARIANT_MAX_FILES,
     Job,
+    JobKind,
     package_name,
     validate_environment,
     with_overrides,
@@ -345,7 +346,7 @@ class AuditAuthorizer:
         """A regrade: the benchmark's own scorers on recorded attempts, judges only."""
         p = self.policy
         args = job.task_args
-        if job.task != "inspect_audit/regrade" or job.package != p.investigation_package:
+        if job.task != JobKind.REGRADE.task or job.package != p.investigation_package:
             raise ToolError("regrade task and package must match the launch policy")
         overrides = list(job.package_overrides)
         for spec in overrides:
@@ -401,33 +402,32 @@ class AuditAuthorizer:
         approved.environment = json.loads(p.environment_json)
         return approved
 
-    def authorise(self, job: Job, kind: str, known_logs: set[str]) -> Job:
+    def authorise(self, job: Job, kind: JobKind, known_logs: set[str]) -> Job:
         p = self.policy
         if job.environment and canonical(job.environment) != p.environment_json:
             raise ToolError("job environment must match the launch policy")
         # a run folder's and a Hawk eval set's name: no paths, nothing Hawk would refuse
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}", job.label):
             raise ToolError("a label is letters, digits, - and _, at most 48 characters")
-        if kind not in ("investigation", "benchmark", "regrade", "variant"):
-            raise ToolError(f"unknown job kind: {kind}")
-        if kind == "regrade":
+        try:
+            kind = JobKind(kind)
+        except ValueError:
+            raise ToolError(f"unknown job kind: {kind}") from None
+        if kind is JobKind.REGRADE:
             return self._regrade(job, known_logs)
-        ours = kind in ("investigation", "variant")
-        expected_task = {
-            "investigation": "inspect_audit/investigation",
-            "variant": "inspect_audit/variant",
-        }.get(kind, p.task)
+        ours = kind in (JobKind.INVESTIGATION, JobKind.VARIANT)
+        expected_task = kind.task or p.task
         expected_package = p.investigation_package if ours else p.task_package
         if job.task != expected_task or job.package != expected_package:
             raise ToolError("job task and package must match the launch policy")
         overrides = list(job.package_overrides)
-        if overrides and kind == "investigation":
+        if overrides and kind is JobKind.INVESTIGATION:
             raise ToolError("investigations run the benchmark as declared: no version overrides")
         for spec in overrides:
             if not re.fullmatch(PINNED, spec):
                 raise ToolError(f"{spec!r}: a version override is an exact pin, name==version")
             if package_name(spec) == "inspect-audit" or (
-                kind == "variant" and package_name(spec) == "inspect-ai"
+                kind is JobKind.VARIANT and package_name(spec) == "inspect-ai"
             ):
                 raise ToolError(f"{spec!r}: this run cannot change that package's version")
         if len({package_name(o) for o in overrides}) != len(overrides):
@@ -435,16 +435,18 @@ class AuditAuthorizer:
         benchmark = p.benchmark_packages(overrides) if p.task_package else []
         if job.extra_packages != (benchmark if ours else benchmark[1:]):
             raise ToolError("job dependencies must match the launch policy")
-        allowed = p.models.investigators if kind == "investigation" else p.models.subjects
+        allowed = p.models.investigators if kind is JobKind.INVESTIGATION else p.models.subjects
         if not job.models:
             raise ToolError("a job must declare its models")
         self.allow(
-            job.models, allowed, "the investigator" if kind == "investigation" else "evaluated"
+            job.models,
+            allowed,
+            "the investigator" if kind is JobKind.INVESTIGATION else "evaluated",
         )
         if isinstance(job.epochs, bool) or not isinstance(job.epochs, int) or job.epochs < 1:
             raise ToolError("epochs must be positive")
         args = job.task_args
-        if kind == "investigation":
+        if kind is JobKind.INVESTIGATION:
             if set(args) - INVESTIGATION_ARGS or job.model_roles or job.sample_range is not None:
                 raise ToolError(
                     "investigation job contains configuration outside the launch contract"
@@ -484,7 +486,7 @@ class AuditAuthorizer:
                     f"investigation cost_limit exceeds the policy's ${cap:g} per sample"
                 )
             benchmark_args = args.get("task_args", {})
-        elif kind == "variant":
+        elif kind is JobKind.VARIANT:
             if set(args) - VARIANT_ARGS or args.get("task") != p.task:
                 raise ToolError("variant job contains configuration outside the launch contract")
             if p.source is None or args.get("source") != p.source:
@@ -526,7 +528,7 @@ class AuditAuthorizer:
         if job.model_configs and job.model_configs != expected_configs:
             raise ToolError("model configuration must match the launch policy")
         approved.model_configs = cached(expected_configs, selected_models)
-        if kind == "investigation" and expected_configs:
+        if kind is JobKind.INVESTIGATION and expected_configs:
             approved.task_args["judge_configs"] = {
                 role: configs[name].model_dump(mode="json", exclude_none=True)
                 for role, name in roles.items()

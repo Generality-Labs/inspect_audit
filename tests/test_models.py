@@ -10,7 +10,7 @@ from inspect_ai.model import GenerateConfig, ModelConfig
 from inspect_ai.tool import ToolError
 from inspect_ai.util import Store
 
-from inspect_audit.dispatch import COMPLETE, FINISHED, Job, LocalRuns, hawk_config
+from inspect_audit.dispatch import FINISHED, Job, JobState, LocalRuns, hawk_config
 from inspect_audit.dispatch.policy import (
     AuditAuthorizer,
     LaunchPolicy,
@@ -126,7 +126,7 @@ def test_local_inspect_preserves_primary_and_role_configs(tmp_path: Path) -> Non
         while (status := await runs.status(run_id)) not in FINISHED:
             assert time.monotonic() < deadline, await runs.runner_log(run_id)
             await asyncio.sleep(0.2)
-        assert status == COMPLETE, await runs.runner_log(run_id)
+        assert status == JobState.COMPLETE, await runs.runner_log(run_id)
         return await runs.logs(run_id, tmp_path / "unused")
 
     [path] = asyncio.run(run())

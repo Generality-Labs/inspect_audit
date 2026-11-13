@@ -11,11 +11,11 @@ from test_helpers.audit import make_audit
 from inspect_audit import _audit, _prices
 from inspect_audit._report import AuditRecord
 from inspect_audit.dispatch import (
-    COMPLETE,
     FINISHED,
     HawkLogin,
     HawkRuns,
     Job,
+    JobState,
     LocalRuns,
     hawk_config,
 )
@@ -215,7 +215,7 @@ def test_a_local_job_runs_detached_and_hands_back_its_logs(tmp_path: Path) -> No
         return status, await runs.logs(run_id, tmp_path / "out")
 
     status, logs = asyncio.run(run())
-    assert status == COMPLETE
+    assert status == JobState.COMPLETE
     from inspect_ai.log import read_eval_log
 
     [log] = [read_eval_log(str(p)) for p in logs]
@@ -428,7 +428,7 @@ def test_a_local_job_sees_only_the_environment_it_needs(
             await asyncio.sleep(1)
         return status
 
-    assert asyncio.run(run()) == COMPLETE
+    assert asyncio.run(run()) == JobState.COMPLETE
     seen = set((tmp_path / "seen.txt").read_text().split(","))
     assert ("OPENROUTER_API_KEY" in seen) == (credential == "OPENROUTER_API_KEY")
     assert ("OPENAI_API_KEY" in seen) == (credential == "OPENAI_API_KEY")
@@ -748,7 +748,7 @@ def test_local_completion_reads_only_the_output_tail(tmp_path: Path, monkeypatch
         return read_text(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", read_metadata)
-    assert asyncio.run(runs.status("child")) == COMPLETE
+    assert asyncio.run(runs.status("child")) == JobState.COMPLETE
 
 
 def test_even_an_empty_configuration_requires_a_bound_policy(
@@ -1131,3 +1131,15 @@ def test_middleman_calls_send_a_supplied_token_and_refuse_redirects(
 
     asyncio.run(run())
     assert seen == ["Bearer supplied"]
+
+
+def test_hawk_status_words_are_read_in_one_place() -> None:
+    from inspect_audit.dispatch import FINISHED, JobKind, JobState
+    from inspect_audit.dispatch.hawk import hawk_state
+
+    assert hawk_state("complete") is JobState.COMPLETE
+    assert hawk_state("failed") is hawk_state("deleted") is hawk_state(None) is JobState.FAILED
+    assert hawk_state("stuck") is JobState.STUCK and JobState.STUCK not in FINISHED
+    assert hawk_state("pending") is JobState.RUNNING
+    assert JobKind.of("inspect_audit/regrade") is JobKind.REGRADE
+    assert JobKind.of("inspect_evals/anything") is None and JobKind.BENCHMARK.task is None

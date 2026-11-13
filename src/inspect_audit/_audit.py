@@ -51,7 +51,16 @@ from .containers import (
     AUDITOR_REQUIREMENTS,
     INVESTIGATOR_IMAGE,
 )
-from .dispatch import FINISHED, STUCK, HawkRuns, Job, LocalRuns, Runs, validate_environment
+from .dispatch import (
+    FINISHED,
+    HawkRuns,
+    Job,
+    JobKind,
+    JobState,
+    LocalRuns,
+    Runs,
+    validate_environment,
+)
 from .dispatch.packages import git_package_spec, own_package_spec
 from .dispatch.policy import (
     USER_CHILDREN_ON_HAWK,
@@ -457,9 +466,10 @@ def _worst_case(job: Job) -> float | None:
     cap = job.task_args.get("cost_limit")
     if not isinstance(cap, (int, float)):
         return None
-    if job.task in ("inspect_audit/investigation", "inspect_audit/regrade"):
+    kind = JobKind.of(job.task)
+    if kind in (JobKind.INVESTIGATION, JobKind.REGRADE):
         items = len(job.task_args.get("samples") or [])
-        epochs = job.task_args.get("epochs", 1) if job.task == "inspect_audit/regrade" else 1
+        epochs = job.task_args.get("epochs", 1) if kind is JobKind.REGRADE else 1
         return float(cap) * items * int(epochs)
     return None
 
@@ -511,7 +521,7 @@ def budget(
             if files:
                 cost = sum([await _recorded_cost(f) for f in files])
                 lines.append(f"  {j['label']} ({j['kind']}): ${cost:.2f} recorded")
-                if j["kind"] == "investigation":
+                if j["kind"] == JobKind.INVESTIGATION:
                     items += sum([await _sample_count(f) for f in files])
                     spent_on_items += cost
             else:
@@ -602,14 +612,14 @@ class Audit:
             raise ToolError(f"no job {label!r}; jobs(action='list') shows them")
         return found[0]
 
-    async def launch(self, job: Job, kind: str, note: str, diff: str | None = None) -> str:
+    async def launch(self, job: Job, kind: JobKind, note: str, diff: str | None = None) -> str:
         async with self.launch_lock:
             from ._findings import require_audit
 
             require_audit()
             return await self._launch(job, kind, note, diff)
 
-    async def _launch(self, job: Job, kind: str, note: str, diff: str | None = None) -> str:
+    async def _launch(self, job: Job, kind: JobKind, note: str, diff: str | None = None) -> str:
         policy = self.authorizer.policy
         approved = self.authorizer.authorise(
             job, kind, {str(j["address"]) for j in self.record().jobs}
@@ -803,7 +813,7 @@ def run_eval(inv: Audit) -> Tool:
                 raise ToolError("rescoring selects the items to score again by sample id")
             job = Job(
                 label=label,
-                task="inspect_audit/regrade",
+                task=str(JobKind.REGRADE.task),
                 package=inv.investigation_package,
                 extra_packages=policy.benchmark_packages(packages),
                 package_overrides=list(packages),
@@ -823,14 +833,14 @@ def run_eval(inv: Audit) -> Tool:
                     **({"files": files, "source": policy.source} if files else {}),
                 },
             )
-            return await inv.launch(job, "regrade", note, diff)
+            return await inv.launch(job, JobKind.REGRADE, note, diff)
         if not models:
             raise ToolError("name the models to make fresh attempts, or give logs to rescore")
         sample_ids, sample_range = _selection(samples)
         variant = files is not None
         job = Job(
             label=label,
-            task="inspect_audit/variant" if variant else inv.task,
+            task=str(JobKind.VARIANT.task) if variant else inv.task,
             package=inv.investigation_package if variant else inv.task_package,
             # a variant job is ours, with the benchmark as an extra; a plain run is the
             # benchmark's own package with its pins
@@ -847,7 +857,7 @@ def run_eval(inv: Audit) -> Tool:
             sample_range=sample_range,
             epochs=epochs,
         )
-        return await inv.launch(job, "variant" if variant else "benchmark", note, diff)
+        return await inv.launch(job, JobKind.VARIANT if variant else JobKind.BENCHMARK, note, diff)
 
     return execute
 
@@ -893,7 +903,7 @@ def send_investigators(inv: Audit) -> Tool:
             )
         job = Job(
             label=label,
-            task="inspect_audit/investigation",
+            task=str(JobKind.INVESTIGATION.task),
             package=inv.investigation_package,
             extra_packages=policy.benchmark_packages(),
             models=[investigator],
@@ -915,7 +925,7 @@ def send_investigators(inv: Audit) -> Tool:
                 "install": policy.box_install(),
             },
         )
-        return await inv.launch(job, "investigation", note)
+        return await inv.launch(job, JobKind.INVESTIGATION, note)
 
     return execute
 
@@ -963,7 +973,7 @@ async def _job_action(
         return f"{label}: {await inv.runs.status(run_id)}"
     if action == "wait":
         deadline = asyncio.get_running_loop().time() + 60 * (wait_minutes or 20)
-        while (status := await inv.runs.status(run_id)) not in (*FINISHED, STUCK):
+        while (status := await inv.runs.status(run_id)) not in (*FINISHED, JobState.STUCK):
             if asyncio.get_running_loop().time() > deadline:
                 break
             await asyncio.sleep(30)
@@ -998,7 +1008,7 @@ async def _job_action(
             files = [Path(shutil.copy2(f, host / f.name)) for f in files]
         await copy_into_box(files, f"/inputs/jobs/{label}")
         lines = [await _log_line(f) for f in files]
-        if job["kind"] == "investigation":
+        if job["kind"] == JobKind.INVESTIGATION:
             lines.append(await _import_investigations(inv, files, job["address"]))
         record = inv.record()
         record.jobs = [{**j, "collected": True} if j["label"] == label else j for j in record.jobs]

@@ -24,7 +24,7 @@ import yaml
 
 from .._prices import prices_for
 from .hawk import hawk_config
-from .jobs import Job
+from .jobs import Job, JobKind
 from .packages import locked_extra_pins, own_package_spec
 
 
@@ -75,7 +75,7 @@ def investigation_config(
             args["prices"] = prices_for([model, *judges.values()])
         return Job(
             label=label,
-            task="inspect_audit/investigation",
+            task=str(JobKind.INVESTIGATION.task),
             package=ours,
             models=[model],
             task_args=args,

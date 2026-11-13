@@ -10,6 +10,7 @@ environment and so its key. Both hand back finished logs as local files.
 
 import re
 from dataclasses import dataclass, field
+from enum import StrEnum
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Protocol
@@ -25,14 +26,42 @@ INSPECT_VERSION = version("inspect-ai")
 VARIANT_MAX_FILES = 50
 VARIANT_MAX_BYTES = 256 * 1024
 
-# a job's lifecycle as both backends report it
-RUNNING = "running"
-COMPLETE = "complete"
-FAILED = "failed"
-STOPPED = "stopped"
-# Hawk's own verdict that a job has stopped making progress: worth a person's look
-STUCK = "stuck"
-FINISHED = frozenset({COMPLETE, FAILED, STOPPED})
+
+class JobState(StrEnum):
+    """A job's lifecycle: the one vocabulary every backend reports in.
+
+    Each backend translates its own words in one place (`hawk.hawk_state`,
+    `local.LocalRuns.status`).
+    """
+
+    RUNNING = "running"
+    COMPLETE = "complete"
+    FAILED = "failed"
+    STOPPED = "stopped"
+    # Hawk's own verdict that a job has stopped making progress: worth a person's look
+    STUCK = "stuck"
+
+
+FINISHED = frozenset({JobState.COMPLETE, JobState.FAILED, JobState.STOPPED})
+
+
+class JobKind(StrEnum):
+    """What a job is for, as the auditor launches it and its record keeps it."""
+
+    BENCHMARK = "benchmark"  # the benchmark's own task: fresh attempts
+    VARIANT = "variant"  # the benchmark with changed code
+    REGRADE = "regrade"  # the benchmark's scorers on recorded attempts
+    INVESTIGATION = "investigation"  # an investigator per item
+
+    @property
+    def task(self) -> str | None:
+        """The task this package runs for the kind; a plain run is the benchmark's own."""
+        return None if self is JobKind.BENCHMARK else f"inspect_audit/{self.value}"
+
+    @classmethod
+    def of(cls, task: str) -> "JobKind | None":
+        """The kind whose task this is; None for the benchmark's own task."""
+        return next((k for k in cls if k.task == task), None)
 
 
 @dataclass
@@ -95,7 +124,7 @@ class Runs(Protocol):
 
     async def submit(self, job: Job) -> str: ...
     def address(self, run_id: str) -> str: ...
-    async def status(self, run_id: str) -> str: ...
+    async def status(self, run_id: str) -> JobState: ...
     async def logs(self, run_id: str, out_dir: Path) -> list[Path]: ...
     async def runner_log(self, run_id: str) -> str: ...
     async def stop(self, run_id: str) -> None: ...

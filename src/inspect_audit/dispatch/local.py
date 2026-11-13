@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .jobs import COMPLETE, FAILED, FINISHED, RUNNING, STOPPED, Job, validate_environment
+from .jobs import FINISHED, Job, JobState, validate_environment
 
 
 class LocalRuns:
@@ -142,17 +142,17 @@ class LocalRuns:
                 return record
         return None
 
-    async def status(self, run_id: str) -> str:
+    async def status(self, run_id: str) -> JobState:
         done = self._done(run_id)
         if done is not None:
             if (self._dir(run_id) / "stopped").exists():
-                return STOPPED
-            return COMPLETE if done.get("success") else FAILED
+                return JobState.STOPPED
+            return JobState.COMPLETE if done.get("success") else JobState.FAILED
         try:
             os.kill(int(self._launch(run_id)["pid"]), 0)
         except (OSError, KeyError, TypeError, ValueError):
-            return FAILED  # gone without a done record: it died mid-flight
-        return RUNNING
+            return JobState.FAILED  # gone without a done record: it died mid-flight
+        return JobState.RUNNING
 
     async def logs(self, run_id: str, out_dir: Path) -> list[Path]:
         return sorted((self._dir(run_id) / "logs").glob("*.eval"))

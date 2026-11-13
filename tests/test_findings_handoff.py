@@ -49,10 +49,12 @@ def test_draft_keeps_investigators_and_requires_explained_findings() -> None:
         auditor=AuditorFindings(summary="Reference missing"),
     )
     assert validate_draft(draft.model_dump(mode="json"), register) == draft
+    # the register's sections come from the register, whatever the draft holds there:
+    # an auditor that rewrites the file cannot fall out of step (FRICTION 92)
     data = draft.model_dump(mode="json")
-    data["investigators"]["samples"]["a"]["gold-answer"] = []
-    with pytest.raises(ValueError, match="collected results"):
-        validate_draft(data, register)
+    data["investigators"] = {"checks": {}, "samples": {}}
+    del data["subject"]
+    assert validate_draft(data, register) == draft
     data = draft.model_dump(mode="json")
     data["auditor"]["findings"] = [
         {

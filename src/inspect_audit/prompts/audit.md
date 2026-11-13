@@ -25,7 +25,9 @@ The register (register tool) lays out every permitted item against the policy's 
 and starts itself on first use. Every sample/check is visible, including empty cells and unresolved verdicts. Read the
 underlying evidence for consequential claims; worker verdicts are leads. The register
 is the host's worker collection record; findings.json is the combined handoff draft.
-Keep all original worker results. Record your reviews in auditor.reviews. Missing
+Its `subject` and `investigators` sections are filled from the register on every
+collect and again at submission: write only `auditor`. Record your reviews in
+auditor.reviews. Missing
 work is missing, not a clean verdict. Explain specific access or execution blockers.
 
 Read /workspace/analysis/framework/criteria.json and checks.json

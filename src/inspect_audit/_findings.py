@@ -125,13 +125,18 @@ async def sync_draft(register: "Register") -> None:
 
 
 def validate_draft(data: Any, register: "Register") -> Findings:
+    """The auditor's draft, with the sections that are the register's taken from it.
+
+    `subject` and `investigators` are copies of the register: whatever the draft holds
+    there is replaced, so an auditor that rewrites the whole file (smoke round 6: seven
+    refused submissions, FRICTION 92) cannot fall out of step with its own results.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("findings.json must be an object")
+    data = {**data, "subject": register.subject, "investigators": investigator_results(register)}
     draft = Findings.model_validate(data)
     if not draft.auditor.summary.strip():
         raise ValueError("The auditor summary must explain what the audit established")
-    if draft.investigators != investigator_results(register) or draft.subject != register.subject:
-        raise ValueError(
-            "Investigator records and subject must match the collected results; collect again to refresh them"
-        )
     samples = set(register.samples)
     for finding in draft.auditor.findings:
         if len(finding.sample_ids) != len(set(finding.sample_ids)):

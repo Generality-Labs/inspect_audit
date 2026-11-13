@@ -71,3 +71,4 @@ UPSTREAM.txt
 
 # Local documentation; publication requires James's review
 /docs/
+tests/smoke/results.jsonl

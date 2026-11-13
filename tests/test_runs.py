@@ -1,6 +1,7 @@
 """Child jobs: one description, run on Hawk or locally, recorded in the sample store."""
 
 import asyncio
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -1114,13 +1115,23 @@ def test_middleman_calls_send_a_supplied_token_and_refuse_redirects(
         async with TestServer(app) as server:
             base = str(server.make_url("")).rstrip("/")
             config = hawk.cli.config.CliConfig.model_construct(middleman_url=base)
-            monkeypatch.setattr(hawk.cli.config, "get_config", lambda: config)
+            asked: list[str | None] = []
+
+            def get_config(*, api_url: str | None = None) -> object:
+                asked.append(api_url)
+                return config
+
+            monkeypatch.setattr(hawk.cli.config, "get_config", get_config)
+            monkeypatch.delenv("HAWK_API_URL", raising=False)
             got = await middleman_request(
                 "https://api.example", "post", "/permitted_models_info", "supplied", {}
             )
             assert got == [{"name": "openai/gpt-6-luna"}]
             with pytest.raises(RuntimeError, match="302"):
                 await middleman_request("https://api.example", "put", "/moved", "supplied", {})
+            # the address is passed, not set in this process's environment for the call
+            assert asked == ["https://api.example"] * 2
+            assert "HAWK_API_URL" not in os.environ
 
     asyncio.run(run())
     assert seen == ["Bearer supplied"]

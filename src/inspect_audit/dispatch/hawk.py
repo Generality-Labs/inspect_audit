@@ -11,8 +11,8 @@ import shutil
 import sys
 import urllib.parse
 import urllib.request
-from collections.abc import AsyncGenerator, Generator
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -439,8 +439,7 @@ async def middleman_request(
     import hawk.core.version
     from hawk.cli.config import get_config
 
-    with _api_url(api_url):
-        base = get_config().middleman_url
+    base = get_config(api_url=api_url).middleman_url
     if not base:
         raise RuntimeError(f"Hawk at {api_url} reports no LLM proxy (middleman) address")
     headers = {
@@ -501,20 +500,6 @@ async def download(address: str, token: str, out_dir: Path, api_url: str) -> lis
         async for url, filename in client.get_download_urls(names):
             await download_file(url, out_dir / Path(filename).name)
     return sorted(out_dir.glob("*.eval"))
-
-
-@contextmanager
-def _api_url(api_url: str) -> Generator[None]:
-    """Hawk's CLI helpers read the API address from the environment: set it for a call."""
-    previous = os.environ.get("HAWK_API_URL")
-    os.environ["HAWK_API_URL"] = api_url
-    try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop("HAWK_API_URL", None)
-        else:
-            os.environ["HAWK_API_URL"] = previous
 
 
 def fetch_eval_sets(eval_sets: str) -> str:

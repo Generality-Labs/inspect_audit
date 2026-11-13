@@ -257,13 +257,21 @@ class FakeRuns:
         self.submitted: list[Job] = []
         # what each run has used so far, as a backend reports it (token counts by model)
         self.used: dict[str, dict[str, Any]] = {}
+        self.states: dict[str, JobState] = {}
+        self.stopped: list[str] = []
+        self.unstoppable: set[str] = set()
+
+    async def stop(self, run_id: str) -> None:
+        if run_id in self.unstoppable:
+            raise RuntimeError("hawk said no")
+        self.stopped.append(run_id)
 
     async def submit(self, job: Job) -> str:
         self.submitted.append(job)
         return f"run-{len(self.submitted)}"
 
     async def status(self, run_id: str) -> JobState:
-        return JobState.RUNNING
+        return self.states.get(run_id, JobState.RUNNING)
 
     async def usage(self, run_id: str) -> tuple[dict[str, Any], int]:
         return self.used.get(run_id, {}), 0
@@ -302,6 +310,30 @@ def test_launched_jobs_are_recorded_and_only_allowed_models_run(
         asyncio.run(benchmark("other", None, ["openai/investigator"], "{}", 1, [], None, [], ""))  # type: ignore[arg-type]
     with pytest.raises(ToolError, match="exists"):
         asyncio.run(benchmark("smoke", None, ["openai/subject"], "{}", 1, [], None, [], ""))  # type: ignore[arg-type]
+
+
+def test_the_audits_end_stops_its_running_jobs(tmp_path: Path, record: AuditRecord) -> None:
+    runs = FakeRuns()
+    inv = _make_audit(tmp_path, runs)
+    runs.states = {"done": JobState.COMPLETE, "stuck": JobState.STUCK}
+    runs.unstoppable = {"stubborn"}
+    record.jobs = [
+        {"label": label, "run_id": label, **extra}
+        for label, extra in [
+            ("running", {}),
+            ("done", {}),
+            ("stuck", {}),
+            ("asked", {"stop_requested": True}),
+            ("stubborn", {}),
+        ]
+    ]
+    assert asyncio.run(inv.stop_unsettled(record)) == ["running"]
+    assert runs.stopped == ["running"]
+    by_label = {j["label"]: j for j in record.jobs}
+    assert by_label["running"]["stopped_by"] == "audit end"
+    # a job Hawk would not stop is left unmarked, so a resumed audit still sees it running
+    assert "stop_requested" not in by_label["stubborn"]
+    assert "stop_requested" not in by_label["done"]
 
 
 def test_an_investigation_reads_logs_by_job_label_or_supplied_source(

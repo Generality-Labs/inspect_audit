@@ -163,6 +163,34 @@ class Audit:
     def record(self) -> AuditRecord:
         return store_as(AuditRecord)
 
+    async def stop_unsettled(self, record: AuditRecord) -> list[str]:
+        """Stop every job that could still run or spend: the audit that owned it is over.
+
+        Task cleanup, so it runs when the auditor submits, is blocked, hits a limit or
+        errors. A killed pod skips it, and there the jobs keep running for the resumed
+        audit to collect. A job that will not stop is logged, not raised: cleanup must
+        reach every job. Returns the labels stopped.
+        """
+        stopped: list[str] = []
+        for job in record.jobs:
+            if job.get("stop_requested"):
+                continue
+            try:
+                if settled(await self.runs.status(job["run_id"]), False):
+                    continue
+                await self.runs.stop(job["run_id"])
+            except Exception as ex:
+                logger.warning("could not stop %s at the audit's end: %s", job["label"], ex)
+                continue
+            stopped.append(job["label"])
+        record.jobs = [
+            {**j, "stop_requested": True, "stopped_by": "audit end"} if j["label"] in stopped else j
+            for j in record.jobs
+        ]
+        if stopped:
+            logger.warning("stopped jobs still running at the audit's end: %s", ", ".join(stopped))
+        return stopped
+
     def job(self, label: str) -> dict[str, Any]:
         found = [j for j in self.record().jobs if j["label"] == label]
         if not found:
@@ -1005,6 +1033,11 @@ def audit(
         ensure_policy(launch_policy, state.store_as(PolicyStore), require_existing=True)
         ensure_model(launch_policy, state.store_as(PolicyStore), str(state.model))
 
+    async def cleanup(state: TaskState) -> None:
+        # children do not outlive the audit that launched them
+        if inv is not None:
+            await inv.stop_unsettled(state.store_as(AuditRecord))
+
     return Task(
         setup=[
             preflight_publisher(selected_publisher),
@@ -1018,6 +1051,7 @@ def audit(
             begin_findings(),
         ],
         on_resume=on_resume,
+        cleanup=cleanup,
         dataset=[
             Sample(
                 id="audit",

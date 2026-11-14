@@ -19,13 +19,17 @@ from inspect_ai.tool import ToolError
 from inspect_ai.util import sandbox
 
 from ._box import archive, install, write_into
-from .containers import EGRESS_POLICY
 
 logger = logging.getLogger(__name__)
 
 
 def configure(root: Path, image: str, resources: dict[str, Any] | None = None) -> tuple[str, str]:
-    """The auditor's box as a Kubernetes pod: no mounts, no service account.
+    """The auditor's box as a Kubernetes pod, with internet access and no API token.
+
+    Both come from the sandbox chart: it mounts no service-account token by default, and
+    `allowEntities: ["world"]` makes it generate DNS and world egress. Hawk 4.1 refuses
+    task-supplied service-account settings and `additionalResources`, which this used to
+    set itself (Alex, PR #74).
 
     Its size is the deployment's default for a sandbox's default service unless the
     operator gives Kubernetes `resources` (requests/limits): nothing is reserved that
@@ -40,10 +44,10 @@ def configure(root: Path, image: str, resources: dict[str, Any] | None = None) -
         service["resources"] = resources
     values = {
         "services": {"default": service},
-        "automountServiceAccountToken": False,
+        "allowEntities": ["world"],
     }
     path = root / "auditor.values.yaml"
-    path.write_text(yaml.safe_dump(values) + EGRESS_POLICY)
+    path.write_text(yaml.safe_dump(values))
     return "k8s", str(path)
 
 

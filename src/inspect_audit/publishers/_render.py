@@ -70,12 +70,11 @@ async def render_in_box(
         raise ToolError(
             f"Rendering failed in the box: {result.stdout[-4000:]} {result.stderr[-2000:]}"
         )
-    found = await box.exec(
-        ["find", str(work / outputs), "-maxdepth", "1", "-type", "f", "-printf", "%f\n"]
-    )
+    # POSIX find (no GNU -printf): the names are taken here, so any box's find will do
+    found = await box.exec(["find", str(work / outputs), "-maxdepth", "1", "-type", "f"])
     if not found.success:
         raise ToolError(f"Rendering wrote no {outputs}: {found.stderr[-1000:]}")
-    names = [n for n in found.stdout.splitlines() if n]
+    names = [PurePosixPath(line).name for line in found.stdout.splitlines() if line]
     back = {n: await box.read_file(str(work / outputs / n), text=False) for n in names}
     await box.exec(["rm", "-rf", str(work)])
     return back

@@ -143,8 +143,18 @@ async def run(case: Path, revision: str, wait_minutes: float) -> dict[str, Any]:
         row["eval_set_id"] = eval_set_id
         print(f"{row['case']}: submitted {eval_set_id}", flush=True)
         deadline = time.monotonic() + 60 * wait_minutes
-        while (state := await status(eval_set_id)) not in FINISHED:
-            if time.monotonic() > deadline:
+        state = "unknown"
+        while time.monotonic() < deadline:
+            # the audit runs on Hawk whatever this machine's network does: a failed
+            # poll is retried, not the end of the case (round 10 lost SQAV to a DNS blip)
+            try:
+                state = await status(eval_set_id)
+            except Exception as ex:
+                row["poll_errors"] = row.get("poll_errors", 0) + 1
+                print(
+                    f"{row['case']}: status poll failed ({type(ex).__name__}); retrying", flush=True
+                )
+            if state in FINISHED:
                 break
             await asyncio.sleep(60)
         row["hawk_status"] = state

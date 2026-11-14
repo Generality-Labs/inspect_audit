@@ -344,9 +344,13 @@ async def middleman_request(
     """
     import aiohttp
     import hawk.core.version
-    from hawk.cli.config import get_config
+    from hawk.cli.config import discover_server_config
 
-    base = get_config(api_url=api_url).middleman_url
+    # the deployment's own proxy: the CLI's `get_config` would let a local
+    # HAWK_MIDDLEMAN_URL (~/.config/hawk-cli/env) name another (FRICTION 129)
+    # a blocking fetch: off the event loop, which the audit's other work shares
+    server = await asyncio.to_thread(discover_server_config, api_url, persist=False)
+    base = server.middleman_url
     if not base:
         raise RuntimeError(f"Hawk at {api_url} reports no LLM proxy (middleman) address")
     headers = {

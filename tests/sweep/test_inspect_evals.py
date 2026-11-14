@@ -24,6 +24,13 @@ pytestmark = pytest.mark.sweep
 # varied: multiple choice, open answers, model-graded-free scoring, and two sandboxed
 # coding tasks (their compose is merged with the investigator's). No cyber or harm
 # benchmarks, nothing gated.
+# A task naming only "docker", with no compose file or Dockerfile beside it, gets
+# Inspect's generic image; the investigation does not build its sandbox from that rule
+# (AGENTS rule 1, declared inputs; FRICTION 132). Strict: a fix makes these fail loudly.
+BARE_DOCKER = pytest.mark.xfail(
+    raises=Exception, strict=True, reason="bare 'docker' sandbox: FRICTION 132"
+)
+
 # (task, the module that defines it: declared, as an operator declares benchmark.source)
 TASKS = [
     ("inspect_evals/arc_easy", "inspect_evals.arc.arc"),
@@ -34,8 +41,16 @@ TASKS = [
     ("inspect_evals/mmlu_0_shot", "inspect_evals.mmlu.mmlu"),
     ("inspect_evals/piqa", "inspect_evals.piqa.piqa"),
     ("inspect_evals/winogrande", "inspect_evals.winogrande.winogrande"),
-    ("inspect_evals/humaneval", "inspect_evals.humaneval.humaneval"),
-    ("inspect_evals/mbpp", "inspect_evals.mbpp.mbpp"),
+    pytest.param(
+        "inspect_evals/humaneval",
+        "inspect_evals.humaneval.humaneval",
+        marks=BARE_DOCKER,
+    ),
+    pytest.param(
+        "inspect_evals/mbpp",
+        "inspect_evals.mbpp.mbpp",
+        marks=BARE_DOCKER,
+    ),
 ]
 
 

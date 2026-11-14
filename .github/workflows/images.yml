@@ -1,0 +1,83 @@
+name: Images
+
+# Builds and pushes the auditor's and investigator's boxes from this commit, for amd64
+# (Hawk) and arm64 (Docker on Apple silicon). Run by hand (Actions > Images > Run
+# workflow) when a box's Dockerfile or its uv.lock group changes; then pin the printed
+# digests as AUDITOR_IMAGE / INVESTIGATOR_IMAGE in src/inspect_audit/containers/__init__.py.
+# Python packages are exported from uv.lock with hashes here, at build time: the
+# requirements files are not committed.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# one build of a ref at a time; a second run waits rather than racing the push
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REPOSITORY: ghcr.io/generality-labs/inspect-audit-auditor
+
+jobs:
+  build:
+    name: Build ${{ matrix.box }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read # check out the box files
+      packages: write # push the built images to ghcr.io
+    strategy:
+      matrix:
+        box: [auditor, investigator]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      - name: Export the box's packages from uv.lock
+        env:
+          BOX: ${{ matrix.box }}
+        run: |
+          uv export --frozen --only-group "${BOX}-box" --no-emit-project \
+            --format requirements-txt -o "src/inspect_audit/containers/${BOX}.requirements.txt"
+      - name: Build and push
+        env:
+          BOX: ${{ matrix.box }}
+          ARCH: ${{ matrix.arch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${REPOSITORY}:${BOX}-${GITHUB_SHA}-${ARCH}"
+          docker build --platform "linux/${ARCH}" \
+            -f "src/inspect_audit/containers/${BOX}.Dockerfile" -t "$tag" \
+            src/inspect_audit/containers
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$tag"
+
+  manifest:
+    name: Publish ${{ matrix.box }}
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write # push the multi-arch manifest
+    strategy:
+      matrix:
+        box: [auditor, investigator]
+    steps:
+      - name: Join the two architectures under one digest
+        env:
+          BOX: ${{ matrix.box }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          tag="${REPOSITORY}:${BOX}-${GITHUB_SHA}"
+          docker buildx imagetools create -t "$tag" "${tag}-amd64" "${tag}-arm64"
+          digest=$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          echo "${BOX}: ${REPOSITORY}@${digest}" | tee -a "$GITHUB_STEP_SUMMARY"

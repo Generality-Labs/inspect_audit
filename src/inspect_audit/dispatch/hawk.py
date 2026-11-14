@@ -11,12 +11,21 @@ import shutil
 import sys
 import urllib.parse
 import urllib.request
-from collections.abc import AsyncGenerator, Generator
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
-from .jobs import COMPLETE, FAILED, INSPECT_VERSION, RUNNING, STUCK, Job, validate_environment
+from .jobs import (
+    FINISHED,
+    INSPECT_VERSION,
+    Job,
+    JobKind,
+    JobState,
+    add_usage,
+    validate_environment,
+)
+from .jobs import package_name as distribution_name
 
 
 def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
@@ -41,7 +50,15 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
     config: dict[str, Any] = {
         "name": job.label,
         "limit": limit,
-        "packages": [job.package, *job.extra_packages, f"inspect-ai=={INSPECT_VERSION}"],
+        "packages": [
+            job.package,
+            *job.extra_packages,
+            *(
+                []
+                if any(distribution_name(p) == "inspect-ai" for p in job.extra_packages)
+                else [f"inspect-ai=={INSPECT_VERSION}"]
+            ),
+        ],
         "tasks": [{"package": job.package, "name": package_name, "items": [item]}],
         "models": [group(m) for m in job.models],
         "model_roles": {role: group(m) for role, m in job.model_roles.items()} or None,
@@ -50,16 +67,16 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
         "retry_attempts": 0,
         "runner": {"environment": validate_environment(job.environment)},
     }
+    # Judges selected through task arguments are outside the eval model grid: declared
+    # here, in either credential mode, so Hawk gives the job their provider's credentials
+    # (smoke round 7: an investigation's OpenRouter judge failed to load, "No
+    # OPENROUTER_API_KEY defined", under user credentials; FRICTION 94)
+    investigation = JobKind.of(job.task) is JobKind.INVESTIGATION
+    judges = (job.task_args.get("judge") or {}) if investigation else {}
+    if judges:
+        config["additional_models"] = [group(str(m)) for m in dict.fromkeys(judges.values())]
     if restricted:
-        # Judges selected through task arguments are outside the eval model grid.
-        judges = (
-            (job.task_args.get("judge") or {}) if job.task == "inspect_audit/investigation" else {}
-        )
-        if judges:
-            config["additional_models"] = [group(str(m)) for m in dict.fromkeys(judges.values())]
-        sources = (
-            (job.task_args.get("logs") or []) if job.task == "inspect_audit/investigation" else []
-        )
+        sources = (job.task_args.get("logs") or []) if investigation else []
         if any(not str(source).startswith("hawk:") for source in sources):
             raise ValueError("restricted investigation jobs require Hawk transcript sources")
         ids = list(dict.fromkeys(s.removeprefix("hawk:") for s in sources))
@@ -70,10 +87,63 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
     return config
 
 
-class HawkLogin:
-    """Hawk credentials for whoever this process runs as.
+def hawk_state(word: Any) -> JobState:
+    """Hawk's word for a job's status, in ours: the one place Hawk's vocabulary is read.
 
-    Inside a Hawk runner, the runner's own refresh hook. Elsewhere, the operator's
+    A job Hawk does not know (None: it answered 404) is unknown, not failed, so a job
+    Hawk briefly loses track of is neither collected as failed nor counted as done
+    (FRICTION 116); one it deleted has failed; anything not yet finished or stuck is
+    running.
+    """
+    return {
+        None: JobState.UNKNOWN,
+        "complete": JobState.COMPLETE,
+        "failed": JobState.FAILED,
+        "deleted": JobState.FAILED,
+        "stuck": JobState.STUCK,
+    }.get(None if word is None else str(word), JobState.RUNNING)
+
+
+async def submit_eval_set(
+    config: dict[str, Any],
+    *,
+    api_url: str,
+    token: str,
+    credential_mode: Literal["restricted", "user"],
+    refresh_token: str | None = None,
+    secrets: dict[str, str] | None = None,
+) -> str:
+    """Every submission to Hawk goes through here (FRICTION 86); Hawk's eval set id back.
+
+    The credential mode is always stated: left out, Hawk uses a deployment feature flag.
+    A user-mode job renews with `refresh_token`; a restricted one carries no login. The
+    runner is told where Hawk's API is (Hawk does not), for jobs that read Hawk.
+    """
+    from hawk.client import HawkClient
+    from hawk.core.types import EvalSetConfig
+
+    if (credential_mode == "user") != (refresh_token is not None):
+        raise ValueError("a user-mode job needs a refresh token; a restricted one takes none")
+    config = json.loads(json.dumps(config))
+    runner = config.setdefault("runner", None) or {}
+    config["runner"] = runner
+    environment = runner.get("environment") or {}
+    runner["environment"] = {**environment, "HAWK_API_URL": api_url}
+    options: dict[str, Any] = {"credential_mode": credential_mode}
+    if refresh_token is not None:
+        options["refresh_token"] = refresh_token
+    if secrets:
+        options["secrets"] = secrets
+    async with HawkClient(token=token, api_url=api_url) as client:
+        created = await client.create_eval_set(EvalSetConfig.model_validate(config), **options)
+    return str(created["eval_set_id"])
+
+
+class HawkLogin:
+    """Hawk credentials for whoever this process runs as: the one place a token is found.
+
+    Inside a Hawk runner, the runner's own refresh hook. Elsewhere, `HAWK_ACCESS_TOKEN`
+    when the operator sets one (a CI job, a borrowed token), else the operator's
     `hawk` login: only the `hawk` binary that wrote it can read it from the keychain
     without asking, so that binary is asked, past the venv's copy `uv run` puts
     first on PATH.
@@ -135,6 +205,8 @@ class HawkLogin:
                 config,
                 refresh_margin_seconds=hook.refresh_margin_seconds,
             )
+        if token := os.environ.get("HAWK_ACCESS_TOKEN"):
+            return token
         # fetched each time, not cached: the login refreshes it, a copy expires
         return await self._hawk("auth", "access-token")
 
@@ -178,7 +250,7 @@ class HawkRuns:
         secrets: dict[str, str] | None = None,
     ) -> None:
         self.login = HawkLogin(api_url)
-        self.credential_mode = credential_mode
+        self.credential_mode: Literal["restricted", "user"] = credential_mode
         self.secrets = dict(secrets or {})
         if credential_mode == "restricted" and not hawk_supports_restricted():
             # refused now, not at the first child job an hour into an audit
@@ -197,31 +269,17 @@ class HawkRuns:
             yield client
 
     async def submit(self, job: Job) -> str:
-        from hawk.client import HawkClient
-        from hawk.core.types import EvalSetConfig
-
         restricted = self.credential_mode == "restricted"
-        settings = hawk_config(job, restricted=restricted)
-        # the job's own code may read Hawk (an investigation fetching hawk: logs); Hawk does
-        # not tell a runner where its API is
-        settings["runner"]["environment"]["HAWK_API_URL"] = self.login.api_url
-        config = EvalSetConfig.model_validate(settings)
         # the access token first: refreshing it may rotate the refresh token
         token = await self.login.access_token()
-        async with HawkClient(token=token, api_url=self.login.api_url) as client:
-            if restricted:
-                # No fallback: old clients/deployments must refuse this mode.
-                options: dict[str, Any] = {"credential_mode": "restricted"}
-                if self.secrets:
-                    options["secrets"] = self.secrets
-                created = await client.create_eval_set(config, **options)
-            else:
-                refresh_token = await self.login.refresh_token()
-                options = {"refresh_token": refresh_token}
-                if self.secrets:
-                    options["secrets"] = self.secrets
-                created = await client.create_eval_set(config, **options)
-        return created["eval_set_id"]
+        return await submit_eval_set(
+            hawk_config(job, restricted=restricted),
+            api_url=self.login.api_url,
+            token=token,
+            credential_mode=self.credential_mode,
+            refresh_token=None if restricted else await self.login.refresh_token(),
+            secrets=self.secrets,
+        )
 
     async def unservable(self, models: list[str]) -> list[str]:
         """Which of `models` Hawk would refuse in a job: names its proxy does not serve.
@@ -243,19 +301,22 @@ class HawkRuns:
     def address(self, run_id: str) -> str:
         return f"hawk:{run_id}"
 
-    async def status(self, run_id: str) -> str:
+    async def status(self, run_id: str) -> JobState:
         async with self._client() as client:
             found = await client.get_job_status(run_id)
-        if found is None:
-            return FAILED
-        status = str(found.status)
-        if status == "complete":
-            return COMPLETE
-        if status in ("failed", "deleted"):
-            return FAILED
-        if status == "stuck":
-            return STUCK
-        return RUNNING
+        return hawk_state(found.status if found is not None else None)
+
+    async def usage(self, run_id: str) -> tuple[dict[str, Any], int]:
+        """From Hawk's live status: each sample's usage so far (its summary's once done)."""
+        async with self._client() as client:
+            status = await client.get_eval_set_status(run_id)
+        total: dict[str, Any] = {}
+        done = 0
+        for task in status.tasks:
+            for sample in task.samples or []:
+                done += bool(sample.completed)
+                add_usage(total, {m: c.model_dump() for m, c in (sample.model_usage or {}).items()})
+        return total, done
 
     async def logs(self, run_id: str, out_dir: Path) -> list[Path]:
         return await download(run_id, await self.login.access_token(), out_dir, self.login.api_url)
@@ -334,23 +395,34 @@ class HawkDelivery:
 
     async def submit(self, config: dict[str, Any], refresh_token: str) -> str:
         """Submit the audit's eval set as the auditor user; Hawk's id back."""
-        from hawk.client import HawkClient
-        from hawk.core.types import EvalSetConfig
-
         token, refresh_token = self.auditor_tokens(refresh_token)
-        async with HawkClient(token=token, api_url=self.api_url) as client:
-            created = await client.create_eval_set(
-                EvalSetConfig.model_validate(config), refresh_token=refresh_token
-            )
-        return created["eval_set_id"]
+        # the audit itself runs as the auditor user: it needs that user's token to
+        # launch its (restricted) children (FRICTION 79d)
+        return await submit_eval_set(
+            config,
+            api_url=self.api_url,
+            token=token,
+            credential_mode="user",
+            refresh_token=refresh_token,
+        )
 
-    async def running(self, eval_set_id: str, operator_token: str) -> bool:
-        """Whether Hawk still runs this audit: unknown to Hawk counts as not."""
+    async def running(self, eval_set_id: str, operator_token: str) -> bool | None:
+        """Whether Hawk still runs this audit; None when Hawk does not say.
+
+        Only a status Hawk reports as finished means not running. Unknown to Hawk, or a
+        refused or failed lookup, is not evidence it stopped: `reap` must not disable a
+        live audit's key on a transient 404 or 403 (FRICTION 79e).
+        """
         from hawk.client import HawkClient
 
-        async with HawkClient(token=operator_token, api_url=self.api_url) as client:
-            status = await client.get_job_status(eval_set_id)
-        return status is not None and str(status.status) not in ("complete", "failed", "deleted")
+        try:
+            async with HawkClient(token=operator_token, api_url=self.api_url) as client:
+                status = await client.get_job_status(eval_set_id)
+        except Exception:
+            return None
+        if status is None:
+            return None
+        return hawk_state(status.status) not in FINISHED
 
 
 async def middleman_request(
@@ -367,8 +439,7 @@ async def middleman_request(
     import hawk.core.version
     from hawk.cli.config import get_config
 
-    with _api_url(api_url):
-        base = get_config().middleman_url
+    base = get_config(api_url=api_url).middleman_url
     if not base:
         raise RuntimeError(f"Hawk at {api_url} reports no LLM proxy (middleman) address")
     headers = {
@@ -386,6 +457,21 @@ async def middleman_request(
             body = (await response.text())[:500]
             raise RuntimeError(f"middleman {method.upper()} {path}: {response.status} {body}")
         return await response.json()
+
+
+async def prices(api_url: str) -> list[dict[str, Any]]:
+    """What Hawk's proxy bills each model at: `GET /usage/prices`, per million tokens.
+
+    `HawkClient` has no method for it yet, so this uses its generic JSON request.
+    """
+    from hawk.client import HawkClient
+
+    login = HawkLogin(api_url)
+    async with HawkClient(token=await login.access_token(), api_url=api_url) as client:
+        rows = await client._request_json("GET", "/usage/prices")  # pyright: ignore[reportPrivateUsage]
+    if not isinstance(rows, list):
+        raise RuntimeError(f"Hawk at {api_url} returned no price list")
+    return [r for r in rows if isinstance(r, dict)]
 
 
 async def download(address: str, token: str, out_dir: Path, api_url: str) -> list[Path]:
@@ -416,29 +502,12 @@ async def download(address: str, token: str, out_dir: Path, api_url: str) -> lis
     return sorted(out_dir.glob("*.eval"))
 
 
-@contextmanager
-def _api_url(api_url: str) -> Generator[None]:
-    """Hawk's CLI helpers read the API address from the environment: set it for a call."""
-    previous = os.environ.get("HAWK_API_URL")
-    os.environ["HAWK_API_URL"] = api_url
-    try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop("HAWK_API_URL", None)
-        else:
-            os.environ["HAWK_API_URL"] = previous
-
-
 def fetch_eval_sets(eval_sets: str) -> str:
     """Download eval sets from the Hawk warehouse to a temporary directory, one folder each.
 
-    Hawk's API is HAWK_API_URL; the token is HAWK_ACCESS_TOKEN when set, else this
-    process's own Hawk credentials (`HawkLogin`): the runner's hook, which a
-    Hawk runner installs before it loads tasks, or the operator's `hawk` login.
+    Hawk's API is HAWK_API_URL; the token is this process's own (`HawkLogin`): the
+    runner's hook, which a Hawk runner installs before it loads tasks, or the operator's.
     """
-    import concurrent.futures
-
     api = os.environ.get("HAWK_API_URL")
     if not api:
         raise ValueError("fetching hawk: logs needs HAWK_API_URL, Hawk's API address")
@@ -447,16 +516,16 @@ def fetch_eval_sets(eval_sets: str) -> str:
     fetched = stable_dir("hawk", eval_sets)
 
     async def fetch() -> None:
-        token = os.environ.get("HAWK_ACCESS_TOKEN") or await HawkLogin(api).access_token()
+        token = await HawkLogin(api).access_token()
         for address in eval_sets.split(","):
             # a folder per eval set: same-named files from two sets cannot collide
             files = await download(address, token, fetched / address.partition("/")[0], api)
             if not files:
                 raise ValueError(f"No .eval files found in Hawk eval set {address!r}")
 
-    # task construction may already be inside inspect's event loop
-    with concurrent.futures.ThreadPoolExecutor(1) as pool:
-        pool.submit(asyncio.run, fetch()).result()
+    from .._sync import run
+
+    run(fetch())
     return str(fetched)
 
 

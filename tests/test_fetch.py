@@ -88,27 +88,16 @@ def test_exact_hawk_files_exclude_partial_runs(monkeypatch):
     assert downloaded == ["https://download.test/complete"]
 
 
-def test_multiple_log_sources_preserve_same_named_files(tmp_path):
-    paths = []
-    for n in range(2):
-        folder = tmp_path / str(n)
-        folder.mkdir()
-        source = folder / "same.eval"
-        source.write_text(str(n))
-        paths.append(str(source))
-    result = Path(fetch_logs(paths))
-    assert sorted(p.read_text() for p in result.glob("*.eval")) == ["0", "1"]
-
-
 def test_directory_sources_accept_inspect_file_uris(tmp_path):
     from test_helpers.logs import run_fixture_eval
 
     folder = tmp_path / "logs with spaces"
     run_fixture_eval(str(folder))
-    copied = Path(fetch_logs([str(folder)]))
+    from inspect_audit._log_sources import log_files
+
     originals = list(folder.glob("*.eval"))
     assert len(originals) == 1
-    assert (copied / f"0_{originals[0].name}").read_bytes() == originals[0].read_bytes()
+    assert log_files([str(folder)]) == [str(originals[0])]
 
 
 def test_a_remote_log_is_fetched_once_per_process(tmp_path, monkeypatch):
@@ -179,3 +168,19 @@ def test_a_single_hawk_log_address_is_fetched_not_taken_as_a_local_file(tmp_path
     monkeypatch.setattr(_log_sources, "fetch_logs", fetch)
     assert _log_sources.log_files(["hawk:run/a.eval"]) == [str(log)]
     assert asked == ["hawk:run/a.eval"]
+
+
+def test_an_undeclared_hawk_log_is_downloaded_with_the_runners_token(monkeypatch):
+    """Declaring inputs needs restricted credentials, which cannot launch jobs, so an audit
+    on Hawk reads its logs by download; a declared input is still used in place (FRICTION 83)."""
+    from inspect_audit import _log_sources
+
+    _log_sources._FETCHED.clear()
+    fetched = []
+    monkeypatch.setattr(_log_sources, "declared_transcripts", lambda: {"other": "hawksrc://other"})
+    monkeypatch.setattr(
+        _log_sources, "fetch_eval_sets", lambda ids: fetched.append(ids) or "/tmp/x"
+    )
+    assert _log_sources.fetch_logs("hawk:mine") == "/tmp/x"
+    assert fetched == ["mine"]
+    assert _log_sources.fetch_logs("hawk:other") == "hawksrc://other"

@@ -180,6 +180,7 @@ def investigation_task(
     notes: str | None = None,
     paper: str | None = None,
     search: WebSearchProviders | None = None,
+    install: Sequence[str] = (),
     investigator_image: str | None = None,
     cost_limit: float | None = None,
     message_limit: int | None = None,
@@ -219,6 +220,8 @@ def investigation_task(
         search: Inspect web_search provider configuration, e.g. {"tavily": True}.
             External providers work across investigator models and need their API key
             in the Inspect runner environment. Omitted means no search tool.
+        install: Pip specs installed into the investigator's own box before it starts:
+            the benchmark as its job installed it, so it can run the benchmark's code.
         investigator_image: A published investigator image (required on k8s, which cannot build).
         cost_limit: Dollars per investigated sample, the investigator's and its `grade` judge calls
             together. The investigation is governed by a dollar cap: this one, or the eval's own
@@ -300,6 +303,7 @@ def investigation_task(
         paper=paper,
         search=search,
         model=investigator_model,
+        install=install,
     )
 
     # every setting of theirs that would govern the investigator is replaced, not inherited

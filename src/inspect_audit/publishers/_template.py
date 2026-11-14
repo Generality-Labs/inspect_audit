@@ -104,7 +104,9 @@ if __name__ == "__main__":
         update_from(args.update_from)
     upstream = template()
     if args.update_registry:
-        from .._framework import REGISTRY
+        from .._framework import REGISTRY, write_skill
 
-        REGISTRY.write_text(json.dumps(regenerate(upstream), indent=2) + "\n")
+        registry = regenerate(upstream)
+        REGISTRY.write_text(json.dumps(registry, indent=2) + "\n")
+        write_skill(registry)
     print(upstream)

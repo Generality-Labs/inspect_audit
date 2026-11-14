@@ -22,8 +22,8 @@ SKILLS = Path(__file__).parent / "skills"
 # asked to audit one of these
 SUPPORT_SKILLS = ("map-inspect-packages", "audit-framework")
 
-# skills for reading .eval files in a box: the auditor's, never the investigator's (the
-# investigator reads logs host-side), and never checks
+# skills for reading Inspect logs in a box, never checks: the auditor's, and the
+# investigator's for its sample's slice of the declared logs (5739685)
 LOG_SKILLS = ("reading-logs", "analyzing-logs")
 
 

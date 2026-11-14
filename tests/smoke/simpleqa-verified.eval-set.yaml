@@ -1,0 +1,51 @@
+name: ia-smoke-sqav
+packages:
+- inspect-ai==0.3.285
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-evals @ git+https://github.com/Generality-Labs/inspect_evals@67a9ea5333d3fc672ebce3ca9724bcfdad87f541
+tasks:
+- package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+  name: inspect_audit
+  items:
+  - name: audit
+    args:
+      repo: https://github.com/Generality-Labs/inspect_evals
+      revision: 67a9ea5333d3fc672ebce3ca9724bcfdad87f541
+      target_task: inspect_evals/simpleqa_verified
+      source: inspect_evals.simpleqa.simpleqa
+      task_package: inspect-evals @ git+https://github.com/Generality-Labs/inspect_evals@67a9ea5333d3fc672ebce3ca9724bcfdad87f541
+      task_args:
+        scorer: original
+        grade_parse: paper
+      investigation_samples: all
+      checks:
+      - gold-answer
+      policy:
+        models:
+          auditor:
+          - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+          investigators:
+          - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+          subjects:
+          - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+          judges:
+          - openrouter/openai/gpt-6-luna
+        limits:
+          max_concurrent_jobs: 3
+          budget_usd: 2.0
+      logs:
+      - hawk:bench-v46e92flztx421dj
+      runs: hawk
+      # TEMPORARY (FRICTION 93): children with the operator's login until Hawk has its token service
+      credential_mode: user
+      box: k8s
+      instructions: 'This case: logs hawk:bench-v46e92flztx421dj (one sample). Jobs: run_eval with rescore
+        on that sample, judge {"grader": "openrouter/openai/gpt-6-luna"}, epochs 2;
+        run_eval with packages pinning one dependency to another version, fresh attempts on that sample
+        with the subject model; send_investigators on it, check gold-answer, with the supplied logs.'
+models:
+- package: inspect-ai
+  items:
+  - name: openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+message_limit: 400
+retry_attempts: 0

@@ -8,7 +8,6 @@ The auditor's default loadout is defined in `AUDIT_SKILLS`. `auditing` and `runn
 | investigate-dataset         | same                                            | 67a9ea5              |
 | security-audit-eval         | same                                            | 67a9ea5              |
 | check-trajectories-workflow | same                                            | 67a9ea5              |
-| read-eval-logs              | same                                            | 67a9ea5              |
 
 All source repositories are MIT licensed (Copyright (c) 2024 UK AI Security Institute; Meridian Labs, see ../../skills/LICENSE.meridian). `reading-logs`, `analyzing-logs` and `map-inspect-packages` are mounted too and live in `../../skills` with their own note.
 

@@ -10,14 +10,14 @@ from inspect_audit.dispatch import (
     hawk_supports_restricted,
     validate_environment,
 )
-from inspect_audit.dispatch.policy import AuditAuthorizer, Execution, LaunchPolicy, Models
+from inspect_audit.dispatch.policy import AuditAuthorizer, LaunchPolicy, Models, credential_mode
 
 
 def test_execution_declares_its_credentials_by_backend() -> None:
-    assert Execution.model_validate({"backend": "local"}).credential_mode == "user"
-    assert Execution.model_validate({"backend": "hawk"}).credential_mode == "restricted"
-    with pytest.raises(ValueError, match="restricted credentials require Hawk"):
-        Execution.model_validate({"backend": "local", "credential_mode": "restricted"})
+    assert credential_mode("local", None) == "user"
+    assert credential_mode("hawk", None) == "restricted"
+    with pytest.raises(ValueError, match=r"restricted credentials require runs=.hawk."):
+        credential_mode("local", "restricted")
 
 
 @pytest.mark.skipif(hawk_supports_restricted(), reason="this Hawk has restricted credentials")
@@ -109,7 +109,6 @@ def _valid() -> tuple["AuditAuthorizer", Job, Job]:
     from inspect_audit.dispatch.policy import (
         AuditAuthorizer,
         LaunchPolicy,
-        Limits,
         Models,
         canonical,
     )
@@ -127,7 +126,6 @@ def _valid() -> tuple["AuditAuthorizer", Job, Job]:
         task_args_json=canonical(args),
         source="bench.task",
         supplied_logs=("hawk:run",),
-        limits=Limits(investigation_sample_cost_usd=0.5),
         configuration_json="{}",
     )
     investigation = Job(
@@ -145,7 +143,6 @@ def _valid() -> tuple["AuditAuthorizer", Job, Job]:
             "logs": ["hawk:run"],
             "judge": {"grader": "judge"},
             "investigator_image": "img",
-            "cost_limit": 0.2,
         },
     )
     benchmark = Job(
@@ -170,9 +167,7 @@ def test_the_valid_jobs_pass() -> None:
 @pytest.mark.parametrize(
     ("kind", "change"),
     [
-        ("investigation", {"cost_limit": 0.9}),  # above the per-sample cap
-        ("investigation", {"cost_limit": float("inf")}),
-        ("investigation", {"cost_limit": 0}),
+        ("investigation", {"cost_limit": 0.9}),  # no per-item caps: not a job argument
         ("investigation", {"logs": ["hawk:someone-elses-run"]}),
         ("investigation", {"source": "other.module"}),
         ("investigation", {"samples": ["3"]}),
@@ -202,3 +197,18 @@ def test_every_policy_limit_refuses_a_job_that_breaks_it(kind: str, change: dict
     job = dataclasses.replace(job, **fields)
     with pytest.raises(ToolError):
         auth.authorise(job, kind, set())
+
+
+def test_a_version_override_cannot_bring_in_new_code() -> None:
+    """`packages` changes the version of something the benchmark already uses; a review
+    had `totally-new-pkg==6.6.6` approved (FRICTION 117)."""
+    from inspect_audit.dispatch.jobs import JobKind
+    from inspect_audit.dispatch.policy import check_overrides
+
+    check_overrides(["pyyaml==6.0.1"], JobKind.BENCHMARK)  # installed: a version change
+    with pytest.raises(ToolError, match="not installed beside the benchmark"):
+        check_overrides(["totally-new-pkg==6.6.6"], JobKind.BENCHMARK)
+    with pytest.raises(ToolError, match="cannot change that package's version"):
+        check_overrides(["inspect-ai==0.3.200"], JobKind.VARIANT)
+    with pytest.raises(ToolError, match="exact pin"):
+        check_overrides(["numpy>=1"], JobKind.BENCHMARK)

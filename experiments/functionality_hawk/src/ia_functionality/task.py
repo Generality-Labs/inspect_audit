@@ -9,7 +9,7 @@ from typing import Any
 from inspect_ai import Task, task
 
 from inspect_audit import _audit
-from inspect_audit._prices import openrouter_prices, register_prices
+from inspect_audit._prices import price_models
 
 REPO = "https://github.com/xantheocracy/inspect_evals"
 REVISION = "369d6ae1de4a7870b4c4119d12bd49a6e484ed64"
@@ -83,7 +83,7 @@ def audit(
         }
     args, source, samples = spec["task_args"], spec["source"], spec["samples"]
     logs, judges = spec["logs"], spec["judges"]
-    register_prices(openrouter_prices([model]))
+    price_models([model])
     return _audit.audit(
         repo=spec["repo"],
         revision=spec["revision"],

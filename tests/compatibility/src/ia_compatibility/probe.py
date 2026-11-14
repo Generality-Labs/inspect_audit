@@ -28,7 +28,7 @@ from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_ai.util import registry_create
 
 from inspect_audit._log_sources import log_files
-from inspect_audit._prices import openrouter_prices, register_prices
+from inspect_audit._prices import register_prices
 from inspect_audit._registry import resolve_source
 from inspect_audit._task import investigation_task, numbered
 
@@ -60,6 +60,15 @@ STAGED = (
     'out["attempts"] = [{"eval_id": g["eval"]["eval_id"], "epoch": s["epoch"]} for g in logs for s in g.get("samples") or []]; '
     "print(json.dumps(out))'"
 )
+
+
+# the probe's own models are free; priced at import so any job that loads the provider
+# (an investigation child too) can run under a cost_limit
+for _name in ("driver", "judge"):
+    set_model_info(
+        f"ia_probe/{_name}",
+        ModelInfo(cost=ModelCost(input=0, output=0, input_cache_write=0, input_cache_read=0)),
+    )
 
 
 @modelapi(name="ia_probe")
@@ -141,14 +150,7 @@ def probe(spec: dict[str, Any], limit: int = 1) -> Task:
     # Hawk replaces Task.model with its declared grid model after construction.
     # Price that real declaration, but bind the actual agent to our driver below.
     # This fetches public price metadata; it never requests a model completion.
-    declared_model = str(get_model())
-    if declared_model.startswith("openrouter/"):
-        register_prices(openrouter_prices([declared_model]))
-    for name in ("driver", "judge"):
-        set_model_info(
-            f"ia_probe/{name}",
-            ModelInfo(cost=ModelCost(input=0, output=0, input_cache_write=0, input_cache_read=0)),
-        )
+    register_prices(spec.get("prices"))
     fixtures = spec.get("mock_judges", {})
     if not isinstance(fixtures, dict):
         raise ValueError("mock_judges must map model role names to response fixtures")

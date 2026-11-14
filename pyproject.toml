@@ -45,6 +45,26 @@ k8s = [
 ]
 
 [dependency-groups]
+# What the boxes' agents work with, pinned in uv.lock like everything else; the `images`
+# workflow exports each group with hashes when it builds that box
+investigator-box = [
+    "inspect-ai==0.3.285",
+    "pandas",
+    "pyarrow",
+    "pillow",
+    "scipy",
+    "sympy",
+]
+auditor-box = [
+    "inspect-ai==0.3.285",
+    "pandas",
+    "pyarrow",
+    "matplotlib",
+    "pyyaml",
+    "scipy",
+    "sympy",
+    "pytest",
+]
 dev = [
     "pytest>=8.0.0",
     "playwright>=1.49",
@@ -135,9 +155,9 @@ exclude = ["src/inspect_audit/skills", "**/__pycache__"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests", "tests/compatibility/src"]
-markers = ["latex: needs TeX and the private pinned audit template", "docker: needs a running Docker daemon", "publishing: needs the Playwright Chromium browser and downloads pinned GL components"]
+markers = ["latex: needs TeX and the private pinned audit template", "docker: needs a running Docker daemon", "publishing: needs the Playwright Chromium browser and downloads pinned GL components", "hawk: talks to the live Hawk deployment as the logged-in operator (hawk login); free reads and refused submissions only"]
 # Heavy Docker, LaTeX and browser tests are opt-in; CI runs their explicit markers.
-addopts = "-rA --durations=10 --color=yes --cov=src --cov-report=term-missing -m 'not docker and not latex and not publishing'"
+addopts = "-rA --durations=10 --color=yes --cov=src --cov-report=term-missing -m 'not docker and not latex and not publishing and not hawk'"
 
 [tool.uv.sources]
 inspect-evals = { git = "https://github.com/Generality-Labs/inspect_evals", rev = "67a9ea5333d3fc672ebce3ca9724bcfdad87f541" }

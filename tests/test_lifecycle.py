@@ -90,7 +90,7 @@ def test_child_investigation_is_collected_once_into_the_register(tmp_path: Path)
             try:
                 from inspect_ai.tool import ToolError
 
-                with pytest.raises(ToolError, match="Finish or stop"):
+                with pytest.raises(ToolError, match="wait for it, or stop it"):
                     await submit_findings(root, inv)()
                 await asyncio.wait_for(manage("wait", "child", 3), timeout=190)
                 first = await manage("collect", "child", None)

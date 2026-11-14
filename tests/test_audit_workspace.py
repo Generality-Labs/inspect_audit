@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -103,9 +105,47 @@ def test_a_k8s_box_is_a_pod_with_nothing_mounted(monkeypatch, tmp_path):
     assert task.sandbox.type == "k8s"
     values = yaml.safe_load(Path(task.sandbox.config).read_text())
     assert "volumes" not in values["services"]["default"]
-    assert values["automountServiceAccountToken"] is False
+    assert "automountServiceAccountToken" not in values
+    assert "additionalResources" not in values
     root = Path(task.metadata["audit_dir"])
     assert json.loads((root / "artifacts.json").read_text())["artifact_dir"].startswith("s3://")
+
+
+@pytest.mark.skipif(shutil.which("helm") is None, reason="needs the Helm CLI")
+def test_auditor_chart_preserves_internet_access_without_an_api_token(tmp_path):
+    import k8s_sandbox
+
+    _, values_path = workspace.configure(tmp_path, "auditor:test")
+    chart = Path(k8s_sandbox.__file__).parent / "resources/helm/agent-env"
+    result = subprocess.run(
+        ["helm", "template", "auditor", str(chart), "-f", values_path],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    documents = [doc for doc in yaml.safe_load_all(result.stdout) if doc]
+    workloads = [doc for doc in documents if doc["kind"] == "StatefulSet"]
+    assert len(workloads) == 1
+    pod = workloads[0]["spec"]["template"]["spec"]
+    assert pod["automountServiceAccountToken"] is False
+    assert not any("hostPath" in volume for volume in pod.get("volumes", []))
+    assert not any(doc["kind"] == "ServiceAccount" for doc in documents)
+
+    policies = [
+        doc["spec"]
+        for doc in documents
+        if doc["kind"] == "CiliumNetworkPolicy" and "egress" in doc["spec"]
+    ]
+    assert len(policies) == 1
+    egress = policies[0]["egress"]
+    assert {"toEntities": ["world"]} in egress
+    dns = next(rule for rule in egress if "toPorts" in rule)
+    assert dns["toEndpoints"] == [
+        {"matchLabels": {"io.kubernetes.pod.namespace": "kube-system", "k8s-app": app}}
+        for app in ("kube-dns", "node-local-dns")
+    ]
+    assert dns["toPorts"][0]["ports"] == [{"port": "53", "protocol": "ANY"}]
+    assert {"matchPattern": "*"} in dns["toPorts"][0]["rules"]["dns"]
 
 
 def test_a_docker_box_is_a_container_with_nothing_mounted(tmp_path):

@@ -19,13 +19,11 @@ from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import ToolError
 from inspect_ai.util import sandbox
 
-from .containers import EGRESS_POLICY
-
 logger = logging.getLogger(__name__)
 
 
 def configure(root: Path, image: str) -> tuple[str, str]:
-    """The auditor's box as a Kubernetes pod: no mounts, no service account."""
+    """Configure the auditor's Kubernetes workspace with internet access."""
     values = {
         "services": {
             "default": {
@@ -38,10 +36,10 @@ def configure(root: Path, image: str) -> tuple[str, str]:
                 },
             }
         },
-        "automountServiceAccountToken": False,
+        "allowEntities": ["world"],
     }
     path = root / "auditor.values.yaml"
-    path.write_text(yaml.safe_dump(values) + EGRESS_POLICY)
+    path.write_text(yaml.safe_dump(values))
     return "k8s", str(path)
 
 

@@ -641,16 +641,22 @@ def test_the_auditor_builds_from_a_directory_it_cannot_write(tmp_path: Path) -> 
 
 
 def test_an_audit_with_a_model_hawk_does_not_price_does_not_start(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hawk: Any
 ) -> None:
     """James, 2026-11-13: "just don't run if you can't find the model". On Hawk every
     model the audit may use must be on Hawk's price list before anything starts; the
     plain `openrouter/...` spelling, which Hawk's proxy cannot route, is not (FRICTION 89)."""
     from inspect_audit import _prices
 
-    monkeypatch.setenv("HAWK_API_URL", "https://hawk.test")
-    row = {"input_cost_per_1m": 0.038, "output_cost_per_1m": 0.5}
-    monkeypatch.setattr(_prices, "_hawk_table", lambda url: {"openrouter/deepseek/flash": row})
+    hawk.prices = [
+        {
+            "model": "openrouter/deepseek/flash",
+            "input_cost_per_1m": 0.038,
+            "output_cost_per_1m": 0.5,
+        }
+    ]
+    _prices._hawk_table.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setenv("HAWK_API_URL", hawk.url)
     with pytest.raises(_prices.UnpricedModelError, match="openrouter/deepseek/gone"):
         audit(
             str(git_repo(tmp_path / "repo")),

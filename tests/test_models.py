@@ -3,6 +3,7 @@
 import asyncio
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 from inspect_ai.log import read_eval_log
@@ -267,7 +268,7 @@ def test_unusable_prices_are_refused(price: dict[str, float]) -> None:
 
 
 def test_prices_come_from_hawks_table_under_the_jobs_model_name(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, hawk: Any
 ) -> None:
     """One table: Hawk's /usage/prices, keyed by Hawk's public name, registered under the
     name the job calls (FRICTION 84: dated snapshots are priced only there)."""
@@ -285,8 +286,10 @@ def test_prices_come_from_hawks_table_under_the_jobs_model_name(
         },
         "claude-x": {"model": "claude-x", "input_cost_per_1m": 5, "output_cost_per_1m": 25},
     }
-    monkeypatch.setenv("HAWK_API_URL", "https://hawk.test")
-    monkeypatch.setattr(_prices, "_hawk_table", lambda url: rows)
+    # Hawk's /usage/prices, fetched once per process: a fresh table for this test
+    hawk.prices = list(rows.values())
+    _prices._hawk_table.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setenv("HAWK_API_URL", hawk.url)
     _prices.price_models(["openai/openrouter/deepseek/snap-20261017", "anthropic/claude-x"])
     cost = get_model_info("openai/openrouter/deepseek/snap-20261017").cost  # type: ignore[union-attr]
     assert (cost.input, cost.output, cost.input_cache_read, cost.input_cache_write) == (
@@ -303,17 +306,18 @@ def test_prices_come_from_hawks_table_under_the_jobs_model_name(
     assert _prices.prices_for(["mockllm/model"]) == {"mockllm/model": _prices.FREE}
     _prices.register_price("mockllm/model", _prices.FREE)
     # a listed row with an unusable price is refused too
-    rows["claude-free"] = {"model": "claude-free", "input_cost_per_1m": 0, "output_cost_per_1m": 0}
+    hawk.prices.append({"model": "claude-free", "input_cost_per_1m": 0, "output_cost_per_1m": 0})
+    _prices._hawk_table.cache_clear()  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(_prices.UnpricedModelError, match="claude-free"):
         _prices.prices_for(["anthropic/claude-free"])
 
 
-def test_off_hawk_nothing_is_fetched(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_off_hawk_nothing_is_fetched(monkeypatch: pytest.MonkeyPatch, hawk: Any) -> None:
     from inspect_audit import _prices
 
     monkeypatch.delenv("HAWK_API_URL", raising=False)
-    monkeypatch.setattr(_prices, "_hawk_table", lambda url: pytest.fail("fetched off Hawk"))
     _prices.price_models(["openai/anything"])
+    assert hawk.tokens_seen == [], "a Hawk was asked for prices off Hawk"
 
 
 def test_child_jobs_need_no_prices_and_never_fetch(monkeypatch: pytest.MonkeyPatch) -> None:

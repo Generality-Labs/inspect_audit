@@ -10,9 +10,9 @@ from pathlib import Path
 import pytest
 from inspect_ai import Task, eval
 from inspect_ai.dataset import Sample
-from test_helpers.fake_hawk import FakeHawk
+from test_helpers.fake_hawk import FakeHawk, runner_hook
 
-from inspect_audit.dispatch import HawkRuns, Job, JobState
+from inspect_audit.dispatch import HawkLogin, HawkRuns, Job, JobState
 from inspect_audit.dispatch.jobs import settled
 
 
@@ -52,12 +52,12 @@ def test_a_job_runs_reports_usage_finishes_and_hands_back_its_logs(tmp_path: Pat
             assert config["runner"]["environment"]["HAWK_API_URL"] == hawk.url
 
             assert await runs.status(run_id) is JobState.RUNNING
-            hawk.progress(
-                run_id,
-                {"openai/x": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120}},
-            )
+            used = {"openai/x": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120}}
+            # Hawk's live status, sample by sample: finished, still running, not started
+            hawk.progress(run_id, [(True, used), (False, used), (False, None)])
             usage, done = await runs.usage(run_id)
-            assert usage["openai/x"].input_tokens == 100 and done == 0
+            assert done == 1
+            assert (usage["openai/x"].input_tokens, usage["openai/x"].output_tokens) == (200, 40)
 
             hawk.finish(run_id, logs=[log])
             assert await runs.status(run_id) is JobState.COMPLETE
@@ -125,5 +125,103 @@ def test_proxy_calls_use_the_deployments_proxy_the_supplied_token_and_no_redirec
             assert hawk.tokens_seen == ["Bearer supplied"]
             with pytest.raises(RuntimeError, match="302"):
                 await middleman_request(hawk.url, "put", "/moved", "supplied", {})
+
+    asyncio.run(run())
+
+
+def test_on_a_runner_credentials_come_from_hawks_own_hook(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Hawk's RefreshTokenHook as a runner installs it, refreshing over HTTP.
+
+    2026-10-20: a fake modelled on an older hook passed while hawk 3.7's hook declined
+    the ask. 2026-11-12: Hawk 4 moved the rotated refresh token into a file cache
+    (FRICTION 70). Here nothing of Hawk's is replaced, only its identity provider.
+    """
+
+    async def run() -> None:
+        async with FakeHawk() as hawk:
+            runner_hook(monkeypatch, hawk, tmp_path)
+            login = HawkLogin(hawk.url)
+            assert await login.access_token() == "access-1"
+            # a child gets the refresh token as rotated by that refresh, not the startup one
+            assert await login.refresh_token() == "refresh-1"
+            assert hawk.grants == ["refresh-0"]
+
+    asyncio.run(run())
+
+
+def test_a_child_job_runs_as_this_runs_user_with_its_current_credentials(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The access token first (refreshing may rotate the refresh token), then the
+    rotated refresh token to the child, so it renews as this run's user."""
+
+    async def run() -> None:
+        async with FakeHawk() as hawk:
+            runner_hook(monkeypatch, hawk, tmp_path)
+            run_id = await HawkRuns(hawk.url).submit(JOB)
+            body = hawk.jobs[run_id].body
+            assert hawk.tokens_seen[-1] == "Bearer access-1"
+            assert body["refresh_token"] == "refresh-1"
+            # the mode is always stated: left out, Hawk uses a deployment flag (FRICTION 86)
+            assert body["credential_mode"] == "user"
+            assert body["secrets"] == {}, "no provider key travels with a child job"
+
+    asyncio.run(run())
+
+
+def test_every_submission_states_its_mode_and_matches_its_credentials() -> None:
+    from inspect_audit.dispatch.hawk import submit_eval_set
+
+    config = {
+        "tasks": [{"package": "p", "name": "p", "items": [{"name": "t"}]}],
+        "runner": {"environment": {"KEEP": "1"}},
+    }
+
+    async def run() -> None:
+        async with FakeHawk() as hawk:
+
+            async def submit(**kw: object) -> dict[str, object]:
+                run_id = await submit_eval_set(config, api_url=hawk.url, token="t", **kw)  # type: ignore[arg-type]
+                return hawk.jobs[run_id].body
+
+            body = await submit(credential_mode="restricted")
+            assert body["credential_mode"] == "restricted" and "refresh_token" not in body
+            assert body["eval_set_config"]["runner"]["environment"] == {
+                "KEEP": "1",
+                "HAWK_API_URL": hawk.url,
+            }
+            assert config["runner"]["environment"] == {"KEEP": "1"}, (
+                "the caller's config is unchanged"
+            )
+            body = await submit(credential_mode="user", refresh_token="r")
+            assert body["credential_mode"] == "user" and body["refresh_token"] == "r"
+            with pytest.raises(ValueError, match="refresh token"):
+                await submit(credential_mode="user")
+            with pytest.raises(ValueError, match="refresh token"):
+                await submit(credential_mode="restricted", refresh_token="r")
+
+    asyncio.run(run())
+
+
+def test_hawk_logs_are_fetched_with_the_runners_own_credentials(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A child investigation fetching `hawk:` logs on a runner uses Hawk's real hook."""
+    from inspect_audit._log_sources import fetch_logs
+
+    log = _log(tmp_path / "made")
+
+    async def run() -> None:
+        async with FakeHawk() as hawk:
+            runner_hook(monkeypatch, hawk, tmp_path)
+            monkeypatch.setenv("HAWK_API_URL", hawk.url)
+            run_id = await HawkRuns(hawk.url, credential_mode="restricted").submit(JOB)
+            hawk.finish(run_id, logs=[log])
+            # fetch_logs is synchronous: off this loop, which serves the fake
+            fetched = await asyncio.to_thread(fetch_logs, f"hawk:{run_id}")
+            assert (Path(fetched) / run_id / log.name).read_bytes() == log.read_bytes()
+            assert set(hawk.tokens_seen[-2:]) == {"Bearer access-1"}
 
     asyncio.run(run())

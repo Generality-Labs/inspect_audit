@@ -2,13 +2,15 @@
 
 Only the endpoints `dispatch.hawk` calls, answered with Hawk's own response models
 (`hawk.core.types.monitoring`), so a field Hawk's client starts to require fails here
-as it would against the real service. A job is driven by the test (`finish`, `stuck`,
-`forget`), and its logs are real `.eval` files served over HTTP like presigned URLs.
+as it would against the real service. A job is driven by the test (`progress`,
+`finish`, `stuck`, `forget`), and its logs are real `.eval` files served over HTTP
+like presigned URLs. It also plays the identity provider a runner's refresh hook
+calls (`runner_hook`), so Hawk's own hook runs unchanged.
 
     async with FakeHawk() as hawk:
-        runs = HawkRuns(HawkLogin(hawk.url))   # with HAWK_ACCESS_TOKEN set
+        runs = HawkRuns(hawk.url, credential_mode="restricted")  # HAWK_ACCESS_TOKEN set
         run_id = await runs.submit(job)
-        hawk.finish(run_id, logs=[path], usage={"openai/x": {...}})
+        hawk.finish(run_id, logs=[path])
 """
 
 import itertools
@@ -21,6 +23,9 @@ from typing import Any
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
+# one sample as Hawk reports it: (finished?, model -> ModelUsage fields; None: none yet)
+SampleUsage = tuple[bool, dict[str, dict[str, Any]] | None]
+
 
 @dataclass
 class FakeJob:
@@ -28,42 +33,42 @@ class FakeJob:
     body: dict[str, Any]
     status: str = "running"
     logs: list[Path] = field(default_factory=list)
-    # model -> Inspect ModelUsage fields, as Hawk reports a sample's usage
-    usage: dict[str, dict[str, Any]] = field(default_factory=dict)
-    samples_done: int = 0
+    samples: list[SampleUsage] = field(default_factory=list)
     runner_log: list[str] = field(default_factory=list)
     stopped: bool = False
 
 
 class FakeHawk:
-    def __init__(self, prices: list[dict[str, Any]] | None = None, served: list[str] | None = None):
+    def __init__(
+        self, prices: list[dict[str, Any]] | None = None, served: list[str] | None = None
+    ) -> None:
         self.jobs: dict[str, FakeJob] = {}
         self.prices = prices or []
         # public model names the proxy serves to this caller
         self.served = list(served or [])
         self.tokens_seen: list[str] = []
+        # the identity provider's side: refresh tokens presented, and whether it rotates them
+        self.grants: list[str] = []
+        self.rotate = True
         self._ids = itertools.count(1)
         self._server: TestServer | None = None
 
     # --- the test's controls -------------------------------------------------
 
+    def progress(self, run_id: str, samples: list[SampleUsage]) -> None:
+        self.jobs[run_id].samples = list(samples)
+
     def finish(
         self,
         run_id: str,
         logs: list[Path] | None = None,
-        usage: dict[str, dict[str, Any]] | None = None,
-        samples: int = 1,
+        samples: list[SampleUsage] | None = None,
         status: str = "complete",
     ) -> None:
         job = self.jobs[run_id]
         job.status, job.logs = status, list(logs or [])
-        job.usage, job.samples_done = dict(usage or {}), samples
-
-    def progress(
-        self, run_id: str, usage: dict[str, dict[str, Any]], samples_done: int = 0
-    ) -> None:
-        job = self.jobs[run_id]
-        job.usage, job.samples_done = dict(usage), samples_done
+        if samples is not None:
+            job.samples = list(samples)
 
     def stuck(self, run_id: str) -> None:
         self.jobs[run_id].status = "stuck"
@@ -79,8 +84,11 @@ class FakeHawk:
 
     # --- the API -------------------------------------------------------------
 
-    def _job(self, request: web.Request) -> FakeJob:
+    def _seen(self, request: web.Request) -> None:
         self.tokens_seen.append(request.headers.get("Authorization", ""))
+
+    def _job(self, request: web.Request) -> FakeJob:
+        self._seen(request)
         job = self.jobs.get(request.match_info["id"])
         if job is None:
             raise web.HTTPNotFound(text=json.dumps({"detail": "not found"}))
@@ -104,7 +112,7 @@ class FakeHawk:
         )
 
     async def _create(self, request: web.Request) -> web.Response:
-        self.tokens_seen.append(request.headers.get("Authorization", ""))
+        self._seen(request)
         body = await request.json()
         run_id = body.get("eval_set_id") or f"fake-{next(self._ids)}"
         self.jobs[run_id] = FakeJob(config=body.get("eval_set_config") or {}, body=body)
@@ -126,16 +134,21 @@ class FakeHawk:
         from hawk.core.types import monitoring
 
         job = self._job(request)
-        sample = monitoring.SampleStatus(
-            id="1",
-            epoch=1,
-            phase="complete" if job.samples_done else "running",  # pyright: ignore[reportArgumentType]
-            completed=bool(job.samples_done),
-            model_usage={
-                model: monitoring.SampleModelUsage.model_validate(counts)
-                for model, counts in job.usage.items()
-            },
-        )
+        samples = [
+            monitoring.SampleStatus(
+                id=str(n + 1),
+                epoch=1,
+                phase="completed" if finished else "running",  # pyright: ignore[reportArgumentType]
+                completed=finished,
+                model_usage=None
+                if usage is None
+                else {
+                    model: monitoring.SampleModelUsage.model_validate(counts)
+                    for model, counts in usage.items()
+                },
+            )
+            for n, (finished, usage) in enumerate(job.samples)
+        ]
         reply = monitoring.EvalSetStatusResponse(
             etag="0",
             data=monitoring.EvalSetStatus(
@@ -147,7 +160,7 @@ class FakeHawk:
                         task_name="task",
                         log_file="task.eval",
                         progress=monitoring.StatusProgress(),
-                        samples=[sample],
+                        samples=samples,
                     )
                 ],
             ),
@@ -172,12 +185,14 @@ class FakeHawk:
         return web.json_response({})
 
     async def _log_files(self, request: web.Request) -> web.Response:
+        self._seen(request)
         run_id = request.query["log_dir"]
         job = self.jobs.get(run_id)
         files = [{"name": f"{run_id}/{p.name}"} for p in (job.logs if job else [])]
         return web.json_response({"files": files})
 
     async def _download_urls(self, request: web.Request) -> web.Response:
+        self._seen(request)
         body = await request.json()
         urls = [
             {"url": f"{self.url}/files/{name}", "filename": Path(name).name}
@@ -196,13 +211,23 @@ class FakeHawk:
         return web.json_response(self.prices)
 
     async def _permitted(self, request: web.Request) -> web.Response:
-        self.tokens_seen.append(request.headers.get("Authorization", ""))
+        self._seen(request)
         # like middleman: every model this caller may use, by its public name
         body = await request.json()
-        assert body.get("api_key") == request.headers.get("Authorization", "").removeprefix(
-            "Bearer "
-        )
+        bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        assert body.get("api_key") == bearer
         return web.json_response([{"name": n} for n in self.served])
+
+    async def _token(self, request: web.Request) -> web.Response:
+        """The identity provider's refresh-token grant, as a runner's hook calls it."""
+        form = await request.post()
+        assert form["grant_type"] == "refresh_token"
+        self.grants.append(str(form["refresh_token"]))
+        n = len(self.grants)
+        reply: dict[str, Any] = {"access_token": f"access-{n}", "expires_in": 3600}
+        if self.rotate:
+            reply["refresh_token"] = f"refresh-{n}"
+        return web.json_response(reply)
 
     async def _moved(self, request: web.Request) -> web.Response:
         raise web.HTTPFound(f"{self.url}/elsewhere")
@@ -212,6 +237,7 @@ class FakeHawk:
     def _app(self) -> web.Application:
         app = web.Application()
         app.router.add_get("/auth/config", self._auth_config)
+        app.router.add_post("/token", self._token)
         app.router.add_post("/eval_sets/", self._create)
         app.router.add_post("/eval_sets/{id}/stop", self._stop)
         app.router.add_get("/monitoring/jobs/{id}/job-status", self._job_status)
@@ -234,3 +260,27 @@ class FakeHawk:
     async def __aexit__(self, *exc: object) -> None:
         assert self._server is not None
         await self._server.close()
+
+
+def runner_hook(monkeypatch: Any, hawk: FakeHawk, tmp_path: Path) -> Any:
+    """Hawk's own RefreshTokenHook, as a runner installs it, refreshing at `hawk`'s IdP.
+
+    Nothing of Hawk's is replaced: the hook reads the environment a runner has and makes
+    its real refresh-token grant over HTTP. Its token cache goes under `tmp_path`.
+    """
+    import tempfile
+
+    from hawk.runner import refresh_token as hawk_hook
+    from inspect_ai.hooks import _hooks
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setenv("HAWK_RUNNER_REFRESH_URL", f"{hawk.url}/token")
+    monkeypatch.setenv("HAWK_RUNNER_REFRESH_CLIENT_ID", "client")
+    monkeypatch.setenv("HAWK_RUNNER_REFRESH_TOKEN", "refresh-0")
+    monkeypatch.setenv("AI_GATEWAY_BASE_URL", f"{hawk.url}/middleman")
+    monkeypatch.setenv("BASE_API_KEY", "startup-jwt")
+    monkeypatch.delenv("HAWK_ACCESS_TOKEN", raising=False)
+    hook = hawk_hook.RefreshTokenHook()
+    # how a runner's hooks are found: the one registry Inspect consults
+    monkeypatch.setattr(_hooks, "get_all_hooks", lambda: [hook])
+    return hook

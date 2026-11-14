@@ -13,7 +13,6 @@ from inspect_audit._report import AuditRecord
 from inspect_audit.dispatch import (
     FINISHED,
     HawkLogin,
-    HawkRuns,
     Job,
     JobState,
     LocalRuns,
@@ -83,97 +82,6 @@ def test_an_investigations_judges_get_credentials_in_either_mode() -> None:
         assert [i.name for g in config.additional_models or [] for i in g.items] == [
             "openrouter/openai/gpt-6-luna"
         ]
-
-
-def test_a_child_job_runs_as_this_runs_user_with_its_current_credentials(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """On a runner the refresh credential rotates when the access token refreshes.
-
-    The child must get the rotated one, so the access token is fetched first; and
-    it must be this run's own, so the child's calls bill to the same key. Uses
-    Hawk 4's real hook; only the IdP exchange is faked.
-    """
-    import hawk.client
-    from inspect_ai.hooks import _hooks
-
-    received: dict[str, Any] = {}
-    hook = _runner_hook(monkeypatch, tmp_path, lambda token: ("current-access", "rotated"))
-
-    class Client:
-        def __init__(self, **kwargs: Any) -> None:
-            received.update(kwargs)
-
-        async def __aenter__(self) -> "Client":
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
-
-        async def create_eval_set(self, config: Any, **kwargs: Any) -> dict[str, Any]:
-            received.update(kwargs)
-            received["config"] = config
-            # hawk >= 3.5 returns the API body rather than the bare id
-            return {"eval_set_id": "child-job", "warnings": []}
-
-    monkeypatch.setattr(_hooks, "get_all_hooks", lambda: [hook])
-    monkeypatch.setattr(hawk.client, "HawkClient", Client)
-    job = Job(label="child", task="benchmark/task", package="benchmark", models=["m/x"])
-    assert asyncio.run(HawkRuns("https://hawk.example").submit(job)) == "child-job"
-    assert received["token"] == "current-access"
-    assert received["refresh_token"] == "rotated"
-    # the child's own code may read Hawk; Hawk does not tell a runner its API
-    assert received["config"].runner.environment == {"HAWK_API_URL": "https://hawk.example"}
-    assert "secrets" not in received, "no provider key travels with a child job"
-    # the mode is always stated: left out, Hawk falls back to a deployment flag (FRICTION 86)
-    assert received["credential_mode"] == "user"
-
-
-def test_every_submission_states_its_mode_and_matches_its_credentials(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import hawk.client
-
-    from inspect_audit.dispatch.hawk import submit_eval_set
-
-    received: dict[str, Any] = {}
-
-    class Client:
-        def __init__(self, **kwargs: Any) -> None:
-            pass
-
-        async def __aenter__(self) -> "Client":
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
-
-        async def create_eval_set(self, config: Any, **kwargs: Any) -> dict[str, Any]:
-            received.clear()
-            received.update(kwargs, config=config)
-            return {"eval_set_id": "job"}
-
-    monkeypatch.setattr(hawk.client, "HawkClient", Client)
-    config = {
-        "tasks": [{"package": "p", "name": "p", "items": [{"name": "t"}]}],
-        "runner": {"environment": {"KEEP": "1"}},
-    }
-    submit = lambda **kw: asyncio.run(  # noqa: E731
-        submit_eval_set(config, api_url="https://hawk.example", token="t", **kw)
-    )
-    assert submit(credential_mode="restricted") == "job"
-    assert received["credential_mode"] == "restricted" and "refresh_token" not in received
-    assert received["config"].runner.environment == {
-        "KEEP": "1",
-        "HAWK_API_URL": "https://hawk.example",
-    }
-    assert config["runner"]["environment"] == {"KEEP": "1"}, "the caller's config is not changed"
-    submit(credential_mode="user", refresh_token="r")
-    assert received["credential_mode"] == "user" and received["refresh_token"] == "r"
-    with pytest.raises(ValueError, match="refresh token"):
-        submit(credential_mode="user")
-    with pytest.raises(ValueError, match="refresh token"):
-        submit(credential_mode="restricted", refresh_token="r")
 
 
 def test_a_laptop_asks_the_operators_own_hawk_past_the_venvs(
@@ -543,34 +451,6 @@ def _runner_hook(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, exchange: Any)
     return hawk_hook.RefreshTokenHook()
 
 
-def test_the_runner_credentials_come_from_hawks_real_hook(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Hawk's own RefreshTokenHook, as installed, not a copy of its behaviour.
-
-    2026-10-20: a fake modelled on an older hook passed while hawk 3.7's hook declined
-    the ask and the budget tool got no token on a runner. 2026-11-12: Hawk 4 moved the
-    rotated refresh token from the hook into a file cache (FRICTION 70). Only the
-    network refresh is replaced; the hook's own rules run as shipped.
-    """
-    from inspect_ai.hooks import _hooks
-
-    refreshes: list[str] = []
-
-    def exchange(token: str) -> tuple[str, str]:
-        refreshes.append(token)
-        return f"access-{len(refreshes)}", f"refresh-{len(refreshes)}"
-
-    hook = _runner_hook(monkeypatch, tmp_path, exchange)
-    monkeypatch.setattr(_hooks, "get_all_hooks", lambda: [hook])
-
-    login = HawkLogin("https://hawk.example")
-    assert asyncio.run(login.access_token()) == "access-1"
-    # the child job gets the refresh token as rotated by that refresh
-    assert asyncio.run(login.refresh_token()) == "refresh-1"
-    assert refreshes == ["refresh-0"]
-
-
 def test_a_dataset_without_ids_is_selected_by_position(tmp_path: Path) -> None:
     """Inspect matches sample ids before it numbers id-less samples, so a positional
     range is the only selection that works for them (2026-10-20: sample_ids=["1"] on
@@ -634,47 +514,6 @@ def test_a_local_job_receives_string_arguments_exactly(tmp_path: Path) -> None:
 
     [log] = [read_eval_log(str(p)) for p in asyncio.run(run())]
     assert log.eval.task_args == {"greeting": "a, yes"}
-
-
-def test_hawk_logs_are_fetched_with_the_runners_own_credentials(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A child investigation fetching hawk: logs on a runner uses Hawk's real hook."""
-    import hawk.cli.download
-    import hawk.client
-    from inspect_ai.hooks import _hooks
-
-    from inspect_audit._log_sources import fetch_logs
-
-    hook = _runner_hook(monkeypatch, tmp_path, lambda token: ("runner-access", None))
-    monkeypatch.setenv("HAWK_API_URL", "https://hawk.example")
-    monkeypatch.delenv("HAWK_ACCESS_TOKEN", raising=False)
-    monkeypatch.setattr(_hooks, "get_all_hooks", lambda: [hook])
-    used: list[str] = []
-
-    class Client:
-        def __init__(self, token: str, api_url: str | None = None) -> None:
-            used.append(token)
-
-        async def __aenter__(self) -> "Client":
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
-
-        async def get_log_files(self, eval_set_id: str) -> list[dict[str, str]]:
-            return [{"name": f"{eval_set_id}/a.eval"}]
-
-        async def get_download_urls(self, names: list[str]) -> Any:
-            yield "https://download/a", "a.eval"
-
-    async def download_file(url: str, dest: Path) -> None:
-        dest.write_bytes(b"log")
-
-    monkeypatch.setattr(hawk.client, "HawkClient", Client)
-    monkeypatch.setattr(hawk.cli.download, "download_file", download_file)
-    assert (Path(fetch_logs("hawk:run")) / "run" / "a.eval").read_bytes() == b"log"
-    assert used == ["runner-access"]
 
 
 def test_an_investigation_reads_a_log_directory(tmp_path: Path) -> None:
@@ -1127,42 +966,6 @@ def test_spend_that_cannot_be_read_stops_launches(
     with pytest.raises(ToolError, match="cannot read what running spent"):
         asyncio.run(spend.refuse_if_spent())
     assert "running (benchmark, running): spend unknown" in "\n".join(asyncio.run(spend.report()))
-
-
-def test_hawk_usage_sums_every_samples_tokens_by_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Live spend comes from Hawk's eval-set status: each sample's usage so far."""
-    from types import SimpleNamespace
-
-    usage = SimpleNamespace(
-        model_dump=lambda: {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110}
-    )
-    status = SimpleNamespace(
-        tasks=[
-            SimpleNamespace(
-                samples=[
-                    SimpleNamespace(completed=True, model_usage={"openai/m": usage}),
-                    SimpleNamespace(completed=False, model_usage={"openai/m": usage}),
-                    SimpleNamespace(completed=False, model_usage=None),
-                ]
-            )
-        ]
-    )
-
-    class Client:
-        async def __aenter__(self) -> "Client":
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
-
-        async def get_eval_set_status(self, run_id: str) -> Any:
-            return status
-
-    runs = HawkRuns("https://hawk.test", credential_mode="user")
-    monkeypatch.setattr(runs, "_client", Client)
-    totals, done = asyncio.run(runs.usage("set-1"))
-    assert done == 1
-    assert (totals["openai/m"].input_tokens, totals["openai/m"].output_tokens) == (200, 20)
 
 
 def test_a_flaky_backend_reaches_the_auditor_wherever_it_is_called(

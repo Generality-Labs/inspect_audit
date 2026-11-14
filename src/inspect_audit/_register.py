@@ -257,14 +257,14 @@ def select(
     ]
 
 
-async def start_register(task: str | None, policy: "LaunchPolicy") -> int:
+async def start_register(
+    task: str | None, policy: "LaunchPolicy", before_agent: bool = False
+) -> int:
     """Lay out the register from the launch policy; returns the number of items.
 
     Every permitted item of the benchmark, with an empty cell per policy check.
     """
-    from inspect_ai.util import registry_create
-
-    from ._task import numbered
+    from . import _in_box as in_box
     from ._verdicts import investigation_items
     from .dispatch.policy import PolicyStore, ensure_policy
 
@@ -278,32 +278,29 @@ async def start_register(task: str | None, policy: "LaunchPolicy") -> int:
         skills = investigation_items(list(policy.checks))
     except ValueError as ex:
         raise ToolError(str(ex)) from ex
-    try:
-        their = registry_create("task", task, **args)
-    except Exception as ex:
-        raise ToolError(
-            f"cannot load {task} here to read its dataset ({type(ex).__name__}: {ex}). "
-            "The benchmark's package must be installed beside inspect_audit."
-        ) from ex
-    dataset, positional = numbered(their)
+    # read in the box, where the benchmark is installed: its code never runs here
+    read = await in_box.population(task, args, policy.source)
+    ids: list[str] = read["ids"]
     if policy.samples is not None:
-        known = {str(s.id) for s in dataset}
-        if set(policy.samples) - known:
+        if set(policy.samples) - set(ids):
             raise ToolError("launch policy selects sample IDs absent from the benchmark")
-        dataset = [s for s in dataset if str(s.id) in policy.samples]
+        ids = [i for i in ids if i in policy.samples]
     register = Register(
         subject={
             **population().subject,
             "task": task,
             "task_args": args,
-            "dataset": getattr(their.dataset, "name", None),
-            "ids": "positional" if positional else "declared",
+            "dataset": read["dataset"],
+            "ids": "positional" if read["positional"] else "declared",
+            # read in the box the agent works in: before its first turn, or after it
+            # had the box and could have changed the installed benchmark
+            "items_read": "before the agent started" if before_agent else "after the agent started",
         },
         checks=[s.name for s in skills],
-        samples={str(s.id): {c.name: [] for c in skills} for s in dataset},
+        samples={i: {c.name: [] for c in skills} for i in ids},
     )
     save(register)
-    return len(dataset)
+    return len(ids)
 
 
 @tool(name="register")

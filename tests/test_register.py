@@ -1,31 +1,43 @@
 """The register: one machine-readable record of every take in an audit."""
 
 import asyncio
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
-from inspect_ai import Task, task
+from inspect_ai import Task
 from inspect_ai.dataset import Sample
 from inspect_ai.tool import ToolError
 from inspect_ai.util._store import Store, init_subtask_store
 from test_helpers.audit import make_audit
+from test_helpers.box import local_box
 
 from inspect_audit import _audit, _register
 from inspect_audit._verdicts import investigation_items
 from inspect_audit.dispatch.policy import Models
+
+FIXTURE = """
+from inspect_ai import Task, task
+from inspect_ai.dataset import Sample
 
 
 @task
 def register_fixture() -> Task:
     # no ids of their own: the register numbers them as an eval would, 1..3
     return Task(dataset=[Sample(input=q, target="x") for q in ("a", "b", "c")])
+"""
 
 
 @pytest.fixture
-def box(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """A fresh sample store, and the box's findings.json captured."""
+def box(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[dict[str, str]]:
+    """A fresh sample store, a real box that reads the fixture benchmark, and the box's
+    findings.json captured."""
     init_subtask_store(Store())
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "regfix.py").write_text(FIXTURE)
+    monkeypatch.setenv("PYTHONPATH", str(site))
     written: dict[str, str] = {}
 
     class Box:
@@ -40,7 +52,8 @@ def box(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     from inspect_audit import _findings
 
     monkeypatch.setattr(_findings, "sandbox", Box)
-    return written
+    with local_box():
+        yield written
 
 
 def _verdicts(run: str, *scores: tuple[str, int, str, str]) -> list[dict[str, Any]]:
@@ -71,6 +84,7 @@ def _start(checks: list[str]) -> str:
 
     policy = LaunchPolicy(
         task="register_fixture",
+        source="regfix",
         task_package=None,
         investigation_package=None,
         investigator_image="i",

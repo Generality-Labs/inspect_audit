@@ -3,11 +3,9 @@
 - `jobs`: a job, its lifecycle states, the `Runs` interface.
 - `local`: jobs on this machine, as Inspect's detached eval sets.
 - `hawk`: everything that only exists on Hawk (login, submit, status, logs,
-  `hawk:` log fetching, key delivery for the launcher).
+  `hawk:` log fetching, the LLM proxy).
 - `policy`: the frozen launch policy and the authoriser every child job passes.
 - `packages`: the pip specs a fresh runner installs.
-- `launcher`, `openrouter`, `secrets`, `cli`: a capped OpenRouter key per
-  audit, always revoked (`inspect-audit-launch`).
 
 Nothing here imports the agents that use it.
 """

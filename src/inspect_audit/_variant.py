@@ -44,13 +44,8 @@ def task_package(task: str, source: str) -> tuple[str, Path]:
     return function, installed(source)[1]
 
 
-def check_overlay(task: str, source: str, files: dict[str, str]) -> str:
-    """Refuse an overlay that is not a small change inside the benchmark's own package.
-
-    Returns a unified diff against the installed files, for the job record.
-    """
-    _, root = task_package(task, source)
-    top = root.name
+def check_shape(top: str, files: dict[str, str]) -> None:
+    """Refuse an overlay that is not a small change inside the package `top`."""
     if not files:
         raise ValueError("the variant folder holds no files: put the files you changed in it")
     if len(files) > MAX_FILES:
@@ -60,23 +55,50 @@ def check_overlay(task: str, source: str, files: dict[str, str]) -> str:
         raise ValueError(
             f"a variant is at most {MAX_BYTES // 1024} KB of files, not {size // 1024} KB"
         )
-    diff: list[str] = []
-    for name, text in sorted(files.items()):
+    for name in files:
         parts = Path(name).parts
         if not parts or parts[0] != top or ".." in parts or Path(name).is_absolute():
             raise ValueError(
                 f"{name!r}: files sit at their path inside the installed package, starting {top}/"
             )
-        installed = root.parent / name
-        if not installed.parent.is_dir():
-            raise ValueError(f"{name!r}: no such folder in the installed {top} package")
-        before = installed.read_text().splitlines(keepends=True) if installed.is_file() else []
+
+
+def missing_folder(name: str, top: str) -> ValueError:
+    return ValueError(f"{name!r}: no such folder in the installed {top} package")
+
+
+def overlay_diff(files: dict[str, str], before: dict[str, str | None]) -> str:
+    """A unified diff of `files` against the installed text (None: a new file)."""
+    diff: list[str] = []
+    for name, text in sorted(files.items()):
+        old = before[name]
         diff += difflib.unified_diff(
-            before, text.splitlines(keepends=True), f"a/{name}", f"b/{name}"
+            old.splitlines(keepends=True) if old is not None else [],
+            text.splitlines(keepends=True),
+            f"a/{name}",
+            f"b/{name}",
         )
     if not diff:
         raise ValueError("the variant's files are identical to the installed package")
     return "".join(diff)
+
+
+def check_overlay(task: str, source: str, files: dict[str, str]) -> str:
+    """Refuse an overlay that is not a small change inside the benchmark's own package.
+
+    Returns a unified diff against the installed files, for the job record. This reads
+    the package installed in this process: a variant job's runner. The auditor checks
+    its overlay in its box instead (`_audit._variant_files`).
+    """
+    _, root = task_package(task, source)
+    check_shape(root.name, files)
+    before: dict[str, str | None] = {}
+    for name in files:
+        installed = root.parent / name
+        if not installed.parent.is_dir():
+            raise missing_folder(name, root.name)
+        before[name] = installed.read_text() if installed.is_file() else None
+    return overlay_diff(files, before)
 
 
 def _laid_over(root: Path, files: dict[str, str]) -> Path:

@@ -1,0 +1,45 @@
+name: ia-smoke-swebench
+packages:
+- inspect-ai==0.3.285
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect-evals[swe_bench] @ git+https://github.com/UKGovernmentBEIS/inspect_evals@cf50625d0957566bf19c6a4719708653ddf59bc7
+tasks:
+- package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+  name: inspect_audit
+  items:
+  - name: audit
+    args:
+      repo: https://github.com/UKGovernmentBEIS/inspect_evals
+      revision: cf50625d0957566bf19c6a4719708653ddf59bc7
+      target_task: inspect_evals/swe_bench
+      source: inspect_evals.swe_bench.swe_bench
+      task_package: inspect-evals[swe_bench] @ git+https://github.com/UKGovernmentBEIS/inspect_evals@cf50625d0957566bf19c6a4719708653ddf59bc7
+      task_args:
+        sandbox_type: k8s
+      investigation_samples: all
+      checks:
+      - gold-answer
+      policy:
+        models:
+          auditor:
+          - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+          investigators:
+          - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+          subjects:
+          - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+          judges: []
+        limits:
+          max_concurrent_jobs: 3
+          budget_usd: 2.0
+      runs: hawk
+      # TEMPORARY (FRICTION 93): children with the operator's login until Hawk has its token service
+      credential_mode: user
+      box: k8s
+      instructions: 'This case: no supplied logs. Jobs: run_eval fresh attempts on ONE sample with the
+        subject model; then send_investigators on that sample, check gold-answer, with that job''s logs.'
+models:
+- package: inspect-ai
+  items:
+  - name: openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+message_limit: 400
+retry_attempts: 0

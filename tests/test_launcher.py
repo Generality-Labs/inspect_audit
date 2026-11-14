@@ -148,6 +148,55 @@ def test_reap_leaves_a_running_audit_alone(tmp_path: Path) -> None:
     assert not keys.get(record.key_hash).disabled  # type: ignore[arg-type]
 
 
+def test_reap_does_not_kill_a_key_when_hawk_cannot_say(tmp_path: Path) -> None:
+    """A transient 404 or 403 is not evidence the audit stopped (FRICTION 79e)."""
+    launcher, keys, hawk = _launcher(tmp_path)
+    record = asyncio.run(launcher.start({}, 10.0, "flaky"))
+
+    async def unknown(eval_set_id: str, operator_token: str) -> bool | None:
+        return None
+
+    hawk.running = unknown  # type: ignore[method-assign]
+    assert asyncio.run(launcher.reap()) == []
+    assert not keys.get(record.key_hash).disabled  # type: ignore[arg-type]
+
+
+def test_the_audit_itself_runs_with_the_auditor_users_own_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """It launches its children with that token: never leave its mode to Hawk's default
+    (restricted would leave it unable to launch anything; FRICTION 79d)."""
+    import hawk.client
+
+    from inspect_audit.dispatch.hawk import HawkDelivery
+
+    sent: dict[str, Any] = {}
+
+    class Client:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "Client":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def create_eval_set(self, config: Any, **kwargs: Any) -> dict[str, Any]:
+            sent.update(kwargs)
+            return {"eval_set_id": "audit-1"}
+
+    delivery = HawkDelivery.__new__(HawkDelivery)
+    delivery.api_url = "https://hawk.example"
+    monkeypatch.setattr(
+        delivery, "auditor_tokens", lambda token: ("access", "refresh"), raising=False
+    )
+    monkeypatch.setattr(hawk.client, "HawkClient", Client)
+    config = {"tasks": [{"package": "p", "name": "p", "items": [{"name": "audit"}]}]}
+    assert asyncio.run(delivery.submit(config, "refresh")) == "audit-1"
+    assert sent["credential_mode"] == "user" and sent["refresh_token"] == "refresh"
+
+
 def test_one_audit_at_a_time(tmp_path: Path) -> None:
     """One auditor user holds one key; a second launch would share it."""
     launcher, _, _ = _launcher(tmp_path)

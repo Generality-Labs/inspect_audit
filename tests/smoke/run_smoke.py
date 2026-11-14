@@ -1,0 +1,191 @@
+"""End-to-end smoke audits on Hawk, with a cheap real model (FRICTION 81).
+
+Each case in this folder is a whole audit (`inspect_audit/audit`) told to do a few small
+steps: confirm the benchmark is installed in its box, launch a job or two (rescore, code
+variant, fresh attempts, investigators), collect them, submit findings and publish. The
+auditor, investigators and subjects are DeepSeek v4.1 Flash; caps are in each config.
+
+    python tests/smoke/run_smoke.py --revision <pushed commit> [--cases simpleqa-verified ...]
+
+Submits every case to Hawk at once as the logged-in operator, waits, downloads
+the audit's log, and appends one JSON line per case to tests/smoke/results.jsonl: what
+the audit launched and collected, how it ended, what it cost. Paid: run it only with a go.
+"""
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+import tempfile
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+HERE = Path(__file__).parent
+ROOT = HERE.parents[1]
+RESULTS = HERE / "results.jsonl"
+FINISHED = {"complete", "failed", "deleted", "stuck"}
+
+
+def at_revision(path: Path, revision: str) -> str:
+    """A file as it is at `revision`, not in the working tree: the case and the code it
+    runs must come from the same commit (round 6 read an edited case against old code)."""
+    import subprocess
+
+    relative = path.resolve().relative_to(ROOT)
+    return subprocess.run(
+        ["git", "show", f"{revision}:{relative}"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def materialize(case: Path, revision: str) -> Path:
+    """The case with this inspect_audit revision in place of SELF, and the shared testing
+    routine (routine.md) ahead of the case's own notes: every smoke audit presses every
+    button and reports on the tool, not the benchmark. Both are read at `revision`."""
+    config = yaml.safe_load(at_revision(case, revision).replace("@SELF", f"@{revision}"))
+    if os.environ.get("IA_SMOKE_KEEP_PODS"):
+        # keep the runner and sandboxes for debugging; `hawk delete` afterwards
+        config.setdefault("runner", {})["cleanup"] = False
+    args = config["tasks"][0]["items"][0]["args"]
+    args["instructions"] = (
+        at_revision(HERE / "routine.md", revision) + "\n" + args.get("instructions", "")
+    )
+    out = Path(tempfile.mkdtemp(prefix="ia-smoke-")) / case.name
+    out.write_text(yaml.safe_dump(config, sort_keys=False))
+    return out
+
+
+API = "https://api.hawk.hawk.generalitylabs.ai"
+# one token refresh at a time: the cases run concurrently, and concurrent refreshes race
+# on the keyring records
+_AUTH = asyncio.Lock()
+
+
+async def token() -> str:
+    from inspect_audit.dispatch.hawk import HawkLogin
+
+    async with _AUTH:
+        return await HawkLogin(API).access_token()
+
+
+async def submit(config: Path) -> str:
+    """Submit as the logged-in operator; the audit itself in user mode (its children
+    are restricted by the audit's own policy)."""
+    from inspect_audit.dispatch.hawk import HawkLogin, submit_eval_set
+
+    async with _AUTH:
+        login = HawkLogin(API)
+        access, refresh = await login.access_token(), await login.refresh_token()
+    return await submit_eval_set(
+        yaml.safe_load(config.read_text()),
+        api_url=API,
+        token=access,
+        credential_mode="user",
+        refresh_token=refresh,
+    )
+
+
+async def status(eval_set_id: str) -> str:
+    from hawk.client import HawkClient
+
+    async with HawkClient(token=await token(), api_url=API) as client:
+        found = await client.get_job_status(eval_set_id)
+    return str(found.status).lower() if found is not None else "unknown"
+
+
+def audit_summary(log_dir: Path) -> dict[str, Any]:
+    """How the audit ended, from its own log: jobs launched/collected, outcome, cost."""
+    from inspect_ai.log import read_eval_log
+
+    logs = sorted(log_dir.rglob("*.eval"))
+    if not logs:
+        return {"outcome": "no_log"}
+    log = read_eval_log(str(logs[-1]))
+    [sample] = log.samples or [None]  # type: ignore[list-item]
+    if sample is None:
+        return {"outcome": "no_sample", "log_status": log.status}
+    store = sample.store or {}
+    jobs = next((v for k, v in store.items() if k.endswith("jobs")), []) or []
+    outcome = next(
+        (s.value for k, s in (sample.scores or {}).items() if "audit_outcome" in k), None
+    )
+    cost = sum((u.total_cost or 0.0) for u in (sample.model_usage or {}).values())
+    return {
+        "log_status": log.status,
+        "outcome": outcome or (sample.error.message[:300] if sample.error else None),
+        "jobs": [
+            {k: j.get(k) for k in ("label", "kind", "collected", "collection_error")} for j in jobs
+        ],
+        "auditor_cost_usd": round(cost, 4),
+        "messages": len(sample.messages),
+    }
+
+
+async def run(case: Path, revision: str, wait_minutes: float) -> dict[str, Any]:
+    from inspect_audit.dispatch.hawk import download
+
+    started = datetime.now(UTC).isoformat(timespec="seconds")
+    row: dict[str, Any] = {
+        "case": case.name.removesuffix(".eval-set.yaml"),
+        "revision": revision,
+        "started": started,
+    }
+    try:
+        eval_set_id = await submit(materialize(case, revision))
+        row["eval_set_id"] = eval_set_id
+        print(f"{row['case']}: submitted {eval_set_id}", flush=True)
+        deadline = time.monotonic() + 60 * wait_minutes
+        while (state := await status(eval_set_id)) not in FINISHED:
+            if time.monotonic() > deadline:
+                break
+            await asyncio.sleep(60)
+        row["hawk_status"] = state
+        out = Path(tempfile.mkdtemp(prefix="ia-smoke-logs-"))
+        await download(eval_set_id, await token(), out, API)
+        row.update(audit_summary(out))
+    except Exception as ex:  # a failed case is a result, not a crash
+        row["error"] = f"{type(ex).__name__}: {ex}"[:2000]
+    row["finished"] = datetime.now(UTC).isoformat(timespec="seconds")
+    with RESULTS.open("a") as fh:
+        fh.write(json.dumps(row) + "\n")
+    return row
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
+    parser.add_argument("--revision", required=True, help="a pushed inspect_audit commit")
+    parser.add_argument("--cases", nargs="*", help="case names (file stems); default all")
+    parser.add_argument("--wait-minutes", type=float, default=180)
+    args = parser.parse_args(argv)
+    cases = sorted(HERE.glob("*.eval-set.yaml"))
+    if args.cases:
+        cases = [c for c in cases if c.name.removesuffix(".eval-set.yaml") in args.cases]
+    for case in cases:
+        # refuse a broken or uncommitted config before any spend
+        yaml.safe_load(at_revision(case, args.revision))
+    rows = asyncio.run(_all(cases, args.revision, args.wait_minutes))
+    failed = sum(bool(r.get("error")) or r.get("log_status") != "success" for r in rows)
+    return 1 if failed else 0
+
+
+async def _all(cases: list[Path], revision: str, wait_minutes: float) -> list[dict[str, Any]]:
+    """Every case at once: the same spend as one after another, a third of the wait."""
+
+    async def one(case: Path) -> dict[str, Any]:
+        row = await run(case, revision, wait_minutes)
+        print(json.dumps(row, indent=1), flush=True)
+        return row
+
+    return list(await asyncio.gather(*(one(c) for c in cases)))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

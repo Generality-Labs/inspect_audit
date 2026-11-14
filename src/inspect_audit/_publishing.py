@@ -179,8 +179,8 @@ def publish(
         auditor_image: Optional published image for the Kubernetes workspace.
         token_limit: Inspect token limit for this publishing run.
     """
-    from ._audit import DEFAULT_AUDITOR_IMAGE, docker_box
-    from ._audit_workspace import configure, stage_inputs
+    from ._audit_workspace import configure, docker_box, stage_inputs
+    from .containers import AUDITOR_IMAGE
 
     source = Path(bundle).expanduser().resolve()
     if source.name == "findings.json" and source.is_file():
@@ -226,11 +226,8 @@ def publish(
 
     if box not in ("docker", "k8s"):
         raise ValueError("box must be docker or k8s")
-    environment = (
-        docker_box(root)
-        if box == "docker"
-        else configure(root, auditor_image or DEFAULT_AUDITOR_IMAGE)
-    )
+    image = auditor_image or AUDITOR_IMAGE
+    environment = docker_box(root, image) if box == "docker" else configure(root, image)
     return Task(
         dataset=[
             Sample(

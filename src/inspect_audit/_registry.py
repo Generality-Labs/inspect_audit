@@ -1,7 +1,5 @@
 """The package's Inspect tasks: `investigation`, `regrade` and `audit`."""
 
-import importlib
-import importlib.util
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +9,6 @@ from inspect_ai.tool import WebSearchProviders
 from ._audit import audit as audit
 from ._log_sources import fetch_logs as fetch_logs
 from ._log_sources import log_files as log_files
-from ._prices import prices_for_models, register_prices
 from ._publishing import publish as publish
 from ._task import investigation_task
 from .containers import INVESTIGATOR_IMAGE
@@ -21,10 +18,12 @@ def resolve_source(source: str | None) -> str | None:
     """`source=` as a path: a file or directory, or a module name resolved by Python."""
     if source is None or Path(source).exists():
         return source
-    spec = importlib.util.find_spec(source)
-    if spec is None or spec.origin is None:
-        raise ValueError(f"source={source!r} is neither a path nor an importable module")
-    return spec.origin
+    from ._source import installed
+
+    try:
+        return str(installed(source)[0])
+    except ValueError as ex:
+        raise ValueError(f"source={source!r} is neither a path nor an importable module") from ex
 
 
 @task
@@ -49,27 +48,18 @@ def investigation(
     message_limit: int | None = None,
     time_limit: int | None = None,
     working_limit: int | None = None,
-    model_prices: dict[str, dict[str, float]] | None = None,
+    install: list[str] | None = None,
 ) -> Task:
     """Investigate a benchmark task from inside its own samples (see `investigation_task` in `_task`).
 
     Everything is declared: `samples` is a list of ids or the literal "all"; `logs` are
     `.eval` files or `hawk:<eval set id>`; `source` is the task's file, a directory, or
-    a module name. The investigator is the eval's own `--model`. With a `cost_limit`,
-    prices come from Inspect, else OpenRouter's list; `model_prices` overrides them.
+    a module name. The investigator is the eval's own `--model`. Uncapped unless the
+    operator sets `cost_limit`: the launching audit prices its jobs itself (`_spend`).
     `investigator_image` defaults to the published image; "build" builds it locally.
     """
     if isinstance(samples, str) and samples != "all":
         raise ValueError('samples must be a list of sample ids or the literal "all"')
-    if model_prices:
-        register_prices(model_prices)
-    elif cost_limit is not None:
-        # a cost limit needs a price for every model this sample can call: the
-        # investigator (the run's --model) and the judges. Inspect's own costs first,
-        # else OpenRouter's published price; a model with neither is refused there.
-        from inspect_ai.model import get_model
-
-        register_prices(prices_for_models([str(get_model()), *(judge or {}).values()]))
     return investigation_task(
         task,
         samples=samples if samples == "all" else list(samples),
@@ -86,6 +76,7 @@ def investigation(
         notes=notes,
         paper=paper,
         search=search,
+        install=install or (),
         # the published image unless told otherwise; "build" builds it here, from source
         investigator_image=None
         if investigator_image == "build"
@@ -106,7 +97,8 @@ def regrade(
     samples: list[str] | None = None,
     epochs: int = 3,
     cost_limit: float | None = None,
-    model_prices: dict[str, dict[str, float]] | None = None,
+    files: dict[str, str] | None = None,
+    source: str | None = None,
 ) -> Task:
     """Re-grade recorded attempts with the benchmark's own scorers (`regrade_task` in `_regrade`).
 
@@ -115,10 +107,6 @@ def regrade(
     """
     from ._regrade import regrade_task
 
-    if model_prices:
-        register_prices(model_prices)
-    elif cost_limit is not None:
-        register_prices(prices_for_models(list((judge or {}).values())))
     return regrade_task(
         task,
         logs=log_files(logs),
@@ -127,4 +115,20 @@ def regrade(
         samples=samples,
         epochs=epochs,
         cost_limit=cost_limit,
+        files=files,
+        source=source,
     )
+
+
+@task
+def variant(
+    task: str, source: str, files: dict[str, str], task_args: dict[str, Any] | None = None
+) -> Task:
+    """The investigated benchmark with the auditor's replacement `files` laid over it.
+
+    An ablation (`_variant`), recorded file by file in the job. `source` is the module
+    that defines the task.
+    """
+    from ._variant import variant_task
+
+    return variant_task(task, source, task_args or {}, files)

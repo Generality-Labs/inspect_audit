@@ -13,7 +13,9 @@ from inspect_audit._report import AuditRecord
 from inspect_audit.dispatch import (
     FINISHED,
     HawkLogin,
+    HawkRuns,
     Job,
+    JobKind,
     JobState,
     LocalRuns,
     hawk_config,
@@ -157,32 +159,12 @@ def _make_audit(tmp_path: Path, runs: Any) -> _audit.Audit:
     return audit
 
 
-class FakeRuns:
-    def address(self, run_id: str) -> str:
-        return f"hawk:{run_id}"
-
-    def __init__(self) -> None:
-        self.submitted: list[Job] = []
-        # what each run has used so far, as a backend reports it (token counts by model)
-        self.used: dict[str, dict[str, Any]] = {}
-        self.states: dict[str, JobState] = {}
-        self.stopped: list[str] = []
-        self.unstoppable: set[str] = set()
-
-    async def stop(self, run_id: str) -> None:
-        if run_id in self.unstoppable:
-            raise RuntimeError("hawk said no")
-        self.stopped.append(run_id)
-
-    async def submit(self, job: Job) -> str:
-        self.submitted.append(job)
-        return f"run-{len(self.submitted)}"
-
-    async def status(self, run_id: str) -> JobState:
-        return self.states.get(run_id, JobState.RUNNING)
-
-    async def usage(self, run_id: str) -> tuple[dict[str, Any], int]:
-        return self.used.get(run_id, {}), 0
+def _submitted(hawk: Any, run_id: str | None = None) -> tuple[str, dict[str, Any], list[str]]:
+    """What Hawk received for a job: its task's name, its arguments, its models."""
+    config = hawk.jobs[run_id or list(hawk.jobs)[-1]].config
+    [item] = config["tasks"][0]["items"]
+    models = [m["name"] for g in config["models"] for m in g["items"]]
+    return item["name"], item.get("args") or {}, models
 
 
 @pytest.fixture
@@ -195,36 +177,50 @@ def record() -> AuditRecord:
 
 
 def test_launched_jobs_are_recorded_and_only_allowed_models_run(
-    tmp_path: Path, record: AuditRecord
+    tmp_path: Path, record: AuditRecord, hawk: Any
 ) -> None:
-    runs = FakeRuns()
-    inv = _make_audit(tmp_path, runs)
+    inv = _make_audit(tmp_path, HawkRuns(hawk.url, credential_mode="restricted"))
     benchmark = _audit.run_eval(inv)
     out = asyncio.run(benchmark("smoke", ["1"], ["openai/subject"], "{}", 1, [], None, [], "why"))  # type: ignore[arg-type]
-    assert "hawk:run-1" in out
+    [run_id] = hawk.jobs
+    assert f"hawk:{run_id}" in out
     assert record.jobs == [
         {
             "label": "smoke",
             "kind": "benchmark",
-            "run_id": "run-1",
-            "address": "hawk:run-1",
+            "run_id": run_id,
+            "address": f"hawk:{run_id}",
             "note": "why",
             "policy_sha256": inv.authorizer.policy.digest,
         }
     ]
+    # what Hawk received: the benchmark's task on the one sample, with the subject model
+    config = hawk.jobs[run_id].config
+    [item] = config["tasks"][0]["items"]
+    assert item["sample_ids"] == ["1"]
+    assert [m["name"] for g in config["models"] for m in g["items"]] == ["openai/subject"]
     from inspect_ai.tool import ToolError
 
     with pytest.raises(ToolError, match="may not be evaluated"):
         asyncio.run(benchmark("other", None, ["openai/investigator"], "{}", 1, [], None, [], ""))  # type: ignore[arg-type]
     with pytest.raises(ToolError, match="exists"):
         asyncio.run(benchmark("smoke", None, ["openai/subject"], "{}", 1, [], None, [], ""))  # type: ignore[arg-type]
+    assert len(hawk.jobs) == 1, "a refused launch reaches Hawk with nothing"
 
 
-def test_the_audits_end_stops_its_running_jobs(tmp_path: Path, record: AuditRecord) -> None:
-    runs = FakeRuns()
-    inv = _make_audit(tmp_path, runs)
-    runs.states = {"done": JobState.COMPLETE, "stuck": JobState.STUCK}
-    runs.unstoppable = {"stubborn"}
+def test_the_audits_end_stops_its_running_jobs(
+    tmp_path: Path, record: AuditRecord, hawk: Any
+) -> None:
+    from test_helpers.fake_hawk import FakeJob
+
+    inv = _make_audit(tmp_path, HawkRuns(hawk.url, credential_mode="restricted"))
+    for label, status in [
+        ("running", "running"),
+        ("done", "complete"),
+        ("stuck", "stuck"),
+        ("asked", "running"),
+    ]:
+        hawk.jobs[label] = FakeJob(config={}, body={}, status=status)
     record.jobs = [
         {"label": label, "run_id": label, **extra}
         for label, extra in [
@@ -232,25 +228,24 @@ def test_the_audits_end_stops_its_running_jobs(tmp_path: Path, record: AuditReco
             ("done", {}),
             ("stuck", {}),
             ("asked", {"stop_requested": True}),
-            ("stubborn", {}),
+            ("lost", {}),  # Hawk no longer knows it: it cannot be stopped
         ]
     ]
     assert asyncio.run(inv.stop_unsettled(record)) == ["running"]
-    assert runs.stopped == ["running"]
+    assert [label for label, job in hawk.jobs.items() if job.stopped] == ["running"]
     by_label = {j["label"]: j for j in record.jobs}
     assert by_label["running"]["stopped_by"] == "audit end"
-    # a job Hawk would not stop is left unmarked, so a resumed audit still sees it running
-    assert "stop_requested" not in by_label["stubborn"]
+    # a job that could not be stopped is left unmarked, so a resumed audit still sees it
+    assert "stop_requested" not in by_label["lost"]
     assert "stop_requested" not in by_label["done"]
 
 
 def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
-    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, record: AuditRecord, hawk: Any
 ) -> None:
     from inspect_ai.tool import ToolError
 
-    runs = FakeRuns()
-    inv = _make_audit(tmp_path, runs)
+    inv = _make_audit(tmp_path, HawkRuns(hawk.url, credential_mode="restricted"))
     inv.paper = "https://arxiv.org/abs/2601.00001"
     record.jobs.append({"label": "smoke", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})
     investigation = _audit.send_investigators(inv)
@@ -265,32 +260,27 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
             "Check every failed rubric item against the context.",
         )
     )
-    [job] = runs.submitted
+    name, args, models = _submitted(hawk)
+    assert name == "investigation" and models == ["openai/investigator"]
+    assert "benchmark" in hawk.jobs[list(hawk.jobs)[-1]].config["packages"]
     # the auditor's note is the investigators' brief, not just a line in its record
-    assert job.task_args["notes"] == "Check every failed rubric item against the context."
+    assert args["notes"] == "Check every failed rubric item against the context."
     # and the operator's paper goes with it (FRICTION 40)
-    assert job.task_args["paper"] == "https://arxiv.org/abs/2601.00001"
-    assert job.task == "inspect_audit/investigation" and job.extra_packages == ["benchmark"]
-    assert job.task_args["logs"] == ["hawk:r", "hawk:supplied-logs"]
-    assert job.task_args["judge"] == {"grader": "openai/judge"}
-    assert job.task_args["source"] == "benchmark.task"
+    assert args["paper"] == "https://arxiv.org/abs/2601.00001"
+    assert args["logs"] == ["hawk:r", "hawk:supplied-logs"]
+    assert args["judge"] == {"grader": "openai/judge"}
+    assert args["source"] == "benchmark.task"
     # the benchmark goes into the investigators' own boxes as the job installs it (FRICTION 74)
-    assert job.task_args["install"][0] == "benchmark"
-    assert job.task_args["install"][-1].startswith("inspect-ai==")
+    assert args["install"][0] == "benchmark" and args["install"][-1].startswith("inspect-ai==")
     # uncapped, and no prices: the audit prices its jobs itself (FRICTION 100)
-    assert "cost_limit" not in job.task_args and "prices" not in job.task_args
+    assert "cost_limit" not in args and "prices" not in args
     with pytest.raises(ToolError, match="neither a job of yours nor a supplied source"):
         asyncio.run(
             investigation(
-                "a2",
-                ["1"],
-                ["gold-answer"],
-                ["/etc/passwd"],
-                "openai/investigator",
-                "{}",
-                "",
+                "a2", ["1"], ["gold-answer"], ["/etc/passwd"], "openai/investigator", "{}", ""
             )  # type: ignore[arg-type]
         )
+    assert len(hawk.jobs) == 1
 
 
 @pytest.mark.parametrize(
@@ -555,17 +545,14 @@ def test_a_balance_without_a_number_is_unknown_not_zero(monkeypatch: pytest.Monk
 
 
 def test_an_empty_judge_reaches_the_investigation_as_empty(
-    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, record: AuditRecord, hawk: Any
 ) -> None:
     """{} means "their grader calls no model"; None means "infer it from the logs"."""
-    runs = FakeRuns()
-    inv = _make_audit(tmp_path, runs)
+    inv = _make_audit(tmp_path, HawkRuns(hawk.url, credential_mode="restricted"))
     asyncio.run(
-        _audit.send_investigators(inv)(  # type: ignore[arg-type]
-            "a", ["1"], ["gold-answer"], [], None, "{}", ""
-        )
+        _audit.send_investigators(inv)("a", ["1"], ["gold-answer"], [], None, "{}", "")  # type: ignore[arg-type]
     )
-    assert runs.submitted[0].task_args["judge"] == {}
+    assert _submitted(hawk)[1]["judge"] == {}
 
 
 def test_local_completion_reads_only_the_output_tail(tmp_path: Path, monkeypatch) -> None:
@@ -588,47 +575,55 @@ def test_local_completion_reads_only_the_output_tail(tmp_path: Path, monkeypatch
 
 
 def test_even_an_empty_configuration_requires_a_bound_policy(
-    tmp_path: Path, record: AuditRecord
+    tmp_path: Path, record: AuditRecord, hawk: Any
 ) -> None:
     from inspect_ai.util import Store
     from inspect_ai.util._store import init_subtask_store
 
-    runs = FakeRuns()
-    audit = _make_audit(tmp_path, runs)
+    audit = _make_audit(tmp_path, HawkRuns(hawk.url, credential_mode="restricted"))
     init_subtask_store(Store())
     job = Job(label="child", task="benchmark/task", package="benchmark", models=["openai/subject"])
     with pytest.raises(RuntimeError, match="differs from its saved launch policy"):
-        asyncio.run(audit.launch(job, "benchmark", "unbound"))
-    assert not runs.submitted
+        asyncio.run(audit.launch(job, JobKind.BENCHMARK, "unbound"))
+    assert not hawk.jobs
 
 
 def test_budget_reports_what_the_audit_and_each_job_have_spent(
-    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch, hawk: Any
 ) -> None:
     """One owner (`Spend`): own calls plus every job's spend so far, running or not,
     priced from its token counts at the audit's prices (FRICTION 25, 99)."""
     from types import SimpleNamespace
 
     import inspect_ai.util
-    from inspect_ai.model import ModelUsage
+    from test_helpers.fake_hawk import FakeJob
 
     from inspect_audit._spend import Spend
 
     _prices.register_price("openai/investigator", {"input": 1.0, "output": 2.0})
-    runs = FakeRuns()
-    runs.used = {
-        # 1M in + 1M out at $1/$2 per M: $3, while still running
-        "r1": {"openai/investigator": ModelUsage(input_tokens=1_000_000, output_tokens=1_000_000)},
-        "r2": {"openai/unpriced": ModelUsage(input_tokens=5)},
+    # 1M in + 1M out at $1/$2 per M: $3, while still running
+    big = {
+        "openai/investigator": {
+            "input_tokens": 1_000_000,
+            "output_tokens": 1_000_000,
+            "total_tokens": 2_000_000,
+        }
     }
+    hawk.jobs["r1"] = FakeJob(config={}, body={}, samples=[(False, big)])
+    hawk.jobs["r2"] = FakeJob(
+        config={},
+        body={},
+        samples=[(False, {"openai/unpriced": {"input_tokens": 5, "total_tokens": 5}})],
+    )
     record.jobs.append({"label": "screen", "kind": "investigation", "run_id": "r1", "address": "a"})
     record.jobs.append({"label": "odd", "kind": "benchmark", "run_id": "r2", "address": "b"})
+    # the auditor's own calls, as Inspect accounts them for the running sample
     monkeypatch.setattr(
         inspect_ai.util,
         "sample_limits",
         lambda: SimpleNamespace(cost=SimpleNamespace(usage=5.82, limit=None)),
     )
-    spend = Spend(runs, budget_usd=100.0)
+    spend = Spend(HawkRuns(hawk.url, credential_mode="restricted"), budget_usd=100.0)
     report = asyncio.run(_spend.budget(spend)())  # type: ignore[call-arg]
     assert "Your own calls: $5.82" in report
     assert "screen (investigation, running): $3.00 so far" in report
@@ -687,7 +682,7 @@ def test_every_argument_a_job_may_carry_is_one_its_task_accepts() -> None:
 
 
 def test_the_auditor_launches_a_regrade_as_its_judge(
-    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, record: AuditRecord, hawk: Any
 ) -> None:
     """Re-judging needs the judge's credentials, which only a job has (FRICTION 20)."""
     import inspect as pyinspect
@@ -697,11 +692,10 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
     from inspect_audit import _registry
     from inspect_audit.dispatch.policy import REGRADE_ARGS
 
-    runs = FakeRuns()
-    inv = _make_audit(tmp_path, runs)
+    inv = _make_audit(tmp_path, HawkRuns(hawk.url, credential_mode="restricted"))
     regrade = _audit.run_eval(inv)
     asyncio.run(
-        regrade(  # type: ignore[arg-type]
+        regrade(
             "rejudge",
             ["1"],
             [],
@@ -711,40 +705,32 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
             None,
             [],
             "noise",
-        )
+        )  # type: ignore[arg-type]
     )
-    [job] = runs.submitted
-    assert job.task == "inspect_audit/regrade" and job.models == ["openai/judge"]
-    assert job.task_args["judge"] == {"grader": "openai/judge"} and job.task_args["epochs"] == 3
-    assert job.task_args["logs"] == ["hawk:supplied-logs"]
+    name, args, models = _submitted(hawk)
+    assert name == "regrade" and models == ["openai/judge"]
+    assert args["judge"] == {"grader": "openai/judge"} and args["epochs"] == 3
+    assert args["logs"] == ["hawk:supplied-logs"]
     assert set(pyinspect.signature(_registry.regrade).parameters) >= REGRADE_ARGS
+    # no per-item cap and no prices: the audit prices its jobs itself (FRICTION 100)
+    assert "cost_limit" not in args and "prices" not in args
     # a grader that calls no model (SciCode's tests) is rescored too, under a mock model
     asyncio.run(
-        regrade(  # type: ignore[arg-type]
-            "rerun-tests", ["1"], [], "{}", 1, ["hawk:supplied-logs"], None, [], "tests"
-        )
+        regrade("rerun-tests", ["1"], [], "{}", 1, ["hawk:supplied-logs"], None, [], "tests")  # type: ignore[arg-type]
     )
-    assert runs.submitted[-1].models == ["mockllm/model"]
-    assert runs.submitted[-1].task_args["judge"] == {}
+    _, args, models = _submitted(hawk)
+    assert models == ["mockllm/model"] and args["judge"] == {}
     # a variant's attempts are graded in its own run: rescoring them is refused at once
-    record = _audit.store_as(AuditRecord)
     record.jobs = [
         *record.jobs,
         {"label": "v", "kind": "variant", "run_id": "x", "address": "hawk:x"},
     ]
     with pytest.raises(ToolError, match=r"not v \(variant\)"):
-        asyncio.run(
-            regrade(  # type: ignore[arg-type]
-                "rv", ["1"], [], "{}", 1, ["v"], None, [], ""
-            )
-        )
-    # no per-item cap and no prices: the audit prices its jobs itself (FRICTION 100)
-    assert "cost_limit" not in runs.submitted[-1].task_args
-    assert "prices" not in runs.submitted[-1].task_args
+        asyncio.run(regrade("rv", ["1"], [], "{}", 1, ["v"], None, [], ""))  # type: ignore[arg-type]
     # epochs are the auditor's call; only a non-positive count is refused
     with pytest.raises(ToolError, match="positive whole number"):
         asyncio.run(
-            regrade(  # type: ignore[arg-type]
+            regrade(
                 "again",
                 ["1"],
                 [],
@@ -754,12 +740,13 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
                 None,
                 [],
                 "",
-            )
+            )  # type: ignore[arg-type]
         )
+    assert len(hawk.jobs) == 2
 
 
 def test_launches_stop_once_spend_so_far_reaches_the_budget(
-    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch, hawk: Any
 ) -> None:
     """No reservations: worst-case caps starved investigations and stopped the auditor
     with the budget unspent (FRICTION 25, 50, 52, 76). Measured spend alone decides."""
@@ -767,35 +754,30 @@ def test_launches_stop_once_spend_so_far_reaches_the_budget(
 
     import inspect_ai.util
     from inspect_ai.tool import ToolError
-
-    from inspect_audit.dispatch.policy import Limits
-
-    runs = FakeRuns()
-    inv = _make_audit(tmp_path, runs)
-    policy = inv.authorizer.policy
-    budgeted = policy.model_copy(update={"limits": Limits(budget_usd=10.0)})
-    from inspect_ai.model import ModelUsage
     from inspect_ai.util import store_as
 
     from inspect_audit._spend import Spend
-    from inspect_audit.dispatch.policy import AuditAuthorizer, PolicyStore, ensure_policy
+    from inspect_audit.dispatch.policy import AuditAuthorizer, Limits, PolicyStore, ensure_policy
 
+    runs = HawkRuns(hawk.url, credential_mode="restricted")
+    inv = _make_audit(tmp_path, runs)
+    budgeted = inv.authorizer.policy.model_copy(update={"limits": Limits(budget_usd=10.0)})
     inv.authorizer = AuditAuthorizer(budgeted)
-    inv.spend = Spend(runs, 10.0)
+    inv.spend = Spend(inv.runs, 10.0)
     saved = store_as(PolicyStore)
     saved.policy_json = saved.digest = None  # the fixture's policy, replaced by the budgeted one
     ensure_policy(budgeted, saved, require_existing=False)
-    own = {"usage": 4.0}
+    # the auditor's own calls so far, as Inspect accounts them
     monkeypatch.setattr(
         inspect_ai.util,
         "sample_limits",
-        lambda: SimpleNamespace(cost=SimpleNamespace(usage=own["usage"], limit=None)),
+        lambda: SimpleNamespace(cost=SimpleNamespace(usage=4.0, limit=None)),
     )
     investigate = _audit.send_investigators(inv)
 
     def launch(label: str, samples: list[str]) -> str:
         return asyncio.run(
-            investigate(  # type: ignore[arg-type]
+            investigate(
                 label,
                 samples,
                 ["gold-answer"],
@@ -803,27 +785,31 @@ def test_launches_stop_once_spend_so_far_reaches_the_budget(
                 "openai/investigator",
                 '{"grader": "openai/judge"}',
                 "",
-            )
+            )  # type: ignore[arg-type]
         )
 
     # $4 spent; jobs launch, uncapped, nothing reserved
     launch("first", [str(i) for i in range(1, 21)])
     launch("second", ["21"])
-    # a fresh rerun has no cap, and is no longer refused for it
     out = asyncio.run(
         _audit.run_eval(inv)("rerun", ["1"], ["openai/subject"], "{}", 1, [], None, [], "")  # type: ignore[arg-type]
     )
     assert "Launched" in out
     # once spend reaches the budget, launches stop: a running job counts what it has
-    # spent so far, not only once collected (FRICTION 99)
+    # spent so far, as Hawk reports it, not only once collected (FRICTION 99)
     _prices.register_price("openai/investigator", {"input": 1.0, "output": 1.0})
-    runs.used["run-1"] = {"openai/investigator": ModelUsage(input_tokens=6_500_000)}
+    first = record.jobs[0]["run_id"]
+    hawk.progress(
+        first,
+        [(False, {"openai/investigator": {"input_tokens": 6_500_000, "total_tokens": 6_500_000}})],
+    )
     with pytest.raises(ToolError, match="budget is spent"):
         launch("third", ["22"])
+    assert len(hawk.jobs) == 3
 
 
 def test_full_coverage_holds_submission_until_every_cell_has_a_take(
-    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, record: AuditRecord, hawk: Any
 ) -> None:
     """v3 sampled 120 of 409 failures and stopped with $132 unspent (FRICTION 25)."""
     from inspect_ai.tool import ToolError
@@ -832,69 +818,48 @@ def test_full_coverage_holds_submission_until_every_cell_has_a_take(
     from inspect_audit._findings import submit_findings
     from inspect_audit.dispatch.policy import AuditAuthorizer, Limits
 
-    inv = _make_audit(tmp_path, FakeRuns())
+    inv = _make_audit(tmp_path, HawkRuns(hawk.url, credential_mode="restricted"))
     policy = inv.authorizer.policy
     inv.authorizer = AuditAuthorizer(policy.model_copy(update={"limits": Limits(coverage="full")}))
-    gap = _register.Register(
-        checks=["gold-answer"], samples={"1": {"gold-answer": []}, "2": {"gold-answer": []}}
+    # the population, with no verdict collected for either item
+    _register.save(
+        _register.Register(
+            checks=["gold-answer"], samples={"1": {"gold-answer": []}, "2": {"gold-answer": []}}
+        )
     )
-
-    async def loaded() -> _register.Register:
-        return gap
-
-    monkeypatch.setattr(_register, "load", loaded)
     with pytest.raises(ToolError, match="full coverage: 2 of 2"):
         asyncio.run(submit_findings(tmp_path, inv, "b/t")())  # type: ignore[call-arg]
 
 
-class RefusingRuns(FakeRuns):
-    """Hawk as v5 met it: the proxy lacks a model, so submissions and lookups fail."""
-
-    async def submit(self, job: Job) -> str:
-        raise RuntimeError("Middleman error: Models not found: ['openai/gpt-5.1']")
-
-    async def status(self, run_id: str) -> str:
-        raise ConnectionError("Hawk API unreachable")
-
-
 def test_a_platform_refusal_reaches_the_auditor_not_the_eval(
-    tmp_path: Path, record: AuditRecord
+    tmp_path: Path, record: AuditRecord, hawk: Any
 ) -> None:
     # FRICTION 51: an exception here ended the audit with nothing saved
     from inspect_ai.tool import ToolError
 
-    inv = _make_audit(tmp_path, RefusingRuns())
+    inv = _make_audit(tmp_path, HawkRuns(hawk.url, credential_mode="restricted"))
     benchmark = _audit.run_eval(inv)
+    # Hawk as v5 met it: its proxy lacked a model, so it refused the submission
+    hawk.refuse = "Middleman error: Models not found: ['openai/gpt-5.1']"
     with pytest.raises(ToolError, match="Models not found"):
         asyncio.run(benchmark("smoke", ["1"], ["openai/subject"], "{}", 1, [], None, [], ""))  # type: ignore[arg-type]
     assert record.jobs == []
 
+    hawk.refuse, hawk.down = None, True
     record.jobs.append({"label": "old", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})
-    with pytest.raises(ToolError, match="unreachable"):
+    with pytest.raises(ToolError, match=r"503|unreachable"):
         asyncio.run(_audit.jobs(inv)("status", "old", None))  # type: ignore[arg-type]
 
 
-def test_hawk_says_which_models_it_will_refuse(monkeypatch: pytest.MonkeyPatch) -> None:
-    from inspect_audit.dispatch import hawk as hawk_backend
-    from inspect_audit.dispatch.hawk import HawkRuns
-
-    async def served(*args: object, **kwargs: object) -> list[dict[str, object]]:
-        # public names as our proxy listed them on 2026-11-12 (FRICTION 71)
-        return [
-            {"name": "gpt-6-luna"},
-            {"name": "gpt-5.1"},
-            {"name": "anthropic/claude-opus-5.5"},
-            {"name": "openrouter/anthropic/claude-opus-5.5"},
-            {"name": "gpt-4", "dead": True},
-        ]
-
-    runs = HawkRuns("https://api.example")
-
-    async def token() -> str:
-        return "t"
-
-    monkeypatch.setattr(runs.login, "access_token", token)
-    monkeypatch.setattr(hawk_backend, "middleman_request", served)
+def test_hawk_says_which_models_it_will_refuse(hawk: Any) -> None:
+    # public names as our proxy listed them on 2026-11-12 (FRICTION 71)
+    hawk.served = [
+        "gpt-6-luna",
+        "gpt-5.1",
+        "anthropic/claude-opus-5.5",
+        "openrouter/anthropic/claude-opus-5.5",
+        {"name": "gpt-4", "dead": True},
+    ]
     asked = [
         "openai/gpt-6-luna",  # served as gpt-6-luna
         "openai/gpt-5.1",  # served as gpt-5.1: Hawk 4 accepts it
@@ -902,7 +867,7 @@ def test_hawk_says_which_models_it_will_refuse(monkeypatch: pytest.MonkeyPatch) 
         "openai-api/openrouter/openrouter/anthropic/claude-opus-5.5",
         "openai/gpt-4",  # dead
     ]
-    missing = asyncio.run(runs.unservable(asked))
+    missing = asyncio.run(HawkRuns(hawk.url, credential_mode="restricted").unservable(asked))
     assert missing == ["anthropic/claude-opus-5.5", "openai/gpt-4"]
 
 
@@ -941,7 +906,7 @@ def test_hawk_status_words_are_read_in_one_place() -> None:
 
 
 def test_spend_that_cannot_be_read_stops_launches(
-    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, record: AuditRecord, monkeypatch: pytest.MonkeyPatch, hawk: Any
 ) -> None:
     """A failed lookup counted as $0: a review launched a job at $9 of $10 with Hawk
     unreachable. Unknown spend is unknown, and the budget cannot be checked (FRICTION 114)."""
@@ -949,53 +914,49 @@ def test_spend_that_cannot_be_read_stops_launches(
 
     import inspect_ai.util
     from inspect_ai.tool import ToolError
+    from test_helpers.fake_hawk import FakeJob
 
     from inspect_audit._spend import Spend
-
-    class Unreachable(FakeRuns):
-        async def usage(self, run_id: str) -> tuple[dict[str, Any], int]:
-            raise ConnectionError("hawk is down")
 
     monkeypatch.setattr(
         inspect_ai.util,
         "sample_limits",
         lambda: SimpleNamespace(cost=SimpleNamespace(usage=9.0, limit=None)),
     )
+    hawk.jobs["r1"] = FakeJob(config={}, body={})
     record.jobs.append({"label": "running", "kind": "benchmark", "run_id": "r1", "address": "a"})
-    spend = Spend(Unreachable(), 10.0)
+    hawk.down = True
+    spend = Spend(HawkRuns(hawk.url, credential_mode="restricted"), 10.0)
     with pytest.raises(ToolError, match="cannot read what running spent"):
         asyncio.run(spend.refuse_if_spent())
-    assert "running (benchmark, running): spend unknown" in "\n".join(asyncio.run(spend.report()))
+    assert "running (benchmark, unknown): spend unknown" in "\n".join(asyncio.run(spend.report()))
 
 
 def test_a_flaky_backend_reaches_the_auditor_wherever_it_is_called(
-    tmp_path: Path, record: AuditRecord
+    tmp_path: Path, record: AuditRecord, hawk: Any
 ) -> None:
     """A status check outside the old per-tool wrapper (the concurrency cap) let a
     ConnectionError end the sample (FRICTION 115); every backend call is wrapped now."""
     from inspect_ai.tool import ToolError
-
-    from inspect_audit.dispatch.policy import AuditAuthorizer, Limits
-
-    class Flaky(FakeRuns):
-        async def status(self, run_id: str) -> JobState:
-            raise ConnectionError("hawk dropped the connection")
-
-    inv = _make_audit(tmp_path, Flaky())
-    capped = inv.authorizer.policy.model_copy(update={"limits": Limits(max_concurrent_jobs=1)})
     from inspect_ai.util import store_as
+    from test_helpers.fake_hawk import FakeJob
 
-    from inspect_audit.dispatch.policy import PolicyStore, ensure_policy
+    from inspect_audit.dispatch.policy import AuditAuthorizer, Limits, PolicyStore, ensure_policy
 
+    inv = _make_audit(tmp_path, HawkRuns(hawk.url, credential_mode="restricted"))
+    capped = inv.authorizer.policy.model_copy(update={"limits": Limits(max_concurrent_jobs=1)})
     inv.authorizer = AuditAuthorizer(capped)
     saved = store_as(PolicyStore)
     saved.policy_json = saved.digest = None
     ensure_policy(capped, saved, require_existing=False)
+    hawk.jobs["r"] = FakeJob(config={}, body={})
     record.jobs.append({"label": "old", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})
-    with pytest.raises(ToolError, match=r"status\(r\) failed: ConnectionError"):
+    hawk.down = True
+    with pytest.raises(ToolError, match=r"status\(r\) failed"):
         asyncio.run(
             _audit.run_eval(inv)("new", ["1"], ["openai/subject"], "{}", 1, [], None, [], "")  # type: ignore[arg-type]
         )
+    assert list(hawk.jobs) == ["r"], "nothing launched past an unreadable concurrency check"
 
 
 def test_a_job_is_settled_only_when_it_can_produce_nothing_more() -> None:

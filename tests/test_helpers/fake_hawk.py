@@ -40,12 +40,16 @@ class FakeJob:
 
 class FakeHawk:
     def __init__(
-        self, prices: list[dict[str, Any]] | None = None, served: list[str] | None = None
+        self, prices: list[dict[str, Any]] | None = None, served: list[Any] | None = None
     ) -> None:
         self.jobs: dict[str, FakeJob] = {}
         self.prices = prices or []
-        # public model names the proxy serves to this caller
-        self.served = list(served or [])
+        # what the proxy serves to this caller: public names, or {"name", "dead"} rows
+        self.served: list[str | dict[str, Any]] = list(served or [])
+        # a refusal Hawk answers every submission with (as when its proxy lacks a model)
+        self.refuse: str | None = None
+        # Hawk unreachable for status and monitoring calls
+        self.down = False
         self.tokens_seen: list[str] = []
         # the identity provider's side: refresh tokens presented, and whether it rotates them
         self.grants: list[str] = []
@@ -89,6 +93,8 @@ class FakeHawk:
 
     def _job(self, request: web.Request) -> FakeJob:
         self._seen(request)
+        if self.down:
+            raise web.HTTPServiceUnavailable(text="Hawk API unreachable")
         job = self.jobs.get(request.match_info["id"])
         if job is None:
             raise web.HTTPNotFound(text=json.dumps({"detail": "not found"}))
@@ -113,6 +119,8 @@ class FakeHawk:
 
     async def _create(self, request: web.Request) -> web.Response:
         self._seen(request)
+        if self.refuse:
+            raise web.HTTPBadRequest(text=json.dumps({"detail": self.refuse}))
         body = await request.json()
         run_id = body.get("eval_set_id") or f"fake-{next(self._ids)}"
         self.jobs[run_id] = FakeJob(config=body.get("eval_set_config") or {}, body=body)
@@ -216,7 +224,7 @@ class FakeHawk:
         body = await request.json()
         bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
         assert body.get("api_key") == bearer
-        return web.json_response([{"name": n} for n in self.served])
+        return web.json_response([n if isinstance(n, dict) else {"name": n} for n in self.served])
 
     async def _token(self, request: web.Request) -> web.Response:
         """The identity provider's refresh-token grant, as a runner's hook calls it."""
@@ -284,3 +292,29 @@ def runner_hook(monkeypatch: Any, hawk: FakeHawk, tmp_path: Path) -> Any:
     # how a runner's hooks are found: the one registry Inspect consults
     monkeypatch.setattr(_hooks, "get_all_hooks", lambda: [hook])
     return hook
+
+
+class ThreadedHawk:
+    """A FakeHawk on its own event loop in a background thread.
+
+    For tests that drive our code with `asyncio.run`: each run gets a fresh loop, and
+    this server outlives them all. Its controls (`finish`, `stuck`, ...) are plain
+    dictionary updates, safe to call from the test's thread between requests.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        import asyncio
+        import threading
+
+        self.hawk = FakeHawk(**kwargs)
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+        self._thread.start()
+        asyncio.run_coroutine_threadsafe(self.hawk.__aenter__(), self._loop).result(30)
+
+    def close(self) -> None:
+        import asyncio
+
+        asyncio.run_coroutine_threadsafe(self.hawk.__aexit__(), self._loop).result(30)
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        self._thread.join(30)

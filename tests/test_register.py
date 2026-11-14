@@ -159,6 +159,9 @@ def test_the_views_select_cells_by_state(box: dict[str, str]) -> None:
     assert cells("disputed") == ["1"]
 
 
+LONG_EXPLANATION = "Checked against the cited source, paragraph by paragraph. " * 40
+
+
 def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
     box: dict[str, str], tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -174,10 +177,14 @@ def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
     @scorer(metrics=[], name="gold-answer")
     def verdict():
         async def score(state: Any, target: Any) -> Score:
+            # as large as a real investigator's: summaries would cut both (FRICTION 125)
             return Score(
                 value="INCORRECT" if state.sample_id == 2 else "CORRECT",
-                explanation="checked against the source",
-                metadata={"evidence": [{"observed": "the source says 9", "source": "url"}]},
+                explanation=LONG_EXPLANATION,
+                metadata={
+                    "evidence": [{"observed": "the source says 9", "source": "url"}]
+                    + [{"observed": f"note {n} " + "x" * 80, "source": "url"} for n in range(20)]
+                },
             )
 
         return score
@@ -235,6 +242,8 @@ def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
         "hawk:investigation-1",
         "the source says 9",
     )
+    # whole, not a summary's preview
+    assert len(take.evidence) == 21 and take.explanation == LONG_EXPLANATION
     assert register.samples["3"]["gold-answer"] == []  # not investigated: still missing
 
 

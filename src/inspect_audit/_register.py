@@ -88,14 +88,26 @@ def save(register: Register) -> None:
 async def verdicts_in(files: list[Path], address: str, checks: list[str]) -> list[dict[str, Any]]:
     """Every verdict the investigation logs record, one row each.
 
-    The score of each check on each sample, read from the logs' sample summaries.
+    The score of each check on each sample, read from the full sample, one at a time.
+    Not from the sample summaries: Inspect shortens their score explanations and
+    replaces any score metadata over 1 KB with a placeholder string, which dropped
+    every real investigator's evidence (FRICTION 125).
     """
-    from inspect_ai.log import read_eval_log_async, read_eval_log_sample_summaries_async
+    from inspect_ai.log import (
+        read_eval_log_async,
+        read_eval_log_sample_async,
+        read_eval_log_sample_summaries_async,
+    )
 
     rows: list[dict[str, Any]] = []
     for file in files:
         header = await read_eval_log_async(str(file), header_only=True)
-        for sample in await read_eval_log_sample_summaries_async(str(file)):
+        for summary in await read_eval_log_sample_summaries_async(str(file)):
+            if not set(summary.scores or {}) & set(checks):
+                continue
+            sample = await read_eval_log_sample_async(
+                str(file), id=summary.id, epoch=summary.epoch, exclude_fields={"events"}
+            )
             for check, score in (sample.scores or {}).items():
                 if check not in checks:
                     continue

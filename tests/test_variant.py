@@ -96,7 +96,7 @@ def test_the_variant_task_takes_what_the_authoriser_allows() -> None:
 
 
 def test_run_eval_with_code_launches_a_recorded_variant(
-    varbench: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    varbench: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hawk: Any
 ) -> None:
     from inspect_ai.util import Store, store_as
     from inspect_ai.util._store import init_subtask_store
@@ -107,21 +107,11 @@ def test_run_eval_with_code_launches_a_recorded_variant(
 
     init_subtask_store(Store())
 
-    class Runs:
-        def __init__(self) -> None:
-            self.submitted: list[Any] = []
+    from inspect_audit.dispatch import HawkRuns
 
-        def address(self, run_id: str) -> str:
-            return f"hawk:{run_id}"
-
-        async def submit(self, job: Any) -> str:
-            self.submitted.append(job)
-            return "run-1"
-
-    runs = Runs()
     inv = make_audit(
         root=tmp_path,
-        runs=runs,
+        runs=HawkRuns(hawk.url, credential_mode="restricted"),
         task="varbench/bench",
         task_package="varbench",
         investigation_package="inspect_audit",
@@ -141,10 +131,13 @@ def test_run_eval_with_code_launches_a_recorded_variant(
         asyncio.run(
             run("ablate", ["1"], ["openai/subject"], "{}", 1, [], str(tmp_path / "v"), [], "prompt")  # type: ignore[arg-type]
         )
-    [job] = runs.submitted
-    assert job.task == "inspect_audit/variant" and job.package == "inspect_audit"
-    assert job.extra_packages == ["varbench"]
-    assert job.task_args == {
+    # what Hawk received: our variant task, the benchmark beside it, the change as its files
+    [submitted] = hawk.jobs.values()
+    [group] = submitted.config["tasks"]
+    [item] = group["items"]
+    assert item["name"] == "variant" and group["package"] == "inspect_audit"
+    assert "varbench" in submitted.config["packages"]
+    assert item["args"] == {
         "task": "varbench/bench",
         "source": "varbench.tasks",
         "task_args": {},

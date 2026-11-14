@@ -9,11 +9,11 @@ HERE = Path(__file__).parent
 # packages exported from uv.lock at build time. Public: no registry login needed.
 INVESTIGATOR_IMAGE = (
     "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
-    "cde03f37170b9d112eff3fc98823c344154d51abf587de4df7146fa72a0be4e1"
+    "e3f69ee90aa0103d6597e0a28f0d582196fda90554962283dcbbdf4a187eabd9"
 )
 AUDITOR_IMAGE = (
     "ghcr.io/generality-labs/inspect-audit-auditor@sha256:"
-    "f0ed82536bde7b211a4973dc3b1b779431774922d8e1fef25931610d7c064b98"
+    "11e169186d410a467078ee109f1dd1b424481d3f48998d9a00905e6672eadfee"
 )
 
 __all__ = ["AUDITOR_IMAGE", "INVESTIGATOR_IMAGE"]

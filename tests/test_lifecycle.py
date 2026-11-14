@@ -60,8 +60,15 @@ def test_child_investigation_is_collected_once_into_the_register(tmp_path: Path)
         async def solve(state: TaskState, generate: Generate) -> TaskState:
             from inspect_ai.util import sandbox
 
-            from inspect_audit._findings import FindingsState, read_bundle, submit_findings
+            from inspect_audit._findings import (
+                Findings,
+                FindingsState,
+                read_bundle,
+                submit_findings,
+            )
 
+            # what an audit's setup stages: the empty draft the auditor fills
+            await sandbox().write_file("/workspace/findings.json", Findings().model_dump_json())
             save(
                 Register(
                     subject={"task": "toy"},

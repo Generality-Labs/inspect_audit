@@ -243,12 +243,16 @@ async def run(args: argparse.Namespace) -> int:
                     return
                 try:
                     # restricted, as production investigation jobs run; prices are in
-                    # the spec (materialize), so the probe needs no login of its own
+                    # the spec (materialize), so the probe needs no login of its own.
+                    # TEMPORARY (FRICTION 127): `--credential-mode user` while this Hawk
+                    # has no token service; it puts the operator's login in each runner
+                    user = args.credential_mode == "user"
                     job_id = await submit_eval_set(
                         config,
                         api_url=api,
                         token=await current_token(),
-                        credential_mode="restricted",
+                        credential_mode=args.credential_mode,
+                        refresh_token=await login.refresh_token() if user else None,
                         secrets={s: environment[s] for s in secrets},
                     )
                 except Exception as ex:
@@ -312,6 +316,12 @@ if __name__ == "__main__":
         "--retry-blocked",
         action="store_true",
         help="With --resume, retry cases that failed before receiving a job ID",
+    )
+    parser.add_argument(
+        "--credential-mode",
+        choices=["restricted", "user"],
+        default="restricted",
+        help="TEMPORARY: user puts the operator's login in each runner (no token service yet)",
     )
     parser.add_argument("--viewer", default="https://viewer.hawk.hawk.generalitylabs.ai")
     raise SystemExit(asyncio.run(run(parser.parse_args())))

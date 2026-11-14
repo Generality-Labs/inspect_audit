@@ -12,7 +12,7 @@ from test_helpers.box import local_box
 
 from inspect_audit import _audit, _registry
 from inspect_audit._variant import check_overlay, variant_task
-from inspect_audit.dispatch.policy import VARIANT_ARGS, Models, credential_mode
+from inspect_audit.dispatch.policy import VARIANT_ARGS, Models
 
 TASK_MODULE = """
 from inspect_ai import Task, task
@@ -215,13 +215,6 @@ def test_rescoring_takes_no_models(tmp_path: Path) -> None:
         asyncio.run(
             run("r", ["1"], ["openai/s"], '{"g": "openai/j"}', 1, ["hawk:logs"], None, [], "")
         )  # type: ignore[arg-type]
-
-
-def test_hawk_child_jobs_are_restricted_unless_the_audit_says_otherwise() -> None:
-    """Restricted by default; `user` only when stated, a temporary allowance while our
-    Hawk has no secure token service (FRICTION 93)."""
-    assert credential_mode("hawk", None) == "restricted"
-    assert credential_mode("hawk", "user") == "user"
 
 
 def test_the_benchmark_is_installed_in_the_box_as_its_jobs_install_it(

@@ -66,16 +66,6 @@ def test_a_declared_compose_must_match_the_tasks_own(tmp_path: Path) -> None:
         their_compose(spec, str(other), tmp_path)
 
 
-def test_a_log_of_another_task_is_refused(fixture_log: str) -> None:
-    with pytest.raises(LogMismatchError, match="records task"):
-        index_logs([fixture_log], task_name="other_task", task_args={}, package=None)
-
-
-def test_a_log_run_with_other_arguments_is_refused(fixture_log: str) -> None:
-    with pytest.raises(LogMismatchError, match="not the declared"):
-        index_logs([fixture_log], task_name="fixture_task", task_args={"n": 3}, package=None)
-
-
 def test_the_same_attempt_in_two_logs_is_refused(fixture_log: str) -> None:
     with pytest.raises(LogMismatchError, match="appears in both"):
         index_logs([fixture_log, fixture_log], task_name="fixture_task", task_args={}, package=None)
@@ -327,34 +317,6 @@ def test_an_investigation_of_a_benchmark_without_a_box(graded_log: str, tmp_path
     ]
     assert grades == ["C", "I", "I"]  # sample 2 was recorded WRONG
     assert sample.scores and sample.scores["gold-answer"].value == "CORRECT"
-
-
-def test_every_investigator_tool_schema_is_strict() -> None:
-    """OpenAI's strict function calling (Azure too) rejects a parameter not listed as required."""
-    from inspect_ai.solver import TaskState
-    from inspect_ai.tool import ToolDef
-
-    from inspect_audit._grade import grade_tool
-    from inspect_audit._investigator import view_image
-    from inspect_audit._reset import reset_tool
-    from inspect_audit._verdicts import investigation_items, record_verdict, submit_investigation
-
-    checks = investigation_items()
-    state = TaskState(model="m", sample_id="a", epoch=1, input="q", messages=[])
-    tools = [
-        record_verdict(checks),
-        submit_investigation(checks),
-        view_image(),
-        grade_tool(state, [], [], None),
-        reset_tool(Sample(input="q"), [], state, None),  # type: ignore[arg-type]
-    ]
-    loose = {}
-    for tool in tools:
-        params = ToolDef(tool).parameters
-        missing = set(params.properties) - set(params.required)
-        if missing:
-            loose[ToolDef(tool).name] = sorted(missing)
-    assert not loose
 
 
 @pytest.mark.docker

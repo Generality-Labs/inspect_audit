@@ -1,0 +1,39 @@
+name: Benchmark sweep
+
+# Can Inspect Auditor take a handful of real inspect_evals benchmarks? Each is read,
+# run on the mock model for one item, regraded and its investigation built; no model
+# calls and no spend (tests/sweep). On demand, and weekly so a benchmark or Inspect
+# change that breaks an audit shows up before an audit finds it.
+on:
+  workflow_dispatch:
+  # and on a PR that changes the sweep itself
+  pull_request:
+    paths:
+      - "tests/sweep/**"
+      - ".github/workflows/sweep.yml"
+  schedule:
+    - cron: "17 4 * * 1" # Mondays, 04:17 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sweep:
+    name: inspect_evals sweep
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Sweep
+        run: uv run pytest -m sweep tests/sweep -p no:cacheprovider

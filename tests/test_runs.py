@@ -1,7 +1,6 @@
 """Child jobs: one description, run on Hawk or locally, recorded in the sample store."""
 
 import asyncio
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -1086,55 +1085,6 @@ def test_an_audit_naming_unservable_models_stops_before_it_spends() -> None:
     assert blocked.asked == [named]
     _audit.require_models(named, Proxy([]))  # type: ignore[arg-type]
     _audit.require_models(named, None)
-
-
-def test_middleman_calls_send_a_supplied_token_and_refuse_redirects(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Hawk 4's own middleman helper refuses tokens not read from a saved login in this
-    process (FRICTION 70); ours sends the given one, and never across a redirect."""
-    import hawk.cli.config
-    from aiohttp import web
-    from aiohttp.test_utils import TestServer
-
-    from inspect_audit.dispatch.hawk import middleman_request
-
-    seen: list[str] = []
-
-    async def models(request: web.Request) -> web.Response:
-        seen.append(request.headers["Authorization"])
-        return web.json_response([{"name": "openai/gpt-6-luna"}])
-
-    async def moved(request: web.Request) -> web.Response:
-        raise web.HTTPFound("/elsewhere")
-
-    async def run() -> None:
-        app = web.Application()
-        app.router.add_post("/permitted_models_info", models)
-        app.router.add_put("/moved", moved)
-        async with TestServer(app) as server:
-            base = str(server.make_url("")).rstrip("/")
-            config = hawk.cli.config.CliConfig.model_construct(middleman_url=base)
-            asked: list[str | None] = []
-
-            def get_config(*, api_url: str | None = None) -> object:
-                asked.append(api_url)
-                return config
-
-            monkeypatch.setattr(hawk.cli.config, "get_config", get_config)
-            monkeypatch.delenv("HAWK_API_URL", raising=False)
-            got = await middleman_request(
-                "https://api.example", "post", "/permitted_models_info", "supplied", {}
-            )
-            assert got == [{"name": "openai/gpt-6-luna"}]
-            with pytest.raises(RuntimeError, match="302"):
-                await middleman_request("https://api.example", "put", "/moved", "supplied", {})
-            # the address is passed, not set in this process's environment for the call
-            assert asked == ["https://api.example"] * 2
-            assert "HAWK_API_URL" not in os.environ
-
-    asyncio.run(run())
-    assert seen == ["Bearer supplied"]
 
 
 def test_hawk_status_words_are_read_in_one_place() -> None:

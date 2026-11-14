@@ -362,20 +362,18 @@ async def collect_investigation(
     rows = await verdicts_in(files, address, current.checks)
     try:
         add_takes(await load(), rows)  # validated against what is already held
-        added = add_takes(current, rows)
     except ValueError as ex:
         raise ToolError(f"cannot add this investigation to the register: {ex}") from ex
     stored = store_as(RegisterStore)
-    held = {(r["run"], r["eval_id"], r["epoch"], r["sample"], r["check"]) for r in stored.verdicts}
-    stored.verdicts = [
-        *stored.verdicts,
-        *(
-            r
-            for r in rows
-            if (r["run"], r["eval_id"], r["epoch"], r["sample"], r["check"]) not in held
-        ),
-    ]
+
+    def key(r: dict[str, Any]) -> tuple[Any, ...]:
+        return (r["run"], r["eval_id"], r["epoch"], r["sample"], r["check"])
+
+    held = {key(r) for r in stored.verdicts}
+    # counted against what is held: collecting a job again adds nothing
+    added = [r for r in rows if key(r) not in held]
+    stored.verdicts = [*stored.verdicts, *added]
     skills = {s.name: s for s in investigation_items(current.checks)}
     flags = {g for s in skills.values() for g in s.flags}
-    flagged = sum(1 for a in added if a.split("=")[-1] in flags)
+    flagged = sum(1 for r in added if r["label"] in flags)
     return f"  register: {len(added)} investigator verdict(s) added, {flagged} flagged"

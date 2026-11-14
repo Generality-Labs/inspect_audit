@@ -96,8 +96,8 @@ def test_child_investigation_is_collected_once_into_the_register(tmp_path: Path)
                 first = await manage("collect", "child", None)
                 second = await manage("collect", "child", None)
                 takes = (await load()).samples["a"]["gold-answer"]
-                assert "1 investigator take(s) added" in first
-                assert "0 investigator take(s) added" in second
+                assert "1 investigator verdict(s) added" in first
+                assert "0 investigator verdict(s) added" in second
                 assert len(takes) == 1 and takes[0].label == "UNVERIFIABLE"
                 assert takes[0].by == "investigator" and takes[0].evidence
                 state.metadata["register"] = (await load()).model_dump(mode="json")

@@ -225,6 +225,8 @@ def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
     ]
     out = asyncio.run(_audit.jobs(inv)("collect", "a1", None))  # type: ignore[arg-type]
     assert "2 investigator verdict(s) added, 1 flagged" in out
+    again = asyncio.run(_audit.jobs(inv)("collect", "a1", None))  # type: ignore[arg-type]
+    assert "0 investigator verdict(s) added, 0 flagged" in again
     # a resume runs on another machine: the host's copies are gone, the store is not
     import shutil
 

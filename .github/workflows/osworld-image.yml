@@ -1,0 +1,58 @@
+name: OSWorld image
+
+# Builds inspect_evals' OSWorld box (src/inspect_evals/osworld/container) as a pullable
+# image for Hawk, which ignores compose `build:`. amd64 only: Hawk's default sandbox
+# architecture.
+# FROM aisiuk/inspect-computer-tool:latest is pinned here by digest; their fonts download
+# (raw.githubusercontent.com/epatey/fonts/main) is not pinned upstream.
+on:
+  push:
+    branches: [claude/osworld]
+    paths: [.github/workflows/osworld-image.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  INSPECT_EVALS: Generality-Labs/inspect_evals
+  INSPECT_EVALS_REF: 67a9ea5333d3fc672ebce3ca9724bcfdad87f541
+  BASE: aisiuk/inspect-computer-tool@sha256:0906594696977c4e97b34bd0426d60a23642e37ab0255e2b5318b2770a91c5ba
+  REPOSITORY: ghcr.io/generality-labs/osworld
+
+jobs:
+  build:
+    name: Build and push the OSWorld box
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write # push the image to ghcr.io
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.INSPECT_EVALS }}
+          ref: ${{ env.INSPECT_EVALS_REF }}
+          persist-credentials: false
+          sparse-checkout: src/inspect_evals/osworld/container
+      - name: Free disk space
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+      - name: Build and push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd src/inspect_evals/osworld/container
+          sed -i "1s|^FROM aisiuk/inspect-computer-tool:latest$|FROM ${BASE}|" Dockerfile
+          head -1 Dockerfile | grep -qF "$BASE"
+          tag="${REPOSITORY}:${INSPECT_EVALS_REF:0:12}"
+          docker build --platform linux/amd64 \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            -t "$tag" .
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$tag"
+          digest=$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          echo "osworld: ${REPOSITORY}@${digest}" | tee -a "$GITHUB_STEP_SUMMARY"

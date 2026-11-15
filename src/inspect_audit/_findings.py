@@ -168,6 +168,9 @@ async def _artifact(root: Path, path: str) -> tuple[str, bytes]:
     if name.startswith("inputs/") and host.exists():
         if host.is_symlink() or not host.resolve().is_relative_to(allowed.resolve()):
             raise ValueError(f"Artifact escapes its input root: {path}")
+        if not host.is_file():
+            # a job's log folder, cited whole (breadth round, bbh): name its files instead
+            raise ValueError(f"Artifact must be a file, not a folder: {path}; cite the files in it")
         content = host.read_bytes()
     else:
         probe = await sandbox().exec(

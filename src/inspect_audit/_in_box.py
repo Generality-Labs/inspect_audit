@@ -18,7 +18,7 @@ WORK = "/tmp/inspect-audit-probe"
 
 # The task's samples with the ids an eval gives them (`_task.numbered`'s rule: id-less
 # samples are numbered by position + 1, over the whole dataset).
-POPULATION = """
+POPULATION = r"""
 import importlib, json, sys
 from inspect_ai.util import registry_create
 
@@ -31,11 +31,27 @@ ids = [sample.id for sample in task.dataset]
 missing = sum(i is None for i in ids)
 if missing and missing != len(ids):
     raise SystemExit("some of the benchmark's samples have ids and some do not")
+# models the task loads by default, from parameters the audit's arguments leave unset
+# (writingbench's `judge_model`): a job is given credentials only for models it names
+import inspect, re
+from inspect_ai._util.registry import registry_lookup
+
+function = inspect.unwrap(registry_lookup("task", request["task"]))
+defaults = {
+    name: param.default
+    for name, param in inspect.signature(function).parameters.items()
+    if re.search(r"(^|_)(model|judge|grader)s?($|_)", name, re.IGNORECASE)
+    and isinstance(param.default, str)
+    # a provider and a name ("anthropic/claude-x"), not any text with a slash ("n/a")
+    and re.fullmatch(r"[A-Za-z][\w.-]+/[\w./:@-]+", param.default)
+    and name not in request["task_args"]
+}
 json.dump(
     {
         "ids": [str(n + 1) if missing else str(i) for n, i in enumerate(ids)],
         "positional": bool(missing),
         "dataset": getattr(task.dataset, "name", None),
+        "model_defaults": defaults,
     },
     open(sys.argv[2], "w"),
 )

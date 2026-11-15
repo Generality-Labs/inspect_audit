@@ -803,26 +803,8 @@ def audit(
                 f"benchmark_environment declares {name!r}; set the same value in the "
                 "auditor runner environment so task loading uses the child configuration"
             )
-    requested_configs: dict[str, dict[str, Any]] = model_configs or {}
-    configured = {}
-    for name, value in requested_configs.items():
-        parsed = ModelConfig.model_validate({"model": name, **value})
-        if parsed.model != name:
-            raise ValueError("model_configs keys must match each config's model")
-        if "api_key" in parsed.args or any(key.startswith("aws_") for key in parsed.args):
-            raise ValueError("model credentials belong in the environment or child_secrets")
-        configured[name] = parsed.model_dump(mode="json", exclude_none=True)
-    model_configs = configured
-    child_secrets = list(child_secrets or [])
-    if child_secrets and runs != "hawk":
-        raise ValueError("child_secrets require runs='hawk'")
-    for name in child_secrets:
-        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
-            raise ValueError("child_secrets must contain environment variable names")
-        if not os.environ.get(name):
-            raise ValueError(
-                f"declared child secret {name!r} is missing from the runner environment"
-            )
+    model_configs = _checked_model_configs(model_configs or {})
+    child_secrets = _checked_child_secrets(child_secrets or [], runs)
     task_args = json.loads(canonical(task_args or {}))
     credential_mode = resolve_credential_mode(runs, credential_mode)
     # the models are the policy's alone, written by the audit's author: a model's name
@@ -849,14 +831,7 @@ def audit(
         raise ValueError("Hawk jobs need hawk_api_url (or HAWK_API_URL)")
     if not repo:
         raise ValueError("audit needs a repo: the benchmark to audit")
-    skill_paths = [str(ASSETS / "skills" / name) for name in AUDIT_SKILLS] + [
-        str(SKILLS / name) for name in (*LOG_SKILLS, *SUPPORT_SKILLS)
-    ]
-    for path in extra_skills or []:
-        resolved = Path(path).expanduser().resolve()
-        if not (resolved / "SKILL.md").is_file():
-            raise ValueError(f"Expected a skill directory containing SKILL.md: {path}")
-        skill_paths.append(str(resolved))
+    skill_paths = _skill_paths(extra_skills or [])
 
     # what can be worked out is worked out: the investigated repository already says which
     # commit it is, which directory the task lives in and which paper it comes from
@@ -886,22 +861,9 @@ def audit(
     seed_path = root / "inputs" / "seed.json"
     seed = json.loads(seed_path.read_text())
     if runs:
-        if not target_task:
-            raise ValueError("jobs run the investigated task: name it with target_task")
-        task_package = task_package or (
-            git_package_spec(local_repo, revision)
-            if local_repo.is_dir()
-            else f"git+{repo.removesuffix('.git')}@{revision}"
-            if revision
-            else None
+        task_package, investigation_package = _job_packages(
+            runs, target_task, task_package, investigation_package, repo, revision
         )
-        investigation_package = investigation_package or own_package_spec()
-        # only Hawk installs packages in its jobs; a local job runs in this machine's
-        # environment and never reads them (FRICTION 79c)
-        if runs == "hawk" and (not task_package or not investigation_package):
-            raise ValueError("declare task_package and investigation_package for Hawk jobs")
-        task_package = task_package or ""
-        investigation_package = investigation_package or ""
     supplied = [str(e["remote"]) for e in seed["logs"] if e.get("remote")]
     if runs == "local":
         supplied += [str(e["source"]) for e in seed["logs"] if not e.get("remote")]
@@ -932,27 +894,10 @@ def audit(
     (root / "inputs" / "policy.json").write_text(snapshot)
     seed["policy"] = {"path": "/inputs/policy.json", "sha256": launch_policy.digest}
 
-    # where jobs run, built once: the job tools launch through it and `Spend` reads
-    # every job's spend from it
-    backend: Runs | None = None
-    if runs == "hawk":
-        backend = HawkRuns(
-            hawk_api_url or "",
-            credential_mode=launch_policy.credential_mode,
-            secrets={name: os.environ[name] for name in child_secrets},
-        )
-    elif runs:
-        # local runs outside the per-construction folder: a resumed run must find them
-        backend = LocalRuns(Path(output_dir).expanduser().resolve() / "runs")
+    backend = _backend(runs, hawk_api_url, launch_policy.credential_mode, child_secrets, output_dir)
     # every model the audit may use, its own included
-    try:
-        from inspect_ai.model import get_model
-
-        auditor_model = [str(get_model())]
-    except ValueError:
-        auditor_model = []  # built outside an eval: no model of its own
     require_models(
-        [*auditor_model, *models.investigators, *models.subjects, *models.judges],
+        [*_own_model(), *models.investigators, *models.subjects, *models.judges],
         backend,
         hawk_api_url,
     )
@@ -1126,8 +1071,8 @@ def audit(
         checkpoint=CheckpointConfig(sandbox_paths={"default": ["/workspace", "/inputs"]}),
         # per-tool limits: bash above; the host tools summarise and write the rest to files
         config=GenerateConfig(max_tool_output=32 * 1024),
+        # no working-time cap: the operator's budget is the one stop (FRICTION 100, 134)
         token_limit=token_limit,
-        working_limit=4 * 3600,
         metadata={
             "audit_dir": str(root),
             "interactive": interactive,
@@ -1136,3 +1081,104 @@ def audit(
             "policy_sha256": launch_policy.digest,
         },
     )
+
+
+def _checked_model_configs(requested: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Inspect ModelConfig settings by model name, without credentials in them."""
+    configured = {}
+    for name, value in requested.items():
+        parsed = ModelConfig.model_validate({"model": name, **value})
+        if parsed.model != name:
+            raise ValueError("model_configs keys must match each config's model")
+        if "api_key" in parsed.args or any(key.startswith("aws_") for key in parsed.args):
+            raise ValueError("model credentials belong in the environment or child_secrets")
+        configured[name] = parsed.model_dump(mode="json", exclude_none=True)
+    return configured
+
+
+def _checked_child_secrets(names: list[str], runs: str | None) -> list[str]:
+    """Environment variable names passed to Hawk children, each set here."""
+    names = list(names)
+    if names and runs != "hawk":
+        raise ValueError("child_secrets require runs='hawk'")
+    for name in names:
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            raise ValueError("child_secrets must contain environment variable names")
+        if not os.environ.get(name):
+            raise ValueError(
+                f"declared child secret {name!r} is missing from the runner environment"
+            )
+    return names
+
+
+def _skill_paths(extra: list[str]) -> list[str]:
+    """The auditor's skills, then the operator's extra skill directories."""
+    paths = [str(ASSETS / "skills" / name) for name in AUDIT_SKILLS] + [
+        str(SKILLS / name) for name in (*LOG_SKILLS, *SUPPORT_SKILLS)
+    ]
+    for path in extra:
+        resolved = Path(path).expanduser().resolve()
+        if not (resolved / "SKILL.md").is_file():
+            raise ValueError(f"Expected a skill directory containing SKILL.md: {path}")
+        paths.append(str(resolved))
+    return paths
+
+
+def _job_packages(
+    runs: str,
+    target_task: str | None,
+    task_package: str | None,
+    investigation_package: str | None,
+    repo: str,
+    revision: str | None,
+) -> tuple[str, str]:
+    """The pip specs a job installs: the benchmark's and this package's."""
+    if not target_task:
+        raise ValueError("jobs run the investigated task: name it with target_task")
+    local_repo = Path(repo).expanduser()
+    task_package = task_package or (
+        git_package_spec(local_repo, revision)
+        if local_repo.is_dir()
+        else f"git+{repo.removesuffix('.git')}@{revision}"
+        if revision
+        else None
+    )
+    investigation_package = investigation_package or own_package_spec()
+    # only Hawk installs packages in its jobs; a local job runs in this machine's
+    # environment and never reads them (FRICTION 79c)
+    if runs == "hawk" and (not task_package or not investigation_package):
+        raise ValueError("declare task_package and investigation_package for Hawk jobs")
+    return task_package or "", investigation_package or ""
+
+
+def _backend(
+    runs: str | None,
+    hawk_api_url: str | None,
+    credential_mode: Literal["restricted", "user"],
+    child_secrets: list[str],
+    output_dir: str,
+) -> Runs | None:
+    """Where jobs run, built once.
+
+    The job tools launch through it and `Spend` reads every job's spend from it.
+    """
+    if runs == "hawk":
+        return HawkRuns(
+            hawk_api_url or "",
+            credential_mode=credential_mode,
+            secrets={name: os.environ[name] for name in child_secrets},
+        )
+    if runs:
+        # local runs outside the per-construction folder: a resumed run must find them
+        return LocalRuns(Path(output_dir).expanduser().resolve() / "runs")
+    return None
+
+
+def _own_model() -> list[str]:
+    """The auditor's own model, when built inside an eval."""
+    try:
+        from inspect_ai.model import get_model
+
+        return [str(get_model())]
+    except ValueError:
+        return []  # built outside an eval: no model of its own

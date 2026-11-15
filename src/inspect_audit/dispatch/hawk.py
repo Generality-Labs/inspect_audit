@@ -64,6 +64,11 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
         "retry_attempts": 0,
         "runner": {"environment": validate_environment(job.environment)},
     }
+    # which audit launched it: Hawk tells a runner its own job id, and many audits'
+    # children otherwise sit side by side in Hawk's job list, named only by their labels
+    if parent := os.environ.get("HAWK_JOB_ID"):
+        config["tags"] = [f"audit:{parent}"]
+        config["metadata"] = {"launched_by": parent}
     # Judges selected through task arguments are outside the eval model grid: declared
     # here, in either credential mode, so Hawk gives the job their provider's credentials
     # (smoke round 7: an investigation's OpenRouter judge failed to load, "No

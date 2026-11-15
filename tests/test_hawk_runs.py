@@ -225,3 +225,19 @@ def test_hawk_logs_are_fetched_with_the_runners_own_credentials(
             assert set(hawk.tokens_seen[-2:]) == {"Bearer access-1"}
 
     asyncio.run(run())
+
+
+def test_a_child_names_the_audit_that_launched_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On a Hawk runner the audit's own job id travels with every child, so its jobs can
+    be told from another audit's in Hawk's list; Hawk accepts the config."""
+    from hawk.core.types import EvalSetConfig
+
+    from inspect_audit.dispatch import hawk_config
+
+    monkeypatch.delenv("HAWK_JOB_ID", raising=False)
+    assert "tags" not in hawk_config(JOB)
+    monkeypatch.setenv("HAWK_JOB_ID", "ia-br-gsm8k-abc")
+    config = hawk_config(JOB)
+    assert config["tags"] == ["audit:ia-br-gsm8k-abc"]
+    assert config["metadata"] == {"launched_by": "ia-br-gsm8k-abc"}
+    EvalSetConfig.model_validate(config)

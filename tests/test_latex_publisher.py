@@ -149,6 +149,24 @@ def test_source_preserves_bracketed_findings_and_benchmark_wide_scope(tmp_path: 
     assert "Benchmark-wide finding; no individual sample count claimed." in content
 
 
+def test_prose_under_a_sub_criterion_is_refused_by_name_as_a_tool_error(tmp_path: Path) -> None:
+    """Breadth round, gsm8k: the agent keyed prose under "C.1"; the preview tool let the
+    ValueError end the audit. Now it names the keys, and previews report it as a tool error."""
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit.publishers._render import reported
+
+    (tmp_path / "reports/Example").mkdir(parents=True)
+    (tmp_path / "reports/Example/Content.tex").write_text(
+        r"\auditpart{Contents} x \auditpart{Eval Scorecard} x \auditpart{Eval Datasheet}"
+    )
+    (tmp_path / "reports/Example/Example_Audit.tex").write_text(r"\evalscore{A}")
+    findings, manifest = read_bundle(FIXTURE)
+    prose = latex.Prose(dimensions={"C": "fine", "C.1": "under a sub-criterion"})
+    with pytest.raises(ToolError, match=r"Preview failed: .*not C\.1"), reported("Preview"):
+        latex.source(findings, manifest, prose, tmp_path)
+
+
 def test_unbreakable_text_may_break_rather_than_run_off_the_page() -> None:
     from inspect_audit.publishers.latex import tex
 

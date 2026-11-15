@@ -93,10 +93,10 @@ def publish_document(root: Path, publisher: Publisher) -> Tool:
             if outcome == "published_incomplete"
             else []
         )
-        try:
+        from .publishers._render import reported
+
+        with reported("Publication"):
             output = await publisher.build(root, bundle)
-        except (ValueError, OSError, ImportError) as ex:
-            raise ToolError(f"Publication failed: {ex}") from ex
         if output.is_symlink() or any(
             p.is_symlink() or p.suffix == ".eval" for p in output.rglob("*")
         ):

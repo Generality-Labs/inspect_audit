@@ -14,7 +14,7 @@ from pydantic import Field
 
 from .._findings import FindingsState, encoded, restore_bundle
 from .._publishing import Publisher
-from ._render import ensure_browser, render_in_box, tree
+from ._render import ensure_browser, render_in_box, reported, tree
 
 GL_REVISION = "014b3165403bab23d630c0623acf0ed9d50df445"
 ASSETS = {
@@ -250,7 +250,8 @@ window.figuresReady = true;
 def preview_report(root: Path) -> Tool:
     async def execute() -> str:
         """Build GL components and HTML/PDF; inspect /workspace/report/preview.png."""
-        output = await build(root)
+        with reported("Preview"):
+            output = await build(root)
         for path in output.iterdir():
             await sandbox().write_file(f"/workspace/report/{path.name}", path.read_bytes())
         return "Preview ready: /workspace/report/preview.png, report.html and report.pdf. Inspect the image, revise prose or figure inputs, then publish_document."

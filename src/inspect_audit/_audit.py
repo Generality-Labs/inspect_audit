@@ -191,6 +191,14 @@ class Audit:
             logger.warning("stopped jobs still running at the audit's end: %s", ", ".join(stopped))
         return stopped
 
+    def update_job(self, label: str, **fields: Any) -> None:
+        """Set fields on one job's record.
+
+        Assigned back whole: the store records an assignment, not a change made in place.
+        """
+        record = self.record()
+        record.jobs = [{**j, **fields} if j["label"] == label else j for j in record.jobs]
+
     def job(self, label: str) -> dict[str, Any]:
         found = [j for j in self.record().jobs if j["label"] == label]
         if not found:
@@ -575,10 +583,7 @@ async def _job_action(
         return await inv.runs.runner_log(run_id)
     if action == "stop":
         await inv.runs.stop(run_id)
-        record = inv.record()
-        record.jobs = [
-            {**j, "stop_requested": True} if j["label"] == label else j for j in record.jobs
-        ]
+        inv.update_job(label, stop_requested=True)
         return (
             f"stop requested for {label}; wait for it to finish before collecting. "
             "Completed samples remain in its logs."
@@ -591,22 +596,12 @@ async def _job_action(
             if not settled(status, bool(job.get("stop_requested"))):
                 raise ToolError(f"{label} is {status}; wait for it before collecting")
             # stuck, or stopped and gone: nothing will come; recorded, so findings can go on
-            record = inv.record()
-            record.jobs = [
-                {**j, "collection_error": f"{status}: nothing to collect"}
-                if j["label"] == label
-                else j
-                for j in record.jobs
-            ]
+            inv.update_job(label, collection_error=f"{status}: nothing to collect")
             return f"{label} is {status} and will produce nothing more; recorded as not collected"
         host = inv.root / "inputs" / "jobs" / label
         files = await inv.runs.logs(run_id, host)
         if not files:
-            record = inv.record()
-            record.jobs = [
-                {**j, "collection_error": f"{status}: no logs"} if j["label"] == label else j
-                for j in record.jobs
-            ]
+            inv.update_job(label, collection_error=f"{status}: no logs")
             raise ToolError(
                 f"{label} ({status}) wrote no logs; the failure was recorded. jobs(action='log') shows why"
             )
@@ -632,11 +627,7 @@ async def _job_action(
             }
             for f in files
         ]
-        record = inv.record()
-        record.jobs = [
-            {**j, "collected": True, "logs": collected} if j["label"] == label else j
-            for j in record.jobs
-        ]
+        inv.update_job(label, collected=True, logs=collected)
         return f"{label}: {status}; collected to /inputs/jobs/{label}/\n" + "\n".join(lines)
     raise ToolError("action must be list, status, wait, collect, log or stop")
 

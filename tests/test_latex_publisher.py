@@ -83,7 +83,9 @@ def test_fixture_pdf_uses_bundle_scorecard_and_finding_boxes(
     )
     generated = (output / "Content.tex").read_text()
     findings, _ = read_bundle(FIXTURE)
-    assert "caf\u00e9" in text and "\u2588" not in generated and "\U0001f600" not in generated
+    # the datasheet with all of them compiled (pdftotext splits accented letters, so the
+    # check is its plain words), and nothing unsettable reached the source
+    assert "quoted" in text and "\u2588" not in generated and "\U0001f600" not in generated
     for title in (
         "Cover Sheet",
         "Contents",

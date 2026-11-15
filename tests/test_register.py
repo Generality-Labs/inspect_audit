@@ -333,3 +333,58 @@ def test_failed_verdict_import_does_not_mark_job_collected(
     hawk.down = False
     out = asyncio.run(collect("collect", "good", None))
     assert "2 investigator verdict(s) added" in out and record.jobs[1]["collected"]
+
+
+def test_an_unreadable_population_says_why_and_does_not_block_submission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, box: dict[str, str]
+) -> None:
+    """Breadth round, docvqa: reading the items failed in the box, the error shown was a
+    progress bar, and submission then refused for ever ("Open the register first")."""
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit._in_box import why_it_failed
+    from inspect_audit._register import RegisterStore
+
+    noisy = (
+        "Saving: 10%\rSaving: 49%\n" * 200
+        + "Traceback (most recent call last):\n  x\nMemoryError\n"
+    )
+    assert why_it_failed(noisy).startswith("Traceback") and "MemoryError" in why_it_failed(noisy)
+
+    # a benchmark whose dataset cannot be built in the box
+    site = tmp_path / "broken"
+    site.mkdir()
+    (site / "brokenfix.py").write_text(
+        "from inspect_ai import Task, task\n\n@task\ndef register_fixture() -> Task:\n"
+        "    raise MemoryError('dataset too large for the box')\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(site))
+    from inspect_audit.dispatch.policy import LaunchPolicy, Models, PolicyStore, ensure_policy
+
+    policy = LaunchPolicy(
+        task="register_fixture",
+        source="brokenfix",
+        task_package=None,
+        investigation_package=None,
+        investigator_image="i",
+        models=Models(),
+        checks=("gold-answer",),
+        configuration_json="{}",
+    )
+    saved = _register.store_as(PolicyStore)
+    saved.policy_json = saved.digest = None
+    ensure_policy(policy, saved, require_existing=False)
+    with pytest.raises(ToolError, match=r"(?s)exit 1\):\nTraceback.*MemoryError"):
+        asyncio.run(_register.start_register("register_fixture", policy))
+    stored = _register.store_as(RegisterStore)
+    assert "MemoryError" in stored.unavailable
+    assert "MemoryError" in str(stored.subject["register_unavailable"])
+    # and submission goes on without a register instead of refusing for ever
+    from inspect_audit._findings import submit_findings
+
+    refusal = ""
+    try:
+        asyncio.run(submit_findings(tmp_path, None, "register_fixture")())
+    except ToolError as ex:
+        refusal = str(ex)  # it may fail later, on the empty draft: not at the register
+    assert "Open the register" not in refusal, "the dead end is back"

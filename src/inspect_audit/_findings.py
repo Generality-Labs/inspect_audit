@@ -372,7 +372,10 @@ def submit_findings(
         lock = audit.launch_lock if audit else asyncio.Lock()
         async with lock:
             require_audit()
-            if (task or (audit and audit.task)) and not (await load()).checks:
+            from ._register import RegisterStore
+
+            unavailable = store_as(RegisterStore).unavailable
+            if (task or (audit and audit.task)) and not (await load()).checks and not unavailable:
                 raise ToolError(
                     'Open the register before submission: register(view="summary") starts it'
                 )

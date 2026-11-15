@@ -72,10 +72,23 @@ async def run_probe(name: str, script: str, request: dict[str, Any]) -> Any:
     )
     if not result.success:
         raise ToolError(
-            f"reading the benchmark in the box failed ({name}):\n"
-            + (result.stderr or result.stdout)[-3000:]
+            f"reading the benchmark in the box failed ({name}, exit {result.returncode}):\n"
+            + why_it_failed(result.stderr or result.stdout)
         )
     return json.loads(await box.read_file(answer))
+
+
+def why_it_failed(output: str, limit: int = 3000) -> str:
+    """The part of a failed script's output that says why.
+
+    Its last traceback, else its last lines, with progress bars (redrawn with carriage
+    returns) reduced to their final state. Breadth round, docvqa: the tail was 3000
+    characters of one progress bar, and the failure itself was cut off.
+    """
+    lines = [line.rsplit("\r", 1)[-1] for line in output.splitlines()]
+    text = "\n".join(line for line in lines if line.strip())
+    start = text.rfind("Traceback (most recent call last)")
+    return (text[start:] if start != -1 else text)[-limit:]
 
 
 async def population(

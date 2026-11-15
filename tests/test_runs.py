@@ -247,8 +247,33 @@ def test_an_investigation_reads_logs_by_job_label_or_supplied_source(
 
     inv = _make_audit(tmp_path, HawkRuns(hawk.url, credential_mode="restricted"))
     inv.paper = "https://arxiv.org/abs/2601.00001"
-    record.jobs.append({"label": "smoke", "kind": "benchmark", "run_id": "r", "address": "hawk:r"})
+    record.jobs.append(
+        {
+            "label": "smoke",
+            "kind": "benchmark",
+            "run_id": "r",
+            "address": "hawk:r",
+            "collected": True,
+        }
+    )
+    record.jobs.append(
+        {"label": "running", "kind": "benchmark", "run_id": "q", "address": "hawk:q"}
+    )
+    record.jobs.append(
+        {
+            "label": "empty",
+            "kind": "benchmark",
+            "run_id": "e",
+            "address": "hawk:e",
+            "collection_error": "failed: no logs",
+        }
+    )
     investigation = _audit.send_investigators(inv)
+    # only a collected run's logs can be read (breadth round, class_eval)
+    with pytest.raises(ToolError, match="running is not collected yet"):
+        asyncio.run(investigation("a0", ["1"], ["gold-answer"], ["running"], None, "{}", ""))  # type: ignore[arg-type]
+    with pytest.raises(ToolError, match=r"empty produced no logs \(failed: no logs\)"):
+        asyncio.run(investigation("a0", ["1"], ["gold-answer"], ["empty"], None, "{}", ""))  # type: ignore[arg-type]
     asyncio.run(
         investigation(  # type: ignore[arg-type]
             "a1",

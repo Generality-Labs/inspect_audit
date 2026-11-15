@@ -4,11 +4,26 @@ The Inspect host may be anything (Hawk's runner has neither), but the box is our
 image wherever the audit runs, so the PDF is drawn there and only bytes cross over.
 """
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from inspect_ai.tool import ToolError
 from inspect_ai.util import sandbox
+
+# what a publisher raises for a problem the agent can fix (its prose, its findings, a
+# missing file): reported back to it as a tool error, not a crash that ends the audit
+FIXABLE = (ValueError, OSError, ImportError)
+
+
+@contextmanager
+def reported(what: str) -> Generator[None]:
+    """Turn a fixable publishing problem into a tool error naming `what` failed."""
+    try:
+        yield
+    except FIXABLE as ex:
+        raise ToolError(f"{what} failed: {ex}") from ex
 
 
 async def box_has(probe: str) -> bool:

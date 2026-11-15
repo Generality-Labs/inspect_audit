@@ -16,7 +16,7 @@ from .._findings import Findings, encoded, read_bundle
 from .._framework import REGISTRY
 from .._publishing import Publisher
 from .._verdicts import Evidence
-from ._render import box_has, render_in_box, tree
+from ._render import box_has, render_in_box, reported, tree
 from ._template import template
 
 ASSESSMENTS = {
@@ -106,8 +106,11 @@ def source(
     validate(findings)
     definitions = json.loads(REGISTRY.read_text())["dimensions"]
     dimensions = {k: v for k, v in definitions.items() if "." not in k}
-    if set(prose.dimensions) - set(dimensions):
-        raise ValueError("Prose dimension keys must be A-I")
+    if unknown := sorted(set(prose.dimensions) - set(dimensions)):
+        raise ValueError(
+            f"prose.json dimensions are keyed A-I only, not {', '.join(unknown)}: "
+            "a sub-criterion's text belongs under its letter"
+        )
     ratings = findings.auditor.ratings
     rows = TypeAdapter(dict[str, dict[str, list[dict[str, Any]]]]).validate_python(
         findings.investigators["samples"]
@@ -420,7 +423,8 @@ def preview_report(root: Path) -> Tool:
         """Compile the GL audit template from frozen findings and prose-only JSON."""
         from .._findings import restore_bundle
 
-        output = await build(root, await restore_bundle(root))
+        with reported("Preview"):
+            output = await build(root, await restore_bundle(root))
         await sandbox().write_file(
             "/workspace/report/report.pdf", (output / "report.pdf").read_bytes()
         )

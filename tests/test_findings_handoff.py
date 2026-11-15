@@ -581,3 +581,16 @@ def test_frozen_findings_cite_collected_logs_from_the_job_record(
         }
     ]
     assert not (tmp_path / "inputs").exists()
+
+
+def test_a_cited_folder_is_refused_by_name(tmp_path: Path) -> None:
+    """Breadth round, bbh: evidence citing a collected job's log folder failed with a bare
+    "[Errno 21] Is a directory"; the agent is told to cite the files in it."""
+    from inspect_audit._findings import _artifact  # pyright: ignore[reportPrivateUsage]
+
+    (tmp_path / "inputs" / "jobs" / "smoke-fresh-1").mkdir(parents=True)
+    (tmp_path / "inputs" / "jobs" / "smoke-fresh-1" / "a.eval").write_bytes(b"log")
+    with pytest.raises(ValueError, match="must be a file, not a folder"):
+        asyncio.run(_artifact(tmp_path, "/inputs/jobs/smoke-fresh-1"))
+    name, content = asyncio.run(_artifact(tmp_path, "/inputs/jobs/smoke-fresh-1/a.eval"))
+    assert (name, content) == ("inputs/jobs/smoke-fresh-1/a.eval", b"log")

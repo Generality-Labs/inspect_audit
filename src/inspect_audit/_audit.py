@@ -397,6 +397,7 @@ def run_eval(inv: Audit) -> Tool:
         """
         policy = inv.authorizer.policy
         judges = {str(k): str(v) for k, v in json_object(judge, "judge").items()}
+        await _published(packages)
         files, diff = await _variant_files(inv, code) if code else (None, None)
         args = json.loads(policy.task_args_json)
         if rescore:
@@ -1173,3 +1174,46 @@ def _own_model() -> list[str]:
         return [str(get_model())]
     except ValueError:
         return []  # built outside an eval: no model of its own
+
+
+# Hawk installs a job's packages with uv's exclude-newer: a release younger than this is
+# invisible to it (FRICTION 82; Hawk exempts only inspect-ai)
+HAWK_PACKAGE_COOLDOWN_DAYS = 7
+
+
+async def _published(pins: list[str], cooldown_days: int = HAWK_PACKAGE_COOLDOWN_DAYS) -> None:
+    """Refuse a pin a Hawk runner could not install, before a runner starts to learn it.
+
+    Breadth round: two auditors pinned `datasets==5.2.0`, released six days earlier,
+    inside Hawk's package cooldown; each job spent a runner start-up for uv's "no version
+    of datasets==5.2.0". PyPI is asked for the release and its upload date. A lookup that
+    cannot be made (no network, PyPI down) lets the pin through: the install decides.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    import aiohttp
+
+    cutoff = datetime.now(UTC) - timedelta(days=cooldown_days)
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as session:
+        for pin in pins:
+            name, _, wanted = (part.strip() for part in pin.partition("=="))
+            if name == "inspect-ai":
+                continue  # exempt from the cooldown
+            try:
+                async with session.get(f"https://pypi.org/pypi/{name}/{wanted}/json") as reply:
+                    if reply.status == 404:
+                        raise ToolError(f"{pin}: PyPI has no such version of {name}")
+                    if reply.status != 200:
+                        continue
+                    files = (await reply.json()).get("urls") or []
+            except (aiohttp.ClientError, TimeoutError, ValueError):
+                continue
+            uploaded = min(
+                (datetime.fromisoformat(f["upload_time_iso_8601"]) for f in files), default=None
+            )
+            if uploaded is not None and uploaded > cutoff:
+                raise ToolError(
+                    f"{pin}: released {uploaded:%Y-%m-%d}, inside Hawk's "
+                    f"{cooldown_days}-day package cooldown, so a Hawk runner "
+                    f"cannot install it; pick a version released before {cutoff:%Y-%m-%d}"
+                )

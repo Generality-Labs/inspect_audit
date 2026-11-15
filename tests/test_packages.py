@@ -175,3 +175,28 @@ def test_every_base_image_is_pinned_by_digest() -> None:
     for dockerfile in root.glob("*.Dockerfile"):
         bases = [ln for ln in dockerfile.read_text().splitlines() if ln.startswith("FROM ")]
         assert bases and all("@sha256:" in ln for ln in bases), dockerfile.name
+
+
+def test_a_pin_hawk_could_not_install_is_refused_before_launch() -> None:
+    """Breadth round: two auditors pinned datasets==5.2.0, released inside Hawk's 7-day
+    package cooldown, and each job spent a runner start-up for uv's refusal. Asks PyPI."""
+    import asyncio
+    import urllib.request
+
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit._audit import _published  # pyright: ignore[reportPrivateUsage]
+
+    try:
+        urllib.request.urlopen("https://pypi.org/pypi/datasets/json", timeout=10).close()
+    except OSError:
+        pytest.skip("PyPI is unreachable from here")
+    try:
+        asyncio.run(_published(["datasets==2.19.0"]))  # released in 2024
+    except ToolError:
+        pytest.fail("an old release was refused")
+    with pytest.raises(ToolError, match="PyPI has no such version"):
+        asyncio.run(_published(["datasets==0.0.999"]))
+    # inside the cooldown (a window long enough to hold a 2024 release, so this stays true)
+    with pytest.raises(ToolError, match="inside Hawk's 100000-day package cooldown"):
+        asyncio.run(_published(["datasets==2.19.0"], cooldown_days=100_000))

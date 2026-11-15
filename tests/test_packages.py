@@ -200,3 +200,34 @@ def test_a_pin_hawk_could_not_install_is_refused_before_launch() -> None:
     # inside the cooldown (a window long enough to hold a 2024 release, so this stays true)
     with pytest.raises(ToolError, match="inside Hawk's 100000-day package cooldown"):
         asyncio.run(_published(["datasets==2.19.0"], cooldown_days=100_000))
+
+
+def test_versions_that_cannot_be_installed_together_are_refused_in_the_box(
+    tmp_path: Path,
+) -> None:
+    """Breadth round, mathvista: a pin conflicting with the benchmark's own requirement
+    failed on a runner after it started. A pip dry run in the box finds it first."""
+    import asyncio
+    import urllib.request
+
+    from inspect_ai.tool import ToolError
+    from test_helpers.box import local_box
+
+    from inspect_audit._audit import _installable  # pyright: ignore[reportPrivateUsage]
+
+    try:
+        urllib.request.urlopen("https://pypi.org/simple/packaging/", timeout=10).close()
+    except OSError:
+        pytest.skip("PyPI is unreachable from here")
+    import os
+    import subprocess
+    import sys
+
+    # a Python with pip, as the auditor's box has (this environment's has none)
+    venv = tmp_path / "box-python"
+    subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
+    with local_box():
+        os.environ["PATH"] = f"{venv / 'bin'}{os.pathsep}{os.environ['PATH']}"
+        asyncio.run(_installable(["packaging==24.0"]))  # satisfiable: nothing installed
+        with pytest.raises(ToolError, match="cannot be installed beside the benchmark"):
+            asyncio.run(_installable(["packaging==20.0", "packaging==21.0"]))

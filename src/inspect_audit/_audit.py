@@ -407,7 +407,9 @@ def run_eval(inv: Audit) -> Tool:
         """
         policy = inv.authorizer.policy
         judges = {str(k): str(v) for k, v in json_object(judge, "judge").items()}
-        await _published(packages)
+        if packages:
+            await _published(packages)
+            await _installable(policy.benchmark_packages(packages))
         files, diff = await _variant_files(inv, code) if code else (None, None)
         args = json.loads(policy.task_args_json)
         if rescore:
@@ -1214,3 +1216,38 @@ async def _published(pins: list[str], cooldown_days: int = HAWK_PACKAGE_COOLDOWN
                     f"{cooldown_days}-day package cooldown, so a Hawk runner "
                     f"cannot install it; pick a version released before {cutoff:%Y-%m-%d}"
                 )
+
+
+# pip's words for "these cannot be installed together, or here": a dry run that fails
+# for another reason (no network) lets the launch through, and the job's install decides
+_UNINSTALLABLE = (
+    "ResolutionImpossible",
+    "No matching distribution",
+    "Could not find a version",
+    "conflicting dependencies",
+    "metadata-generation-failed",
+    "Failed to build",
+    "subprocess-exited-with-error",
+)
+
+
+async def _installable(specs: list[str]) -> None:
+    """A dry run, in the auditor's box, of what the job will install.
+
+    The box has the benchmark installed and, like a runner, no compiler. Breadth round,
+    mathvista: `pillow==11.0.0` conflicted with the benchmark's `pillow>=11.3.0`, and
+    `numpy==1.26.4` has no wheel for Python 3.13 and could not be built; each failed on
+    a runner after it started. Hawk's 7-day cooldown is checked separately (`_published`).
+    """
+    from ._in_box import why_it_failed
+
+    result = await sandbox().exec(
+        ["python", "-m", "pip", "install", "--dry-run", "--quiet", "--no-input", *specs],
+        timeout=600,
+    )
+    output = result.stderr + result.stdout
+    if not result.success and any(word in output for word in _UNINSTALLABLE):
+        raise ToolError(
+            "these versions cannot be installed beside the benchmark (pip, in your box):\n"
+            + why_it_failed(output, limit=2000)
+        )

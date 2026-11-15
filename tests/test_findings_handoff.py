@@ -530,7 +530,7 @@ def test_invalid_publication_records_do_not_mark_a_report_published(
         pytest.fail("invalid findings must fail before building")
 
     monkeypatch.setattr(_publishing, "restore_bundle", restored)
-    with pytest.raises(KeyError):
+    with pytest.raises(ToolError, match="no valid investigators section"):
         asyncio.run(_publishing.publish_document(tmp_path, Publisher(skills=[], build=build))())
     assert store_as(AuditState).published is None
     assert store_as(AuditState).outcome is None

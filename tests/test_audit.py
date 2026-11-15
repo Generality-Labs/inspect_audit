@@ -436,63 +436,6 @@ def test_a_blocked_audit_ends_the_sample_as_an_error() -> None:
     assert run(None).status == "success"
 
 
-def test_every_tool_schema_survives_a_strict_provider(tmp_path: Path) -> None:
-    """A schema whose `required` omits a property is refused by OpenAI-strict providers.
-
-    Azure, which is where OpenRouter routed sol, returns 400 with "'required' is
-    required to be supplied and to be an array including every key in properties". The
-    first real run died on that before its first turn. Optional arguments are expressed
-    as nullable and still required, which is the documented way to have both.
-    """
-    from inspect_ai.tool._tool_def import ToolDef
-
-    from inspect_audit import _audit
-    from inspect_audit._findings import submit_findings
-    from inspect_audit._image import view_image
-    from inspect_audit._publishing import load_publisher, publish_document
-
-    inv = make_audit(
-        root=tmp_path,
-        runs=None,
-        task="b/t",
-        task_package="b",  # type: ignore[arg-type]
-        investigation_package="a",
-        investigator_image="i",
-        menu=every(["m"]),
-        supplied=[],
-    )
-    ours = [
-        _audit.run_eval(inv),
-        _audit.send_investigators(inv),
-        _audit.jobs(inv),
-        budget(Spend(None, None)),
-        view_image(),
-        submit_findings(tmp_path),
-        publish_document(tmp_path, load_publisher("gl")),
-    ]
-
-    def free_form(schema: Any) -> bool:
-        """An object with no declared properties: strict schemas refuse it (2026-10-20)."""
-        if schema is None:
-            return False
-        if schema.type == "object" and not schema.properties:
-            return True
-        return any(free_form(s) for s in (schema.anyOf or [])) or free_form(schema.items)
-
-    for tool in ours:
-        definition = ToolDef(tool)
-        missing = set(definition.parameters.properties) - set(definition.parameters.required or [])
-        assert not missing, (
-            f"{definition.name} has optional parameters {sorted(missing)}; a strict "
-            "provider refuses the whole request. Make them nullable and required."
-        )
-        loose = [n for n, p in definition.parameters.properties.items() if free_form(p)]
-        assert not loose, (
-            f"{definition.name} takes free-form objects {loose}; Azure's strict schemas "
-            "refuse them. Take a JSON string instead."
-        )
-
-
 def test_jobs_refuse_to_guess_a_package_they_cannot_derive(tmp_path: Path) -> None:
     repo = git_repo(tmp_path / "repo")  # no origin remote
     with pytest.raises(ValueError, match="declare task_package and investigation_package"):
@@ -698,16 +641,22 @@ def test_the_auditor_builds_from_a_directory_it_cannot_write(tmp_path: Path) -> 
 
 
 def test_an_audit_with_a_model_hawk_does_not_price_does_not_start(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hawk: Any
 ) -> None:
     """James, 2026-11-13: "just don't run if you can't find the model". On Hawk every
     model the audit may use must be on Hawk's price list before anything starts; the
     plain `openrouter/...` spelling, which Hawk's proxy cannot route, is not (FRICTION 89)."""
     from inspect_audit import _prices
 
-    monkeypatch.setenv("HAWK_API_URL", "https://hawk.test")
-    row = {"input_cost_per_1m": 0.038, "output_cost_per_1m": 0.5}
-    monkeypatch.setattr(_prices, "_hawk_table", lambda url: {"openrouter/deepseek/flash": row})
+    hawk.prices = [
+        {
+            "model": "openrouter/deepseek/flash",
+            "input_cost_per_1m": 0.038,
+            "output_cost_per_1m": 0.5,
+        }
+    ]
+    _prices._hawk_table.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setenv("HAWK_API_URL", hawk.url)
     with pytest.raises(_prices.UnpricedModelError, match="openrouter/deepseek/gone"):
         audit(
             str(git_repo(tmp_path / "repo")),

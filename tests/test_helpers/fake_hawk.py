@@ -216,6 +216,7 @@ class FakeHawk:
         raise web.HTTPNotFound()
 
     async def _prices(self, request: web.Request) -> web.Response:
+        self._seen(request)
         return web.json_response(self.prices)
 
     async def _permitted(self, request: web.Request) -> web.Response:

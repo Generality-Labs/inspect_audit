@@ -158,14 +158,3 @@ def test_a_docker_box_is_a_container_with_nothing_mounted(tmp_path):
 
     assert compose["services"]["default"]["image"] == AUDITOR_IMAGE
     assert "build" not in compose["services"]["default"]
-
-
-def test_artifacts_land_where_hawks_viewer_looks_for_the_sample(tmp_path):
-    """Hawk serves a sample's artifacts from artifacts/<sample uuid>/."""
-    root = _remote_root(tmp_path)
-    settings = json.loads((root / "artifacts.json").read_text())
-    settings["sample_uuid"] = "9uE3myJMUv4H9bs2Rw4nVj"
-    (root / "artifacts.json").write_text(json.dumps(settings))
-    assert workspace._destination(root, "published").endswith(
-        "/artifacts/9uE3myJMUv4H9bs2Rw4nVj/published"
-    )

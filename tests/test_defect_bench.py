@@ -8,7 +8,6 @@ counts every labelled (item, check), so a run with missing verdicts cannot look 
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -51,15 +50,29 @@ def test_the_investigator_is_given_no_label() -> None:
 
 
 def test_missing_verdicts_stay_in_the_denominator(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    one = SimpleNamespace(id="q3", scores={"gold-answer": SimpleNamespace(value="INCORRECT")})
-    monkeypatch.setattr(
-        score_investigation, "read_eval_log", lambda path: SimpleNamespace(samples=[one])
+    """A real investigation log holding one verdict, on q3: the other seven labelled
+    (item, check) pairs count as missing, not as agreement."""
+    from inspect_ai import Task, eval
+    from inspect_ai.dataset import Sample
+    from inspect_ai.scorer import Score, scorer
+
+    @scorer(metrics=[], name="gold-answer")
+    def one_verdict():
+        async def score(state: object, target: object) -> Score:
+            return Score(value="INCORRECT")
+
+        return score
+
+    [log] = eval(
+        Task(dataset=[Sample(id="q3", input="q", target="x")], scorer=one_verdict()),
+        model="mockllm/model",
+        log_dir=str(tmp_path),
+        display="none",
     )
-    log = tmp_path / "investigation.eval"
-    score_investigation.main(str(log))
-    rows = (tmp_path / "investigation.defects.csv").read_text().splitlines()
+    score_investigation.main(log.location)
+    rows = Path(log.location).with_suffix(".defects.csv").read_text().splitlines()
     assert len(rows) - 1 == len(LABELS["planted"]) * len(LABELS["clean"])
     out = capsys.readouterr().out
     assert "gold-answer: 1/8 agree; planted found 1/3" in out

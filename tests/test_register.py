@@ -264,56 +264,72 @@ def test_collecting_an_investigation_job_fills_the_register_from_its_real_log(
 
 
 def test_failed_verdict_import_does_not_mark_job_collected(
-    tmp_path: Path, monkeypatch, box: dict[str, str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, box: dict[str, str], hawk: Any
 ) -> None:
+    """A job whose verdicts cannot enter the register stays uncollected, so collecting
+    it again after the cause is fixed still brings its verdicts in."""
+    from inspect_ai import eval as inspect_eval
+    from inspect_ai.scorer import Score, scorer
     from inspect_ai.tool import ToolError
+    from test_helpers.fake_hawk import FakeJob
 
     from inspect_audit import _box
+    from inspect_audit.dispatch import HawkRuns
 
-    _start(["gold-answer"])
-    log = tmp_path / "worker.eval"
-    log.write_text("placeholder")
+    @scorer(metrics=[], name="gold-answer")
+    def verdict():
+        async def score(state: Any, target: Any) -> Score:
+            return Score(value="CORRECT", explanation="checked", metadata={"evidence": []})
 
-    class Runs:
-        async def status(self, run_id):
-            return "complete"
+        return score
 
-        async def logs(self, run_id, out_dir):
-            return [log]
+    def investigation_log(ids: list[int], where: str) -> Path:
+        [log] = inspect_eval(
+            Task(dataset=[Sample(input="q", target="x", id=i) for i in ids], scorer=verdict()),
+            model="mockllm/model",
+            log_dir=str(tmp_path / where),
+            display="none",
+        )
+        return Path(log.location)
 
-    async def copy(files, destination):
-        pass
+    _start(["gold-answer"])  # the population: items 1, 2, 3
 
-    attempts = []
+    async def nowhere(files: list[Path], destination: str) -> None:
+        pass  # the job's logs placed in the box's /inputs: no such folder on this machine
 
-    async def import_results(files, address, task, policy):
-        attempts.append(address)
-        if len(attempts) == 1:
-            raise ToolError("repair findings.json")
-        return "imported"
-
-    monkeypatch.setattr(_box, "copy_into_box", copy)
-
-    async def line(path: Any) -> str:
-        return "worker"
-
-    monkeypatch.setattr(_audit, "_log_line", line)
-    monkeypatch.setattr(_register, "collect_investigation", import_results)
+    monkeypatch.setattr(_box, "copy_into_box", nowhere)
     inv = make_audit(
         root=tmp_path,
-        runs=Runs(),
-        task="task",
+        runs=HawkRuns(hawk.url, credential_mode="restricted"),
+        task="register_fixture",
         task_package="p",
         investigation_package="a",
         investigator_image="i",
         menu=Models(investigators=[], subjects=[], judges=[]),
         supplied=[],
     )
+    # a verdict on an item the register does not hold: the whole collection is refused
+    hawk.jobs["bad"] = FakeJob(
+        config={}, body={}, status="complete", logs=[investigation_log([9], "bad")]
+    )
+    hawk.jobs["good"] = FakeJob(
+        config={}, body={}, status="complete", logs=[investigation_log([1, 2], "good")]
+    )
     record = inv.record()
-    record.jobs = [{"label": "child", "kind": "investigation", "run_id": "r", "address": "hawk:r"}]
+    record.jobs = [
+        {"label": label, "kind": "investigation", "run_id": label, "address": f"hawk:{label}"}
+        for label in ("bad", "good")
+    ]
     collect = _audit.jobs(inv)
-    with pytest.raises(ToolError, match="repair"):
-        asyncio.run(collect("collect", "child", None))
+    with pytest.raises(ToolError, match="not in the register's population"):
+        asyncio.run(collect("collect", "bad", None))
     assert not record.jobs[0].get("collected")
-    asyncio.run(collect("collect", "child", None))
-    assert record.jobs[0]["collected"]
+    assert asyncio.run(_register.load()).samples["1"]["gold-answer"] == []
+    # a transient failure (Hawk unreachable) leaves the job uncollected, so a retry works
+    hawk.down = True
+    with pytest.raises(ToolError, match="failed"):
+        asyncio.run(collect("collect", "good", None))
+    assert not record.jobs[1].get("collected")
+    hawk.down = False
+    out = asyncio.run(collect("collect", "good", None))
+    assert "2 investigator verdict(s) added" in out and record.jobs[1]["collected"]

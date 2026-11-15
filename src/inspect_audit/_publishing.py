@@ -70,12 +70,19 @@ def publish_document(root: Path, publisher: Publisher) -> Tool:
         from ._verdicts import InvestigationItemSkill
 
         findings = Findings.model_validate(store_as(FindingsState).findings)
-        checks = TypeAdapter(dict[str, InvestigationItemSkill]).validate_python(
-            findings.investigators["checks"]
-        )
-        register = Register.model_validate(
-            {"checks": list(checks), "samples": findings.investigators["samples"]}
-        )
+        try:
+            checks = TypeAdapter(dict[str, InvestigationItemSkill]).validate_python(
+                findings.investigators["checks"]
+            )
+            register = Register.model_validate(
+                {"checks": list(checks), "samples": findings.investigators["samples"]}
+            )
+        except (KeyError, ValueError) as ex:
+            # a tool error the agent can report, not a crash that ends the run (FRICTION 131)
+            raise ToolError(
+                f"The submitted findings have no valid investigators section ({ex!r}); "
+                "nothing can be published from them"
+            ) from ex
         apply_reviews(register, findings.auditor.reviews, checks)
         unresolved = select(register, "missing", checks, None) or select(
             register, "unresolved", checks, None

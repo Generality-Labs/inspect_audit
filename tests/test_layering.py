@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1] / "src" / "inspect_audit"
 
 # Running jobs, policy, keys and prices know nothing about the agents that use them.
-LOWER = ("dispatch", "_runs", "_policy", "_prices", "_log_sources")
+LOWER = ("dispatch", "_prices", "_log_sources", "_box")
 HIGHER = ("_audit", "_registry", "_investigator", "_task", "_publishing", "_findings", "_report")
 
 # Cycles that exist today. Each consolidation step removes one; this list only shrinks.

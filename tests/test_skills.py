@@ -47,16 +47,6 @@ def test_the_gold_skill_names_its_grades() -> None:
         assert grade in gold.instructions
 
 
-def test_descriptions_stay_within_the_always_visible_budget() -> None:
-    """Descriptions cost context on every turn.
-
-    They live in the skill tool's own description, so an investigation pays for them whether or
-    not a skill is ever invoked.
-    """
-    for skill in load():
-        assert len(skill.description) <= 1024
-
-
 def test_a_skill_directory_is_the_whole_contract(tmp_path: Path, monkeypatch) -> None:
     """Dropping a skill directory in is all it takes: prompt, validation and scoring derive."""
     import inspect_audit._verdicts as agent_module

@@ -4,10 +4,8 @@ import pytest
 from inspect_ai.tool import ToolError
 
 from inspect_audit.dispatch import (
-    HawkRuns,
     Job,
     hawk_config,
-    hawk_supports_restricted,
     validate_environment,
 )
 from inspect_audit.dispatch.policy import AuditAuthorizer, LaunchPolicy, Models, credential_mode
@@ -16,14 +14,10 @@ from inspect_audit.dispatch.policy import AuditAuthorizer, LaunchPolicy, Models,
 def test_execution_declares_its_credentials_by_backend() -> None:
     assert credential_mode("local", None) == "user"
     assert credential_mode("hawk", None) == "restricted"
+    # user only when stated: temporary while our Hawk has no token service (FRICTION 93)
+    assert credential_mode("hawk", "user") == "user"
     with pytest.raises(ValueError, match=r"restricted credentials require runs=.hawk."):
         credential_mode("local", "restricted")
-
-
-@pytest.mark.skipif(hawk_supports_restricted(), reason="this Hawk has restricted credentials")
-def test_restricted_mode_on_a_hawk_without_it_is_refused_at_construction() -> None:
-    with pytest.raises(RuntimeError, match="credential_mode: user"):
-        HawkRuns("https://hawk.test", credential_mode="restricted")
 
 
 def _authoriser() -> AuditAuthorizer:

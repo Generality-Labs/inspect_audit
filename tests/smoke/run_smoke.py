@@ -174,8 +174,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--revision", required=True, help="a pushed inspect_audit commit")
     parser.add_argument("--cases", nargs="*", help="case names (file stems); default all")
     parser.add_argument("--wait-minutes", type=float, default=180)
+    parser.add_argument(
+        "--dir", type=Path, default=HERE, help="folder of cases, e.g. tests/smoke/breadth"
+    )
     args = parser.parse_args(argv)
-    cases = sorted(HERE.glob("*.eval-set.yaml"))
+    cases = sorted(args.dir.resolve().glob("*.eval-set.yaml"))
     if args.cases:
         cases = [c for c in cases if c.name.removesuffix(".eval-set.yaml") in args.cases]
     for case in cases:

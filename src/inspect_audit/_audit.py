@@ -269,11 +269,21 @@ def json_object(text: str, name: str) -> dict[str, Any]:
 
 
 def _logs_named(inv: Audit, names: list[str]) -> list[str]:
-    """Job labels and supplied sources as addresses a job can read."""
+    """Job labels and supplied sources as addresses a job can read.
+
+    Only the benchmark's own runs hold its attempts: a variant's, a regrade's and an
+    investigation's logs record other tasks, and a job given them fails at load, after
+    a runner starts (FRICTION 101 for rescores; breadth round for investigations).
+    """
     addresses = []
     for name in names:
         known = [j for j in inv.record().jobs if j["label"] == name]
         if known:
+            if known[0]["kind"] != JobKind.BENCHMARK:
+                raise ToolError(
+                    f"{name} is a {known[0]['kind']} job: its logs hold no attempts of the "
+                    "benchmark; name the benchmark's own runs or the supplied logs"
+                )
             addresses.append(known[0]["address"])
         elif name in inv.supplied:
             addresses.append(name)
@@ -402,19 +412,6 @@ def run_eval(inv: Audit) -> Tool:
         if rescore:
             if models:
                 raise ToolError("rescoring makes no new attempts: models must be []")
-            # only the benchmark's own attempts can be graded again: a variant's are
-            # graded in its own run, and the other kinds' logs hold no attempts of the
-            # benchmark (round 8: refused only after launch, FRICTION 101)
-            others = [
-                f"{j['label']} ({j['kind']})"
-                for j in inv.record().jobs
-                if j["label"] in rescore and j["kind"] != JobKind.BENCHMARK
-            ]
-            if others:
-                raise ToolError(
-                    f"rescore takes the benchmark's own runs or the supplied logs, not "
-                    f"{', '.join(others)}: a variant's attempts are graded in its own run"
-                )
             if samples is None:
                 raise ToolError("rescoring selects the items to score again by sample id")
             job = Job(

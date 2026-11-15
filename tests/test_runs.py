@@ -724,9 +724,17 @@ def test_the_auditor_launches_a_regrade_as_its_judge(
     record.jobs = [
         *record.jobs,
         {"label": "v", "kind": "variant", "run_id": "x", "address": "hawk:x"},
+        {"label": "r", "kind": "regrade", "run_id": "y", "address": "hawk:y"},
     ]
-    with pytest.raises(ToolError, match=r"not v \(variant\)"):
+    before = len(hawk.jobs)
+    with pytest.raises(ToolError, match="v is a variant job"):
         asyncio.run(regrade("rv", ["1"], [], "{}", 1, ["v"], None, [], ""))  # type: ignore[arg-type]
+    # nor can an investigation read a regrade's logs (breadth round, mathvista)
+    with pytest.raises(ToolError, match="r is a regrade job"):
+        asyncio.run(
+            _audit.send_investigators(inv)("i", ["1"], ["gold-answer"], ["r"], None, "{}", "")  # type: ignore[arg-type]
+        )
+    assert len(hawk.jobs) == before, "refused before any launch"
     # epochs are the auditor's call; only a non-positive count is refused
     with pytest.raises(ToolError, match="positive whole number"):
         asyncio.run(

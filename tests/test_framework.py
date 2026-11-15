@@ -62,3 +62,16 @@ def test_a_letter_grade_on_a_criterion_is_refused_with_the_rule() -> None:
         ValueError, match=r"F\.3=D is not an assessment: ratings\.overall takes a grade"
     ):
         validate(findings)
+
+
+def test_the_submission_checklist_names_the_grades_the_publisher_requires() -> None:
+    """The auditing skill lists what submission refuses (breadth round: agents learned
+    it one refusal at a time). Its grades are the registry's, which `latex.validate` uses."""
+    import json
+
+    from inspect_audit._framework import REGISTRY
+
+    skill = (REGISTRY.parent / "skills/auditing/SKILL.md").read_text()
+    checklist = skill.split("## Before you submit", 1)[1]
+    grades = list(json.loads(REGISTRY.read_text())["grades"])
+    assert f"a grade ({', '.join(grades[:-1])} or {grades[-1]})" in checklist

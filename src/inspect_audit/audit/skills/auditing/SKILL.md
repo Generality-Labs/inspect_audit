@@ -122,3 +122,17 @@ A complete label table is saved progress, not substantive completion. Reallocate
 worker funding toward useful follow-up rather than treating a worker cap as a final answer.
 Before publication compare remaining audits with their likely value and cost,
 including the cost of subsequent publication. Do not spend merely to exhaust the budget.
+
+## Before you submit
+
+Submission is refused, one problem at a time, unless /workspace/findings.json has:
+
+- `auditor.ratings.overall`: a grade (A, B, C or D) with its explanation and evidence;
+- every other rating keyed by a dimension (A-I) or a criterion (A.1, C.3, ...), each
+  labelled with an assessment (the audit-framework skill lists both);
+- a framework criterion on every finding (e.g. `C` or `C.1`);
+- reviews that name an existing sample and check, with a grade that check gives;
+- evidence that cites files, never folders.
+
+The report's prose (`/workspace/report/prose.json`, written after submission) keys its
+dimensions by letter only, A-I: write a criterion's text under its letter.

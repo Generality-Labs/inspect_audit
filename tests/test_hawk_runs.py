@@ -241,3 +241,29 @@ def test_a_child_names_the_audit_that_launched_it(monkeypatch: pytest.MonkeyPatc
     assert config["tags"] == ["audit:ia-br-gsm8k-abc"]
     assert config["metadata"] == {"launched_by": "ia-br-gsm8k-abc"}
     EvalSetConfig.model_validate(config)
+
+
+def test_a_judge_the_benchmarks_arguments_name_is_declared_for_every_job_kind() -> None:
+    """Breadth round, writingbench: its judge is the task argument `judge_model`; jobs
+    that did not declare it got no credentials for it and failed to load (FRICTION 143)."""
+    from hawk.core.types import EvalSetConfig
+
+    from inspect_audit.dispatch import hawk_config
+
+    def declared(job: Job) -> list[str]:
+        config = hawk_config(job)
+        EvalSetConfig.model_validate(config)
+        return [m["name"] for g in config.get("additional_models") or [] for m in g["items"]]
+
+    args = {"judge_model": "openai/gpt-6-luna", "domain1": None}
+    benchmark = Job(label="b", task="pkg/task", package="pkg", models=["m/x"], task_args=args)
+    assert declared(benchmark) == ["openai/gpt-6-luna"]
+    variant = Job(
+        label="v",
+        task="inspect_audit/variant",
+        package="inspect_audit",
+        models=["m/x"],
+        task_args={"task": "pkg/task", "task_args": args, "files": {}, "source": "pkg.t"},
+    )
+    assert declared(variant) == ["openai/gpt-6-luna"]
+    assert declared(JOB) == []  # nothing named, nothing declared

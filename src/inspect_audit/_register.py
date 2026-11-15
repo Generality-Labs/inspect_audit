@@ -305,6 +305,8 @@ async def start_register(
             "task_args": args,
             "dataset": read["dataset"],
             "ids": "positional" if read["positional"] else "declared",
+            # models it loads by default that no job will be given credentials for
+            **({"model_defaults": read["model_defaults"]} if read.get("model_defaults") else {}),
             # read in the box the agent works in: before its first turn, or after it
             # had the box and could have changed the installed benchmark
             "items_read": "before the agent started" if before_agent else "after the agent started",

@@ -399,3 +399,37 @@ def test_a_probe_killed_for_memory_says_so() -> None:
     killed = "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n"
     with local_box(), pytest.raises(ToolError, match="most likely ran out of memory"):
         asyncio.run(run_probe("killed", killed, {}))
+
+
+def test_a_model_the_task_loads_by_default_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, box: dict[str, str]
+) -> None:
+    """Breadth round, writingbench: its judge_model defaults to an Anthropic model no job
+    was given credentials for; every job failed to load. The box read now finds it."""
+    site = tmp_path / "judged"
+    site.mkdir()
+    (site / "judgedfix.py").write_text(
+        "from inspect_ai import Task, task\nfrom inspect_ai.dataset import Sample\n\n@task\n"
+        "def register_fixture(judge_model: str = 'anthropic/claude-x', grader: str = 'exact',"
+        " model_note: str = 'n/a') -> Task:\n"
+        "    return Task(dataset=[Sample(input='q', target='a', id='1')])\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(site))
+    from inspect_audit.dispatch.policy import LaunchPolicy, Models, PolicyStore, ensure_policy
+
+    policy = LaunchPolicy(
+        task="register_fixture",
+        source="judgedfix",
+        task_package=None,
+        investigation_package=None,
+        investigator_image="i",
+        models=Models(),
+        checks=("gold-answer",),
+        configuration_json="{}",
+    )
+    saved = _register.store_as(PolicyStore)
+    saved.policy_json = saved.digest = None
+    ensure_policy(policy, saved, require_existing=False)
+    asyncio.run(_register.start_register("register_fixture", policy))
+    # a model name ("/"), under a model-like parameter, left unset by the audit's arguments
+    assert _register.population().subject["model_defaults"] == {"judge_model": "anthropic/claude-x"}

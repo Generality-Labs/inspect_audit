@@ -210,7 +210,29 @@ class Audit:
             from ._findings import require_audit
 
             require_audit()
-            return await self._launch(job, kind, note, diff)
+            return await self._launch_and_warn(job, kind, note, diff)
+
+    async def _launch_and_warn(
+        self, job: Job, kind: JobKind, note: str, diff: str | None = None
+    ) -> str:
+        """Launch, then warn if the benchmark loads a model this job has no credentials for.
+
+        A model it loads by default, from a parameter its arguments leave unset (FRICTION
+        143). A warning, not a refusal: a model-like parameter the benchmark never uses
+        would otherwise block the whole audit.
+        """
+        launched = await self._launch(job, kind, note, diff)
+        from ._register import population
+
+        defaults = population().subject.get("model_defaults") or {}
+        if not isinstance(defaults, dict) or not defaults:
+            return launched
+        named = ", ".join(f"{k}={v}" for k, v in defaults.items())
+        return (
+            f"{launched}\nWarning: the benchmark loads {named} by default, and no job is given "
+            "credentials for a model its arguments do not name: jobs may fail to load. Only "
+            "the operator can set it (task_args); tell them, with report_blocker if it does."
+        )
 
     async def _launch(self, job: Job, kind: JobKind, note: str, diff: str | None = None) -> str:
         policy = self.authorizer.policy

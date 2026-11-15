@@ -1,0 +1,43 @@
+name: ia-br-mathvista
+packages:
+- inspect-ai==0.3.285
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- inspect_evals @ git+https://github.com/Generality-Labs/inspect_evals@67a9ea5333d3fc672ebce3ca9724bcfdad87f541
+tasks:
+- package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+  name: inspect_audit
+  items:
+  - name: audit
+    args:
+      repo: https://github.com/Generality-Labs/inspect_evals
+      revision: 67a9ea5333d3fc672ebce3ca9724bcfdad87f541
+      target_task: inspect_evals/mathvista
+      source: inspect_evals.mathvista.mathvista
+      task_package: inspect_evals @ git+https://github.com/Generality-Labs/inspect_evals@67a9ea5333d3fc672ebce3ca9724bcfdad87f541
+      investigation_samples: all
+      policy:
+        models:
+          auditor:
+          - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+          investigators:
+          - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+          subjects:
+          - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+          judges:
+          - openai/gpt-6-luna
+        limits:
+          budget_usd: 2.0
+      runs: hawk
+      credential_mode: user
+      box: k8s
+      checks:
+      - gold-answer
+      instructions: 'This case: no supplied logs. Jobs: run_eval fresh attempts on ONE sample with the
+        subject model; run_eval rescore of that job''s logs; send_investigators on that sample, check
+        gold-answer, with that job''s logs.'
+models:
+- package: inspect-ai
+  items:
+  - name: openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+retry_attempts: 0
+message_limit: 400

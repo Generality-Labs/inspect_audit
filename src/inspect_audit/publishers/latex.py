@@ -41,7 +41,23 @@ class Prose(BaseModel):
     dimensions: dict[str, str] = Field(default_factory=dict)
 
 
+# What pdfLaTeX with T1 fonts (the template's default engine) can set from UTF-8: Latin
+# text and common typographic punctuation. Anything else (box drawing, emoji, CJK)
+# stops the whole report (breadth round, docvqa: a progress bar's U+2588 in a recorded
+# error). It is shown as "?" instead: the report says less, but it is produced.
+_SETTABLE = {
+    *(chr(c) for c in range(0x20, 0x7F)),
+    *(chr(c) for c in range(0xA0, 0x180)),
+    *"\n\t\u2013\u2014\u2018\u2019\u201c\u201d\u2022\u2026\u20ac\u2032\u2033",
+}
+
+
+def _settable(text: str) -> str:
+    return "".join(c if c in _SETTABLE else "?" for c in text)
+
+
 def tex(value: object) -> str:
+    value = _settable(str(value))
     substitutions = {
         "\\": r"\textbackslash{}",
         "&": r"\&",

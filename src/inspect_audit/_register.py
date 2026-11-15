@@ -286,7 +286,10 @@ async def start_register(
         read = await in_box.population(task, args, policy.source)
     except ToolError as ex:
         stored = store_as(RegisterStore)
-        stored.unavailable = str(ex)[-2000:]
+        # its first line and its last (exit code, then the error): enough to say why,
+        # where the whole output was a progress bar the report could not typeset
+        lines = [line for line in str(ex).splitlines() if line.strip()]
+        stored.unavailable = " ... ".join(dict.fromkeys([lines[0], lines[-1]]))[:500]
         # the submitted findings' subject says so: no coverage is claimed without one
         stored.subject = {**stored.subject, "register_unavailable": stored.unavailable}
         raise

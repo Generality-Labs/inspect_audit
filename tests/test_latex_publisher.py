@@ -67,7 +67,10 @@ def test_fixture_pdf_uses_bundle_scorecard_and_finding_boxes(
             assert path == "/workspace/report/prose.json"
             return json.dumps(
                 {
-                    "datasheet": "Synthetic fixture benchmark.",
+                    # typographic punctuation is set; a progress bar's block, an
+                    # emoji and CJK become "?" rather than stop the report (docvqa)
+                    "datasheet": "Synthetic fixture benchmark \u2013 \u201cquoted\u201d\u2026 "
+                    "caf\u00e9 \u2588\u258e \U0001f600 \u6f22.",
                     "setup": "No model calls were made.",
                     "dimensions": {"C": "The reference was checked directly."},
                 }
@@ -80,6 +83,7 @@ def test_fixture_pdf_uses_bundle_scorecard_and_finding_boxes(
     )
     generated = (output / "Content.tex").read_text()
     findings, _ = read_bundle(FIXTURE)
+    assert "caf\u00e9" in text and "\u2588" not in generated and "\U0001f600" not in generated
     for title in (
         "Cover Sheet",
         "Contents",
@@ -165,6 +169,10 @@ def test_prose_under_a_sub_criterion_is_refused_by_name_as_a_tool_error(tmp_path
     prose = latex.Prose(dimensions={"C": "fine", "C.1": "under a sub-criterion"})
     with pytest.raises(ToolError, match=r"Preview failed: .*not C\.1"), reported("Preview"):
         latex.source(findings, manifest, prose, tmp_path)
+
+
+def test_characters_pdflatex_cannot_set_become_a_question_mark() -> None:
+    assert latex.tex("caf\u00e9 \u2013 \u2588 \U0001f600") == "caf\u00e9 \u2013 ? ?"
 
 
 def test_unbreakable_text_may_break_rather_than_run_off_the_page() -> None:

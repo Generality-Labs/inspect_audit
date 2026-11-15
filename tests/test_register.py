@@ -388,3 +388,14 @@ def test_an_unreadable_population_says_why_and_does_not_block_submission(
     except ToolError as ex:
         refusal = str(ex)  # it may fail later, on the empty draft: not at the register
     assert "Open the register" not in refusal, "the dead end is back"
+
+
+def test_a_probe_killed_for_memory_says_so() -> None:
+    """Breadth round, docvqa: the read died with exit 137 and the agent saw "Killed"."""
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit._in_box import run_probe
+
+    killed = "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n"
+    with local_box(), pytest.raises(ToolError, match="most likely ran out of memory"):
+        asyncio.run(run_probe("killed", killed, {}))

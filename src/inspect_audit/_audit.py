@@ -279,12 +279,20 @@ def _logs_named(inv: Audit, names: list[str]) -> list[str]:
     for name in names:
         known = [j for j in inv.record().jobs if j["label"] == name]
         if known:
-            if known[0]["kind"] != JobKind.BENCHMARK:
+            job = known[0]
+            if job["kind"] != JobKind.BENCHMARK:
                 raise ToolError(
-                    f"{name} is a {known[0]['kind']} job: its logs hold no attempts of the "
+                    f"{name} is a {job['kind']} job: its logs hold no attempts of the "
                     "benchmark; name the benchmark's own runs or the supplied logs"
                 )
-            addresses.append(known[0]["address"])
+            # a job that wrote nothing, or has not finished, has no logs to read yet: the
+            # job reading them fails at load (breadth round, class_eval: a regrade of a
+            # benchmark run already recorded as "failed: no logs")
+            if job.get("collection_error"):
+                raise ToolError(f"{name} produced no logs ({job['collection_error']})")
+            if not job.get("collected"):
+                raise ToolError(f"{name} is not collected yet: wait for it and collect it first")
+            addresses.append(job["address"])
         elif name in inv.supplied:
             addresses.append(name)
         else:

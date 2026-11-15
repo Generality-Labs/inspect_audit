@@ -71,9 +71,18 @@ async def run_probe(name: str, script: str, request: dict[str, Any]) -> Any:
         ["python", f"{WORK}/{name}.py", f"{WORK}/{name}.request.json", answer], timeout=1800
     )
     if not result.success:
+        killed = (
+            # SIGKILL: on a pod, the kernel's out-of-memory killer (breadth round, docvqa:
+            # 5,349 images built into a dataset)
+            "\nThe box most likely ran out of memory. The operator can give it more with "
+            'box_resources, e.g. {"limits": {"memory": "16Gi"}}.'
+            if result.returncode in (137, -9)
+            else ""
+        )
         raise ToolError(
             f"reading the benchmark in the box failed ({name}, exit {result.returncode}):\n"
             + why_it_failed(result.stderr or result.stdout)
+            + killed
         )
     return json.loads(await box.read_file(answer))
 

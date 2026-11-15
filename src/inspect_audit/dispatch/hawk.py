@@ -25,6 +25,27 @@ from .jobs import (
 from .jobs import package_name as distribution_name
 
 
+def argument_models(args: Any, model_key: bool = False) -> list[str]:
+    """Models a benchmark's arguments name.
+
+    String values under model-like keys (`judge_model`, `grader`, `models`), as the
+    authoriser reads them (`policy.MODEL_ARG`).
+    """
+    from .policy import MODEL_ARG
+
+    if isinstance(args, str):
+        return [args] if model_key and "/" in args else []
+    if isinstance(args, dict):
+        return [
+            m
+            for key, value in args.items()
+            for m in argument_models(value, model_key or bool(MODEL_ARG.search(str(key))))
+        ]
+    if isinstance(args, list):
+        return [m for value in args for m in argument_models(value, model_key)]
+    return []
+
+
 def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
     """The eval-set config Hawk runs for a job. Models route through Hawk's proxy."""
     package_name, _, task_name = job.task.partition("/")
@@ -73,10 +94,18 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
     # here, in either credential mode, so Hawk gives the job their provider's credentials
     # (smoke round 7: an investigation's OpenRouter judge failed to load, "No
     # OPENROUTER_API_KEY defined", under user credentials; FRICTION 94)
+    # The same for a model the benchmark's own arguments name (writingbench's
+    # `judge_model`), in a job of any kind: the breadth round's writingbench jobs all
+    # failed to load with "No ANTHROPIC_API_KEY" (FRICTION 143)
     investigation = JobKind.of(job.task) is JobKind.INVESTIGATION
-    judges = (job.task_args.get("judge") or {}) if investigation else {}
-    if judges:
-        config["additional_models"] = [group(str(m)) for m in dict.fromkeys(judges.values())]
+    judges = [
+        str(m) for m in ((job.task_args.get("judge") or {}) if investigation else {}).values()
+    ]
+    own = JobKind.of(job.task) is None  # the benchmark's own task: its arguments are its own
+    benchmark_args = job.task_args if own else job.task_args.get("task_args") or {}
+    named = [*judges, *argument_models(benchmark_args)]
+    if named:
+        config["additional_models"] = [group(m) for m in dict.fromkeys(named)]
     if restricted:
         sources = (job.task_args.get("logs") or []) if investigation else []
         if any(not str(source).startswith("hawk:") for source in sources):

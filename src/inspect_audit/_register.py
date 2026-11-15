@@ -58,6 +58,9 @@ class RegisterStore(StoreModel):
     sample_ids: list[str] = Field(default_factory=list)
     verdicts: list[dict[str, Any]] = Field(default_factory=list)
     """One row per verdict read from a collected investigation log (see `verdicts_in`)."""
+    unavailable: str = ""
+    """Why the population could not be read, when it could not: submission goes on
+    without a register rather than never (breadth round, docvqa)."""
 
 
 def population() -> Register:
@@ -279,7 +282,14 @@ async def start_register(
     except ValueError as ex:
         raise ToolError(str(ex)) from ex
     # read in the box, where the benchmark is installed: its code never runs here
-    read = await in_box.population(task, args, policy.source)
+    try:
+        read = await in_box.population(task, args, policy.source)
+    except ToolError as ex:
+        stored = store_as(RegisterStore)
+        stored.unavailable = str(ex)[-2000:]
+        # the submitted findings' subject says so: no coverage is claimed without one
+        stored.subject = {**stored.subject, "register_unavailable": stored.unavailable}
+        raise
     ids: list[str] = read["ids"]
     if policy.samples is not None:
         if set(policy.samples) - set(ids):

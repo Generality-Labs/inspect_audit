@@ -548,3 +548,35 @@ def test_staging_a_samples_logs_happens_off_the_event_loop() -> None:
 
     # the solver reads and writes logs to stage them; it must hand that to a thread
     assert "to_thread.run_sync(sliced_logs" in inspect.getsource(_investigator)
+
+
+def test_an_image_input_matches_its_log_by_its_bytes(tmp_path: Path) -> None:
+    """A benchmark loads an image as a path in its cache; Inspect logs it as a data URI.
+    Breadth round: every mathvista investigation was refused as "input differs"."""
+    from inspect_ai import Task, eval
+    from inspect_ai.dataset import Sample
+    from inspect_ai.model import ChatMessageUser, ContentImage, ContentText
+    from PIL import Image
+
+    from inspect_audit._task import check_same_items
+
+    picture = tmp_path / "cache" / "45.png"
+    picture.parent.mkdir()
+    Image.new("RGB", (8, 8), "red").save(picture)
+
+    def item() -> Sample:
+        content = [ContentText(text="What colour?"), ContentImage(image=str(picture))]
+        return Sample(id="45", input=[ChatMessageUser(content=content)])
+
+    [log] = eval(
+        Task(name="image_task", dataset=[item()]),
+        model="mockllm/model",
+        log_dir=str(tmp_path / "logs"),
+        display="none",
+    )
+    index = index_logs([log.location], task_name="image_task", task_args={}, package=None)
+    check_same_items(index, [item()])
+    # the same path, other bytes: a different input
+    Image.new("RGB", (8, 8), "blue").save(picture)
+    with pytest.raises(LogMismatchError, match="differs"):
+        check_same_items(index, [item()])

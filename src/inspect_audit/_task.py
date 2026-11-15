@@ -61,7 +61,38 @@ def _task_source(task: Task, name: str, source: str | None) -> SourceCopy:
 
 def _content(value: str | list[ChatMessage]) -> str | list[dict[str, Any]]:
     # a chat's messages get a fresh random id each time the dataset is loaded
-    return value if isinstance(value, str) else [m.model_dump(exclude={"id"}) for m in value]
+    if isinstance(value, str):
+        return value
+    return [_same_images(m.model_dump(exclude={"id"})) for m in value]
+
+
+def _same_images(dumped: Any) -> Any:
+    """An image as the digest of its bytes, wherever they are.
+
+    A benchmark loads an image as a path into its local cache; the log records it as a
+    data URI of the same bytes (breadth round: every mathvista investigation was refused
+    as "input differs"). A URL stays as it is: its bytes are not here to compare.
+    """
+    if isinstance(dumped, list):
+        return [_same_images(v) for v in dumped]
+    if not isinstance(dumped, dict):
+        return dumped
+    if dumped.get("type") == "image" and isinstance(dumped.get("image"), str):
+        return {**dumped, "image": _image_digest(dumped["image"])}
+    return {k: _same_images(v) for k, v in dumped.items()}
+
+
+def _image_digest(image: str) -> str:
+    import base64
+    import hashlib
+
+    if image.startswith("data:"):
+        data = base64.b64decode(image.split(",", 1)[1])
+    elif Path(image).is_file():
+        data = Path(image).read_bytes()
+    else:
+        return image
+    return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
 def check_same_items(index: LogIndex, samples: list[Sample]) -> None:
@@ -72,7 +103,12 @@ def check_same_items(index: LogIndex, samples: list[Sample]) -> None:
         one_per_log = {a.log: a for a in index.for_sample(str(sample.id))}
         for attempt in one_per_log.values():
             logged = read_eval_log_sample(
-                attempt.log, id=attempt.sample_id, epoch=attempt.epoch, exclude_fields={"events"}
+                attempt.log,
+                id=attempt.sample_id,
+                epoch=attempt.epoch,
+                exclude_fields={"events"},
+                # images are logged as attachments: their bytes, not a reference to them
+                resolve_attachments=True,
             ).input
             if _content(logged) != _content(sample.input):
                 raise LogMismatchError(

@@ -27,15 +27,16 @@ One Inspect task: a react agent in its own box, launching benchmark and investig
 | Module                | Owns                                                                                                       |
 | --------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `_audit.py`           | `audit`: declared inputs staged on the host, the job tools, the budget tool, the task                      |
-| `dispatch/`           | jobs and where they run (`local`, `hawk`), `policy` and the authoriser, `packages`, the key launcher       |
+| `dispatch/`           | jobs and where they run (`local`, `hawk`), `policy` and the authoriser, `packages`                         |
 | `_log_sources.py`     | every way of naming logs (path, `hawk:`, URL) resolved to local files                                      |
 | `_staging.py`         | the declared inputs on the host: repository snapshot, logs, paper, docs, starting workspace                |
 | `_repository.py`      | what a benchmark repository says about itself: its task, the paths to snapshot, its paper                  |
 | `_audit_workspace.py` | the auditor's box (Docker compose or k8s values, staging inputs, installing the benchmark), Hawk artifacts |
 | `_box.py`             | the one way into any box: archive, `write_into`/`copy_into_box`, `install`                                 |
 | `_report.py`          | launched-job records, log provenance, operator turn-taking and outcome scoring                             |
-| `_results.py`         | investigators' verdicts as Inspect Scout results (the one record of them), scanned in on collect           |
-| `_register.py`        | the register: the population, with verdicts read from the Scout results on demand                          |
+| `_register.py`        | the register: the population and verdicts read once from collected logs into the checkpointed store        |
+| `_in_box.py`          | questions that need the benchmark's code (its samples, a variant's check), answered in the auditor's box   |
+| `_variant.py`         | the auditor's modified copies of the benchmark: replacement files checked against the installed package    |
 | `_spend.py`           | the one owner of money: own calls plus every job's spend so far, the budget stop, the `budget` report      |
 | `_prices.py`          | the one price table (Hawk's), the start-of-audit price check, pricing token counts                         |
 | `_framework.py`       | the framework's one source (`audit/framework.json`) and everything derived from it                         |
@@ -44,11 +45,11 @@ One Inspect task: a react agent in its own box, launching benchmark and investig
 | `publishers/latex.py` | default pinned GL audit template, generated structure and host/image TeX compilation                       |
 | `publishers/gl.py`    | reviewed GL components and static HTML/PDF output                                                          |
 
-Money has one owner, `_spend.Spend`: the auditor's own calls plus every job's spend so far, running or finished, priced by the audit from the job's token counts at Hawk's prices. The operator's `budget_usd` is the one stop (launches stop once spend reaches it; it also bounds the auditor's own calls). No job carries a pre-set cap and nothing is reserved: the auditor manages spend from what `budget` shows (FRICTION 99, 100). A capped per-audit OpenRouter key launcher exists in `dispatch/` but has never been configured. Resume is Inspect's checkpointing of `/workspace`, `/inputs` and the store.
+Money has one owner, `_spend.Spend`: the auditor's own calls plus every job's spend so far, running or finished, priced by the audit from the job's token counts at Hawk's prices. The operator's `budget_usd` is the one stop (launches stop once spend reaches it; it also bounds the auditor's own calls). No job carries a pre-set cap and nothing is reserved: the auditor manages spend from what `budget` shows (FRICTION 99, 100). Resume is Inspect's checkpointing of `/workspace`, `/inputs` and the store.
 
 Launch configuration is resolved once into an immutable `LaunchPolicy`. Its snapshot and SHA-256 are saved in Inspect's sample store; resume must match the original policy and auditor model. `/inputs/policy.json` is a readable copy, never authority. Child submissions pass through `AuditAuthorizer` and record the policy digest. The policy's limits are the budget, concurrency and coverage; unsupported policy fields are refused.
 
-Structured YAML accepts `benchmark`, `investigation`, `policy` and `execution` sections (see `examples/audit-policy.yaml`). Hawk children are restricted by default (Hawk's restricted-credentials API; they never receive a user refresh token). Our deployment has no secure token service yet, so the smoke audits temporarily state `credential_mode: user` (FRICTION 93); remove that once restricted launches work. Submission authority currently remains in the auditor's host process. A separate trusted launcher and moving benchmark enumeration out of that process remain work; the policy object alone is not a process-isolation boundary.
+An audit's settings are the audit task's own arguments, passed with Inspect's `--task-config` or a Hawk task item's `args` (see `examples/audit-policy.yaml`). Hawk children are restricted by default (Hawk's restricted-credentials API; they never receive a user refresh token). Our deployment has no secure token service yet, so the smoke audits temporarily state `credential_mode: user` (FRICTION 93); remove that once restricted launches work. Submission authority currently remains in the auditor's host process. The benchmark's own code never runs in that process: its samples are read and variants checked in the auditor's box (`_in_box.py`). The policy object alone is not a process-isolation boundary.
 
 ## Load-bearing rules
 
@@ -78,7 +79,7 @@ Structured YAML accepts `benchmark`, `investigation`, `policy` and `execution` s
 
 ## Findings handoff
 
-The auditor's draft (`/workspace/findings.json`) is its own: only the `auditor` section. Investigators' verdicts are Scout results, never copied into the draft; submission assembles the bundle's `subject` and `investigators` from the register (FRICTION 92, 102). `submit_findings` validates and freezes the bundle; publishing tools and skills are withheld until this boundary. Afterwards job tools disappear and host launch code refuses new experiments. There is no reopening. The same agent continues, or `inspect_audit/publish` starts a fresh publishing run from the saved bundle. See `docs/findings.md`. Do not introduce a second mutable report findings format into this workflow.
+The auditor's draft (`/workspace/findings.json`) is its own: only the `auditor` section. Investigators' verdicts are scores in their jobs' logs, read once into the register on collect and never copied into the draft; submission assembles the bundle's `subject` and `investigators` from the register (FRICTION 92, 102). `submit_findings` validates and freezes the bundle; publishing tools and skills are withheld until this boundary. Afterwards job tools disappear and host launch code refuses new experiments. There is no reopening. The same agent continues, or `inspect_audit/publish` starts a fresh publishing run from the saved bundle. Do not introduce a second mutable report findings format into this workflow.
 
 The default latex publisher builds from the audit_reports template shipped in `publishers/template/` at the revision in `publishers/template.json` (that repository is private, so it is shipped, not fetched); `framework.json` and the framework skill's definitions are generated from it. Publisher validation runs before freezing findings. Task setup checks, before the first model call, that something can compile the report: TeX in the auditor's box, host `latexmk` and `pdflatex`, or an available image named by `INSPECT_AUDIT_LATEX_IMAGE`. Agent-authored publishing input is prose only; grades, criterion assignments, counts and evidence remain in the frozen findings.
 

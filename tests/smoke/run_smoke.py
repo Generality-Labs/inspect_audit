@@ -180,6 +180,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     cases = sorted(args.dir.resolve().glob("*.eval-set.yaml"))
     if args.cases:
+        known = {c.name.removesuffix(".eval-set.yaml") for c in cases}
+        # a name that matches no case is an error, not nothing to run (zsh passed a whole
+        # unsplit list as one name, and the runner exited 0 having run nothing)
+        if unknown := sorted(set(args.cases) - known):
+            parser.error(f"no such case in {args.dir}: {', '.join(unknown)}")
         cases = [c for c in cases if c.name.removesuffix(".eval-set.yaml") in args.cases]
     for case in cases:
         # refuse a broken or uncommitted config before any spend

@@ -37,9 +37,18 @@ def materialize(config: dict[str, Any], revision: str) -> dict[str, Any]:
         for g in config.get("models") or []
         for i in g["items"]
     ]
+    sources: list[str] = []
     for group in config["tasks"]:
         for item in group["items"]:
-            item.setdefault("args", {}).setdefault("spec", {})["prices"] = prices_for(models)
+            spec = item.setdefault("args", {}).setdefault("spec", {})
+            spec["prices"] = prices_for(models)
+            sources += [
+                s.removeprefix("hawk:") for s in spec.get("logs") or [] if s.startswith("hawk:")
+            ]
+    # a restricted runner reads only the Hawk logs its config declares, as production
+    # investigation jobs declare theirs (dispatch.hawk.hawk_config)
+    if sources:
+        config["transcripts"] = {"sources": [{"eval_set_id": s} for s in dict.fromkeys(sources)]}
     return config
 
 

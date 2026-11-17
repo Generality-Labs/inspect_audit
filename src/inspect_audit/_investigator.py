@@ -10,6 +10,7 @@ import json
 from collections.abc import Sequence
 from copy import copy
 from logging import getLogger
+from pathlib import Path
 from typing import Any
 
 import anyio.to_thread
@@ -133,8 +134,12 @@ def investigator(
     search: WebSearchProviders | None = None,
     model: Model | None = None,
     install: Sequence[str] = (),
+    rubric: Path | None = None,
 ) -> Solver:
     """Investigate the sample this solver runs in, in place of the benchmark's solver.
+
+    `rubric` is the audit package's rubric skill: what the auditor's judgments mean, so
+    an investigator knows what its item verdicts are evidence for.
 
     `install` are the pip specs its job installed the benchmark with: the same go into
     the investigator's own box, so it can import and run the benchmark's code there
@@ -146,10 +151,11 @@ def investigator(
         for path in sorted(SKILLS.iterdir())
         if path.is_dir()
         and path.name in ({c.name for c in checks} | set(SUPPORT_SKILLS) | set(LOG_SKILLS))
-    ]
+    ] + ([str(rubric)] if rubric else [])
     named = "\n".join(f"- `{c.name}`: {c.description}" for c in checks)
     system = prompts.INVESTIGATOR.format(
         items=named,
+        rubric=(f"; `{rubric.name}` defines what the audit's judgments mean" if rubric else ""),
         confidential=prompts.INVESTIGATION_CONFIDENTIAL.format(root=INVESTIGATION_ROOT)
         if confidential
         else "",

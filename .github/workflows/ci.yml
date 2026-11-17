@@ -57,6 +57,30 @@ jobs:
         if: github.event_name == 'pull_request'
         run: uv run pytest -m publishing tests/test_findings_handoff.py tests/test_render.py
 
+  # Every audit package under packages/ installed beside this commit of inspect_audit and
+  # tested against it, so a change to the machinery that breaks a package fails here.
+  packages:
+    name: Audit packages
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.13"
+      - name: Install inspect_audit and every package
+        run: |
+          uv sync --locked
+          for package in packages/*/; do uv pip install --no-deps -e "$package"; done
+      - name: Every package loads by name
+        run: uv run --no-sync inspect-audit-packages
+      - name: Type-check the packages
+        run: uv run --no-sync basedpyright packages
+      - name: Package tests, and the interface tests with every package installed
+        run: uv run --no-sync pytest --no-cov packages tests/test_package.py tests/test_layering.py
+
   latex:
     name: LaTeX fixture
     timeout-minutes: 20

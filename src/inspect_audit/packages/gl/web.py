@@ -12,9 +12,16 @@ from inspect_ai.tool import Tool, ToolError, tool
 from inspect_ai.util import StoreModel, sandbox, store_as
 from pydantic import Field
 
-from .._findings import FindingsState, encoded, restore_bundle
-from .._publishing import Publisher
-from ._render import ensure_browser, render_in_box, reported, tree
+from inspect_audit.package import (
+    FindingsState,
+    Publisher,
+    encoded,
+    ensure_browser,
+    render_in_box,
+    reported,
+    restore_bundle,
+    tree,
+)
 
 GL_REVISION = "014b3165403bab23d630c0623acf0ed9d50df445"
 ASSETS = {

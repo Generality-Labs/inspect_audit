@@ -24,8 +24,14 @@ dependencies = [
 [project.entry-points.inspect_ai]
 inspect_audit = "inspect_audit._registry"
 
+# Audit packages (a rubric and its publishing formats), found by name; see
+# inspect_audit.package. Packages in other distributions register the same way.
+[project.entry-points."inspect_audit.packages"]
+gl = "inspect_audit.packages.gl:package"
+
 [project.scripts]
 inspect-audit-regrade = "inspect_audit._regrade:main"
+inspect-audit-packages = "inspect_audit.package:main"
 
 [project.optional-dependencies]
 remote = [

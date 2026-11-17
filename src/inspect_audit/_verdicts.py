@@ -20,7 +20,7 @@ SKILLS = Path(__file__).parent / "skills"
 
 # support skills help with the work rather than defining it; an investigator is never
 # asked to audit one of these
-SUPPORT_SKILLS = ("map-inspect-packages", "audit-framework")
+SUPPORT_SKILLS = ("map-inspect-packages",)
 
 # skills for reading Inspect logs in a box, never checks: the auditor's, and the
 # investigator's for its sample's slice of the declared logs (5739685)

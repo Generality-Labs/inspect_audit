@@ -127,12 +127,6 @@ including the cost of subsequent publication. Do not spend merely to exhaust the
 
 Submission is refused, one problem at a time, unless /workspace/findings.json has:
 
-- `auditor.ratings.overall`: a grade (A, B, C or D) with its explanation and evidence;
-- every other rating keyed by a dimension (A-I) or a criterion (A.1, C.3, ...), each
-  labelled with an assessment (the audit-framework skill lists both);
-- a framework criterion on every finding (e.g. `C` or `C.1`);
+- the ratings and finding criteria your rubric skill's "Before you submit" lists;
 - reviews that name an existing sample and check, with a grade that check gives;
 - evidence that cites files, never folders.
-
-The report's prose (`/workspace/report/prose.json`, written after submission) keys its
-dimensions by letter only, A-I: write a criterion's text under its letter.

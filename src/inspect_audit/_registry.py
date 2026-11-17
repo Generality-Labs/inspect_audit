@@ -49,6 +49,7 @@ def investigation(
     time_limit: int | None = None,
     working_limit: int | None = None,
     install: list[str] | None = None,
+    package: str | None = None,
 ) -> Task:
     """Investigate a benchmark task from inside its own samples (see `investigation_task` in `_task`).
 
@@ -85,6 +86,7 @@ def investigation(
         message_limit=message_limit,
         time_limit=time_limit,
         working_limit=working_limit,
+        package=package,
     )
 
 

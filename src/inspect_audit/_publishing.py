@@ -1,9 +1,6 @@
 """Publishing packages and phase-dependent tools, using Inspect's ToolSource API."""
 
-import importlib
 import shutil
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,46 +12,10 @@ from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
 from inspect_ai.util import CheckpointConfig, store_as
 from pydantic import TypeAdapter
 
-from ._findings import Findings, FindingsState, encoded, read_bundle, restore_bundle
+from ._findings import FindingsState, encoded, read_bundle, restore_bundle
 from ._image import view_image
 from ._report import AuditState, audit_outcome, report_blocker
-
-
-@dataclass(frozen=True)
-class Publisher:
-    """A trusted publishing package: skills, optional tools and an output builder.
-
-    A factory ``module:factory`` returns this object. ``build(root, bundle)`` reads draft output
-    from the sandbox and returns a host directory of finished artifacts. The
-    second argument is the trusted submitted bundle, independent of the workspace. It must
-    not edit the submitted bundle. No benchmark installation is required.
-    """
-
-    skills: list[str]
-    build: Callable[[Path, Path], Awaitable[Path]]
-    tools: Callable[[Path], list[Tool]] = lambda root: []
-    validate: Callable[[Findings], None] = lambda findings: None
-    # checked in setup, before the first model call: a missing renderer ends the audit then,
-    # not after hours of work (CVE-Bench Hard froze 9 findings, then could not publish)
-    preflight: Callable[[], Awaitable[None]] | None = None
-
-
-def load_publisher(name: str) -> Publisher:
-    if name == "latex":
-        from .publishers.latex import publisher
-
-        return publisher()
-    if name == "gl":
-        from .publishers.gl import publisher
-
-        return publisher()
-    module, separator, factory = name.partition(":")
-    if not separator:
-        raise ValueError("publisher must be 'latex', 'gl' or an installed module:factory")
-    result = getattr(importlib.import_module(module), factory)()
-    if not isinstance(result, Publisher):
-        raise TypeError("Publisher factories must return inspect_audit.Publisher")
-    return result
+from .package import Publisher, select
 
 
 @tool(parallel=False)
@@ -93,7 +54,7 @@ def publish_document(root: Path, publisher: Publisher) -> Tool:
             if outcome == "published_incomplete"
             else []
         )
-        from .publishers._render import reported
+        from ._render import reported
 
         with reported("Publication"):
             output = await publisher.build(root, bundle)
@@ -168,7 +129,8 @@ class PhaseTools:
 @task
 def publish(
     bundle: str,
-    publisher: str = "latex",
+    package: str | None = None,
+    publisher: str | None = None,
     output_dir: str = "./publications",
     instructions: str = "",
     box: str = "docker",
@@ -179,7 +141,9 @@ def publish(
 
     Args:
         bundle: Local directory containing findings.json, manifest.json and evidence.
-        publisher: 'latex', 'gl' or an installed module:factory returning a Publisher.
+        package: The audit package the findings were rated under (default gl).
+        publisher: One of that package's formats (default its first; gl: latex or web),
+            or an installed module:factory returning a Publisher.
         output_dir: Where immutable report bundles are saved.
         instructions: Presentation instructions for the publishing agent.
         box: docker or k8s, independently of where the original audit ran.
@@ -197,8 +161,9 @@ def publish(
     (root / "inputs").mkdir(parents=True)
     (root / "work/report").mkdir(parents=True)
     shutil.copytree(source, root / "inputs/findings")
-    selected = load_publisher(publisher)
-    selected.validate(findings)
+    chosen = select(package, publisher)
+    chosen.validate(findings)
+    selected = chosen.publisher
     tools = PhaseTools(
         root,
         [
@@ -253,5 +218,5 @@ def publish(
         scorer=audit_outcome(),
         checkpoint=CheckpointConfig(sandbox_paths={"default": ["/workspace", "/inputs"]}),
         token_limit=token_limit,
-        metadata={"audit_dir": str(root), "publisher": publisher},
+        metadata={"audit_dir": str(root), "package": chosen.name, "publisher": chosen.format},
     )

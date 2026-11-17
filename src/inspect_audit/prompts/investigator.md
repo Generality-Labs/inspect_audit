@@ -82,7 +82,7 @@ You are auditing:
 {items}
 
 Invoke each skill and follow it. `map-inspect-packages` points at Inspect's docs when you
-need to read its code; `audit-framework` defines the framework's judgments.
+need to read its code{rubric}.
 When `web_search` is available, use it to find sources, then retrieve the source text.
 Check that a fetched page contains the requested content: HTTP 200 can be a consent
 page or CAPTCHA. If access is blocked, try a different source or retrieval method;

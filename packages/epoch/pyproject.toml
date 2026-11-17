@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "inspect-audit-epoch"
+version = "0.0.1"
+description = "Epoch AI's benchmark review rubric as an Inspect Auditor package"
+license = "MIT"
+authors = [{ name = "Laurence Wroe" }, { name = "James Mann", email = "james.mann@generality.org" }]
+requires-python = ">=3.11"
+# inspect_audit is the machinery this plugs into; installed beside it, never pinned here
+dependencies = ["inspect_audit", "pyyaml"]
+
+[project.entry-points."inspect_audit.packages"]
+epoch = "inspect_audit_epoch:package"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/inspect_audit_epoch"]

@@ -539,7 +539,10 @@ def send_investigators(inv: Audit) -> Tool:
             label=label,
             task=str(JobKind.INVESTIGATION.task),
             package=inv.investigation_package,
-            extra_packages=policy.benchmark_packages(),
+            extra_packages=[
+                *policy.benchmark_packages(),
+                *([r] if (r := policy.audit_package_requirement) else []),
+            ],
             models=[investigator],
             task_args={
                 "task": inv.task,
@@ -555,6 +558,7 @@ def send_investigators(inv: Audit) -> Tool:
                 "paper": inv.paper,
                 # the benchmark into the investigator's own box, as this job installs it
                 "install": policy.box_install(),
+                "package": policy.audit_package,
             },
         )
         return await inv.launch(job, JobKind.INVESTIGATION, note)
@@ -737,6 +741,7 @@ def audit(
     child_secrets: list[str] | None = None,
     benchmark_environment: dict[str, str] | None = None,
     model_configs: dict[str, dict[str, Any]] | None = None,
+    package: str | None = None,
     publisher: str | None = None,
 ) -> Task:
     """Audit a benchmark, submit findings, then use the selected publisher.
@@ -802,14 +807,18 @@ def audit(
             credentials belong in child_secrets instead.
         model_configs: Inspect ModelConfig settings keyed by full model name.
             Child models and judge roles use these fixed settings.
-        publisher: Publishing package, revealed only after findings submission.
-            Defaults to latex; installed module:factory packages can replace it.
+        package: The audit package: the rubric the auditor rates against, given to it
+            from the start, and the formats its findings can be published in. Defaults
+            to gl; `inspect-audit-packages` lists the installed ones.
+        publisher: A format of that package (gl: latex, the default, or web), revealed
+            only after findings submission; or an installed module:factory.
     """
     from ._findings import Findings, encoded, submit_findings
-    from ._publishing import PhaseTools, load_publisher, preflight_publisher
+    from ._publishing import PhaseTools, preflight_publisher
+    from .package import select
 
-    publisher = publisher or "latex"
-    selected_publisher = load_publisher(str(publisher))
+    chosen = select(package, publisher)
+    selected_publisher = chosen.publisher
     box = box or "docker"
     hawk_api_url = hawk_api_url or os.environ.get("HAWK_API_URL")
     interactive = bool(interactive)
@@ -852,7 +861,7 @@ def audit(
         raise ValueError("Hawk jobs need hawk_api_url (or HAWK_API_URL)")
     if not repo:
         raise ValueError("audit needs a repo: the benchmark to audit")
-    skill_paths = _skill_paths(extra_skills or [])
+    skill_paths = _skill_paths(chosen.package.rubric.skill, extra_skills or [])
 
     # what can be worked out is worked out: the investigated repository already says which
     # commit it is, which directory the task lives in and which paper it comes from
@@ -873,6 +882,7 @@ def audit(
         overview or "",
         target_task,
         output_dir,
+        chosen.package.rubric.stage,
     )
 
     (root / "work/findings.json").write_bytes(encoded(Findings().model_dump(mode="json")))
@@ -909,6 +919,8 @@ def audit(
         limits=permissions.limits,
         credential_mode=credential_mode,
         configuration_json=canonical(configuration),
+        audit_package=chosen.name,
+        audit_package_requirement=chosen.package.requirement,
     )
     snapshot = canonical(launch_policy.model_dump(mode="json"))
     (root / "policy.json").write_text(snapshot)
@@ -967,7 +979,7 @@ def audit(
             "judge_models": list(models.judges),
             "supplied_logs": inv.supplied,
         }
-    tools.append(submit_findings(root, inv, target_task, selected_publisher.validate))
+    tools.append(submit_findings(root, inv, target_task, chosen.validate))
     # Common shell/image/budget/blocker tools survive the handoff. Skill and job
     # capabilities are resolved per turn by Inspect, not by a second agent loop.
     common = [
@@ -1074,7 +1086,7 @@ def audit(
             as_solver(
                 react(
                     name="auditor",
-                    prompt=prompts.AUDIT,
+                    prompt=prompts.AUDIT.format(rubric=chosen.package.rubric.guide),
                     submit=False,
                     tools=[phase_tools],
                     # an absolute threshold: 0.8 of a 1.05M-token context fired at ~840k,
@@ -1132,10 +1144,12 @@ def _checked_child_secrets(names: list[str], runs: str | None) -> list[str]:
     return names
 
 
-def _skill_paths(extra: list[str]) -> list[str]:
-    """The auditor's skills, then the operator's extra skill directories."""
-    paths = [str(ASSETS / "skills" / name) for name in AUDIT_SKILLS] + [
-        str(SKILLS / name) for name in (*LOG_SKILLS, *SUPPORT_SKILLS)
+def _skill_paths(rubric: Path, extra: list[str]) -> list[str]:
+    """The auditor's skills, its package's rubric skill, then the operator's extra skills."""
+    paths = [
+        *(str(ASSETS / "skills" / name) for name in AUDIT_SKILLS),
+        *(str(SKILLS / name) for name in (*LOG_SKILLS, *SUPPORT_SKILLS)),
+        str(rubric),
     ]
     for path in extra:
         resolved = Path(path).expanduser().resolve()

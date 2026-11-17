@@ -11,8 +11,8 @@ import pytest
 from pydantic import ValidationError
 
 from inspect_audit._findings import read_bundle
-from inspect_audit._publishing import load_publisher
-from inspect_audit.publishers import _template, latex
+from inspect_audit.package import load_package
+from inspect_audit.packages.gl import _template, latex
 
 FIXTURE = Path(__file__).parent / "fixtures/findings_bundle"
 
@@ -29,8 +29,10 @@ def test_latex_requires_recorded_grade_and_criterion() -> None:
         latex.validate(findings)
     with pytest.raises(ValidationError):
         latex.Prose.model_validate({"grade": "A"})
-    assert load_publisher("latex").validate is latex.validate
-    assert load_publisher("gl").build is not latex.build
+    gl = load_package("gl")
+    assert gl.rubric.validate is latex.validate
+    assert gl.publisher("latex")[1].build is latex.build
+    assert gl.publisher("gl")[1].build is not latex.build
 
 
 def test_the_template_ships_every_file_the_publisher_needs() -> None:
@@ -48,7 +50,7 @@ def upstream() -> Path:
 
 @pytest.mark.latex
 def test_registry_is_regenerated_from_the_pinned_template(upstream: Path) -> None:
-    from inspect_audit._framework import REGISTRY
+    from inspect_audit.packages.gl.rubric import REGISTRY
 
     assert json.loads(REGISTRY.read_text()) == _template.regenerate(upstream)
 
@@ -160,7 +162,7 @@ def test_prose_under_a_sub_criterion_is_refused_by_name_as_a_tool_error(tmp_path
     ValueError end the audit. Now it names the keys, and previews report it as a tool error."""
     from inspect_ai.tool import ToolError
 
-    from inspect_audit.publishers._render import reported
+    from inspect_audit._render import reported
 
     (tmp_path / "reports/Example").mkdir(parents=True)
     (tmp_path / "reports/Example/Content.tex").write_text(
@@ -178,7 +180,7 @@ def test_characters_pdflatex_cannot_set_become_a_question_mark() -> None:
 
 
 def test_unbreakable_text_may_break_rather_than_run_off_the_page() -> None:
-    from inspect_audit.publishers.latex import tex
+    from inspect_audit.packages.gl.latex import tex
 
     assert (
         tex("inspect_evals/swe_bench")

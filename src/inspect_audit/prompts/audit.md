@@ -51,10 +51,7 @@ using absolute /workspace/... or /inputs/... paths. Include derived tables, anal
 scripts and relevant evidence extracts. Native logs remain external references; include
 the extracts and tables needed to explain conclusions without the conversation.
 
-For the default LaTeX audit report, rate in auditor.ratings as the audit-framework
-skill's Ratings section says (overall: a grade; dimensions and criteria: assessments),
-each with explanation and evidence. Give each broader finding a criterion (e.g. C or
-C.1); the publisher generates its finding box.
+{rubric}
 
 Call submit_findings to validate and freeze the bundle. This cannot be reopened.
 Publishing instructions and tools become available after successful submission;

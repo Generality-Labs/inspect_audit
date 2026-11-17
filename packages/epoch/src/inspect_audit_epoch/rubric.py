@@ -5,8 +5,7 @@ and labelled with one of the row's statuses. The verdict is not the auditor's to
 it follows from the rows by Epoch's rule (`verdict`), and a submission whose rows break
 that rule is refused (`validate`).
 
-Not yet ported from Laurence's branch: the scoring row's measured defect rate against its
-20% threshold (`_epoch.measures`), which reads the register's item verdicts.
+The scoring row's status is checked against its measured defect rate (`measure`).
 """
 
 import json
@@ -18,6 +17,8 @@ from typing import Any
 import yaml
 
 from inspect_audit.package import Findings, Rating, Rubric
+
+from .measure import DefectRate, defect_rate
 
 HERE = Path(__file__).parent
 SOURCE = HERE / "rubric.yaml"
@@ -81,8 +82,23 @@ def _label(ratings: dict[str, Rating], row: dict[str, Any]) -> str:
     return ratings[row["id"]].label if row["id"] in ratings else NOT_REVIEWED
 
 
-def verdict(ratings: dict[str, Rating]) -> tuple[str, list[str]]:
+def threshold() -> dict[str, Any]:
+    return next(r for r in rows() if r.get("threshold"))["threshold"]
+
+
+def measured(findings: Findings) -> DefectRate:
+    """The scoring row's defect rate over the threshold's scoring checks."""
+    return defect_rate(findings, list(threshold()["checks"]))
+
+
+def exceeded(rate: DefectRate) -> bool | None:
+    bound = float(threshold()["flag_when"].removeprefix(">=").strip())
+    return None if rate.value is None else rate.value >= bound
+
+
+def verdict(findings: Findings) -> tuple[str, list[str]]:
     """Epoch's rule: NEI, Flawed, Incomplete or Verified, with the reasons."""
+    ratings = findings.auditor.ratings
     stop_at = method()["verdict"]["procedure"]["gate"]["stop_at"]
     reviewability = _label(ratings, gate())
     if reviewability == stop_at:
@@ -95,7 +111,14 @@ def verdict(ratings: dict[str, Rating]) -> tuple[str, list[str]]:
     pending = [r["name"] for r in minimum() if _label(ratings, r) == NOT_REVIEWED]
     if pending:
         return "Incomplete", [f"minimum standard not reviewed: {', '.join(pending)}"]
-    return "Verified", [f"reviewability {reviewability}; every minimum-standard check passes"]
+    # a scoring Pass stands on a measured rate: with no item settled, the review is unfinished
+    rate = measured(findings)
+    if rate.value is None:
+        return "Incomplete", [f"scoring passes without a measure: {rate.line()}"]
+    return "Verified", [
+        f"reviewability {reviewability}; every minimum-standard check passes",
+        rate.line(),
+    ]
 
 
 def validate(findings: Findings) -> None:
@@ -148,6 +171,22 @@ def validate(findings: Findings) -> None:
                 f"{row['id']} is flagged: its explanation must state the measured impact "
                 "on the headline results, with numbers"
             )
+    scoring = next(r for r in rows() if r.get("threshold"))
+    rating = ratings[scoring["id"]]
+    rate = measured(findings)
+    over = exceeded(rate)
+    if (
+        rating.label in (FLAG, "Pass")
+        and over is not None
+        and (rating.label == FLAG) != over
+        and not rating.explanation.startswith("Threshold override:")
+    ):
+        raise ValueError(
+            f"{scoring['id']} is {rating.label} but the {rate.line().lower()} is "
+            f"{'at or above' if over else 'below'} the threshold "
+            f"({threshold()['flag_when']}): change the status, or start its explanation "
+            '"Threshold override:" and say why'
+        )
     for finding in findings.auditor.findings:
         if finding.criterion not in known:
             raise ValueError(

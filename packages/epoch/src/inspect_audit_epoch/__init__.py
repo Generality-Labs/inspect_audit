@@ -9,7 +9,7 @@ from pathlib import Path
 
 from inspect_audit.package import AuditPackage, Findings, Publisher, read_bundle
 
-from .rubric import rows, verdict
+from .rubric import measured, rows, verdict
 
 HERE = Path(__file__).parent
 
@@ -20,13 +20,13 @@ async def build(root: Path, bundle: Path) -> Path:
     out = root / "epoch-page"
     out.mkdir(exist_ok=True)
     (out / "review.md").write_text(page(findings))
-    result, reasons = verdict(findings.auditor.ratings)
+    result, reasons = verdict(findings)
     (out / "verdict.json").write_text(json.dumps({"verdict": result, "reasons": reasons}, indent=2))
     return out
 
 
 def page(findings: Findings) -> str:
-    result, reasons = verdict(findings.auditor.ratings)
+    result, reasons = verdict(findings)
     ratings = findings.auditor.ratings
     lines = [f"# {result}", "", *[f"- {r}" for r in reasons], "", findings.auditor.summary, ""]
     section = None
@@ -38,8 +38,13 @@ def page(findings: Findings) -> str:
         status = rating.label if rating else "Not Reviewed"
         note = (rating.explanation if rating else "").replace("|", "/").replace("\n", " ")
         lines.append(f"| {row['name']} | {status} | {note} |")
+    rate = measured(findings)
+    if rate.states["DEFECT"]:
+        # every defect, not a sample of them: the reader counts these rows against the rate
+        lines += ["", "## Errors", "", rate.line(), "", "| Item | Verdicts |", "|---|---|"]
+        lines += [f"| {item} | {'; '.join(rate.why[item])} |" for item in rate.states["DEFECT"]]
     if findings.auditor.findings:
-        lines += ["", "## Errors", ""]
+        lines += ["", "## Findings", ""]
         lines += [
             f"- **{f.issue}** ({f.criterion}): {f.explanation}" for f in findings.auditor.findings
         ]

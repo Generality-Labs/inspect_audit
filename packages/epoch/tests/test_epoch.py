@@ -3,7 +3,7 @@
 import asyncio
 import hashlib
 import json
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Mapping
 from pathlib import Path
 
 import pytest
@@ -35,9 +35,38 @@ def rated(**labels: str) -> dict[str, Rating]:
     }
 
 
-def findings(ratings: dict[str, Rating], *, criterion: str = "scoring_integrity") -> Findings:
+GOLD = {
+    "name": "gold-answer",
+    "description": "d",
+    "grades": ["CORRECT", "INCORRECT", "ALTERNATIVES", "UNVERIFIABLE"],
+    "flags": ["INCORRECT", "ALTERNATIVES"],
+    "unresolved": ["UNVERIFIABLE"],
+}
+SOUND: dict[str, str | None] = {f"s{i}": "CORRECT" for i in range(10)}
+
+
+def findings(
+    ratings: dict[str, Rating],
+    *,
+    criterion: str = "scoring_integrity",
+    verdicts: Mapping[str, str | None] | None = None,
+    reviews: dict[str, str] | None = None,
+) -> Findings:
+    """Findings with investigators' gold-answer verdicts per item (None: no verdict yet)."""
+    chosen = SOUND if verdicts is None else verdicts
+
+    def take(label: str) -> dict[str, str]:
+        return {"by": "investigator", "label": label, "explanation": "x"}
+
     return Findings.model_validate(
         {
+            "investigators": {
+                "checks": {"gold-answer": GOLD},
+                "samples": {
+                    item: {"gold-answer": [take(label)] if label else []}
+                    for item, label in chosen.items()
+                },
+            },
             "auditor": {
                 "summary": "s",
                 "ratings": {k: v.model_dump() for k, v in ratings.items()},
@@ -46,7 +75,17 @@ def findings(ratings: dict[str, Rating], *, criterion: str = "scoring_integrity"
                         criterion=criterion, issue="i", explanation="e", evidence=EVIDENCE
                     ).model_dump()
                 ],
-            }
+                "reviews": [
+                    {
+                        "sample_id": item,
+                        "check": "gold-answer",
+                        "label": label,
+                        "explanation": "reviewed",
+                        "evidence": [e.model_dump() for e in EVIDENCE],
+                    }
+                    for item, label in (reviews or {}).items()
+                ],
+            },
         }
     )
 
@@ -84,14 +123,14 @@ def test_it_is_found_by_name_through_its_entry_point() -> None:
     ],
 )
 def test_the_verdict_follows_from_the_rows(labels: dict[str, str], expected: str) -> None:
-    result, reasons = rubric.verdict(rated(**labels))
+    result, reasons = rubric.verdict(findings(rated(**labels)))
     assert result == expected and reasons
     rubric.validate(findings(rated(**labels)))
 
 
 def test_quality_rows_never_change_the_verdict() -> None:
     labels = {**PASSING, "construct_validity": "Does not measure stated capabilities"}
-    assert rubric.verdict(rated(**labels))[0] == "Verified"
+    assert rubric.verdict(findings(rated(**labels)))[0] == "Verified"
 
 
 def test_the_review_stops_at_the_first_flag() -> None:
@@ -171,3 +210,47 @@ def test_the_page_prints_the_derived_verdict(tmp_path: Path) -> None:
     out = asyncio.run(_built(publisher.build(tmp_path, bundle)))
     assert (out / "review.md").read_text().startswith("# Verified")
     assert json.loads((out / "verdict.json").read_text())["verdict"] == "Verified"
+
+
+def test_the_defect_rate_is_read_as_the_register_reads_it() -> None:
+    """The auditor's review stands over the investigator's verdict.
+
+    Unsettled and unassessed items are reported beside the rate, not in it.
+    """
+    verdicts = {**SOUND, "s0": "INCORRECT", "s1": "ALTERNATIVES", "u": "UNVERIFIABLE", "n": None}
+    rate = rubric.measured(findings(rated(), verdicts=verdicts, reviews={"s1": "CORRECT"}))
+    assert rate.states["DEFECT"] == ["s0"] and rate.why["s0"] == ["gold-answer: INCORRECT"]
+    assert (rate.numerator, rate.denominator) == (1, 10)
+    assert rate.states["UNRESOLVED"] == ["u"] and rate.states["NOT_ASSESSED"] == ["n"]
+
+
+def test_the_scoring_status_agrees_with_its_rate_or_says_why_not() -> None:
+    two_in_ten = {**SOUND, "s0": "INCORRECT", "s1": "INCORRECT"}
+    with pytest.raises(ValueError, match=r"Pass but the defect rate: 2/10 \(20%\).*at or above"):
+        rubric.validate(findings(rated(**PASSING), verdicts=two_in_ten))
+    flagged = rated(reviewability="Full", scoring_integrity="Flag")
+    rubric.validate(findings(flagged, verdicts=two_in_ten))
+    with pytest.raises(ValueError, match="below the threshold"):
+        rubric.validate(findings(flagged))
+    flagged["scoring_integrity"] = Rating(
+        label="Flag",
+        explanation="Threshold override: 1 in 10 is a grader that accepts any answer",
+        evidence=EVIDENCE,
+    )
+    rubric.validate(findings(flagged))
+
+
+def test_a_scoring_pass_with_nothing_measured_is_incomplete() -> None:
+    result, reasons = rubric.verdict(findings(rated(**PASSING), verdicts={"s0": None}))
+    assert result == "Incomplete" and "without a measure" in reasons[0]
+
+
+def test_the_page_lists_every_defect(tmp_path: Path) -> None:
+    from inspect_audit_epoch import page
+
+    verdicts = {**SOUND, "s3": "INCORRECT", "s7": "ALTERNATIVES"}
+    text = page(findings(rated(reviewability="Full", scoring_integrity="Flag"), verdicts=verdicts))
+    assert text.startswith("# Flawed")
+    assert (
+        "| s3 | gold-answer: INCORRECT |" in text and "| s7 | gold-answer: ALTERNATIVES |" in text
+    )

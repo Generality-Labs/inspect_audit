@@ -852,7 +852,9 @@ def audit(
         raise ValueError("Hawk jobs need hawk_api_url (or HAWK_API_URL)")
     if not repo:
         raise ValueError("audit needs a repo: the benchmark to audit")
-    skill_paths = _skill_paths(extra_skills or [])
+    # the publisher's audit skills come last: a report that asks the audit to be conducted
+    # its way (the Epoch review) says so after the auditor's own skills
+    skill_paths = _skill_paths(extra_skills or []) + list(selected_publisher.audit_skills)
 
     # what can be worked out is worked out: the investigated repository already says which
     # commit it is, which directory the task lives in and which paper it comes from
@@ -879,8 +881,14 @@ def audit(
     (root / "work/findings.schema.json").write_text(
         json.dumps(Findings.model_json_schema(), indent=2)
     )
+    if selected_publisher.stage:
+        selected_publisher.stage(root / "work/analysis")
     seed_path = root / "inputs" / "seed.json"
     seed = json.loads(seed_path.read_text())
+    seed["publisher"] = {
+        "name": str(publisher),
+        "audit_skills": [Path(p).name for p in selected_publisher.audit_skills],
+    }
     if runs:
         task_package, investigation_package = _job_packages(
             runs, target_task, task_package, investigation_package, repo, revision
@@ -1062,8 +1070,17 @@ def audit(
                     if instructions
                     else ""
                 )
-                + "Read /inputs/seed.json and invoke the auditing skill. Begin the "
-                "audit autonomously.",
+                + "Read /inputs/seed.json and invoke the auditing skill. "
+                + (
+                    "The report is published by the "
+                    f"{publisher} publisher, whose "
+                    f"{', '.join(Path(p).name for p in selected_publisher.audit_skills)} "
+                    "skill says how this audit is conducted and rated: invoke it too, "
+                    "and follow it where the two differ. "
+                    if selected_publisher.audit_skills
+                    else ""
+                )
+                + "Begin the audit autonomously.",
             )
         ],
         scorer=audit_outcome(),

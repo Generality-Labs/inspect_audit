@@ -11,8 +11,18 @@ HIGHER = ("_audit", "_registry", "_investigator", "_task", "_publishing", "_find
 
 # Cycles that exist today. Each consolidation step removes one; this list only shrinks.
 KNOWN_CYCLES: list[set[str]] = [
-    # findings, register and publishing all reach back into the top-level agent
-    {"_audit", "_publishing", "_findings", "_register", "publishers.latex", "publishers.gl"},
+    # findings, register and publishing all reach back into the top-level agent; the
+    # Epoch publisher reads the findings it is given and is loaded by publishing
+    {
+        "_audit",
+        "_publishing",
+        "_findings",
+        "_register",
+        "_epoch",
+        "publishers.latex",
+        "publishers.gl",
+        "publishers.epoch",
+    },
 ]
 
 

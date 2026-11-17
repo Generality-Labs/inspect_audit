@@ -305,6 +305,10 @@ async def start_register(
             "task_args": args,
             "dataset": read["dataset"],
             "ids": "positional" if read["positional"] else "declared",
+            # the evaluation logs the audit was given, so a publisher that reads the
+            # bundle alone knows whether the recorded grades were in reach (none: an
+            # Epoch phase-1 review, whose log-dependent rows stay Not Reviewed)
+            "supplied_logs": list(policy.supplied_logs),
             # models it loads by default that no job will be given credentials for
             **({"model_defaults": read["model_defaults"]} if read.get("model_defaults") else {}),
             # read in the box the agent works in: before its first turn, or after it

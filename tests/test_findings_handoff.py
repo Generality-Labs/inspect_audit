@@ -295,7 +295,8 @@ def test_bundle_rejects_unlisted_files_and_directory_symlinks(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
-    ("publisher", "skill_name"), [("latex", "latex-publishing"), ("gl", "publishing")]
+    ("publisher", "skill_name"),
+    [("latex", "latex-publishing"), ("gl", "publishing"), ("epoch", "epoch-publishing")],
 )
 def test_publishers_are_actual_inspect_skills(publisher: str, skill_name: str) -> None:
     from inspect_ai.tool import read_skills

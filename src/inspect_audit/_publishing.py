@@ -3,7 +3,7 @@
 import importlib
 import shutil
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
@@ -37,6 +37,13 @@ class Publisher:
     # checked in setup, before the first model call: a missing renderer ends the audit then,
     # not after hours of work (CVE-Bench Hard froze 9 findings, then could not publish)
     preflight: Callable[[], Awaitable[None]] | None = None
+    # skills the auditor is given during the audit, when the publisher's report asks the
+    # audit to be conducted a particular way (the Epoch review's two phases and rubric);
+    # the GL publishers add none, the audit-framework skill is theirs
+    audit_skills: list[str] = field(default_factory=list)
+    # files the publisher stages under /workspace/analysis before the audit starts:
+    # the description the auditor rates against (the Epoch rubric as data)
+    stage: Callable[[Path], None] | None = None
 
 
 def load_publisher(name: str) -> Publisher:
@@ -48,9 +55,13 @@ def load_publisher(name: str) -> Publisher:
         from .publishers.gl import publisher
 
         return publisher()
+    if name == "epoch":
+        from .publishers.epoch import publisher
+
+        return publisher()
     module, separator, factory = name.partition(":")
     if not separator:
-        raise ValueError("publisher must be 'latex', 'gl' or an installed module:factory")
+        raise ValueError("publisher must be 'latex', 'gl', 'epoch' or an installed module:factory")
     result = getattr(importlib.import_module(module), factory)()
     if not isinstance(result, Publisher):
         raise TypeError("Publisher factories must return inspect_audit.Publisher")

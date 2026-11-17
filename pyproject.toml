@@ -13,12 +13,12 @@ authors = [{ name = "James Mann", email = "james.mann@generality.org" }]
 # .python-version pins 3.13 so local and CI environments get Hawk.
 requires-python = ">=3.11"
 dependencies = [
-    "inspect-ai==0.3.285",
+    "inspect-ai==0.3.288",
     "pillow>=10.0",
     "openai>=1.0",
     # k8s_sandbox passes newline-terminated Helm output to Version.parse;
     # semver 3.1 rejects that output before any investigation sample can start.
-    "semver>=3.0,<3.1",
+    "semver>=3.0,<3.2",
 ]
 
 [project.entry-points.inspect_ai]
@@ -47,7 +47,7 @@ k8s = [
 # What the boxes' agents work with, pinned in uv.lock like everything else; the `images`
 # workflow exports each group with hashes when it builds that box
 investigator-box = [
-    "inspect-ai==0.3.285",
+    "inspect-ai==0.3.288",
     "pandas",
     "pyarrow",
     "pillow",
@@ -55,7 +55,7 @@ investigator-box = [
     "sympy",
 ]
 auditor-box = [
-    "inspect-ai==0.3.285",
+    "inspect-ai==0.3.288",
     "pandas",
     "pyarrow",
     "matplotlib",

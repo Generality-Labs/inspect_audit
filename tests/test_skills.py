@@ -26,6 +26,7 @@ def test_every_skill_loads_and_names_are_unique() -> None:
         "environment-integrity",
         "failure-attribution",
         "gold-answer",
+        "grading-labels",
         "ground-truth-access",
         "insufficiently-specified",
         "other-findings",

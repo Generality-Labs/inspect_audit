@@ -16,6 +16,7 @@ from inspect_ai.agent import AgentState, as_solver, react
 from inspect_ai.dataset import Sample
 from inspect_ai.log import (
     EvalSampleSummary,
+    read_eval_log_async,
     read_eval_log_sample_summaries_async,
 )
 from inspect_ai.model import CompactionSummary, GenerateConfig, ModelConfig
@@ -688,9 +689,16 @@ def _cost(summaries: list[EvalSampleSummary]) -> float:
 # inside the auditor's async tools is the race that blocked CL-bench v4 (FRICTION 44, 79)
 async def _log_line(path: Path) -> str:
     """One log, summarised from its samples: how many, how they ended, what they cost."""
+    from ._logs import LOG_DIFFERENCES
+
     summaries = await read_eval_log_sample_summaries_async(str(path))
     errors = sum(1 for s in summaries if s.error)
-    return f"  {path.name}: {len(summaries)} samples, {errors} errored, ${_cost(summaries):.2f} recorded"
+    line = f"  {path.name}: {len(summaries)} samples, {errors} errored, ${_cost(summaries):.2f} recorded"
+    # what the job's input logs record differently from the run it declared: not
+    # refused, so said here, where the auditor reads the job's results
+    header = await read_eval_log_async(str(path), header_only=True)
+    differences = (header.eval.metadata or {}).get(LOG_DIFFERENCES) or []
+    return "\n".join([line, *(f"    differs: {d}" for d in differences)])
 
 
 async def _continue(state: AgentState, interactive: bool) -> bool | str:

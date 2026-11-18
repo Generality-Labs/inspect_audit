@@ -20,7 +20,7 @@ from inspect_ai.util import registry_create, registry_info
 from ._compose import UnsupportedBenchmarkError, investigation_compose, their_compose, their_sandbox
 from ._investigator import investigator
 from ._k8s import investigation_k8s
-from ._logs import LogIndex, LogMismatchError, index_logs
+from ._logs import LOG_DIFFERENCES, LogIndex, LogMismatchError, index_logs
 from ._source import SourceCopy, collect_directory, collect_source
 from ._verdicts import investigation_items, item_scorer
 from .package import load_package
@@ -384,6 +384,7 @@ def investigation_task(
             "investigated_task_args": dict(task_args or {}),
             "investigated_logs": list(logs or []),
             "judge_roles": roles,
+            LOG_DIFFERENCES: index.differences if index is not None else [],
         },
     }
     accepted = set(pyinspect.signature(task_with).parameters)

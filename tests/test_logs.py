@@ -1,16 +1,36 @@
 """Which logs count as runs of the declared task."""
 
+from pathlib import Path
 
-def test_a_run_started_from_its_file_is_the_same_task_as_the_installed_one() -> None:
-    """CVE-bench's logs say `cvebench` and `src/cvebench/cvebench.py`; its package registers
-    `cvebench/cvebench` (FRICTION 61). Here with an installed benchmark of the same shape."""
-    import inspect_evals.gsm8k  # noqa: F401  registers the task
 
+def test_a_bare_task_name_is_the_same_task_as_the_prefixed_one() -> None:
+    """A run started from its file records `cvebench` (FRICTION 61); a task rebuilt with
+    changed code is named `scicode` (FRICTION 145). Both are the installed task."""
     from inspect_audit._logs import _same_task
 
-    assert _same_task("gsm8k", "src/inspect_evals/gsm8k/gsm8k.py", "inspect_evals/gsm8k")
-    assert _same_task("inspect_evals/gsm8k", None, "inspect_evals/gsm8k")
-    # another file, no file, or another function are not it
-    assert not _same_task("gsm8k", "src/elsewhere/gsm8k.py", "inspect_evals/gsm8k")
-    assert not _same_task("gsm8k", None, "inspect_evals/gsm8k")
-    assert not _same_task("mmlu", "src/inspect_evals/gsm8k/gsm8k.py", "inspect_evals/gsm8k")
+    assert _same_task("inspect_evals/gsm8k", "inspect_evals/gsm8k")
+    assert _same_task("gsm8k", "inspect_evals/gsm8k")
+    assert _same_task("inspect_evals/gsm8k", "gsm8k")
+    assert not _same_task("other/gsm8k", "inspect_evals/gsm8k")
+    assert not _same_task("mmlu", "inspect_evals/gsm8k")
+
+
+def test_the_auditor_reads_a_jobs_log_differences_when_it_collects(tmp_path: Path) -> None:
+    import asyncio
+
+    from inspect_ai import Task
+    from inspect_ai import eval as inspect_eval
+    from inspect_ai.dataset import Sample
+
+    from inspect_audit._audit import _log_line
+    from inspect_audit._logs import LOG_DIFFERENCES
+
+    difference = "a.eval records task 'other/task', not the declared 'bench/task'"
+    [log] = inspect_eval(
+        Task(name="job", dataset=[Sample(input="q")], metadata={LOG_DIFFERENCES: [difference]}),
+        model="mockllm/model",
+        log_dir=str(tmp_path),
+        display="none",
+    )
+    line = asyncio.run(_log_line(Path(log.location)))
+    assert line.splitlines()[1] == f"    differs: {difference}"

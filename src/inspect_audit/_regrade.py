@@ -27,7 +27,7 @@ from inspect_ai.scorer._scorer import unique_scorer_name
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import registry_create, registry_info
 
-from ._logs import index_logs
+from ._logs import LOG_DIFFERENCES, index_logs
 from ._task import configured_judges, judge_roles
 
 AGREE = "AGREE"
@@ -372,5 +372,9 @@ def regrade_task(
         model_roles=roles or None,
         cost_limit=cost_limit,
         name=f"regrade/{name}",
-        metadata={"regraded_task": name, "regraded_logs": list(logs)},
+        metadata={
+            "regraded_task": name,
+            "regraded_logs": list(logs),
+            LOG_DIFFERENCES: index.differences,
+        },
     )

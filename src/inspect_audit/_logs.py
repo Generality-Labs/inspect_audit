@@ -1,16 +1,14 @@
 """Validate declared logs and index attempts by (eval_id, sample_id, epoch).
 
-Reject duplicate attempts and mismatched task, arguments or benchmark versions.
+Reject duplicate attempts; report a different task, arguments or benchmark version.
 Read native logs on the host; export selected content through tools.
 """
 
-import inspect
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from logging import getLogger
-from pathlib import Path, PurePosixPath
 from typing import Any
 
 from inspect_ai.event import EventTreeSpan, ModelEvent, event_tree
@@ -66,6 +64,8 @@ class LogIndex:
     eval_models: set[str] = field(default_factory=set)
     shuffled: bool = False
     """Whether any recorded run shuffled its dataset (positional ids then unstable)."""
+    differences: list[str] = field(default_factory=list)
+    """How the logs' runs differ from the declared one: reported with the results."""
 
     def for_sample(self, sample_id: str) -> list[Attempt]:
         return self.attempts.get(sample_id, [])
@@ -112,104 +112,90 @@ def same_build(logged: str, installed: str) -> bool:
     return a.group(1)[:short] == b.group(1)[:short]
 
 
+LOG_DIFFERENCES = "log_differences"
+"""Task metadata key: how the logs a job read differ from the run it declared."""
 WRAPPER = "inspect_audit/benchmark"
 WRAPPED = "inspect_audit_benchmark"
 
 
-def _installed(package: str) -> str:
-    try:
-        return version(package)
-    except PackageNotFoundError:
-        raise LogMismatchError(f"the benchmark package {package!r} is not installed") from None
+def _same_task(recorded: str, declared: str) -> bool:
+    """Whether a log's task name is the declared one's.
 
-
-def _same_task(recorded: str, task_file: str | None, task_name: str) -> bool:
-    """Whether a log's task is the declared one.
-
-    A run started from a file (`inspect eval src/cvebench/cvebench.py`) records the
-    bare function name and the file, not the package's registry name
-    (`cvebench/cvebench`). That is the same task when the declared task's function has
-    the recorded name and is defined in a file at the recorded path (its last two parts:
-    the package folder and the module, which an install keeps).
+    A name with no package prefix names the same task as a prefixed name ending in it:
+    a run started from a file records the bare function name (`cvebench`, FRICTION 61),
+    and so does a task rebuilt with changed code (`scicode`, FRICTION 145).
     """
-    if recorded == task_name:
+    if recorded == declared:
         return True
-    if not task_file or recorded != task_name.rsplit("/", 1)[-1]:
+    if "/" in recorded and "/" in declared:
         return False
-    from inspect_ai._util.registry import registry_lookup
-
-    try:
-        source = inspect.getsourcefile(inspect.unwrap(registry_lookup("task", task_name)))  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return False
-    if source is None:
-        return False
-    logged, declared = PurePosixPath(task_file).parts, Path(source).resolve().parts
-    return len(logged) >= 2 and declared[-2:] == logged[-2:]
+    return recorded.rsplit("/", 1)[-1] == declared.rsplit("/", 1)[-1]
 
 
-def _check_header(
+def _differences(
     path: str,
     header: EvalLog,
     *,
     task_name: str,
     task_args: dict[str, Any],
     package: str | None,
-) -> None:
+) -> list[str]:
+    """How a log's run differs from the declared one, said, not refused.
+
+    A difference may make a regrade or an investigation of these attempts mean
+    something else; whether it does is the auditor's call, so it is reported with the
+    job's results. What would leave nothing to work on (no attempts, duplicates, a
+    compacted log, inputs that differ) is still refused elsewhere.
+    """
     spec = header.eval
+    found: list[str] = []
     if spec.task_registry_name == WRAPPER:
         # the auditor's `benchmark` wrapper: its header names the wrapper, and the
         # wrapped run is recorded in the task metadata
         wrapped = (spec.metadata or {}).get(WRAPPED)
         if not isinstance(wrapped, dict):
-            raise LogMismatchError(f"{path} is a benchmark-wrapper log with no recorded run")
-        if wrapped.get("task") != task_name or wrapped.get("task_args") != task_args:
-            raise LogMismatchError(
-                f"{path} wrapped {wrapped.get('task')!r} with {wrapped.get('task_args')!r}, "
-                f"not the declared {task_name!r} with {task_args!r}"
-            )
-        if package is not None and not same_build(str(wrapped.get("version")), _installed(package)):
-            raise LogMismatchError(
-                f"{path} was produced by {package} {wrapped.get('version')}; "
-                f"{_installed(package)} is installed"
-            )
-        return
-    recorded = spec.task_registry_name or spec.task
-    if not _same_task(recorded, spec.task_file, task_name):
-        raise LogMismatchError(f"{path} records task {recorded!r}, not the declared {task_name!r}")
+            return [f"{path} is a benchmark-wrapper log with no recorded run"]
+        recorded, args, logged = (
+            str(wrapped.get("task")),
+            dict(wrapped.get("task_args") or {}),
+            wrapped.get("version"),
+        )
+        passed = set(args)
+    else:
+        recorded = spec.task_registry_name or spec.task
+        args, passed = dict(spec.task_args), set(spec.task_args_passed)
+        logged = spec.packages.get(package) if package is not None else None
+    if not _same_task(recorded, task_name):
+        found.append(f"{path} records task {recorded!r}, not the declared {task_name!r}")
     for key, value in task_args.items():
-        if spec.task_args.get(key) != value:
-            raise LogMismatchError(
-                f"{path} ran {task_name} with {key}={spec.task_args.get(key)!r}, "
-                f"not the declared {value!r}"
+        if args.get(key) != value:
+            found.append(
+                f"{path} ran {recorded} with {key}={args.get(key)!r}, not the declared {value!r}"
             )
-    undeclared = set(spec.task_args_passed) - set(task_args)
-    if undeclared:
-        raise LogMismatchError(
-            f"{path} passed task argument(s) the investigation does not declare: "
-            f"{', '.join(sorted(undeclared))}"
+    if undeclared := passed - set(task_args):
+        found.append(
+            f"{path} passed task argument(s) not declared here: {', '.join(sorted(undeclared))}"
         )
     # Inspect itself decides how samples are set up and scored: a different version
-    # can grade the same answer differently. Not refused (a log's exact build is often
-    # unobtainable), but said, so a regrade that disagrees has a named suspect.
+    # can grade the same answer differently
     logged_inspect = spec.packages.get("inspect_ai")
     if logged_inspect and not same_build(logged_inspect, version("inspect_ai")):
-        logger.warning(
+        found.append(
             f"{path} was produced by inspect_ai {logged_inspect}; this run uses "
-            f"{version('inspect_ai')}: regrades may differ for that reason"
+            f"{version('inspect_ai')}"
         )
     if package is not None:
         try:
             installed = version(package)
         except PackageNotFoundError:
-            raise LogMismatchError(f"the benchmark package {package!r} is not installed") from None
-        logged = spec.packages.get(package)
-        if logged is None:
-            raise LogMismatchError(f"{path} does not record which {package} version produced it")
-        if not same_build(logged, installed):
-            raise LogMismatchError(
-                f"{path} was produced by {package} {logged}; {installed} is installed"
-            )
+            installed = None
+        if installed is None:
+            found.append(f"the benchmark package {package!r} is not installed")
+        elif logged is None:
+            found.append(f"{path} does not record which {package} version produced it")
+        elif not same_build(str(logged), installed):
+            found.append(f"{path} was produced by {package} {logged}; {installed} is installed")
+    return found
 
 
 def _scorer_models(path: str, sample_id: str | int, epoch: int) -> set[str]:
@@ -243,7 +229,11 @@ def index_logs(
     roles_seen: dict[str, str] | None = None
     for path in files:
         header = read_eval_log(path, header_only=True)
-        _check_header(path, header, task_name=task_name, task_args=task_args, package=package)
+        for difference in _differences(
+            path, header, task_name=task_name, task_args=task_args, package=package
+        ):
+            logger.warning(difference)
+            index.differences.append(difference)
         roles = _roles(header)
         if roles_seen is not None and roles != roles_seen:
             raise LogMismatchError(

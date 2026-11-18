@@ -176,13 +176,14 @@ def test_the_confidential_section_is_off_by_default_and_names_the_boundary() -> 
     """
     from inspect_audit import prompts
 
-    default = prompts.INVESTIGATOR.format(items="- `x`: y", confidential="", notes="")
+    default = prompts.INVESTIGATOR.format(items="- `x`: y", confidential="", notes="", logs="")
     assert "unpublished" not in default
 
     on = prompts.INVESTIGATOR.format(
         items="- `x`: y",
         confidential=prompts.INVESTIGATION_CONFIDENTIAL.format(root="/audit"),
         notes="",
+        logs="",
     )
     assert "must not transmit" in on
     assert "/audit" in on
@@ -276,7 +277,7 @@ def test_every_prompt_is_a_file_and_every_placeholder_gets_filled() -> None:
     from inspect_audit import prompts
 
     filled = {
-        "INVESTIGATOR": {"items": "- `x`: y", "confidential": "", "notes": ""},
+        "INVESTIGATOR": {"items": "- `x`: y", "confidential": "", "notes": "", "logs": ""},
         "INVESTIGATION_CONFIDENTIAL": {"root": "/audit"},
         "INVESTIGATION_NOTES": {"notes": "look at the grader"},
         "AUDIT": {},

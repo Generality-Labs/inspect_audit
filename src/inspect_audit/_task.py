@@ -20,7 +20,7 @@ from inspect_ai.util import registry_create, registry_info
 from ._compose import UnsupportedBenchmarkError, investigation_compose, their_compose, their_sandbox
 from ._investigator import investigator
 from ._k8s import investigation_k8s
-from ._logs import LogIndex, LogMismatchError, index_logs
+from ._logs import LogIndex, LogMismatchError, distribution_of, index_logs
 from ._source import SourceCopy, collect_directory, collect_source
 from ._verdicts import investigation_items, item_scorer
 
@@ -274,7 +274,7 @@ def investigation_task(
     else:
         their = registry_create("task", task, **(task_args or {}))
         name = registry_info(their).name
-        package = name.split("/")[0] if "/" in name else None
+        package = distribution_of(name)
     scoped = investigation_items(list(checks))
 
     dataset, _ = numbered(their)

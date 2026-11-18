@@ -116,6 +116,24 @@ WRAPPER = "inspect_audit/benchmark"
 WRAPPED = "inspect_audit_benchmark"
 
 
+def distribution_of(task_name: str) -> str | None:
+    """The distribution that provides a registry task, from the task's namespace.
+
+    `inspect_evals/simpleqa` is provided by the distribution `inspect_evals`, and the
+    two names coincide; `bench/simpleqa_verified_anti_abstention` is provided by
+    `epoch-bench`, and the namespace alone is not a distribution anyone installed.
+    The import name maps to its distribution through the installed metadata; a
+    namespace the metadata does not know is taken as the distribution name.
+    """
+    if "/" not in task_name:
+        return None
+    namespace = task_name.split("/")[0]
+    from importlib.metadata import packages_distributions
+
+    known = packages_distributions().get(namespace)
+    return known[0] if known else namespace
+
+
 def _installed(package: str) -> str:
     try:
         return version(package)

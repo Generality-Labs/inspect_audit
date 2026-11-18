@@ -27,7 +27,7 @@ from inspect_ai.scorer._scorer import unique_scorer_name
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import registry_create, registry_info
 
-from ._logs import index_logs
+from ._logs import distribution_of, index_logs
 from ._task import configured_judges, judge_roles
 
 AGREE = "AGREE"
@@ -124,7 +124,7 @@ async def regrade_async(
     else:
         their = registry_create("task", task, **(task_args or {}))
         name = registry_info(their).name
-        package = name.split("/")[0] if "/" in name else None
+        package = distribution_of(name)
     # off the event loop: the sync header readers start their own (FRICTION 44, 79)
     index = await anyio.to_thread.run_sync(
         lambda: index_logs(logs, task_name=name, task_args=dict(task_args or {}), package=package)
@@ -322,7 +322,7 @@ def regrade_task(
         else:
             their = registry_create("task", task, **(task_args or {}))
         name = registry_info(their).name
-        package = name.split("/")[0] if "/" in name else None
+        package = distribution_of(name)
     index = index_logs(logs, task_name=name, task_args=dict(task_args or {}), package=package)
     roles = configured_judges(index, judge_roles(index, judge))
     scorers: list[Scorer] = (

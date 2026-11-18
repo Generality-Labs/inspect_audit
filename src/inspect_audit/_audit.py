@@ -555,11 +555,37 @@ def send_investigators(inv: Audit) -> Tool:
                 "paper": inv.paper,
                 # the benchmark into the investigator's own box, as this job installs it
                 "install": policy.box_install(),
+                **_search_and_budget(policy, [investigator, *judges.values()]),
             },
         )
         return await inv.launch(job, JobKind.INVESTIGATION, note)
 
     return execute
+
+
+def _search_and_budget(policy: LaunchPolicy, models: list[str]) -> dict[str, Any]:
+    """The policy's investigator search and budget, as an investigation's arguments.
+
+    A budget comes with this audit's prices for the job's models (Hawk's table,
+    registered at the start), since the job itself has none (FRICTION 99, 100).
+    """
+    from inspect_ai.model import get_model_info
+
+    args: dict[str, Any] = {}
+    if search := json.loads(policy.search_json):
+        args["search"] = search
+    if (budget := policy.limits.investigator_budget_usd) is not None:
+        prices: dict[str, dict[str, float]] = {}
+        for model in dict.fromkeys(models):
+            info = get_model_info(model)
+            if info is None or info.cost is None:
+                raise ToolError(f"{model} has no price here: an investigator budget needs one")
+            prices[model] = info.cost.model_dump(
+                include={"input", "output", "input_cache_read", "input_cache_write"}
+            )
+        args["soft_cost_limit"] = budget
+        args["prices"] = prices
+    return args
 
 
 @tool
@@ -771,6 +797,7 @@ def audit(
     benchmark_environment: dict[str, str] | None = None,
     model_configs: dict[str, dict[str, Any]] | None = None,
     publisher: str | None = None,
+    investigator_search: dict[str, Any] | None = None,
 ) -> Task:
     """Audit a benchmark, submit findings, then use the selected publisher.
 
@@ -839,6 +866,10 @@ def audit(
             Child models and judge roles use these fixed settings.
         publisher: Publishing package, revealed only after findings submission.
             Defaults to latex; installed module:factory packages can replace it.
+        investigator_search: Inspect `web_search` providers for investigators, e.g.
+            {"tavily": true}; external providers need their key in child_secrets.
+            None gives investigators no search tool (they still have the internet in
+            their box).
     """
     from ._findings import Findings, encoded, submit_findings
     from ._publishing import PhaseTools, load_publisher, preflight_publisher
@@ -861,6 +892,7 @@ def audit(
             )
     model_configs = _checked_model_configs(model_configs or {})
     child_secrets = _checked_child_secrets(child_secrets or [], runs)
+    _check_search(investigator_search or {}, runs, child_secrets)
     task_args = json.loads(canonical(task_args or {}))
     credential_mode = resolve_credential_mode(runs, credential_mode)
     # the models are the policy's alone, written by the audit's author: a model's name
@@ -942,6 +974,7 @@ def audit(
         investigation_package=investigation_package,
         investigator_image=investigator_image,
         model_configs_json=canonical(model_configs),
+        search_json=canonical(investigator_search or {}),
         models=models,
         samples=tuple(investigation_samples) if isinstance(investigation_samples, list) else None,
         checks=permitted_checks,
@@ -1175,6 +1208,31 @@ def _checked_model_configs(requested: dict[str, dict[str, Any]]) -> dict[str, di
             raise ValueError("model credentials belong in the environment or child_secrets")
         configured[name] = parsed.model_dump(mode="json", exclude_none=True)
     return configured
+
+
+# the keys Inspect's external web_search providers read, in the runner that calls them
+SEARCH_KEYS = {
+    "tavily": ["TAVILY_API_KEY"],
+    "exa": ["EXA_API_KEY"],
+    "google": ["GOOGLE_CSE_API_KEY", "GOOGLE_CSE_ID"],
+}
+
+
+def _check_search(search: dict[str, Any], runs: str | None, child_secrets: list[str]) -> None:
+    """Refuse a search configuration the investigators could not use."""
+    from inspect_ai.tool import WebSearchProviders
+
+    if unknown := set(search) - set(WebSearchProviders.__annotations__):
+        raise ValueError(f"investigator_search names unknown providers: {sorted(unknown)}")
+    if runs == "hawk":
+        missing = [
+            k for p in search if search[p] for k in SEARCH_KEYS.get(p, []) if k not in child_secrets
+        ]
+        if missing:
+            raise ValueError(
+                f"investigator_search needs {', '.join(missing)} in child_secrets (and in "
+                "this runner's environment: hawk eval-set run --secret NAME)"
+            )
 
 
 def _checked_child_secrets(names: list[str], runs: str | None) -> list[str]:

@@ -51,6 +51,9 @@ class Limits(FrozenModel):
     # any policy check; the auditor finishes the work or reports why it cannot
     # (report_blocker). "any": submit at whatever coverage (FRICTION 25)
     coverage: Literal["any", "full"] = "any"
+    # each investigator's own budget: past it, it is asked for its best estimate on every
+    # check (a further quarter of it to write them) and its scores carry budget_capped
+    investigator_budget_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
 
 class Permissions(FrozenModel):
@@ -105,6 +108,8 @@ class LaunchPolicy(FrozenModel):
     limits: Limits = Limits()
     credential_mode: Literal["restricted", "user"] = "user"
     model_configs_json: str = "{}"
+    # Inspect web_search providers for investigators (e.g. {"tavily": true}); "{}" for none
+    search_json: str = "{}"
     configuration_json: str
 
     def benchmark_packages(self, overrides: list[str] | tuple[str, ...] = ()) -> list[str]:
@@ -220,6 +225,9 @@ INVESTIGATION_ARGS = frozenset(
         "notes",
         "paper",
         "install",
+        "search",
+        "soft_cost_limit",
+        "prices",
     }
 )
 
@@ -429,6 +437,10 @@ class AuditAuthorizer:
                 raise ToolError("investigation paper must be a path or URL")
             if args.get("task") != p.task or args.get("investigator_image") != p.investigator_image:
                 raise ToolError("investigation task and image must match the launch policy")
+            if canonical(args.get("search") or {}) != p.search_json:
+                raise ToolError("investigator web search must match the launch policy")
+            if args.get("soft_cost_limit") != p.limits.investigator_budget_usd:
+                raise ToolError("the investigator budget must match the launch policy")
             source = args.get("source")
             if not isinstance(source, str) or not re.fullmatch(
                 r"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*", source

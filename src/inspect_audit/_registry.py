@@ -49,6 +49,8 @@ def investigation(
     time_limit: int | None = None,
     working_limit: int | None = None,
     install: list[str] | None = None,
+    soft_cost_limit: float | None = None,
+    prices: dict[str, dict[str, float]] | None = None,
 ) -> Task:
     """Investigate a benchmark task from inside its own samples (see `investigation_task` in `_task`).
 
@@ -57,7 +59,13 @@ def investigation(
     a module name. The investigator is the eval's own `--model`. Uncapped unless the
     operator sets `cost_limit`: the launching audit prices its jobs itself (`_spend`).
     `investigator_image` defaults to the published image; "build" builds it locally.
+    `soft_cost_limit` is each investigator's own budget, after which it gives its best
+    estimates; `prices` are the launching audit's prices for its models (Hawk's table),
+    registered here so that budget can be measured.
     """
+    from ._prices import register_prices
+
+    register_prices(prices)
     if isinstance(samples, str) and samples != "all":
         raise ValueError('samples must be a list of sample ids or the literal "all"')
     return investigation_task(
@@ -85,6 +93,7 @@ def investigation(
         message_limit=message_limit,
         time_limit=time_limit,
         working_limit=working_limit,
+        soft_cost_limit=soft_cost_limit,
     )
 
 

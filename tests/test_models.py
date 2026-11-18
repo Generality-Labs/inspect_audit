@@ -339,5 +339,12 @@ def test_child_jobs_need_no_prices_and_never_fetch(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(_registry, "log_files", lambda logs: logs)
     _registry.investigation(task="b/t", samples=["1"], checks=["gold-answer"])
     _registry.regrade(task="b/t", logs=["x.eval"], judge={"grader": "ia-test/judge"})
-    for child in (_registry.investigation, _registry.regrade):
-        assert "prices" not in inspect.signature(inspect.unwrap(child)).parameters
+    assert "prices" not in inspect.signature(inspect.unwrap(_registry.regrade)).parameters
+    # an investigation with its own budget is handed the audit's prices, never fetches them
+    _registry.investigation(
+        task="b/t",
+        samples=["1"],
+        checks=["gold-answer"],
+        soft_cost_limit=4.0,
+        prices={"ia-test/investigator": {"input": 2.0, "output": 10.0}},
+    )

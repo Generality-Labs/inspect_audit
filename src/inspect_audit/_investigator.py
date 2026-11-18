@@ -13,13 +13,13 @@ from logging import getLogger
 from typing import Any
 
 import anyio.to_thread
-from inspect_ai.agent import AgentSubmit, as_solver, react
+from inspect_ai.agent import Agent, AgentState, AgentSubmit, as_solver, react, run
 from inspect_ai.dataset import Sample
 from inspect_ai.model import ChatMessage, ChatMessageUser, ContentImage, Model
 from inspect_ai.scorer import Scorer
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.tool import Tool, ToolDef, WebSearchProviders, bash, skill, web_search
-from inspect_ai.util import sandbox, store_as
+from inspect_ai.util import cost_limit, sandbox, store_as
 
 from . import prompts
 from ._compose import INVESTIGATOR
@@ -33,6 +33,7 @@ from ._verdicts import (
     SKILLS,
     SUPPORT_SKILLS,
     AssessmentUnits,
+    BudgetCap,
     InvestigationItemSkill,
     record_verdict,
     submit_investigation,
@@ -133,12 +134,18 @@ def investigator(
     search: WebSearchProviders | None = None,
     model: Model | None = None,
     install: Sequence[str] = (),
+    soft_cost_limit: float | None = None,
 ) -> Solver:
     """Investigate the sample this solver runs in, in place of the benchmark's solver.
 
     `install` are the pip specs its job installed the benchmark with: the same go into
     the investigator's own box, so it can import and run the benchmark's code there
     (FRICTION 74), with the outcome in /audit/benchmark-install.json.
+
+    `soft_cost_limit` is this investigator's own budget in dollars: when it is spent the
+    investigator is stopped and asked for its best estimate on every check, with a
+    further `BUDGET_GRACE` of it to write them; the sample's scores then carry
+    `budget_capped`. Its models must be priced in this process (`register_prices`).
     """
     granted = {name for check in checks for name in check.tools}
     skill_dirs = [
@@ -237,7 +244,59 @@ def investigator(
             ),
         )
         prompt = ITEM_PROMPT if benchmark_box else ITEM_PROMPT + NO_BOX
-        state.messages = [ChatMessageUser(content=prompt)]
-        return await as_solver(agent)(state, generate)
+        if soft_cost_limit is None:
+            state.messages = [ChatMessageUser(content=prompt)]
+            return await as_solver(agent)(state, generate)
+        prompt += BUDGET_NOTE.format(budget=soft_cost_limit)
+        wrap_up = react(
+            name="investigator",
+            description="Records best-estimate verdicts once the budget is spent.",
+            prompt=None,  # the conversation already carries the investigator's prompt
+            tools=[record_verdict(checks)],
+            model=model,
+            submit=AgentSubmit(
+                tool=submit_investigation(checks), name="submit", keep_in_messages=True
+            ),
+        )
+        result = await within_budget(
+            agent, wrap_up, [ChatMessageUser(content=prompt)], soft_cost_limit
+        )
+        state.messages = result.messages
+        state.output = result.output
+        return state
 
     return solve
+
+
+# What the investigator may spend writing its best estimates, as a share of its budget.
+BUDGET_GRACE = 0.25
+
+BUDGET_NOTE = (
+    "\n\nYour budget for this item is ${budget:.2f}. If you reach it you will be stopped "
+    "and asked for your best estimate on every check, so record verdicts as you go."
+)
+
+BUDGET_REACHED = (
+    "You have reached your ${budget:.2f} budget for this item: stop investigating. For "
+    "every check, record your best-estimate verdict now with `record_verdict`, from the "
+    "evidence you already have, and say in its explanation that the budget ended the "
+    "investigation and what you would have checked next. Do not run new tools other than "
+    "`record_verdict`; then call `submit`."
+)
+
+
+async def within_budget(
+    agent: Agent, wrap_up: Agent, messages: list[ChatMessage], budget: float
+) -> AgentState:
+    """Run `agent` under a `budget` in dollars; past it, `wrap_up` writes best estimates.
+
+    Only a cost limit of ours is caught here: the sample's own limits still end it.
+    """
+    state, exceeded = await run(agent, messages, limits=[cost_limit(budget)])
+    if exceeded is None:
+        return state
+    store_as(BudgetCap).capped = True
+    logger.info(f"investigator reached its ${budget:.2f} budget; asking for best estimates")
+    state.messages.append(ChatMessageUser(content=BUDGET_REACHED.format(budget=budget)))
+    final, _ = await run(wrap_up, state, limits=[cost_limit(budget * BUDGET_GRACE)])
+    return final

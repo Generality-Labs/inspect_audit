@@ -4,8 +4,9 @@ The audit, which holds a Hawk login, looks up a price for every model it may use
 starts and refuses any it cannot price (`price_models`; James, 2026-11-13: "just don't
 run if you can't find the model"). Those prices are the one pricing: the auditor's own
 `cost_limit` (its budget), and every job's spend, computed from the job's token counts
-(`cost_of`, used by `_spend`). Children get no prices and carry no caps (FRICTION 99,
-100). Off Hawk (no `HAWK_API_URL`) Inspect's built-in prices are all there is.
+(`cost_of`, used by `_spend`). Children fetch no prices and carry no caps (FRICTION 99,
+100), except an investigator budget (`limits.investigator_budget_usd`), for which the
+audit hands its prices to the job (`register_prices`). Off Hawk (no `HAWK_API_URL`) Inspect's built-in prices are all there is.
 
 Temporary (FRICTION 84): Hawk PR #1542 fills `model_cost_config` from this same table,
 and Inspect's `set_model_cost` refuses models it does not know, hence `set_model_info`

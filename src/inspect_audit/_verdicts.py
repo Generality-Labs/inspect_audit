@@ -375,6 +375,12 @@ def _no_verdict_reason(rejected: list[str]) -> str:
     return "; ".join(reasons)
 
 
+class BudgetCap(StoreModel):
+    """Whether this sample's investigator reached its own budget (`soft_cost_limit`)."""
+
+    capped: bool = False
+
+
 def item_scorer(item: InvestigationItemSkill) -> Scorer:
     """A scorer surfacing the investigator's verdict on one investigation item."""
     # Declared categories retain zero-count grades when metrics are recomputed.
@@ -390,7 +396,10 @@ def item_scorer(item: InvestigationItemSkill) -> Scorer:
                 return Score(
                     value="NO_VERDICT",
                     explanation=_no_verdict_reason(rejected),
-                    metadata={"rejections": len(rejected)},
+                    metadata={
+                        "rejections": len(rejected),
+                        "budget_capped": state.store_as(BudgetCap).capped,
+                    },
                 )
             return Score(
                 value=verdict.grade,
@@ -404,6 +413,8 @@ def item_scorer(item: InvestigationItemSkill) -> Scorer:
                     **verdict.details,
                     "tried": verdict.tried,
                     "remarks": verdict.remarks,
+                    # a best estimate written once the investigator's own budget ran out
+                    "budget_capped": state.store_as(BudgetCap).capped,
                     "debrief": {
                         key: [e.model_dump() for e in entries]
                         for key, entries in state.store_as(Verdicts).debrief.items()

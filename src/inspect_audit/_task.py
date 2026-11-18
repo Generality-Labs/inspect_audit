@@ -223,6 +223,7 @@ def investigation_task(
     time_limit: int | None = None,
     working_limit: int | None = None,
     investigator_model: Model | None = None,
+    soft_cost_limit: float | None = None,
 ) -> Task:
     """Build the investigation of a benchmark task.
 
@@ -266,6 +267,8 @@ def investigation_task(
         message_limit: The investigator's message limit (the benchmark's is not inherited).
         time_limit: The investigator's time limit, seconds.
         working_limit: The investigator's working-time limit, seconds.
+        soft_cost_limit: Dollars per investigator after which it is stopped and asked for
+            its best estimate on every check (see `investigator`); its models must be priced.
     """
     if isinstance(task, Task):
         if task_args:
@@ -348,6 +351,7 @@ def investigation_task(
         search=search,
         model=investigator_model,
         install=install,
+        soft_cost_limit=soft_cost_limit,
     )
 
     # every setting of theirs that would govern the investigator is replaced, not inherited

@@ -348,3 +348,120 @@ def test_child_jobs_need_no_prices_and_never_fetch(monkeypatch: pytest.MonkeyPat
         soft_cost_limit=4.0,
         prices={"ia-test/investigator": {"input": 2.0, "output": 10.0}},
     )
+
+
+def test_every_job_kind_with_a_configured_judge_is_a_request_hawk_accepts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Epoch SimpleQA audit: its grading-labels investigation, with the policy's judge at
+    medium reasoning effort, was refused by Hawk ("additional_models.0...items.0.args:
+    Extra inputs are not permitted") before a job id was issued. Each kind's child
+    request, as the authoriser approves it, validates as Hawk's EvalSetConfig, and the
+    judge still grades at medium effort."""
+    from hawk.core.types import EvalSetConfig
+
+    from inspect_audit._task import configured_judges
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    judge = "openrouter/openai/gpt-5.6-terra"
+    investigator = "openrouter/openai/gpt-6-luna"
+    medium = ModelConfig(model=judge, config=GenerateConfig(reasoning_effort="medium"))
+    policy = LaunchPolicy(
+        task="bench/task",
+        task_package="bench-pkg",
+        investigation_package="investigation-pkg",
+        investigator_image="image",
+        models=Models(investigators=(investigator,), subjects=("m/x",), judges=(judge,)),
+        checks=("question-labels", "grading-labels"),
+        source="bench.task",
+        supplied_logs=("hawk:imported-logs",),
+        model_configs_json=canonical({judge: medium.model_dump(mode="json", exclude_none=True)}),
+        configuration_json="{}",
+    )
+    authorizer = AuditAuthorizer(policy)
+
+    def investigation(check: str, roles: dict[str, str]) -> Job:
+        return Job(
+            label=f"base-{check}",
+            task="inspect_audit/investigation",
+            package="investigation-pkg",
+            extra_packages=["bench-pkg"],
+            models=[investigator],
+            task_args={
+                "task": "bench/task",
+                "investigator_image": "image",
+                "source": "bench.task",
+                "checks": [check],
+                "samples": ["2", "26"],
+                "logs": ["hawk:imported-logs"] if roles else [],
+                "judge": roles,
+            },
+        )
+
+    def hawk_request(job: Job, kind: str) -> Any:
+        approved = authorizer.authorise(job, kind, set())
+        return approved, EvalSetConfig.model_validate(hawk_config(approved))
+
+    # the grading job: its judge is declared to Hawk by name, configured by the task
+    approved, config = hawk_request(
+        investigation("grading-labels", {"grader": judge}), "investigation"
+    )
+    [declared] = config.additional_models or []
+    assert [m.name for m in declared.items] == [judge]
+    assert approved.task_args["judge_configs"]["grader"]["config"] == {"reasoning_effort": "medium"}
+    grader = configured_judges(None, {"grader": judge}, approved.task_args["judge_configs"])
+    assert grader["grader"].config.reasoning_effort == "medium"  # type: ignore[union-attr]
+
+    # the blind job: no judge, nothing declared
+    approved, config = hawk_request(investigation("question-labels", {}), "investigation")
+    assert config.additional_models is None
+
+    # a benchmark or variant run with the judge in a role: configured where Hawk takes args
+    for kind, task, package, extra, args in (
+        ("benchmark", "bench/task", "bench-pkg", [], {}),
+        (
+            "variant",
+            "inspect_audit/variant",
+            "investigation-pkg",
+            ["bench-pkg"],
+            {
+                "task": "bench/task",
+                "task_args": {},
+                "files": {"bench/task.py": "x = 1\n"},
+                "source": "bench.task",
+            },
+        ),
+    ):
+        job = Job(
+            label=kind,
+            task=task,
+            package=package,
+            extra_packages=extra,
+            models=["m/x"],
+            task_args=args,
+            model_roles={"grader": judge},
+            sample_ids=["2"],
+        )
+        _, config = hawk_request(job, kind)
+        role = (config.model_roles or {})["grader"].items[0]
+        assert role.args.parsed_config.reasoning_effort == "medium"
+
+    # a regrade runs as its judge: configured in the model grid
+    regrade = Job(
+        label="regrade",
+        task="inspect_audit/regrade",
+        package="investigation-pkg",
+        extra_packages=["bench-pkg"],
+        models=[judge],
+        task_args={
+            "task": "bench/task",
+            "task_args": {},
+            "logs": ["hawk:imported-logs"],
+            "judge": {"grader": judge},
+            "samples": ["2"],
+            "epochs": 1,
+        },
+    )
+    _, config = hawk_request(regrade, "regrade")
+    [group] = config.models or []
+    assert group.items[0].args.parsed_config.reasoning_effort == "medium"

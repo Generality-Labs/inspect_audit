@@ -61,6 +61,14 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
             }
         return {"package": "inspect-ai", "items": [item]}
 
+    def declared(model: str) -> dict[str, Any]:
+        # Hawk's additional models take a name only (`extra="forbid"`): a declaration
+        # gives the job the provider's credentials, nothing more. A judge's settings
+        # reach it through the task's own arguments (an investigation's
+        # `judge_configs`, set by the authoriser); the Epoch SimpleQA audit's grading
+        # job was refused for a judge declared with its reasoning effort here
+        return {"package": "inspect-ai", "items": [{"name": model}]}
+
     item: dict[str, Any] = {"name": task_name, "args": job.task_args}
     if job.sample_ids is not None:
         item["sample_ids"] = job.sample_ids
@@ -105,7 +113,7 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
     benchmark_args = job.task_args if own else job.task_args.get("task_args") or {}
     named = [*judges, *argument_models(benchmark_args)]
     if named:
-        config["additional_models"] = [group(m) for m in dict.fromkeys(named)]
+        config["additional_models"] = [declared(m) for m in dict.fromkeys(named)]
     if restricted:
         sources = (job.task_args.get("logs") or []) if investigation else []
         if any(not str(source).startswith("hawk:") for source in sources):

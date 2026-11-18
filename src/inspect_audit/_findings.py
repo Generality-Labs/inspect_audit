@@ -44,6 +44,16 @@ class Rating(BaseModel):
     label: str = Field(min_length=1)
     explanation: str = Field(min_length=1)
     evidence: list[Evidence] = Field(min_length=1)
+    # what a publisher's form asks for beside the label: the numbers a rubric row prints
+    # (a score floor and ceiling, runs per model), a sample's design. The publisher
+    # says which keys its rows take; the GL publishers take none.
+    fields: dict[str, str | float | int | None] = Field(default_factory=dict)
+    # a failing label's measured effect on the headline results, where the publisher's
+    # rubric requires one (an Epoch Flag); empty otherwise
+    impact: str = ""
+    # why a label disagrees with a measure the publisher computes from the bundle (an
+    # Epoch scoring row against its defect-rate threshold); empty when it agrees
+    override: str = ""
 
 
 class AuditorFindings(BaseModel):

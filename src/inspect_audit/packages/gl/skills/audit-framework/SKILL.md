@@ -9,6 +9,11 @@ checks within operator scope. Do not attempt to establish population representat
 cross-model effects from one sample. Report useful observations even when they do not settle
 a framework check, with that limitation explicit.
 
+The framework's files are /workspace/analysis/framework/checks.json (dimensions and
+criteria) and criteria.json (the scales). Read each criterion as its definition says: for
+example, clustering concerns model-score discrimination, not dataset clustering; unequal
+constraint effects concerns how a constraint binds different models.
+
 ## Ratings
 
 Two scales, each for its own place:
@@ -24,11 +29,23 @@ this audit's scope, and not applicable to this evaluation. Rate consequence usin
 not a fixed numerical defect threshold. The scales' full wording is in
 /workspace/analysis/framework/criteria.json in the auditor's workspace.
 
+## Before you submit
+
+Submission is refused unless /workspace/findings.json has:
+
+- `auditor.ratings.overall`: a grade (A, B, C or D) with its explanation and evidence;
+- every other rating keyed by a dimension (A-I) or a criterion (A.1, C.3, ...), each
+  labelled with an assessment (both are listed above);
+- a framework criterion on every finding (e.g. `C` or `C.1`).
+
+The LaTeX report's prose (`/workspace/report/prose.json`, written after submission) keys
+its dimensions by letter only, A-I: write a criterion's text under its letter.
+
 ## Definitions
 
 Source: Generality-Labs/audit_reports at ad7de89658b6794112c2f65847991c7ed41d9e30, auditframework.sty and ScoringCriteria.tex.
 
-<!-- generated from audit/framework.json by `python -m inspect_audit.publishers._template --update-registry`: do not edit -->
+<!-- generated from framework.json by `python -m inspect_audit.packages.gl._template --update-registry`: do not edit -->
 - **A: Construct validity** — Does performance on the eval validly measure the capability or behaviour the eval aims to assess?
 - **A.0: measurement distortion** — flaws in implementation validity dimensions distort measurement of the target construct
 - **A.1: contamination** — benchmark items or their solutions were present in training data or otherwise accessible during training

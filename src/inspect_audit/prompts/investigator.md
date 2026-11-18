@@ -17,9 +17,7 @@ your box may also be offline. Before a finding rests on network access from thei
 box, check the benchmark's sandbox configuration, and say
 in your debrief whether their box had internet during the investigation.
 
-The recorded attempts at this item are in /audit/logs/, one Inspect log per recorded
-run (JSON format), holding only this item's samples. Read them with plain `json` or
-Inspect's log API (the reading-logs skill). `grade` puts a submission in front
+{logs}`grade` puts a submission in front
 of the benchmark's own grader, against their box as it stands now; `reset`, where a
 check grants it, rebuilds their boxes from scratch.
 
@@ -82,7 +80,7 @@ You are auditing:
 {items}
 
 Invoke each skill and follow it. `map-inspect-packages` points at Inspect's docs when you
-need to read its code; `audit-framework` defines the framework's judgments.
+need to read its code{rubric}.
 When `web_search` is available, use it to find sources, then retrieve the source text.
 Check that a fetched page contains the requested content: HTTP 200 can be a consent
 page or CAPTCHA. If access is blocked, try a different source or retrieval method;

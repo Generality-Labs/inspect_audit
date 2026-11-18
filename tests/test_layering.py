@@ -11,8 +11,9 @@ HIGHER = ("_audit", "_registry", "_investigator", "_task", "_publishing", "_find
 
 # Cycles that exist today. Each consolidation step removes one; this list only shrinks.
 KNOWN_CYCLES: list[set[str]] = [
-    # findings, register and publishing all reach back into the top-level agent
-    {"_audit", "_publishing", "_findings", "_register", "publishers.latex", "publishers.gl"},
+    # findings, register and publishing all reach back into the top-level agent; the
+    # package interface sits in it because the agent selects a package
+    {"_audit", "_publishing", "_findings", "_register", "package"},
 ]
 
 
@@ -102,3 +103,29 @@ def test_no_import_cycles_beyond_the_known_ones() -> None:
     gone = [c for c in KNOWN_CYCLES if c not in cycles]
     assert new == [], f"new import cycles: {new}"
     assert gone == [], f"these cycles are gone; remove them from KNOWN_CYCLES: {gone}"
+
+
+def test_packages_reach_inspect_audit_only_through_its_public_interface() -> None:
+    """A package (GL included) imports `inspect_audit.package` and nothing else of ours, so it
+    could move to its own distribution; and the machinery never imports a package."""
+    graph = _graph()
+    leaks = sorted(
+        f"{source} imports {target}"
+        for source, targets in graph.items()
+        for target in targets
+        if (
+            source.startswith("packages.")
+            and not target.startswith("packages.")
+            and target != "package"
+        )
+        or (not source.startswith("packages") and target.startswith("packages."))
+    )
+    # a relative import out of the package (`from .. import`) escapes the graph above
+    leaks += sorted(
+        f"{path.relative_to(ROOT)} imports from outside its package"
+        for name, path in _modules().items()
+        if name.startswith("packages.")
+        for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.ImportFrom) and node.level > 1
+    )
+    assert leaks == []

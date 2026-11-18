@@ -20,9 +20,10 @@ from inspect_ai.util import registry_create, registry_info
 from ._compose import UnsupportedBenchmarkError, investigation_compose, their_compose, their_sandbox
 from ._investigator import investigator
 from ._k8s import investigation_k8s
-from ._logs import LogIndex, LogMismatchError, index_logs
+from ._logs import LOG_DIFFERENCES, LogIndex, LogMismatchError, distribution_of, index_logs
 from ._source import SourceCopy, collect_directory, collect_source
 from ._verdicts import investigation_items, item_scorer
+from .package import load_package
 
 # task settings of theirs the investigation keeps on purpose: `setup` prepares their box,
 # `cleanup` tears their resources down, `model` is the eval's own --model (the
@@ -223,6 +224,7 @@ def investigation_task(
     time_limit: int | None = None,
     working_limit: int | None = None,
     investigator_model: Model | None = None,
+    audit_package: str | None = None,
 ) -> Task:
     """Build the investigation of a benchmark task.
 
@@ -246,6 +248,8 @@ def investigation_task(
         investigator_model: Optional explicit agent model for programmatic drivers. The
             CLI normally uses the evaluation model. Binding here also works when
             an execution backend overrides Task.model after construction.
+        audit_package: The audit package whose rubric skill the investigator loads
+            (default gl).
         compose: The benchmark's compose file, when its task names only `"docker"`.
         assessment_ids: Assessment-unit ids per sample for question labels.
         redact: Metadata keys withheld from the staged item.
@@ -274,7 +278,7 @@ def investigation_task(
     else:
         their = registry_create("task", task, **(task_args or {}))
         name = registry_info(their).name
-        package = name.split("/")[0] if "/" in name else None
+        package = distribution_of(name)
     scoped = investigation_items(list(checks))
 
     dataset, _ = numbered(their)
@@ -295,6 +299,13 @@ def investigation_task(
         if logs is not None
         else None
     )
+    if index is not None and index.differences:
+        notes = ((notes + "\n\n") if notes else "") + (
+            "How the supplied logs differ from the run in your box: "
+            + "; ".join(index.differences)
+            + ". A grade you reproduce, or fail to, may differ for that reason alone; say "
+            "so in your explanation where it matters."
+        )
     roles = judge_roles(index, judge)
     configured_roles = configured_judges(index, roles, judge_configs)
     if index is not None:
@@ -340,6 +351,7 @@ def investigation_task(
         search=search,
         model=investigator_model,
         install=install,
+        rubric=load_package(audit_package).rubric.skill,
     )
 
     # every setting of theirs that would govern the investigator is replaced, not inherited
@@ -379,6 +391,7 @@ def investigation_task(
             "investigated_task_args": dict(task_args or {}),
             "investigated_logs": list(logs or []),
             "judge_roles": roles,
+            LOG_DIFFERENCES: index.differences if index is not None else [],
         },
     }
     accepted = set(pyinspect.signature(task_with).parameters)

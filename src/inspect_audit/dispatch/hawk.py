@@ -107,9 +107,13 @@ def hawk_config(job: Job, *, restricted: bool = False) -> dict[str, Any]:
     if named:
         config["additional_models"] = [group(m) for m in dict.fromkeys(named)]
     if restricted:
-        sources = (job.task_args.get("logs") or []) if investigation else []
+        # a restricted runner reads only the Hawk logs its config declares, and has no
+        # user login to download others: investigations and regrades both read logs
+        # (the smoke round of 17 Nov: every restricted regrade failed to load)
+        reads_logs = investigation or JobKind.of(job.task) is JobKind.REGRADE
+        sources = (job.task_args.get("logs") or []) if reads_logs else []
         if any(not str(source).startswith("hawk:") for source in sources):
-            raise ValueError("restricted investigation jobs require Hawk transcript sources")
+            raise ValueError("restricted jobs that read logs require Hawk transcript sources")
         ids = list(dict.fromkeys(s.removeprefix("hawk:") for s in sources))
         if any(not sid or "," in sid for sid in ids):
             raise ValueError("declare each Hawk transcript source as a separate hawk:<id>")

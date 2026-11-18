@@ -16,6 +16,7 @@ from inspect_ai.agent import AgentState, as_solver, react
 from inspect_ai.dataset import Sample
 from inspect_ai.log import (
     EvalSampleSummary,
+    read_eval_log_async,
     read_eval_log_sample_summaries_async,
 )
 from inspect_ai.model import CompactionSummary, GenerateConfig, ModelConfig
@@ -24,7 +25,7 @@ from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
 from inspect_ai.util import CheckpointConfig, sandbox, store_as
 
 from . import prompts
-from ._audit_workspace import docker_box
+from ._audit_workspace import docker_box, hawk_artifact_dir
 from ._image import view_image
 from ._prices import cost_of, price_models
 from ._register import register_view
@@ -539,7 +540,10 @@ def send_investigators(inv: Audit) -> Tool:
             label=label,
             task=str(JobKind.INVESTIGATION.task),
             package=inv.investigation_package,
-            extra_packages=policy.benchmark_packages(),
+            extra_packages=[
+                *policy.benchmark_packages(),
+                *([r] if (r := policy.audit_package_requirement) else []),
+            ],
             models=[investigator],
             task_args={
                 "task": inv.task,
@@ -555,6 +559,7 @@ def send_investigators(inv: Audit) -> Tool:
                 "paper": inv.paper,
                 # the benchmark into the investigator's own box, as this job installs it
                 "install": policy.box_install(),
+                "audit_package": policy.audit_package,
             },
         )
         return await inv.launch(job, JobKind.INVESTIGATION, note)
@@ -684,9 +689,16 @@ def _cost(summaries: list[EvalSampleSummary]) -> float:
 # inside the auditor's async tools is the race that blocked CL-bench v4 (FRICTION 44, 79)
 async def _log_line(path: Path) -> str:
     """One log, summarised from its samples: how many, how they ended, what they cost."""
+    from ._logs import LOG_DIFFERENCES
+
     summaries = await read_eval_log_sample_summaries_async(str(path))
     errors = sum(1 for s in summaries if s.error)
-    return f"  {path.name}: {len(summaries)} samples, {errors} errored, ${_cost(summaries):.2f} recorded"
+    line = f"  {path.name}: {len(summaries)} samples, {errors} errored, ${_cost(summaries):.2f} recorded"
+    # what the job's input logs record differently from the run it declared: not
+    # refused, so said here, where the auditor reads the job's results
+    header = await read_eval_log_async(str(path), header_only=True)
+    differences = (header.eval.metadata or {}).get(LOG_DIFFERENCES) or []
+    return "\n".join([line, *(f"    differs: {d}" for d in differences)])
 
 
 async def _continue(state: AgentState, interactive: bool) -> bool | str:
@@ -701,6 +713,34 @@ async def _continue(state: AgentState, interactive: bool) -> bool | str:
     if not interactive:
         return False
     return await operator_turn(state)
+
+
+def _log_differences(
+    root: Path, seed: dict[str, Any], task: str, task_args: dict[str, Any]
+) -> tuple[str, ...]:
+    """How the supplied logs' runs differ from the declared one, read at the audit's start.
+
+    Compared with the benchmark installed on this host, when it is: a host without the
+    benchmark judges nothing, and the jobs, which install it, say the same to their
+    investigators and in their results.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    from ._logs import differences_of, distribution_of
+
+    staged = [
+        str(root / "inputs" / str(entry["staged"]).removeprefix("/inputs/"))
+        for entry in seed.get("logs") or []
+        if entry.get("staged")
+    ]
+    package = distribution_of(task)
+    if not staged or package is None:
+        return ()
+    try:
+        version(package)
+    except PackageNotFoundError:
+        return ()
+    return tuple(differences_of(staged, task_name=task, task_args=task_args, package=package))
 
 
 @task
@@ -737,6 +777,7 @@ def audit(
     child_secrets: list[str] | None = None,
     benchmark_environment: dict[str, str] | None = None,
     model_configs: dict[str, dict[str, Any]] | None = None,
+    package: str | None = None,
     publisher: str | None = None,
 ) -> Task:
     """Audit a benchmark, submit findings, then use the selected publisher.
@@ -780,8 +821,10 @@ def audit(
         auditor_image: Published auditor sandbox image for Hawk.
         box_resources: Kubernetes `resources` (requests/limits) for the auditor's box on
             k8s; None uses the deployment's sandbox default.
-        artifact_dir: Where the published report is also saved, under this sample:
-            on Hawk, the job's S3 artifacts directory. None keeps it on the host only.
+        artifact_dir: Where the published report and the findings are also saved,
+            under this sample. None: on a Hawk runner, the job's own artifacts
+            directory (`hawk download-artifacts <eval set id>` fetches them); elsewhere
+            the host only.
         instructions: Operator instructions and scope, separate from benchmark background.
         policy: The frozen permissions: `models` (auditor, investigators, subjects,
             judges: full Inspect names, the only place models are named) and `limits`
@@ -802,14 +845,18 @@ def audit(
             credentials belong in child_secrets instead.
         model_configs: Inspect ModelConfig settings keyed by full model name.
             Child models and judge roles use these fixed settings.
-        publisher: Publishing package, revealed only after findings submission.
-            Defaults to latex; installed module:factory packages can replace it.
+        package: The audit package: the rubric the auditor rates against, given to it
+            from the start, and the formats its findings can be published in. Defaults
+            to gl; `inspect-audit-packages` lists the installed ones.
+        publisher: A format of that package (gl: latex, the default, or web), revealed
+            only after findings submission; or an installed module:factory.
     """
     from ._findings import Findings, encoded, submit_findings
-    from ._publishing import PhaseTools, load_publisher, preflight_publisher
+    from ._publishing import PhaseTools, preflight_publisher
+    from .package import select
 
-    publisher = publisher or "latex"
-    selected_publisher = load_publisher(str(publisher))
+    chosen = select(package, publisher)
+    selected_publisher = chosen.publisher
     box = box or "docker"
     hawk_api_url = hawk_api_url or os.environ.get("HAWK_API_URL")
     interactive = bool(interactive)
@@ -852,7 +899,7 @@ def audit(
         raise ValueError("Hawk jobs need hawk_api_url (or HAWK_API_URL)")
     if not repo:
         raise ValueError("audit needs a repo: the benchmark to audit")
-    skill_paths = _skill_paths(extra_skills or [])
+    skill_paths = _skill_paths(chosen.package.rubric.skill, extra_skills or [])
 
     # what can be worked out is worked out: the investigated repository already says which
     # commit it is, which directory the task lives in and which paper it comes from
@@ -873,6 +920,7 @@ def audit(
         overview or "",
         target_task,
         output_dir,
+        chosen.package.rubric.stage,
     )
 
     (root / "work/findings.json").write_bytes(encoded(Findings().model_dump(mode="json")))
@@ -881,6 +929,11 @@ def audit(
     )
     seed_path = root / "inputs" / "seed.json"
     seed = json.loads(seed_path.read_text())
+    seed["package"] = {
+        "name": chosen.name,
+        "format": chosen.format,
+        "rubric": chosen.package.rubric.skill.name,
+    }
     if runs:
         task_package, investigation_package = _job_packages(
             runs, target_task, task_package, investigation_package, repo, revision
@@ -906,9 +959,14 @@ def audit(
         environment_json=canonical(benchmark_environment),
         source=source,
         supplied_logs=tuple(sorted(set(supplied))),
+        log_differences=(
+            _log_differences(root, seed, target_task, dict(task_args or {})) if target_task else ()
+        ),
         limits=permissions.limits,
         credential_mode=credential_mode,
         configuration_json=canonical(configuration),
+        audit_package=chosen.name,
+        audit_package_requirement=chosen.package.requirement,
     )
     snapshot = canonical(launch_policy.model_dump(mode="json"))
     (root / "policy.json").write_text(snapshot)
@@ -966,8 +1024,9 @@ def audit(
             "subject_models": list(models.subjects),
             "judge_models": list(models.judges),
             "supplied_logs": inv.supplied,
+            "log_differences": list(launch_policy.log_differences),
         }
-    tools.append(submit_findings(root, inv, target_task, selected_publisher.validate))
+    tools.append(submit_findings(root, inv, target_task, chosen.validate))
     # Common shell/image/budget/blocker tools survive the handoff. Skill and job
     # capabilities are resolved per turn by Inspect, not by a second agent loop.
     common = [
@@ -985,12 +1044,16 @@ def audit(
         if box == "k8s"
         else docker_box(root, auditor_image)
     )
+    if not artifact_dir and box == "k8s":
+        artifact_dir = hawk_artifact_dir()
+        if artifact_dir:
+            logger.info("artifact_dir defaults to this Hawk job's own folder: %s", artifact_dir)
     if artifact_dir:
         (root / "artifacts.json").write_text(json.dumps({"artifact_dir": artifact_dir}))
     elif box == "k8s":
         logger.warning(
-            "no artifact_dir: the published report stays on this host only, and on a "
-            "Hawk runner it is lost when the pod ends"
+            "no artifact_dir, and this is not a Hawk runner: the published report stays on "
+            "this host only, and in a pod it is lost when the pod ends"
         )
 
     async def on_continue(state: AgentState) -> bool | str:
@@ -1062,8 +1125,9 @@ def audit(
                     if instructions
                     else ""
                 )
-                + "Read /inputs/seed.json and invoke the auditing skill. Begin the "
-                "audit autonomously.",
+                + "Read /inputs/seed.json and invoke the auditing skill, then your rubric "
+                f"skill, {chosen.package.rubric.skill.name}, which says what this audit "
+                "rates and how: follow it where the two differ. " + "Begin the audit autonomously.",
             )
         ],
         scorer=audit_outcome(),
@@ -1074,7 +1138,7 @@ def audit(
             as_solver(
                 react(
                     name="auditor",
-                    prompt=prompts.AUDIT,
+                    prompt=prompts.AUDIT.format(rubric=chosen.package.rubric.guide),
                     submit=False,
                     tools=[phase_tools],
                     # an absolute threshold: 0.8 of a 1.05M-token context fired at ~840k,
@@ -1132,10 +1196,12 @@ def _checked_child_secrets(names: list[str], runs: str | None) -> list[str]:
     return names
 
 
-def _skill_paths(extra: list[str]) -> list[str]:
-    """The auditor's skills, then the operator's extra skill directories."""
-    paths = [str(ASSETS / "skills" / name) for name in AUDIT_SKILLS] + [
-        str(SKILLS / name) for name in (*LOG_SKILLS, *SUPPORT_SKILLS)
+def _skill_paths(rubric: Path, extra: list[str]) -> list[str]:
+    """The auditor's skills, its package's rubric skill, then the operator's extra skills."""
+    paths = [
+        *(str(ASSETS / "skills" / name) for name in AUDIT_SKILLS),
+        *(str(SKILLS / name) for name in (*LOG_SKILLS, *SUPPORT_SKILLS)),
+        str(rubric),
     ]
     for path in extra:
         resolved = Path(path).expanduser().resolve()

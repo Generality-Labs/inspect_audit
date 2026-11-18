@@ -20,7 +20,7 @@ SKILLS = Path(__file__).parent / "skills"
 
 # support skills help with the work rather than defining it; an investigator is never
 # asked to audit one of these
-SUPPORT_SKILLS = ("map-inspect-packages", "audit-framework")
+SUPPORT_SKILLS = ("map-inspect-packages",)
 
 # skills for reading Inspect logs in a box, never checks: the auditor's, and the
 # investigator's for its sample's slice of the declared logs (5739685)
@@ -238,15 +238,18 @@ def record_verdict(items: list[InvestigationItemSkill]) -> Tool:
             asks = ", ".join(f"{key} ({skill.details[key]})" for key in missing)
             raise ToolError(f"This item also requires details: {asks}.")
 
-        if item == "question-labels":
-            from ._labels import validate_labels
+        if item in ("question-labels", "grading-labels"):
+            from ._labels import DEFECT_TYPES, GRADING_DEFECT_TYPES, validate_labels
 
             expected = store_as(AssessmentUnits).ids
             if not expected:
                 raise ToolError("Question labels need the sample's assessment ids; none were set")
             try:
                 labels = validate_labels(
-                    recorded_details["question_assessments"], expected, require_classification=True
+                    recorded_details["question_assessments"],
+                    expected,
+                    require_classification=True,
+                    allowed=GRADING_DEFECT_TYPES if item == "grading-labels" else DEFECT_TYPES,
                 )
                 overall = (
                     "DEFECT"

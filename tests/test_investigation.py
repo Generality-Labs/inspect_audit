@@ -71,13 +71,14 @@ def test_the_same_attempt_in_two_logs_is_refused(fixture_log: str) -> None:
         index_logs([fixture_log, fixture_log], task_name="fixture_task", task_args={}, package=None)
 
 
-def test_the_benchmark_version_must_match_the_logs(fixture_log: str) -> None:
+def test_a_benchmark_version_the_logs_do_not_share_is_reported(fixture_log: str) -> None:
     index = index_logs([fixture_log], task_name="fixture_task", task_args={}, package="inspect_ai")
+    assert sorted(index.attempts) == ["1", "2", "3"] and not index.differences
+    index = index_logs(
+        [fixture_log], task_name="fixture_task", task_args={}, package="no-such-benchmark"
+    )
     assert sorted(index.attempts) == ["1", "2", "3"]
-    with pytest.raises(LogMismatchError, match="not installed"):
-        index_logs(
-            [fixture_log], task_name="fixture_task", task_args={}, package="no-such-benchmark"
-        )
+    assert any("no distribution named" in d for d in index.differences)
 
 
 def test_a_declared_judge_must_agree_with_the_logs() -> None:
@@ -436,12 +437,13 @@ def test_a_log_names_the_same_build_only_by_commit_and_never_from_an_edited_tree
     assert not same_build("0.3.266", "0.3.264")
 
 
-def test_a_log_from_a_different_run_is_refused(tmp_path: Path) -> None:
-    """Declared task, declared arguments and nothing undeclared, or the log is refused."""
+def test_a_log_from_a_different_run_is_read_and_the_differences_reported(tmp_path: Path) -> None:
+    """A different task, different arguments or an unrecorded version is said, not refused:
+    the auditor decides what it means. Refusing cost whole jobs over naming (FRICTION 145)."""
     from inspect_ai import Task, task
     from inspect_ai import eval as inspect_eval
 
-    from inspect_audit._logs import LogMismatchError, index_logs
+    from inspect_audit._logs import index_logs
 
     @task
     def probe(split: str = "test", hard: bool = False) -> Task:
@@ -451,24 +453,23 @@ def test_a_log_from_a_different_run_is_refused(tmp_path: Path) -> None:
         probe(split="dev", hard=True), model="mockllm/model", log_dir=str(tmp_path), display="none"
     )
     name = log.eval.task_registry_name or log.eval.task
-    index_logs(
-        [log.location], task_name=name, task_args={"split": "dev", "hard": True}, package=None
+
+    def differences(task_name: str, task_args: dict[str, Any], package: str | None = None) -> str:
+        index = index_logs(
+            [log.location], task_name=task_name, task_args=task_args, package=package
+        )
+        assert list(index.attempts) == ["1"]
+        return " | ".join(index.differences)
+
+    assert differences(name, {"split": "dev", "hard": True}) == ""
+    assert "split='dev', not the declared 'test'" in differences(
+        name, {"split": "test", "hard": True}
     )
-    with pytest.raises(LogMismatchError, match="split"):
-        index_logs(
-            [log.location], task_name=name, task_args={"split": "test", "hard": True}, package=None
-        )
-    with pytest.raises(LogMismatchError, match="does not declare: hard"):
-        index_logs([log.location], task_name=name, task_args={"split": "dev"}, package=None)
-    with pytest.raises(LogMismatchError, match="records task"):
-        index_logs([log.location], task_name="other/task", task_args={}, package=None)
-    with pytest.raises(LogMismatchError, match="does not record which"):
-        index_logs(
-            [log.location],
-            task_name=name,
-            task_args={"split": "dev", "hard": True},
-            package="pytest",
-        )
+    assert "not declared here: hard" in differences(name, {"split": "dev"})
+    assert "record task" in differences("other/task", {"split": "dev", "hard": True})
+    assert "record no pytest version" in differences(
+        name, {"split": "dev", "hard": True}, package="pytest"
+    )
 
 
 def test_a_chat_input_matches_its_log_whatever_its_message_ids(tmp_path: Path) -> None:

@@ -99,10 +99,17 @@ class LaunchPolicy(FrozenModel):
     environment_json: str = "{}"
     source: str | None = None
     supplied_logs: tuple[str, ...] = ()
+    log_differences: tuple[str, ...] = ()
+    """How the supplied logs' runs differ from the declared one, read at the audit's
+    start; empty when they match or could not be judged there."""
     limits: Limits = Limits()
     credential_mode: Literal["restricted", "user"] = "user"
     model_configs_json: str = "{}"
     configuration_json: str
+    # the audit package, whose rubric skill investigators load, and how a child job
+    # installs it when it does not ship with inspect_audit
+    audit_package: str = "gl"
+    audit_package_requirement: str | None = None
 
     def benchmark_packages(self, overrides: list[str] | tuple[str, ...] = ()) -> list[str]:
         """The benchmark as its jobs install it; the one place this list is built.
@@ -217,6 +224,7 @@ INVESTIGATION_ARGS = frozenset(
         "notes",
         "paper",
         "install",
+        "audit_package",
     }
 )
 
@@ -402,6 +410,8 @@ class AuditAuthorizer:
             raise ToolError("investigations run the benchmark as declared: no version overrides")
         check_overrides(overrides, kind)
         benchmark = p.benchmark_packages(overrides) if p.task_package else []
+        if kind is JobKind.INVESTIGATION and p.audit_package_requirement:
+            benchmark = [*benchmark, p.audit_package_requirement]
         if job.extra_packages != (benchmark if ours else benchmark[1:]):
             raise ToolError("job dependencies must match the launch policy")
         allowed = p.models.investigators if kind is JobKind.INVESTIGATION else p.models.subjects
@@ -426,6 +436,8 @@ class AuditAuthorizer:
                 raise ToolError("investigation paper must be a path or URL")
             if args.get("task") != p.task or args.get("investigator_image") != p.investigator_image:
                 raise ToolError("investigation task and image must match the launch policy")
+            if args.get("audit_package", "gl") != p.audit_package:
+                raise ToolError("investigation package must match the launch policy")
             source = args.get("source")
             if not isinstance(source, str) or not re.fullmatch(
                 r"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*", source

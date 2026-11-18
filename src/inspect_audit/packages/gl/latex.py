@@ -12,12 +12,21 @@ from inspect_ai.tool import Tool, ToolError, tool
 from inspect_ai.util import sandbox, subprocess
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from .._findings import Findings, encoded, read_bundle
-from .._framework import REGISTRY
-from .._publishing import Publisher
-from .._verdicts import Evidence
-from ._render import box_has, render_in_box, reported, tree
+from inspect_audit.package import (
+    Evidence,
+    Findings,
+    Publisher,
+    box_has,
+    encoded,
+    read_bundle,
+    render_in_box,
+    reported,
+    restore_bundle,
+    tree,
+)
+
 from ._template import template
+from .rubric import REGISTRY, validate
 
 ASSESSMENTS = {
     label: r"\assess" + macro
@@ -79,40 +88,6 @@ def tex(value: object) -> str:
         return "".join(substitutions.get(c, c) + (r"\allowbreak{}" if c in "/_" else "") for c in w)
 
     return "".join(word(w) for w in re.split(r"(\s+)", str(value))).replace("\n\n", "\\par ")
-
-
-RULE = (
-    "ratings.overall takes a grade ({grades}); every dimension (A-I) and criterion "
-    "(e.g. C.3) takes an assessment ({assessments}), never a letter grade"
-)
-
-
-def validate(findings: Findings) -> None:
-    registry = json.loads(REGISTRY.read_text())
-    definitions, grades, assessments = (
-        registry["dimensions"],
-        registry["grades"],
-        registry["assessments"],
-    )
-    rule = RULE.format(grades=", ".join(grades), assessments=", ".join(assessments))
-    ratings = findings.auditor.ratings
-    if "overall" not in ratings or ratings["overall"].label not in grades:
-        raise ValueError(
-            "LaTeX publication needs ratings.overall, with its explanation and evidence, "
-            f"before submission: {rule}"
-        )
-    for key, rating in ratings.items():
-        if key == "overall":
-            continue
-        if key not in definitions:
-            raise ValueError(f"Unknown framework criterion {key!r}: IDs are A-I and A.1, C.3, ...")
-        if rating.label not in assessments:
-            raise ValueError(f"{key}={rating.label} is not an assessment: {rule}")
-    for finding in findings.auditor.findings:
-        if finding.criterion not in definitions:
-            raise ValueError(
-                "Each LaTeX finding needs a framework criterion, e.g. C or C.1, before submission"
-            )
 
 
 def source(
@@ -437,8 +412,6 @@ async def build(root: Path, bundle: Path) -> Path:
 def preview_report(root: Path) -> Tool:
     async def execute() -> str:
         """Compile the GL audit template from frozen findings and prose-only JSON."""
-        from .._findings import restore_bundle
-
         with reported("Preview"):
             output = await build(root, await restore_bundle(root))
         await sandbox().write_file(
@@ -476,6 +449,5 @@ def publisher() -> Publisher:
         skills=[str(Path(__file__).parent / "skills/latex-publishing")],
         build=build,
         tools=lambda root: [preview_report(root)],
-        validate=validate,
         preflight=preflight,
     )

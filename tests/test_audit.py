@@ -536,9 +536,10 @@ def test_every_agent_tool_schema_meets_openais_strict_rules(tmp_path: Path) -> N
     from inspect_audit import _audit
     from inspect_audit._findings import submit_findings
     from inspect_audit._image import view_image
-    from inspect_audit._publishing import load_publisher, publish_document
+    from inspect_audit._publishing import publish_document
     from inspect_audit._report import report_blocker
-    from inspect_audit.publishers.gl import figure, preview_report
+    from inspect_audit.package import load_package
+    from inspect_audit.packages.gl.web import figure, preview_report
 
     inv = make_audit(
         root=tmp_path,
@@ -557,7 +558,7 @@ def test_every_agent_tool_schema_meets_openais_strict_rules(tmp_path: Path) -> N
         budget(Spend(None, None)),
         view_image(),
         submit_findings(tmp_path),
-        publish_document(tmp_path, load_publisher("gl")),
+        publish_document(tmp_path, load_package("gl").publisher("web")[1]),
         report_blocker(),
         register_view(),
         figure(),

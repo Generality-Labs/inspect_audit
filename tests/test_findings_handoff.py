@@ -24,7 +24,7 @@ from inspect_audit._publishing import PhaseTools, Publisher, publish
 from inspect_audit._register import Register, Take
 from inspect_audit._verdicts import Evidence
 from inspect_audit.dispatch.policy import Models
-from inspect_audit.publishers.gl import validate_rows
+from inspect_audit.packages.gl.web import validate_rows
 
 
 def test_draft_keeps_investigators_and_requires_explained_findings() -> None:
@@ -295,15 +295,16 @@ def test_bundle_rejects_unlisted_files_and_directory_symlinks(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
-    ("publisher", "skill_name"), [("latex", "latex-publishing"), ("gl", "publishing")]
+    ("publisher", "skill_name"),
+    [("latex", "latex-publishing"), ("gl", "publishing")],
 )
 def test_publishers_are_actual_inspect_skills(publisher: str, skill_name: str) -> None:
     from inspect_ai.tool import read_skills
 
     from inspect_audit._audit import AUDIT_SKILLS
-    from inspect_audit._publishing import load_publisher
+    from inspect_audit.package import load_package
 
-    skills = read_skills(load_publisher(publisher).skills)
+    skills = read_skills(load_package("gl").publisher(publisher)[1].skills)
     assert [skill.name for skill in skills] == [skill_name]
     assert "writing" not in AUDIT_SKILLS
     assert "eval-report-workflow" not in AUDIT_SKILLS

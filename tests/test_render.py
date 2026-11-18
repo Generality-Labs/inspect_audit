@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from test_helpers.box import local_box
 
-from inspect_audit.publishers import _render
+from inspect_audit import _render
 
 
 def test_files_go_in_and_outputs_come_back() -> None:
@@ -40,7 +40,7 @@ def test_the_gl_renderer_draws_a_pdf_in_the_box(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     pytest.importorskip("playwright")
-    from inspect_audit.publishers.gl import RENDERER
+    from inspect_audit.packages.gl.web import RENDERER
 
     page = "<!doctype html><html><body><h1>Synthetic report</h1></body></html>"
     with local_box():

@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import tarfile
+from collections.abc import Callable
 from logging import getLogger
 from pathlib import Path
 from uuid import uuid4
@@ -132,6 +133,7 @@ def prepare_workspace(
     overview: str,
     target_task: str | None,
     output_dir: str,
+    stage_rubric: Callable[[Path], None],
 ) -> Path:
     """Stage the declared inputs on the host; the box gets a copy at the start."""
     root = Path(output_dir).expanduser().resolve() / uuid4().hex
@@ -178,9 +180,9 @@ def prepare_workspace(
         logs=log_index,
     )
     (inputs / "seed.json").write_text(json.dumps(seed, indent=2))
-    from ._framework import stage_framework
-
-    stage_framework(work / "analysis")
+    # the audit package's rubric: what the auditor rates the benchmark against
+    (work / "analysis/framework").mkdir(parents=True)
+    stage_rubric(work / "analysis/framework")
     (work / "report").mkdir()
     (work / "journal.md").write_text(
         "# Activity journal\n\nAppend actions and corrections with evidence references.\n"

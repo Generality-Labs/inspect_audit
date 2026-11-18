@@ -317,3 +317,34 @@ def test_the_auditors_box_takes_the_deployment_default_size(tmp_path: Path) -> N
     _, path = configure(tmp_path, "image", sized)
     [values] = [d for d in yaml.safe_load_all(Path(path).read_text()) if d and "services" in d]
     assert values["services"]["default"]["resources"] == sized
+
+
+def test_a_variant_regrade_reads_logs_recorded_under_the_registry_name(
+    varbench: Path, tmp_path: Path
+) -> None:
+    """Epoch smoke of 18 Nov: a regrade with changed code named the task by its function
+    (`scicode`), so every log recorded under its registry name (`inspect_evals/scicode`)
+    was refused as another task's (FRICTION 145). The names agree; what differs (here,
+    a benchmark version the log does not record) is reported with the job's results."""
+    from inspect_ai import eval
+    from inspect_ai.log import write_eval_log
+
+    from inspect_audit._logs import LOG_DIFFERENCES
+    from inspect_audit._regrade import regrade_task
+
+    files = {"varbench/prompts.py": 'QUESTION = "changed"\n'}
+    [log] = eval(
+        variant_task(
+            "varbench/bench", "varbench.tasks", {}, {"varbench/prompts.py": "QUESTION = 'q'\n"}
+        ),
+        model="mockllm/model",
+        display="none",
+        log_dir=str(tmp_path),
+    )
+    log.eval.task = log.eval.task_registry_name = "varbench/bench"  # as an install records it
+    recorded = str(tmp_path / "recorded.eval")
+    write_eval_log(log, recorded)
+    task = regrade_task("varbench/bench", logs=[recorded], files=files, source="varbench.tasks")
+    differences = (task.metadata or {})[LOG_DIFFERENCES]
+    assert not any("record task" in d for d in differences)
+    assert any("no distribution named 'varbench'" in d for d in differences)

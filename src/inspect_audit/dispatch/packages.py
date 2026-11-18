@@ -48,10 +48,20 @@ def own_package_spec() -> str | None:
     With the `runner` extra: child jobs need Hawk client dependencies for
     reading logs, without installing the operator CLI and its Inspect pin.
     """
+    return distribution_spec("inspect_audit", extra="runner")
+
+
+def distribution_spec(name: str, extra: str | None = None) -> str | None:
+    """The spec that installs an installed distribution, as installed here, in a child job.
+
+    From its PEP 610 record: a git install at its commit, or a local (editable) install
+    asked of git; either within its repository's subdirectory when it has one (an audit
+    package in `packages/<name>`).
+    """
     from importlib.metadata import Distribution, PackageNotFoundError
 
     try:
-        dist = Distribution.from_name("inspect_audit")
+        dist = Distribution.from_name(name)
     except PackageNotFoundError:  # pragma: no cover - not installed
         return None
     direct_url = dist.read_text("direct_url.json")
@@ -59,12 +69,23 @@ def own_package_spec() -> str | None:
     if direct_url:
         data = json.loads(direct_url)
         vcs = data.get("vcs_info") or {}
+        subdirectory = data.get("subdirectory")
         if vcs.get("vcs") == "git" and vcs.get("commit_id"):
             spec = f"git+{data['url'].removesuffix('.git')}@{vcs['commit_id']}"
         # an editable or local install: the code is a working tree, so ask git
         elif (local := data.get("url", "")).startswith("file://"):
-            spec = git_package_spec(Path(local.removeprefix("file://")))
-    return f"inspect_audit[runner] @ {spec}" if spec else None
+            path = Path(local.removeprefix("file://"))
+            spec = git_package_spec(path)
+            prefix = subprocess.run(
+                ["git", "-C", str(path), "rev-parse", "--show-prefix"],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+            subdirectory = prefix.rstrip("/") or None
+        if spec and subdirectory:
+            spec += f"#subdirectory={subdirectory}"
+    return f"{name}{f'[{extra}]' if extra else ''} @ {spec}" if spec else None
 
 
 def locked_extra_pins(repo: str, commit: str, extra: str) -> list[str]:

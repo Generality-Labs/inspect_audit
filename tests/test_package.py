@@ -95,3 +95,22 @@ def test_the_package_listing_prints_every_installed_package(
     names = [line.split("\t")[0] for line in lines]
     assert names == sorted(names) and {"gl", "toy"} <= set(names)
     assert "formats: latex, web" in lines[names.index("gl")]
+
+
+def test_investigation_task_never_rebinds_its_audit_package() -> None:
+    """Smoke round of 17 Nov: the parameter was `package`, which the function also uses for
+    the benchmark's package name, so every registry-named investigation looked for an audit
+    package called `inspect_evals`. Building one needs a registered benchmark, so this reads
+    the code instead: the parameter is only read."""
+    import ast
+    import inspect
+
+    from inspect_audit._task import investigation_task
+
+    tree = ast.parse(inspect.getsource(investigation_task))
+    stores = [
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    ]
+    assert "audit_package" not in stores

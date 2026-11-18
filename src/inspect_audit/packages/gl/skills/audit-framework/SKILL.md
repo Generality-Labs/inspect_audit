@@ -9,6 +9,11 @@ checks within operator scope. Do not attempt to establish population representat
 cross-model effects from one sample. Report useful observations even when they do not settle
 a framework check, with that limitation explicit.
 
+The framework's files are /workspace/analysis/framework/checks.json (dimensions and
+criteria) and criteria.json (the scales). Read each criterion as its definition says: for
+example, clustering concerns model-score discrimination, not dataset clustering; unequal
+constraint effects concerns how a constraint binds different models.
+
 ## Ratings
 
 Two scales, each for its own place:

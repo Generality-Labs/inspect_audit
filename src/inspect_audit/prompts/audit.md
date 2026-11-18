@@ -31,10 +31,9 @@ sample), and the register tool shows them item by item. Record your reviews in
 auditor.reviews. Missing
 work is missing, not a clean verdict. Explain specific access or execution blockers.
 
-Read /workspace/analysis/framework/criteria.json and checks.json
-for the evaluation dimensions and their meanings. Use these as audit criteria,
-not a requirement to manufacture a concern in every dimension. Record per-dimension judgments under auditor.ratings in findings.json.
-Use framework check IDs as keys, with a label, explanation and supporting evidence. Read the relevant Inspect skills before unfamiliar
+Read the rubric in /workspace/analysis/framework/ for what you rate and what it means.
+Use it as audit criteria, not a requirement to manufacture a concern in every row. Record judgments under auditor.ratings in findings.json,
+keyed by the rubric's IDs, with a label, explanation and supporting evidence. Read the relevant Inspect skills before unfamiliar
 log, scoring or execution operations. Never unzip .eval files.
 
 If jobs are configured, read running-jobs before launching them: run_eval runs the

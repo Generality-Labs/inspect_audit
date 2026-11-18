@@ -224,7 +224,7 @@ def investigation_task(
     time_limit: int | None = None,
     working_limit: int | None = None,
     investigator_model: Model | None = None,
-    package: str | None = None,
+    audit_package: str | None = None,
 ) -> Task:
     """Build the investigation of a benchmark task.
 
@@ -248,7 +248,8 @@ def investigation_task(
         investigator_model: Optional explicit agent model for programmatic drivers. The
             CLI normally uses the evaluation model. Binding here also works when
             an execution backend overrides Task.model after construction.
-        package: The audit package whose rubric skill the investigator loads (default gl).
+        audit_package: The audit package whose rubric skill the investigator loads
+            (default gl).
         compose: The benchmark's compose file, when its task names only `"docker"`.
         assessment_ids: Assessment-unit ids per sample for question labels.
         redact: Metadata keys withheld from the staged item.
@@ -343,7 +344,7 @@ def investigation_task(
         search=search,
         model=investigator_model,
         install=install,
-        rubric=load_package(package).rubric.skill,
+        rubric=load_package(audit_package).rubric.skill,
     )
 
     # every setting of theirs that would govern the investigator is replaced, not inherited

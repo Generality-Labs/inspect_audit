@@ -221,7 +221,7 @@ INVESTIGATION_ARGS = frozenset(
         "notes",
         "paper",
         "install",
-        "package",
+        "audit_package",
     }
 )
 
@@ -433,7 +433,7 @@ class AuditAuthorizer:
                 raise ToolError("investigation paper must be a path or URL")
             if args.get("task") != p.task or args.get("investigator_image") != p.investigator_image:
                 raise ToolError("investigation task and image must match the launch policy")
-            if args.get("package", "gl") != p.audit_package:
+            if args.get("audit_package", "gl") != p.audit_package:
                 raise ToolError("investigation package must match the launch policy")
             source = args.get("source")
             if not isinstance(source, str) or not re.fullmatch(

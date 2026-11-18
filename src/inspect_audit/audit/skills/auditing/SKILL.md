@@ -5,11 +5,10 @@ description: Establish a benchmark's measurement claim, prioritise hypotheses an
 
 ## Orient
 
-Before planning, read /workspace/analysis/framework/criteria.json and checks.json.
-These define the scope, meanings and rating rubric. Plan evidence collection against the
-actual question for each dimension/check; record what was examined, the result and remaining
-gaps. For example, clustering concerns model-score discrimination, not dataset clustering;
-unequal constraint effects concerns how a constraint binds different models. Related
+Before planning, read the rubric in /workspace/analysis/framework/ and your rubric skill.
+They define the scope, meanings and rating rubric. Plan evidence collection against the
+actual question for each row or check; record what was examined, the result and remaining
+gaps. Related
 observations can be findings without answering those checks. Do not assign a clean rating
 merely because no worker reported a problem.
 

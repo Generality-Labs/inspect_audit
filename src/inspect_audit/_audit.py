@@ -558,7 +558,7 @@ def send_investigators(inv: Audit) -> Tool:
                 "paper": inv.paper,
                 # the benchmark into the investigator's own box, as this job installs it
                 "install": policy.box_install(),
-                "package": policy.audit_package,
+                "audit_package": policy.audit_package,
             },
         )
         return await inv.launch(job, JobKind.INVESTIGATION, note)

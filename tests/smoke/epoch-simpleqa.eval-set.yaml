@@ -40,8 +40,6 @@ tasks:
       # TEMPORARY (FRICTION 93): children with the operator's login until Hawk has its token service
       credential_mode: user
       box: k8s
-      child_secrets:
-      - HF_TOKEN
       overview: 'SimpleQA Verified is Google''s 1,000-question factual recall benchmark; the variant under
         review is the one Epoch AI runs on its leaderboard, bench/simpleqa_verified_anti_abstention, whose
         prompt appends an anti-abstention instruction and whose grader is a model judge bound through the
@@ -56,9 +54,5 @@ models:
 - package: inspect-ai
   items:
   - name: openai/openrouter/deepseek/deepseek-v4.1-flash-1017
-runner:
-  secrets:
-  - name: HF_TOKEN
-    description: Hugging Face token; forwarded to child jobs for the dataset load
 message_limit: 400
 retry_attempts: 0

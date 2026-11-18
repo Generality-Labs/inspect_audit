@@ -27,9 +27,11 @@ computed at submission from the standing question-labels verdict on every sample
 review where you wrote one, else the investigator's), DEFECT over DEFECT plus
 NO_ISSUE_FOUND, against the threshold. Submission refuses a Pass at or above it and a
 Flag below it unless the rating's `override` says why. Its `fields` say how the sample
-was chosen: `sample_design` is random, stratified, census or purposive, with `drawn_by`
-when someone else drew it; a purposive sample shows that defects exist, not how common
-they are, and leaves a passing row Incomplete.
+was chosen, and take nothing else: `sample_design` is random, stratified, census or
+purposive, with `drawn_by` when someone else drew it and `population` when the frame
+differs from the dataset. The counts, the rate and the threshold are derived, never
+written. A purposive sample shows that defects exist, not how common they are: the page
+prints its counts without the threshold, and a passing row leaves the review Incomplete.
 
 The quality rows with a form take their numbers in `fields`: contamination `as_of`,
 `tasks_public_pct`, `solutions_public_pct`; score range `floor`, `ceiling`;

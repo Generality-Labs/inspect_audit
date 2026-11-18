@@ -807,6 +807,22 @@ def measures(
                 "source": "the sample labels (reviews over the investigators' verdicts)",
                 "beside": beside,
             }
+        elif coverage is not None and sampling is not None:
+            # the counts are still the page's facts (three of five chosen items defective);
+            # what a purposive sample cannot support is the comparison with the threshold
+            counts = coverage.get("counts") or {}
+            num = _sum_states(spec.numerator, counts)
+            den = _sum_states(spec.denominator, counts)
+            out[check.id] = {
+                "name": spec.name,
+                "numerator": num,
+                "denominator": den,
+                "value": num / den if den else None,
+                "threshold": threshold,
+                "exceeded": None,
+                "source": "the sample labels, on items chosen to show that defects exist",
+                "inadmissible": f"a {sampling.strategy} sample does not measure prevalence",
+            }
         else:
             out[check.id] = {
                 "name": spec.name,
@@ -816,11 +832,7 @@ def measures(
                 "threshold": threshold,
                 "exceeded": None,
                 "source": None,
-                "inadmissible": (
-                    f"a {sampling.strategy} sample does not measure prevalence"
-                    if coverage is not None and sampling is not None
-                    else "no label check ran, so there is no defect rate"
-                ),
+                "inadmissible": "no label check ran, so there is no defect rate",
             }
     return out
 
@@ -908,7 +920,15 @@ def derive_verdict(
             verdict = proc.otherwise
             reasons.insert(0, f"{method.gate.id} {gate.level}; every minimum-standard check passes")
     for check_id, m in measured.items():
-        if m["value"] is not None:
+        if m["value"] is None:
+            continue
+        if m.get("inadmissible"):
+            reasons.append(
+                f"{check_id}: {m['numerator']}/{m['denominator']} chosen items defective "
+                f"({m['value']:.1%}); {m['inadmissible']}, so the {m['threshold']:.0%} "
+                "threshold is not applied"
+            )
+        else:
             reasons.append(
                 f"{check_id} {m['name']} {m['numerator']}/{m['denominator']} "
                 f"({m['value']:.1%}; threshold {m['threshold']:.0%})"
@@ -1234,6 +1254,13 @@ def _measure_line(check: Check, row: Assessment, derived: dict[str, Any], unit: 
     measured = (derived.get("measures") or {}).get(check.id)
     if not measured or measured.get("value") is None:
         return ""
+    if measured.get("inadmissible"):
+        return (
+            f"{check.name}: {measured['numerator']} of {measured['denominator']} inspected "
+            f"{unit}s defective, on {unit}s chosen to show that defects exist rather than drawn "
+            f"to measure how common they are; the {measured['threshold']:.0%} threshold is not "
+            "applied."
+        )
     line = (
         f"{check.name} prevalence: {measured['numerator']} of {measured['denominator']} inspected "
         f"{unit}s ({measured['value']:.0%}); threshold {measured['threshold']:.0%}."

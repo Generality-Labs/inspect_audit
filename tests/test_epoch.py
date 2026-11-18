@@ -166,6 +166,9 @@ def test_a_purposive_sample_measures_nothing() -> None:
     derived = _epoch.validate(findings(ten(1), purposive))
     assert derived["verdict"] == "Incomplete"
     assert "purposive sample does not measure prevalence" in " ".join(derived["reasons"])
+    measure = derived["measures"]["scoring_integrity"]
+    # the counts are still reported; only the comparison with the threshold is withheld
+    assert (measure["numerator"], measure["denominator"], measure["exceeded"]) == (1, 10, None)
     bare = phase1()
     bare["scoring_integrity"] = rating("Pass")
     with pytest.raises(ValueError, match="sample_design"):

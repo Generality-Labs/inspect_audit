@@ -1,0 +1,64 @@
+name: ia-smoke-epoch-sqav-logs
+packages:
+- inspect-ai==0.3.285
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+- epoch-bench[simpleqa] @ git+https://github.com/LaurenceWroe/epoch_bench.git@03e832812e00799fed2644e55f87c0bb2f16e2d2
+tasks:
+- package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@SELF
+  name: inspect_audit
+  items:
+  - name: audit
+    args:
+      # SimpleQA Verified as Epoch runs it, with Epoch's own leaderboard logs supplied: the
+      # same five items as the phase-1 case, now through both phases in one run
+      repo: https://github.com/LaurenceWroe/epoch_bench.git
+      revision: 03e832812e00799fed2644e55f87c0bb2f16e2d2
+      target_task: bench/simpleqa_verified_anti_abstention
+      source: bench.task.simpleqa_verified
+      task_package: epoch-bench[simpleqa] @ git+https://github.com/LaurenceWroe/epoch_bench.git@03e832812e00799fed2644e55f87c0bb2f16e2d2
+      paths:
+      - bench/task/simpleqa_verified
+      # 49 of Epoch's 64 published runs of this variant, imported in October 2026
+      logs:
+      - hawk:imported-epoch-simpleqa-v-wer91z3eqkmr3hv3
+      investigation_samples: ["2", "26", "391", "667", "960"]
+      checks:
+      - question-labels
+      - grading-labels
+      publisher: epoch
+      policy:
+        models:
+          auditor:
+          - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+          investigators:
+          - openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+          subjects: []
+          judges:
+          - openrouter/openai/gpt-5-mini
+        limits:
+          max_concurrent_jobs: 3
+          budget_usd: 8.0
+      runs: hawk
+      # TEMPORARY (FRICTION 93): children with the operator's login until Hawk has its token service
+      credential_mode: user
+      box: k8s
+      overview: 'SimpleQA Verified is Google''s 1,000-question factual recall benchmark; the variant under
+        review is the one Epoch AI runs on its leaderboard, bench/simpleqa_verified_anti_abstention, whose
+        prompt appends an anti-abstention instruction and whose grader is a model judge bound through the
+        grader role (Epoch''s is gpt-5.6-terra; here gpt-5-mini stands in). The supplied logs are 49 of
+        Epoch''s 64 published leaderboard runs, every one over all 1,000 questions, so each sampled item has
+        49 recorded submissions and grades.'
+      instructions: 'This case: an Epoch review with logs supplied, both phases in this one run. Phase 1
+        first, blind to the logs: send_investigators on the five samples, check question-labels, logs=[],
+        one job (all five, not one: the scoring row needs a denominator); every sample must end resolved.
+        Then phase 2: send_investigators on the same five samples, check grading-labels, logs=[the supplied
+        hawk source], one job; then rate elicitation and bias from the log headers, the quality rows you can
+        answer, and construct validity last, as the epoch-review skill says. Rate reviewability,
+        scoring_integrity (fields.sample_design purposive) and benchmark_consistency as in phase 1. Submit,
+        then publish with the epoch publisher: write prose.json, preview_review, publish_document.'
+models:
+- package: inspect-ai
+  items:
+  - name: openai/openrouter/deepseek/deepseek-v4.1-flash-1017
+message_limit: 600
+retry_attempts: 0

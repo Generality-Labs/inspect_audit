@@ -24,7 +24,7 @@ from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
 from inspect_ai.util import CheckpointConfig, sandbox, store_as
 
 from . import prompts
-from ._audit_workspace import docker_box
+from ._audit_workspace import docker_box, hawk_artifact_dir
 from ._image import view_image
 from ._prices import cost_of, price_models
 from ._register import register_view
@@ -780,8 +780,10 @@ def audit(
         auditor_image: Published auditor sandbox image for Hawk.
         box_resources: Kubernetes `resources` (requests/limits) for the auditor's box on
             k8s; None uses the deployment's sandbox default.
-        artifact_dir: Where the published report is also saved, under this sample:
-            on Hawk, the job's S3 artifacts directory. None keeps it on the host only.
+        artifact_dir: Where the published report and the findings are also saved,
+            under this sample. None: on a Hawk runner, the job's own artifacts
+            directory (`hawk download-artifacts <eval set id>` fetches them); elsewhere
+            the host only.
         instructions: Operator instructions and scope, separate from benchmark background.
         policy: The frozen permissions: `models` (auditor, investigators, subjects,
             judges: full Inspect names, the only place models are named) and `limits`
@@ -993,12 +995,16 @@ def audit(
         if box == "k8s"
         else docker_box(root, auditor_image)
     )
+    if not artifact_dir and box == "k8s":
+        artifact_dir = hawk_artifact_dir()
+        if artifact_dir:
+            logger.info("artifact_dir defaults to this Hawk job's own folder: %s", artifact_dir)
     if artifact_dir:
         (root / "artifacts.json").write_text(json.dumps({"artifact_dir": artifact_dir}))
     elif box == "k8s":
         logger.warning(
-            "no artifact_dir: the published report stays on this host only, and on a "
-            "Hawk runner it is lost when the pod ends"
+            "no artifact_dir, and this is not a Hawk runner: the published report stays on "
+            "this host only, and in a pod it is lost when the pod ends"
         )
 
     async def on_continue(state: AgentState) -> bool | str:

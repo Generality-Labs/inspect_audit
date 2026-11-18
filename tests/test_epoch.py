@@ -464,3 +464,39 @@ def test_grading_labels_carry_their_own_defect_types_and_a_headline() -> None:
     # the item vocabulary is unchanged for question-labels
     with pytest.raises(ValueError, match="unknown defect type"):
         validate_labels([{**row, "headline": None}], ["s0"], require_classification=True)
+
+
+# ------------------------------------------------------------------ the render command
+
+
+def test_the_page_is_rendered_again_from_what_the_audit_saved(tmp_path: Path, capsys) -> None:
+    source = bundle(tmp_path, findings(ten(1), phase1()))
+    prose = tmp_path / "prose.json"
+    prose.write_text(json.dumps(PROSE))
+    # a bare bundle needs the prose named; a published folder carries its own
+    with pytest.raises(SystemExit):
+        epoch.main([str(source), "--out", str(tmp_path / "out")])
+    assert epoch.main([str(source), "--prose", str(prose), "--out", str(tmp_path / "out")]) == 0
+    page = (tmp_path / "out/epoch_review.md").read_text()
+    assert "Verdict: Incomplete" in page
+    assert "Incomplete" in capsys.readouterr().out
+    published = tmp_path / "published"
+    (published / "rendered-epoch").mkdir(parents=True)
+    (published / "rendered-epoch/prose.json").write_text(json.dumps(PROSE))
+    (published / "findings").mkdir()
+    for file in source.iterdir():
+        (published / "findings" / file.name).write_bytes(file.read_bytes())
+    assert epoch.main([str(published), "--out", str(tmp_path / "again")]) == 0
+    verdict = json.loads((tmp_path / "again/verdict.json").read_text())
+    assert verdict["verdict"] == "Incomplete"
+    assert (
+        verdict["findings_sha256"]
+        == json.loads((source / "manifest.json").read_text())["files"]["findings.json"]["sha256"]
+    )
+    # findings.json on its own renders too
+    assert (
+        epoch.main(
+            [str(source / "findings.json"), "--prose", str(prose), "--out", str(tmp_path / "bare")]
+        )
+        == 0
+    )

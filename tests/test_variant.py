@@ -317,3 +317,36 @@ def test_the_auditors_box_takes_the_deployment_default_size(tmp_path: Path) -> N
     _, path = configure(tmp_path, "image", sized)
     [values] = [d for d in yaml.safe_load_all(Path(path).read_text()) if d and "services" in d]
     assert values["services"]["default"]["resources"] == sized
+
+
+def test_a_variant_regrade_reads_logs_recorded_under_the_registry_name(
+    varbench: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Epoch smoke of 18 Nov: a regrade with changed code named the task by its function
+    (`scicode`), so every log recorded under its registry name (`inspect_evals/scicode`)
+    was refused as another task's."""
+    from inspect_ai import eval
+    from inspect_ai.log import write_eval_log
+
+    from inspect_audit._regrade import regrade_task
+
+    [log] = eval(
+        variant_task(
+            "varbench/bench", "varbench.tasks", {}, {"varbench/prompts.py": "QUESTION = 'q'\n"}
+        ),
+        model="mockllm/model",
+        display="none",
+        log_dir=str(tmp_path),
+    )
+    log.eval.task = log.eval.task_registry_name = (
+        "varbench/bench"  # as an installed package records it
+    )
+    log.eval.packages["varbench"] = "1.0"
+    from inspect_audit import _logs
+
+    installed = _logs.version
+    monkeypatch.setattr(_logs, "version", lambda p: "1.0" if p == "varbench" else installed(p))
+    recorded = str(tmp_path / "recorded.eval")
+    write_eval_log(log, recorded)
+    files = {"varbench/prompts.py": 'QUESTION = "changed"\n'}
+    regrade_task("varbench/bench", logs=[recorded], files=files, source="varbench.tasks")

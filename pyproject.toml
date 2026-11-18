@@ -137,6 +137,7 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D"] # tests don't need docstring linting
+"packages/*/tests/**" = ["D"]
 "dev/**" = ["E402"] # one-off analysis scripts import where they need to
 
 [tool.basedpyright]

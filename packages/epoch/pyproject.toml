@@ -10,7 +10,10 @@ license = "MIT"
 authors = [{ name = "Laurence Wroe" }, { name = "James Mann", email = "james.mann@generality.org" }]
 requires-python = ">=3.11"
 # inspect_audit is the machinery this plugs into; installed beside it, never pinned here
-dependencies = ["inspect_audit", "pyyaml"]
+dependencies = ["inspect_audit"]
+
+[project.scripts]
+inspect-audit-epoch-review = "inspect_audit_epoch.page:main"
 
 [project.entry-points."inspect_audit.packages"]
 epoch = "inspect_audit_epoch:package"

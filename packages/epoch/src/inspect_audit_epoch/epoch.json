@@ -1,0 +1,707 @@
+{
+  "_about": "The Epoch AI benchmark review as data: the methodology (checks, scales, thresholds, verdict rule, sampling policy) and the page template (header, prose blocks with their limits, rubric layout). Transcribed from Epoch's Rubric v1; guidance is Generality Labs'. The epoch publisher and the epoch-review skill read this file; nothing else holds rubric text.",
+  "methodology": {
+    "id": "epoch-rubric",
+    "version": 1,
+    "status": "draft",
+    "source": "https://epoch.ai/data/benchmark-reviews-documentation/methodology",
+    "notes": "Form text, option lists and numeric fields transcribed from Epoch's review form (Rubric v1). Guidance paraphrases Epoch's intent and adds Generality Labs' decision rule: Pass is the default; a Flag needs a measured impact on the headline results.",
+    "intro": {
+      "rubric": "Rubric v1. We expect future revisions to account for new types of benchmark flaws.",
+      "minimum_standard": "This is the minimum standard required to be Verified; failing any of these items results in a Flawed verdict.",
+      "quality": "This is the standard we would like all benchmarks to meet, but it is not necessarily disqualifying to omit or fail these items.",
+      "disclaimer": "We undertook this audit without requesting additional information from {creator} to provide impartial feedback."
+    },
+    "verdict": {
+      "scale": [
+        "Verified",
+        "Flawed",
+        "NEI",
+        "Incomplete"
+      ],
+      "rule": "NEI when reviewability is Inadequate; Flawed when any minimum-standard check is Flag; Incomplete when reviewability or any minimum-standard check is Not Reviewed; Verified otherwise. Quality checks never change the verdict.",
+      "stop": "the rubric stops once reviewability is Inadequate, and at the first Flag in rubric order: the minimum-standard checks after it and every quality check are Not Reviewed, as the published rubric's \"stop\" reads; the Flag is reported with its impact and the review publishes as Flawed",
+      "flag": "a Flag on a benchmark-wide check carries an impact statement, the measured effect on the headline results with numbers, at most 60 words, which the page prints as a footnote under the row's note; a scoring Flag carries one only when logs were on hand, and no Pass carries one",
+      "procedure": {
+        "gate": {
+          "check": "reviewability",
+          "stop_at": "Inadequate",
+          "outcome": "NEI"
+        },
+        "minimum": {
+          "section": "2. Scoring (minimum standard)",
+          "fail_at": "Flag",
+          "outcome": "Flawed"
+        },
+        "unfinished": {
+          "level": "Not Reviewed",
+          "outcome": "Incomplete"
+        },
+        "otherwise": "Verified"
+      },
+      "impact": {
+        "max_words": 60,
+        "max_sentences": 3
+      }
+    },
+    "sampling": {
+      "unit": "task",
+      "population": "every task in the benchmark version reviewed",
+      "sample": "all tasks when the benchmark has at most 100; otherwise 50, random, stratified by category when the benchmark has categories",
+      "expansion": "extend to 100 when the sampled defect rate is between 15% and 25%",
+      "confirmation": "agent-flagged defects are confirmed by an independent check before they count",
+      "states": [
+        "NO_ISSUE_FOUND",
+        "DEFECT",
+        "UNRESOLVED",
+        "NOT_ASSESSED"
+      ],
+      "measure": {
+        "name": "sampled_defect_rate",
+        "numerator": "DEFECT",
+        "denominator": "DEFECT + NO_ISSUE_FOUND",
+        "note": "UNRESOLVED and NOT_ASSESSED are reported beside the rate, not counted"
+      }
+    },
+    "checks": [
+      {
+        "id": "reviewability",
+        "section": "1. Reviewability",
+        "name": "Reviewability",
+        "question": "Can the tasks, scoring logic and harness settings used for each model be inspected?",
+        "guidance": "Establish what can be inspected before any other work: the tasks, the scoring logic, and the harness and API settings each model ran with (reasoning effort, token and time limits, tool access, system prompts). Read these from log headers and source, not from documentation alone. Inadequate stops the review at NEI: record the level with evidence, leave the other checks Not Reviewed, and publish the limited conclusion.",
+        "scale": [
+          "Full",
+          "Partial",
+          "Inadequate",
+          "Not Reviewed"
+        ],
+        "form": {
+          "Full": {
+            "meaning": "All tasks and scoring logic inspectable, and harness/API settings used for each model (reasoning effort, token/time limits, tool access, system prompts) are fully disclosed",
+            "status": "[proceed to 2]"
+          },
+          "Partial": {
+            "meaning": "A representative sample of tasks and scoring logic inspectable, with full harness/API settings disclosed",
+            "status": "[proceed to 2]"
+          },
+          "Inadequate": {
+            "meaning": "Limited, biased, or no inspectable tasks or scoring logic, harness/API settings undisclosed",
+            "status": "[stop → NEI]"
+          }
+        },
+        "evidence": [
+          "source",
+          "documentation",
+          "logs"
+        ],
+        "taxonomy": {
+          "inspect-audit@2": [
+            "practical_reproducibility"
+          ]
+        }
+      },
+      {
+        "id": "scoring_integrity",
+        "section": "2. Scoring (minimum standard)",
+        "name": "Scoring",
+        "question": "Are tasks answerable as written, is the scorer accurate, and does the benchmark measure the claimed capability?",
+        "guidance": "Sample tasks under the sampling policy, or label the whole population. A task is defective when it cannot be answered correctly as written, when the scorer rejects a correct answer, or when it accepts an incorrect one. Report numerator, denominator and selection method. Flag at or above the threshold, or on demonstrated grading corruption at scale. Authored attacks on the grader and single false negatives are limitations, not Flags; say which kind each defect is. The row is decided by the item audits, with no attempts run for it: in phase 1 the question-labels audit judges each sampled item as written, with no logs read; in phase 2 the grading-labels audit judges the same items' recorded grades from the logs, and the measure is their union, an item defective as written or as graded counting once. The note is the defect rate against the threshold in one sentence, without the counts the prevalence line already prints. A Flag with logs on hand carries an impact, the recorded submissions the defects misgraded, printed as a footnote; a Pass carries none.",
+        "scale": [
+          "Pass",
+          "Flag",
+          "Not Reviewed"
+        ],
+        "form": {
+          "examples": [
+            "Essentially impossible to correctly answer as written (e.g. underspecified task, hidden requirement, missing file/tool)",
+            "False Negative (e.g. overly strict scorer, stale/incorrect ground truth, dependent on live external state that can drift, sandbox failure independent of the agent)",
+            "False Positive (e.g. lax scorer, reward-hackable environment, stated skill can be bypassed via a shortcut such as exploiting an error in the scoring logic or retrieving the answer from the harness/web)",
+            "Task egregiously doesn't measure the claimed capability"
+          ],
+          "default_threshold": "≥20% of inspected sample contains errors or issue that corrupts grading at scale",
+          "status_options": [
+            "Pass",
+            "Flag [stop → Flawed]",
+            "Not Reviewed"
+          ]
+        },
+        "flag_requires_impact": false,
+        "notes_limit": {
+          "max_words": 40,
+          "max_sentences": 2
+        },
+        "impact_limit": {
+          "max_words": 25,
+          "max_sentences": 1
+        },
+        "evidence": [
+          "logs",
+          "source",
+          "coverage",
+          "findings"
+        ],
+        "taxonomy": {
+          "inspect-audit@2": [
+            "implementation.task_specification",
+            "implementation.grading"
+          ]
+        },
+        "threshold": {
+          "measure": "sampled_defect_rate",
+          "flag_when": ">= 0.20",
+          "override": "a status that disagrees with the measure needs threshold_override_reason"
+        }
+      },
+      {
+        "id": "benchmark_consistency",
+        "section": "2. Scoring (minimum standard)",
+        "name": "Benchmark consistency",
+        "question": "Have the scorer, instructions or ground truth changed without a version bump?",
+        "guidance": "Phase 1 answers this from the source's version history, its changelog and the published methodology, and is the last row phase 1 writes: every evaluation-quality row waits for phase 2. Phase 2 re-checks it against the versions and graders the logs record. Compare the scorer, instructions and reference answers across the logs' recorded versions and grading models against what the leaderboard presents as one series. Flag only when results from different versions are shown to be incomparable, with a measured score difference attributable to the change. An unversioned change with no measured effect is a limitation.",
+        "scale": [
+          "Pass",
+          "Flag",
+          "Not Reviewed"
+        ],
+        "form": {
+          "examples": [
+            "Scorer, instructions, or ground truth changed without a version bump"
+          ],
+          "default_threshold": "Leaderboard has incomparable results from different versions",
+          "status_options": [
+            "Pass",
+            "Flag [stop → Flawed]",
+            "Not Reviewed"
+          ]
+        },
+        "flag_requires_impact": true,
+        "evidence": [
+          "logs",
+          "source",
+          "coverage",
+          "findings"
+        ],
+        "taxonomy": {
+          "inspect-audit@2": [
+            "comparability.identity"
+          ]
+        }
+      },
+      {
+        "id": "elicitation_adequacy",
+        "needs_logs": true,
+        "section": "2. Scoring (minimum standard)",
+        "name": "Elicitation",
+        "question": "Is model elicitation so constraining that it substantially reduces performance against reasonable alternatives?",
+        "guidance": "Compare the recorded limits and settings with what the tasks need and with reasonable alternatives. A deliberately constrained design (single turn, no tools) passes when the constraint is the point of the benchmark. Flag only when the benchmark as a whole under-elicits, meaning the best listed configuration of the affected models is still depressed. Rows that are poor but have a better row for the same model are a limitation.",
+        "scale": [
+          "Pass",
+          "Flag",
+          "Not Reviewed"
+        ],
+        "form": {
+          "examples": [
+            "Model elicitation is extremely constraining and is not the focus of the benchmark:",
+            "Under-resourced relative to task size (token/turn/time limit, sandbox resources)",
+            "Poor context management",
+            "Lack of agentic environment where one would be natural to provide",
+            "Excessive non-voluntary termination for agentic benchmarks"
+          ],
+          "default_threshold": "Substantially reduced performance compared to reasonable alternatives for the tasks",
+          "status_options": [
+            "Pass",
+            "Flag [stop → Flawed]",
+            "Not Reviewed"
+          ]
+        },
+        "flag_requires_impact": true,
+        "evidence": [
+          "logs",
+          "source",
+          "coverage",
+          "findings"
+        ],
+        "taxonomy": {
+          "inspect-audit@2": [
+            "sensitivity.token_limits",
+            "implementation.scaffolding"
+          ]
+        }
+      },
+      {
+        "id": "evaluation_bias",
+        "needs_logs": true,
+        "section": "2. Scoring (minimum standard)",
+        "name": "Bias in evaluation setup",
+        "question": "Does the setup give any model a material advantage the others do not get?",
+        "guidance": "Look for prompts, tools, budgets, graders or termination rules that differ by model or developer. Flag only on a demonstrated model-specific advantage, not on heterogeneous settings alone.",
+        "scale": [
+          "Pass",
+          "Flag",
+          "Not Reviewed"
+        ],
+        "form": {
+          "examples": [
+            "Uneven compute/token budgets",
+            "Unfair scaffold choice (e.g. only a subset of models optimized)"
+          ],
+          "default_threshold": "Material model-specific advantage found",
+          "status_options": [
+            "Pass",
+            "Flag [stop → Flawed]",
+            "Not Reviewed"
+          ]
+        },
+        "flag_requires_impact": true,
+        "evidence": [
+          "logs",
+          "source",
+          "coverage",
+          "findings"
+        ],
+        "taxonomy": {
+          "inspect-audit@2": [
+            "comparability.audited_implementation"
+          ]
+        }
+      },
+      {
+        "id": "resource_adequacy",
+        "needs_logs": true,
+        "section": "3. Evaluation quality",
+        "name": "Elicitation and resource adequacy",
+        "question": "Elicitation and resource adequacy: Are the resources given to models (reasoning token/turn budget, tool access, etc.) sufficient for them to perform near their ceiling?",
+        "guidance": "Judge whether the resources given to models let them perform near their ceiling: reasoning and output budgets, turns, tools. Count attempts cut off at a limit and say which configurations lose answers to it.",
+        "scale": [
+          "Sufficient",
+          "Constraining",
+          "Unreasonably constraining",
+          "Unknown",
+          "Not Reviewed"
+        ],
+        "evidence": [
+          "logs"
+        ]
+      },
+      {
+        "id": "scaffold_fairness",
+        "needs_logs": true,
+        "section": "3. Evaluation quality",
+        "name": "Scaffold fairness",
+        "question": "Scaffold fairness: What scaffold does the leaderboard report?",
+        "guidance": "State what scaffold the leaderboard reports: one common prompt and harness for every model, a mix, or model-specific scaffolds. Settings that vary per model (effort, caps) are reported under elicitation and bias, not here.",
+        "scale": [
+          "Shared common scaffold",
+          "Mix of model-specific and common scaffolds",
+          "Model-specific scaffolds",
+          "Not Reviewed"
+        ],
+        "evidence": [
+          "logs",
+          "source"
+        ]
+      },
+      {
+        "id": "contamination",
+        "needs_logs": true,
+        "section": "3. Evaluation quality",
+        "name": "Contamination",
+        "question": "Is there evidence/risk of contamination?",
+        "guidance": "State whether the tasks and their solutions are public, as of the review date, and whether there is evidence of training exposure. Public availability is exposure risk, not evidence of memorisation; say which was tested.",
+        "scale": [
+          "Assessed",
+          "Not Reviewed"
+        ],
+        "evidence": [
+          "documentation",
+          "findings"
+        ],
+        "taxonomy": {
+          "inspect-audit@2": [
+            "content.contamination"
+          ]
+        },
+        "fields": [
+          "as_of",
+          "tasks_public_pct",
+          "solutions_public_pct"
+        ],
+        "form": "As of {as_of}: {tasks_public_pct}% of tasks public; {solutions_public_pct}% of solutions public"
+      },
+      {
+        "id": "human_completability",
+        "needs_logs": true,
+        "section": "3. Evaluation quality",
+        "name": "Human completability",
+        "question": "Has human completability been assessed?",
+        "guidance": "State whether a human baseline exists, on all tasks or a representative sample, and whether its design is sound (representative tasks, reasonable participants).",
+        "scale": [
+          "All tasks",
+          "Representative set of tasks",
+          "Poor implementation",
+          "Not established",
+          "Not Reviewed"
+        ],
+        "evidence": [
+          "documentation"
+        ],
+        "form": {
+          "status_options": [
+            "All tasks",
+            "Representative set of tasks",
+            "Poor implementation (Unrepresentative set of tasks, unreasonable set of participants)",
+            "Not established",
+            "Not reviewed"
+          ]
+        }
+      },
+      {
+        "id": "score_range",
+        "needs_logs": true,
+        "section": "3. Evaluation quality",
+        "name": "Score range",
+        "question": "Score range (if possible to estimate)",
+        "guidance": "Give the floor (chance or a trivial strategy) and the ceiling (what a perfect or engine-assisted solver reaches, and what limits it), with the best observed score for context.",
+        "scale": [
+          "Estimated",
+          "Not Reviewed"
+        ],
+        "evidence": [
+          "logs",
+          "findings"
+        ],
+        "taxonomy": {
+          "inspect-audit@2": [
+            "informativeness.floor_ceiling"
+          ]
+        },
+        "fields": [
+          "floor",
+          "ceiling"
+        ],
+        "form": "{floor} floor; {ceiling} ceiling"
+      },
+      {
+        "id": "statistical_adequacy",
+        "needs_logs": true,
+        "section": "3. Evaluation quality",
+        "name": "Statistical adequacy",
+        "question": "Statistical adequacy: How many runs/model (≥ 5 recommended for error bars)",
+        "guidance": "Give runs per model and the resulting standard error. Five or more runs per model is the recommended standard; single runs mean differences within about twice the standard error are noise.",
+        "scale": [
+          "Known",
+          "Unknown",
+          "Not Reviewed"
+        ],
+        "evidence": [
+          "logs"
+        ],
+        "taxonomy": {
+          "inspect-audit@2": [
+            "sensitivity.rollouts"
+          ]
+        },
+        "fields": [
+          "runs_per_model"
+        ],
+        "form": "{runs_per_model} runs/model"
+      },
+      {
+        "id": "construct_validity",
+        "needs_logs": true,
+        "section": "3. Evaluation quality",
+        "name": "Construct validity",
+        "question": "Construct validity",
+        "guidance": "Assessed last, after every other row, with everything the review learned in hand. Say what the score measures and how far that matches the capability the benchmark claims. Independent checks of the reference answers belong here, as does any evidence that the task can be solved without the claimed capability.",
+        "scale": [
+          "Measures stated capabilities",
+          "Partially measures stated capabilities",
+          "Does not measure stated capabilities",
+          "Not Reviewed"
+        ],
+        "evidence": [
+          "findings",
+          "documentation"
+        ],
+        "taxonomy": {
+          "inspect-audit@2": [
+            "construct"
+          ]
+        }
+      }
+    ],
+    "notes_limit": {
+      "max_words": 50,
+      "max_sentences": 3
+    }
+  },
+  "template": {
+    "id": "epoch-review",
+    "version": 1,
+    "methodology": "epoch-rubric@1",
+    "audience": "People with a scientific background who do not work on model evaluations. They want to know what the benchmark measures, whether its number can be trusted, and what to keep in mind when they quote it. They will not read a long document.",
+    "style": {
+      "max_sentences_per_paragraph": 5,
+      "rules": [
+        "Short sentences, one idea each; no paragraph longer than five sentences.",
+        "No jargon. Say \"the model that reads the answer out of the response\", not \"the extractor\"; \"a reference answer\", not \"gold\". Expand an acronym the first time.",
+        "Numbers with their denominators, not adjectives. Lead with the conclusion, then the evidence.",
+        "Do not narrate the investigation; execution details, costs and pipeline errors belong in the journal."
+      ]
+    },
+    "title": "{benchmark} Review",
+    "notices": {
+      "no_logs": "Phase 1 only: the tasks and their scoring were audited without evaluation logs. Elicitation, bias in the evaluation setup, the evaluation-quality section and the effect of the recorded defects on published results await an audit given the logs, so the verdict cannot be Verified."
+    },
+    "footnotes": {
+      "title": "Footnotes",
+      "max_words": 60,
+      "max_items": 12,
+      "brief": "Evidence detail that supports a sentence on the page without cluttering it: counts with their denominators, model names and settings, dates, versions, locators. Refer to a footnote as [^n] from any prose block or rubric note; a Flag's impact is appended as a footnote for you. A footnote supports a claim already made; it never introduces one."
+    },
+    "header": [
+      {
+        "label": "Benchmark",
+        "value": "profile.benchmark"
+      },
+      {
+        "label": "Benchmark creator",
+        "value": "profile.creator"
+      },
+      {
+        "label": "Verdict",
+        "value": "verdict"
+      },
+      {
+        "label": "Review date",
+        "value": "profile.review_date",
+        "format": "ordinal_date"
+      }
+    ],
+    "blocks": [
+      {
+        "id": "summary",
+        "title": "Summary",
+        "kind": "prose",
+        "max_words": 150,
+        "when": [
+          "Verified",
+          "Flawed",
+          "NEI",
+          "Incomplete"
+        ],
+        "required": [
+          "Verified",
+          "Flawed",
+          "NEI",
+          "Incomplete"
+        ],
+        "brief": "How the task works and what it tries to measure, what the best score is, and the key observations that decided the verdict. A reader who stops here knows the verdict and why."
+      },
+      {
+        "id": "methodology",
+        "title": "Methodology",
+        "kind": "prose",
+        "max_words": 125,
+        "when": [
+          "Verified",
+          "Flawed",
+          "NEI",
+          "Incomplete"
+        ],
+        "required": [
+          "Verified",
+          "Flawed",
+          "NEI",
+          "Incomplete"
+        ],
+        "brief": "What was done: which logs were supplied, or that none were; which source was read; which per-item audits ran and on how many items; what was computed; what was not done. The prevalence line in the rubric prints the counts, so do not repeat them here."
+      },
+      {
+        "id": "interpretation",
+        "title": "Interpretation",
+        "kind": "prose",
+        "max_words": 250,
+        "max_paragraphs": 3,
+        "max_sentences_per_paragraph": 4,
+        "when": [
+          "Verified"
+        ],
+        "required": [
+          "Verified"
+        ],
+        "brief": "Three short paragraphs at most, in this order. First, what the benchmark claims to measure and what one score means in a reader's terms. Second, what the number is and is not: what counts as a success, how results are aggregated, and the reading a reader should not make of it. Third, which of the review's findings bear on that reading, and how and why. No run statistics, settings or harness details; those belong in the elicitation block or a footnote."
+      },
+      {
+        "id": "task_analysis",
+        "title": "Task Analysis",
+        "kind": "prose",
+        "max_words": 300,
+        "when": [
+          "Verified"
+        ],
+        "required": [
+          "Verified"
+        ],
+        "brief": "How the tasks work, how they were created, whether they are reasonable, and how they are graded. Name any issue that matters to the score, with its count and denominator."
+      },
+      {
+        "id": "elicitation_and_scaffolding",
+        "title": "Elicitation and Scaffolding",
+        "kind": "prose",
+        "max_words": 300,
+        "when": [
+          "Verified"
+        ],
+        "required": [
+          "Verified"
+        ],
+        "brief": "The harness, prompting and tools the model is given; limits on tokens, turns or time; cost and resources where known; whether these settings let models show what they can do."
+      },
+      {
+        "id": "representative_errors",
+        "title": "Representative Errors",
+        "kind": "bullets",
+        "max_sentences": 3,
+        "max_items": 5,
+        "plain": true,
+        "when": [
+          "Verified",
+          "Flawed",
+          "NEI",
+          "Incomplete"
+        ],
+        "required": [
+          "Flawed"
+        ],
+        "required_when_defects": true,
+        "lead": {
+          "Flawed": "The following issues cross our threshold for a Flawed verdict.",
+          "default": "The following errors were found in specific tasks. They do not cross our threshold for a Flawed verdict."
+        },
+        "brief": "One bullet per defect class present in the errors table, in order of how many rows it covers: name the class as the table names it, say how many rows it covers, and give one or two of those rows as examples described by what is wrong, not by id. A run-level error gets its own bullet. Nothing else: no definitions of the classes, no caveats about unresolved or unassessed items, no sampling notes; those belong in the scoring row and the methodology block."
+      },
+      {
+        "id": "error_examples",
+        "kind": "table",
+        "when": [
+          "Verified",
+          "Flawed",
+          "NEI",
+          "Incomplete"
+        ],
+        "required": [
+          "Flawed"
+        ],
+        "required_when_defects": true,
+        "max_cell_words": 30,
+        "footer": "coverage_ids",
+        "columns": [
+          {
+            "key": "task",
+            "title": "Task"
+          },
+          {
+            "key": "error_type",
+            "title": "Error type"
+          },
+          {
+            "key": "notes",
+            "title": "Notes",
+            "plain": true,
+            "max_words": 25
+          },
+          {
+            "key": "affected_logs",
+            "title": "Affected logs"
+          }
+        ],
+        "brief": "Every recorded error. One row for each item coverage.json records as a defect, with Task naming its id, then any run-level errors; Error type is the defect class in a few words; Notes is one plain sentence saying what is wrong with the item, as its reader would see it, with no account of how that was found (start from the auditor's headline); Affected logs names the runs or models the error touches, with a count. The ids audited without a defect are listed under the table from coverage.json; you do not write them."
+      },
+      {
+        "id": "limitations",
+        "title": "Limitations",
+        "kind": "bullets",
+        "max_sentences": 3,
+        "when": [
+          "Verified",
+          "NEI",
+          "Incomplete"
+        ],
+        "required": [
+          "Verified",
+          "NEI",
+          "Incomplete"
+        ],
+        "lead": {
+          "Verified": "While none of these limitations cross our threshold for a Flawed verdict, they do inform how a reader should characterize this benchmark.",
+          "default": "The review did not reach a verdict. These points say why."
+        },
+        "brief": "Concerns that did not change the verdict, one bullet each, starting straight on the point. For a review without a verdict, what could not be reviewed and why."
+      },
+      {
+        "id": "recommendations",
+        "title": "Recommendations",
+        "kind": "bullets",
+        "max_sentences": 1,
+        "max_items": 5,
+        "closing": true,
+        "when": [
+          "Verified",
+          "Flawed",
+          "NEI",
+          "Incomplete"
+        ],
+        "required": [
+          "Verified",
+          "Flawed"
+        ],
+        "brief": "Addressed to the benchmark's creator, one bullet per defect class in the errors table or per limitation, each a check or practice that would catch that class across the whole benchmark: confirm every reference answer independently, verify each question determines a unique answer, test the grader on correct answers phrased differently. Name no individual items. A final bullet on publication or versioning only when the methodology block found results irreproducible. One sentence each."
+      }
+    ],
+    "rubric": {
+      "title": "Benchmark Review Rubric",
+      "intro": "rubric",
+      "sections": [
+        {
+          "section": "1. Reviewability",
+          "title": "1. Reviewability",
+          "layout": "levels",
+          "columns": [
+            "Level",
+            "Meaning",
+            "Status",
+            "Notes"
+          ]
+        },
+        {
+          "section": "2. Scoring (minimum standard)",
+          "title": "2. Scoring",
+          "intro": "minimum_standard",
+          "layout": "defect_classes",
+          "columns": [
+            "Defect Class",
+            "Examples",
+            "Default Threshold for Flawed",
+            "Status",
+            "Notes"
+          ],
+          "measure_line": true
+        },
+        {
+          "section": "3. Evaluation quality",
+          "title": "3. Evaluation Quality",
+          "intro": "quality",
+          "layout": "questions",
+          "columns": [
+            "Question",
+            "Status",
+            "Notes"
+          ]
+        }
+      ],
+      "disclaimer": "disclaimer"
+    }
+  }
+}

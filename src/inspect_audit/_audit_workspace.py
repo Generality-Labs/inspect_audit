@@ -51,6 +51,32 @@ def configure(root: Path, image: str, resources: dict[str, Any] | None = None) -
     return "k8s", str(path)
 
 
+def hawk_artifact_dir() -> str | None:
+    """The running Hawk job's artifacts directory, or None off Hawk.
+
+    Hawk's runner is handed its infra config as a file on its command line and does
+    not export it; the config's `log_dir` is the eval set's S3 folder, and Hawk reads
+    artifacts from `<log_dir>/artifacts/<sample uuid>/`. The eval set's id is only
+    known once Hawk has assigned it, so an audit that wants its report kept reads the
+    folder here rather than asking the operator to guess it in the config.
+    """
+    import sys
+
+    for argument in sys.argv[1:]:
+        path = Path(argument)
+        if path.suffix not in (".yaml", ".yml", ".json") or not path.is_file():
+            continue
+        try:
+            loaded = yaml.safe_load(path.read_text())
+        except (OSError, yaml.YAMLError):
+            continue
+        if isinstance(loaded, dict) and isinstance(loaded.get("log_dir"), str):
+            log_dir = str(loaded["log_dir"]).rstrip("/")
+            if log_dir.startswith("s3://"):
+                return f"{log_dir}/artifacts"
+    return None
+
+
 def _destination(root: Path, name: str) -> str:
     settings = json.loads((root / "artifacts.json").read_text())
     # Hawk indexes artifacts under the current sample UUID, including on resume.

@@ -20,7 +20,7 @@ from inspect_ai.util import registry_create, registry_info
 from ._compose import UnsupportedBenchmarkError, investigation_compose, their_compose, their_sandbox
 from ._investigator import investigator
 from ._k8s import investigation_k8s
-from ._logs import LOG_DIFFERENCES, LogIndex, LogMismatchError, index_logs
+from ._logs import LOG_DIFFERENCES, LogIndex, LogMismatchError, distribution_of, index_logs
 from ._source import SourceCopy, collect_directory, collect_source
 from ._verdicts import investigation_items, item_scorer
 from .package import load_package
@@ -278,7 +278,7 @@ def investigation_task(
     else:
         their = registry_create("task", task, **(task_args or {}))
         name = registry_info(their).name
-        package = name.split("/")[0] if "/" in name else None
+        package = distribution_of(name)
     scoped = investigation_items(list(checks))
 
     dataset, _ = numbered(their)
@@ -299,6 +299,13 @@ def investigation_task(
         if logs is not None
         else None
     )
+    if index is not None and index.differences:
+        notes = ((notes + "\n\n") if notes else "") + (
+            "How the supplied logs differ from the run in your box: "
+            + "; ".join(index.differences)
+            + ". A grade you reproduce, or fail to, may differ for that reason alone; say "
+            "so in your explanation where it matters."
+        )
     roles = judge_roles(index, judge)
     configured_roles = configured_judges(index, roles, judge_configs)
     if index is not None:

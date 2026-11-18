@@ -78,7 +78,7 @@ def test_a_benchmark_version_the_logs_do_not_share_is_reported(fixture_log: str)
         [fixture_log], task_name="fixture_task", task_args={}, package="no-such-benchmark"
     )
     assert sorted(index.attempts) == ["1", "2", "3"]
-    assert any("not installed" in d for d in index.differences)
+    assert any("no distribution named" in d for d in index.differences)
 
 
 def test_a_declared_judge_must_agree_with_the_logs() -> None:
@@ -466,8 +466,8 @@ def test_a_log_from_a_different_run_is_read_and_the_differences_reported(tmp_pat
         name, {"split": "test", "hard": True}
     )
     assert "not declared here: hard" in differences(name, {"split": "dev"})
-    assert "records task" in differences("other/task", {"split": "dev", "hard": True})
-    assert "does not record which pytest" in differences(
+    assert "record task" in differences("other/task", {"split": "dev", "hard": True})
+    assert "record no pytest version" in differences(
         name, {"split": "dev", "hard": True}, package="pytest"
     )
 

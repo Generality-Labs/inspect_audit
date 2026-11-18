@@ -346,5 +346,5 @@ def test_a_variant_regrade_reads_logs_recorded_under_the_registry_name(
     write_eval_log(log, recorded)
     task = regrade_task("varbench/bench", logs=[recorded], files=files, source="varbench.tasks")
     differences = (task.metadata or {})[LOG_DIFFERENCES]
-    assert not any("records task" in d for d in differences)
-    assert any("'varbench' is not installed" in d for d in differences)
+    assert not any("record task" in d for d in differences)
+    assert any("no distribution named 'varbench'" in d for d in differences)

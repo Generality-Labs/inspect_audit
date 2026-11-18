@@ -34,3 +34,18 @@ def test_the_auditor_reads_a_jobs_log_differences_when_it_collects(tmp_path: Pat
     )
     line = asyncio.run(_log_line(Path(log.location)))
     assert line.splitlines()[1] == f"    differs: {difference}"
+
+
+def test_a_task_namespace_resolves_to_the_distribution_that_provides_it(monkeypatch):
+    """Epoch's `bench/...` tasks come from the distribution `epoch-bench`; the namespace
+    alone is nothing pip installed, so the identity check must look up the provider."""
+    from inspect_audit import _logs
+
+    monkeypatch.setattr(
+        "importlib.metadata.packages_distributions",
+        lambda: {"bench": ["epoch-bench"], "inspect_evals": ["inspect_evals"]},
+    )
+    assert _logs.distribution_of("bench/simpleqa_verified_anti_abstention") == "epoch-bench"
+    assert _logs.distribution_of("inspect_evals/simpleqa") == "inspect_evals"
+    assert _logs.distribution_of("cvebench/cvebench") == "cvebench"
+    assert _logs.distribution_of("bare_task") is None

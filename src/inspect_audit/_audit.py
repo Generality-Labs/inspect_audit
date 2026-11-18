@@ -25,7 +25,7 @@ from inspect_ai.tool import Tool, ToolDef, ToolError, bash, skill, tool
 from inspect_ai.util import CheckpointConfig, sandbox, store_as
 
 from . import prompts
-from ._audit_workspace import docker_box
+from ._audit_workspace import docker_box, hawk_artifact_dir
 from ._image import view_image
 from ._prices import cost_of, price_models
 from ._register import register_view
@@ -715,6 +715,34 @@ async def _continue(state: AgentState, interactive: bool) -> bool | str:
     return await operator_turn(state)
 
 
+def _log_differences(
+    root: Path, seed: dict[str, Any], task: str, task_args: dict[str, Any]
+) -> tuple[str, ...]:
+    """How the supplied logs' runs differ from the declared one, read at the audit's start.
+
+    Compared with the benchmark installed on this host, when it is: a host without the
+    benchmark judges nothing, and the jobs, which install it, say the same to their
+    investigators and in their results.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    from ._logs import differences_of, distribution_of
+
+    staged = [
+        str(root / "inputs" / str(entry["staged"]).removeprefix("/inputs/"))
+        for entry in seed.get("logs") or []
+        if entry.get("staged")
+    ]
+    package = distribution_of(task)
+    if not staged or package is None:
+        return ()
+    try:
+        version(package)
+    except PackageNotFoundError:
+        return ()
+    return tuple(differences_of(staged, task_name=task, task_args=task_args, package=package))
+
+
 @task
 def audit(
     repo: str | None = None,
@@ -793,8 +821,10 @@ def audit(
         auditor_image: Published auditor sandbox image for Hawk.
         box_resources: Kubernetes `resources` (requests/limits) for the auditor's box on
             k8s; None uses the deployment's sandbox default.
-        artifact_dir: Where the published report is also saved, under this sample:
-            on Hawk, the job's S3 artifacts directory. None keeps it on the host only.
+        artifact_dir: Where the published report and the findings are also saved,
+            under this sample. None: on a Hawk runner, the job's own artifacts
+            directory (`hawk download-artifacts <eval set id>` fetches them); elsewhere
+            the host only.
         instructions: Operator instructions and scope, separate from benchmark background.
         policy: The frozen permissions: `models` (auditor, investigators, subjects,
             judges: full Inspect names, the only place models are named) and `limits`
@@ -899,6 +929,11 @@ def audit(
     )
     seed_path = root / "inputs" / "seed.json"
     seed = json.loads(seed_path.read_text())
+    seed["package"] = {
+        "name": chosen.name,
+        "format": chosen.format,
+        "rubric": chosen.package.rubric.skill.name,
+    }
     if runs:
         task_package, investigation_package = _job_packages(
             runs, target_task, task_package, investigation_package, repo, revision
@@ -924,6 +959,9 @@ def audit(
         environment_json=canonical(benchmark_environment),
         source=source,
         supplied_logs=tuple(sorted(set(supplied))),
+        log_differences=(
+            _log_differences(root, seed, target_task, dict(task_args or {})) if target_task else ()
+        ),
         limits=permissions.limits,
         credential_mode=credential_mode,
         configuration_json=canonical(configuration),
@@ -986,6 +1024,7 @@ def audit(
             "subject_models": list(models.subjects),
             "judge_models": list(models.judges),
             "supplied_logs": inv.supplied,
+            "log_differences": list(launch_policy.log_differences),
         }
     tools.append(submit_findings(root, inv, target_task, chosen.validate))
     # Common shell/image/budget/blocker tools survive the handoff. Skill and job
@@ -1005,12 +1044,16 @@ def audit(
         if box == "k8s"
         else docker_box(root, auditor_image)
     )
+    if not artifact_dir and box == "k8s":
+        artifact_dir = hawk_artifact_dir()
+        if artifact_dir:
+            logger.info("artifact_dir defaults to this Hawk job's own folder: %s", artifact_dir)
     if artifact_dir:
         (root / "artifacts.json").write_text(json.dumps({"artifact_dir": artifact_dir}))
     elif box == "k8s":
         logger.warning(
-            "no artifact_dir: the published report stays on this host only, and on a "
-            "Hawk runner it is lost when the pod ends"
+            "no artifact_dir, and this is not a Hawk runner: the published report stays on "
+            "this host only, and in a pod it is lost when the pod ends"
         )
 
     async def on_continue(state: AgentState) -> bool | str:
@@ -1082,8 +1125,9 @@ def audit(
                     if instructions
                     else ""
                 )
-                + "Read /inputs/seed.json and invoke the auditing skill. Begin the "
-                "audit autonomously.",
+                + "Read /inputs/seed.json and invoke the auditing skill, then your rubric "
+                f"skill, {chosen.package.rubric.skill.name}, which says what this audit "
+                "rates and how: follow it where the two differ. " + "Begin the audit autonomously.",
             )
         ],
         scorer=audit_outcome(),

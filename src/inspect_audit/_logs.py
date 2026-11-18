@@ -118,6 +118,24 @@ WRAPPER = "inspect_audit/benchmark"
 WRAPPED = "inspect_audit_benchmark"
 
 
+def distribution_of(task_name: str) -> str | None:
+    """The distribution that provides a registry task, from the task's namespace.
+
+    `inspect_evals/simpleqa` is provided by the distribution `inspect_evals`, and the
+    two names coincide; `bench/simpleqa_verified_anti_abstention` is provided by
+    `epoch-bench`, and the namespace alone is not a distribution anyone installed.
+    The import name maps to its distribution through the installed metadata; a
+    namespace the metadata does not know is taken as the distribution name.
+    """
+    if "/" not in task_name:
+        return None
+    namespace = task_name.split("/")[0]
+    from importlib.metadata import packages_distributions
+
+    known = packages_distributions().get(namespace)
+    return known[0] if known else namespace
+
+
 def _same_task(recorded: str, declared: str) -> bool:
     """Whether a log's task name is the declared one's.
 
@@ -133,7 +151,6 @@ def _same_task(recorded: str, declared: str) -> bool:
 
 
 def _differences(
-    path: str,
     header: EvalLog,
     *,
     task_name: str,
@@ -154,7 +171,7 @@ def _differences(
         # wrapped run is recorded in the task metadata
         wrapped = (spec.metadata or {}).get(WRAPPED)
         if not isinstance(wrapped, dict):
-            return [f"{path} is a benchmark-wrapper log with no recorded run"]
+            return ["are benchmark-wrapper logs with no recorded run"]
         recorded, args, logged = (
             str(wrapped.get("task")),
             dict(wrapped.get("task_args") or {}),
@@ -166,23 +183,18 @@ def _differences(
         args, passed = dict(spec.task_args), set(spec.task_args_passed)
         logged = spec.packages.get(package) if package is not None else None
     if not _same_task(recorded, task_name):
-        found.append(f"{path} records task {recorded!r}, not the declared {task_name!r}")
+        found.append(f"record task {recorded!r}, not the declared {task_name!r}")
     for key, value in task_args.items():
         if args.get(key) != value:
-            found.append(
-                f"{path} ran {recorded} with {key}={args.get(key)!r}, not the declared {value!r}"
-            )
+            found.append(f"ran with {key}={args.get(key)!r}, not the declared {value!r}")
     if undeclared := passed - set(task_args):
-        found.append(
-            f"{path} passed task argument(s) not declared here: {', '.join(sorted(undeclared))}"
-        )
+        found.append(f"passed task argument(s) not declared here: {', '.join(sorted(undeclared))}")
     # Inspect itself decides how samples are set up and scored: a different version
     # can grade the same answer differently
     logged_inspect = spec.packages.get("inspect_ai")
     if logged_inspect and not same_build(logged_inspect, version("inspect_ai")):
         found.append(
-            f"{path} was produced by inspect_ai {logged_inspect}; this run uses "
-            f"{version('inspect_ai')}"
+            f"were produced by inspect_ai {logged_inspect}; this run uses {version('inspect_ai')}"
         )
     if package is not None:
         try:
@@ -190,12 +202,52 @@ def _differences(
         except PackageNotFoundError:
             installed = None
         if installed is None:
-            found.append(f"the benchmark package {package!r} is not installed")
+            found.append(
+                f"could not be compared with the installed benchmark: no distribution named "
+                f"{package!r} is installed here"
+            )
         elif logged is None:
-            found.append(f"{path} does not record which {package} version produced it")
+            others = ", ".join(
+                f"{n} {v}" for n, v in sorted(spec.packages.items()) if n != "inspect_ai"
+            )
+            found.append(
+                f"record no {package} version"
+                + (f" (their recorded packages: {others})" if others else "")
+                + f"; {package} {installed} is installed, so the recorded grades may come "
+                "from a different build of the benchmark"
+            )
         elif not same_build(str(logged), installed):
-            found.append(f"{path} was produced by {package} {logged}; {installed} is installed")
+            found.append(
+                f"were produced by {package} {logged}; {package} {installed} is installed, so "
+                "the recorded grades come from a different build of the benchmark"
+            )
     return found
+
+
+def _aggregate(found: dict[str, int], total: int) -> list[str]:
+    """One line per distinct difference, with how many of the logs it covers."""
+    return [
+        f"{count} of {total} log{'s' if total != 1 else ''} {difference}"
+        for difference, count in found.items()
+    ]
+
+
+def differences_of(
+    files: Sequence[str], *, task_name: str, task_args: dict[str, Any], package: str | None
+) -> list[str]:
+    """How the logs' runs differ from the declared one, from their headers alone.
+
+    For a host that stages the logs without indexing their attempts (the audit, at its
+    start); the same lines `index_logs` records.
+    """
+    found: dict[str, int] = {}
+    for path in files:
+        header = read_eval_log(path, header_only=True)
+        for difference in _differences(
+            header, task_name=task_name, task_args=task_args, package=package
+        ):
+            found[difference] = found.get(difference, 0) + 1
+    return _aggregate(found, len(files))
 
 
 def _scorer_models(path: str, sample_id: str | int, epoch: int) -> set[str]:
@@ -227,13 +279,13 @@ def index_logs(
     index = LogIndex()
     seen: dict[tuple[str, str, int], str] = {}
     roles_seen: dict[str, str] | None = None
+    found: dict[str, int] = {}
     for path in files:
         header = read_eval_log(path, header_only=True)
         for difference in _differences(
-            path, header, task_name=task_name, task_args=task_args, package=package
+            header, task_name=task_name, task_args=task_args, package=package
         ):
-            logger.warning(difference)
-            index.differences.append(difference)
+            found[difference] = found.get(difference, 0) + 1
         roles = _roles(header)
         if roles_seen is not None and roles != roles_seen:
             raise LogMismatchError(
@@ -287,6 +339,9 @@ def index_logs(
                     "log): it has no transcripts to investigate"
                 ) from None
     index.judges = roles_seen or {}
+    index.differences = _aggregate(found, len(files))
+    for difference in index.differences:
+        logger.warning(difference)
     return index
 
 

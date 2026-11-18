@@ -156,6 +156,16 @@ def investigator(
     system = prompts.INVESTIGATOR.format(
         items=named,
         rubric=(f"; `{rubric.name}` defines what the audit's judgments mean" if rubric else ""),
+        logs=(
+            "The recorded attempts at this item are in /audit/logs/, one Inspect log per "
+            "recorded run (JSON format), holding only this item's samples. Read them with "
+            "plain `json` or Inspect's log API (the reading-logs skill). "
+            if index is not None
+            else "No recorded attempts were supplied for this item, by design: there is no "
+            "/audit/logs, and nothing about how models fared on it is available. Judge the "
+            "item as written, from the benchmark's code and the item's own references, "
+            "and do not spend effort looking for logs. "
+        ),
         confidential=prompts.INVESTIGATION_CONFIDENTIAL.format(root=INVESTIGATION_ROOT)
         if confidential
         else "",

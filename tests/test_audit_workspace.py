@@ -158,3 +158,22 @@ def test_a_docker_box_is_a_container_with_nothing_mounted(tmp_path):
 
     assert compose["services"]["default"]["image"] == AUDITOR_IMAGE
     assert "build" not in compose["services"]["default"]
+
+
+def test_a_hawk_runner_knows_its_own_artifacts_folder(tmp_path, monkeypatch):
+    """The eval set id is Hawk's to assign, so the audit reads the folder from the
+    runner's infra config instead of asking the operator to guess it."""
+    infra = tmp_path / "infra.yaml"
+    infra.write_text(
+        yaml.safe_dump({"job_id": "audit-x1", "log_dir": "s3://bucket/evals/audit-x1/"})
+    )
+    user = tmp_path / "user.yaml"
+    user.write_text(yaml.safe_dump({"name": "audit-x1"}))
+    monkeypatch.setattr("sys.argv", ["runner", str(user), str(infra), "-v"])
+    assert workspace.hawk_artifact_dir() == "s3://bucket/evals/audit-x1/artifacts"
+    monkeypatch.setattr("sys.argv", ["pytest", str(user)])
+    assert workspace.hawk_artifact_dir() is None
+    local = tmp_path / "local.yaml"
+    local.write_text(yaml.safe_dump({"log_dir": "logs/audit-x1"}))
+    monkeypatch.setattr("sys.argv", ["runner", str(user), str(local)])
+    assert workspace.hawk_artifact_dir() is None

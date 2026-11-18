@@ -99,6 +99,9 @@ class LaunchPolicy(FrozenModel):
     environment_json: str = "{}"
     source: str | None = None
     supplied_logs: tuple[str, ...] = ()
+    log_differences: tuple[str, ...] = ()
+    """How the supplied logs' runs differ from the declared one, read at the audit's
+    start; empty when they match or could not be judged there."""
     limits: Limits = Limits()
     credential_mode: Literal["restricted", "user"] = "user"
     model_configs_json: str = "{}"

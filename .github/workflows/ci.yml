@@ -76,8 +76,8 @@ jobs:
           for package in packages/*/; do uv pip install --no-deps -e "$package"; done
       - name: Every package loads by name
         run: uv run --no-sync inspect-audit-packages
-      - name: Type-check the packages
-        run: uv run --no-sync basedpyright packages
+      - name: Type-check the packages (their sources, as the core's are)
+        run: uv run --no-sync basedpyright packages/*/src
       - name: Package tests, and the interface tests with every package installed
         run: uv run --no-sync pytest --no-cov packages tests/test_package.py tests/test_layering.py
 

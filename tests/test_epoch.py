@@ -500,3 +500,21 @@ def test_the_page_is_rendered_again_from_what_the_audit_saved(tmp_path: Path, ca
         )
         == 0
     )
+
+
+def test_logs_from_another_build_are_a_notice_on_the_page(tmp_path: Path, monkeypatch) -> None:
+    """Epoch's logs come from Epoch's package; a reconstruction regrades them. The page
+    says so instead of the audit refusing them."""
+    with_logs = findings(ten(1), phase1())
+    with_logs.subject["supplied_logs"] = ["hawk:imported-epoch"]
+    with_logs.subject["logs_provenance"] = [
+        "49 of 49 logs produced without recording an epoch-bench version (its recorded "
+        "packages: benchmarks 0.1.0); epoch-bench 0.0.1 is installed, so the recorded grades "
+        "come from a different build of the benchmark"
+    ]
+    source = bundle(tmp_path, with_logs)
+    monkeypatch.setattr(epoch, "sandbox", lambda: Box(PROSE))
+    page = (asyncio.run(epoch.build(tmp_path, source)) / "epoch_review.md").read_text()
+    assert "recorded by another build of the benchmark" in page
+    assert "benchmarks 0.1.0" in page
+    assert "Phase 1 only" not in page

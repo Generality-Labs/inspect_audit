@@ -74,10 +74,18 @@ def test_the_same_attempt_in_two_logs_is_refused(fixture_log: str) -> None:
 def test_the_benchmark_version_must_match_the_logs(fixture_log: str) -> None:
     index = index_logs([fixture_log], task_name="fixture_task", task_args={}, package="inspect_ai")
     assert sorted(index.attempts) == ["1", "2", "3"]
-    with pytest.raises(LogMismatchError, match="not installed"):
-        index_logs(
-            [fixture_log], task_name="fixture_task", task_args={}, package="no-such-benchmark"
+    # a build that cannot be compared is said, not refused: the review may still look
+    # for problems in logs another build produced
+    other = index_logs(
+        [fixture_log], task_name="fixture_task", task_args={}, package="no-such-benchmark"
+    )
+    assert sorted(other.attempts) == ["1", "2", "3"]
+    assert other.provenance == [
+        (
+            "1 of 1 log no distribution named 'no-such-benchmark' is installed here, so the "
+            "build that produced the log could not be compared with the one regrading it"
         )
+    ]
 
 
 def test_a_declared_judge_must_agree_with_the_logs() -> None:
@@ -462,13 +470,15 @@ def test_a_log_from_a_different_run_is_refused(tmp_path: Path) -> None:
         index_logs([log.location], task_name=name, task_args={"split": "dev"}, package=None)
     with pytest.raises(LogMismatchError, match="records task"):
         index_logs([log.location], task_name="other/task", task_args={}, package=None)
-    with pytest.raises(LogMismatchError, match="does not record which"):
-        index_logs(
-            [log.location],
-            task_name=name,
-            task_args={"split": "dev", "hard": True},
-            package="pytest",
-        )
+    unrecorded = index_logs(
+        [log.location],
+        task_name=name,
+        task_args={"split": "dev", "hard": True},
+        package="pytest",
+    )
+    [notice] = unrecorded.provenance
+    assert notice.startswith("1 of 1 log produced without recording a pytest version")
+    assert "different build of the benchmark" in notice
 
 
 def test_a_chat_input_matches_its_log_whatever_its_message_ids(tmp_path: Path) -> None:

@@ -295,6 +295,14 @@ def investigation_task(
         if logs is not None
         else None
     )
+    if index is not None and index.provenance:
+        notes = ((notes + "\n\n") if notes else "") + (
+            "Provenance of the supplied logs: "
+            + "; ".join(index.provenance)
+            + ". The benchmark code in your box is not the build that produced the "
+            "recorded grades, so a grade you reproduce, or fail to, may differ for that "
+            "reason alone; say so in your explanation where it matters."
+        )
     roles = judge_roles(index, judge)
     configured_roles = configured_judges(index, roles, judge_configs)
     if index is not None:

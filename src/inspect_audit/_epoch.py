@@ -1403,6 +1403,14 @@ def review(findings: "Findings", prose: Prose) -> dict[str, Any]:
     notices: list[str] = []
     if not derived["logs_supplied"] and "no_logs" in page.notices:
         notices.append(page.notices["no_logs"])
+    provenance = findings.subject.get("logs_provenance")
+    if derived["logs_supplied"] and isinstance(provenance, list) and provenance:
+        notices.append(
+            "The supplied logs were recorded by another build of the benchmark than the "
+            "one audited here: "
+            + "; ".join(str(p) for p in provenance)
+            + ". Grades reproduced in this review were computed by the installed build."
+        )
     derived["notices"] = notices
     if not prose.profile.review_date:
         prose.profile.review_date = datetime.now(UTC).date().isoformat()

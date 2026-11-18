@@ -66,6 +66,9 @@ class LogIndex:
     eval_models: set[str] = field(default_factory=set)
     shuffled: bool = False
     """Whether any recorded run shuffled its dataset (positional ids then unstable)."""
+    provenance: list[str] = field(default_factory=list)
+    """How the logs' recorded benchmark build differs from the installed one; empty when
+    it matches. Said to the investigators and on the page, never a refusal."""
 
     def for_sample(self, sample_id: str) -> list[Attempt]:
         return self.attempts.get(sample_id, [])
@@ -134,11 +137,35 @@ def distribution_of(task_name: str) -> str | None:
     return known[0] if known else namespace
 
 
-def _installed(package: str) -> str:
+def _build_notice(package: str, logged: str | None, recorded: dict[str, str]) -> str | None:
+    """How a log's recorded benchmark build differs from the installed one, or None.
+
+    A different build is not refused: an Epoch review regrades Epoch's logs with a
+    reconstruction of a private package, and the point of the review is to look for
+    problems in them. It is said, on every job and on the page, so a regrade that
+    disagrees with a recorded grade has the build difference as a named suspect.
+    """
     try:
-        return version(package)
+        installed = version(package)
     except PackageNotFoundError:
-        raise LogMismatchError(f"the benchmark package {package!r} is not installed") from None
+        return (
+            f"no distribution named {package!r} is installed here, so the build that "
+            "produced the log could not be compared with the one regrading it"
+        )
+    if logged is None:
+        others = ", ".join(f"{n} {v}" for n, v in sorted(recorded.items()) if n != "inspect_ai")
+        return (
+            f"produced without recording a {package} version"
+            + (f" (its recorded packages: {others})" if others else "")
+            + f"; {package} {installed} is installed, so the recorded grades come from a "
+            "different build of the benchmark"
+        )
+    if same_build(logged, installed):
+        return None
+    return (
+        f"produced by {package} {logged}; {package} {installed} is installed, so the "
+        "recorded grades come from a different build of the benchmark"
+    )
 
 
 def _same_task(recorded: str, task_file: str | None, task_name: str) -> bool:
@@ -173,7 +200,12 @@ def _check_header(
     task_name: str,
     task_args: dict[str, Any],
     package: str | None,
-) -> None:
+) -> str | None:
+    """Refuse a log of another task or other task arguments; say when the build differs.
+
+    The returned notice names the difference; None when the build matches or no
+    package was named.
+    """
     spec = header.eval
     if spec.task_registry_name == WRAPPER:
         # the auditor's `benchmark` wrapper: its header names the wrapper, and the
@@ -186,12 +218,10 @@ def _check_header(
                 f"{path} wrapped {wrapped.get('task')!r} with {wrapped.get('task_args')!r}, "
                 f"not the declared {task_name!r} with {task_args!r}"
             )
-        if package is not None and not same_build(str(wrapped.get("version")), _installed(package)):
-            raise LogMismatchError(
-                f"{path} was produced by {package} {wrapped.get('version')}; "
-                f"{_installed(package)} is installed"
-            )
-        return
+        if package is None:
+            return None
+        recorded_version = wrapped.get("version")
+        return _build_notice(package, str(recorded_version) if recorded_version else None, {})
     recorded = spec.task_registry_name or spec.task
     if not _same_task(recorded, spec.task_file, task_name):
         raise LogMismatchError(f"{path} records task {recorded!r}, not the declared {task_name!r}")
@@ -216,18 +246,36 @@ def _check_header(
             f"{path} was produced by inspect_ai {logged_inspect}; this run uses "
             f"{version('inspect_ai')}: regrades may differ for that reason"
         )
-    if package is not None:
-        try:
-            installed = version(package)
-        except PackageNotFoundError:
-            raise LogMismatchError(f"the benchmark package {package!r} is not installed") from None
-        logged = spec.packages.get(package)
-        if logged is None:
-            raise LogMismatchError(f"{path} does not record which {package} version produced it")
-        if not same_build(logged, installed):
-            raise LogMismatchError(
-                f"{path} was produced by {package} {logged}; {installed} is installed"
-            )
+    if package is None:
+        return None
+    return _build_notice(package, spec.packages.get(package), dict(spec.packages))
+
+
+def _aggregate(notices: dict[str, int], total: int) -> list[str]:
+    """One line per distinct notice, with how many of the logs it covers."""
+    return [
+        f"{count} of {total} log{'s' if total != 1 else ''} {notice}"
+        for notice, count in notices.items()
+    ]
+
+
+def provenance_of(
+    files: Sequence[str], *, task_name: str, task_args: dict[str, Any], package: str | None
+) -> list[str]:
+    """What the logs say about the build that produced them, against the installed one.
+
+    The header check alone, for a host that stages the logs without indexing their
+    attempts (the audit, at its start); the same notices `index_logs` records.
+    """
+    notices: dict[str, int] = {}
+    for path in files:
+        header = read_eval_log(path, header_only=True)
+        notice = _check_header(
+            path, header, task_name=task_name, task_args=task_args, package=package
+        )
+        if notice:
+            notices[notice] = notices.get(notice, 0) + 1
+    return _aggregate(notices, len(files))
 
 
 def _scorer_models(path: str, sample_id: str | int, epoch: int) -> set[str]:
@@ -259,9 +307,14 @@ def index_logs(
     index = LogIndex()
     seen: dict[tuple[str, str, int], str] = {}
     roles_seen: dict[str, str] | None = None
+    notices: dict[str, int] = {}
     for path in files:
         header = read_eval_log(path, header_only=True)
-        _check_header(path, header, task_name=task_name, task_args=task_args, package=package)
+        notice = _check_header(
+            path, header, task_name=task_name, task_args=task_args, package=package
+        )
+        if notice:
+            notices[notice] = notices.get(notice, 0) + 1
         roles = _roles(header)
         if roles_seen is not None and roles != roles_seen:
             raise LogMismatchError(
@@ -315,6 +368,9 @@ def index_logs(
                     "log): it has no transcripts to investigate"
                 ) from None
     index.judges = roles_seen or {}
+    index.provenance = _aggregate(notices, len(files))
+    for line in index.provenance:
+        logger.warning("supplied logs: %s", line)
     return index
 
 

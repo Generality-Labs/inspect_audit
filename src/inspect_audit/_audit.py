@@ -703,6 +703,39 @@ async def _continue(state: AgentState, interactive: bool) -> bool | str:
     return await operator_turn(state)
 
 
+def _logs_provenance(
+    root: Path, seed: dict[str, Any], task: str, task_args: dict[str, Any]
+) -> tuple[str, ...]:
+    """What the supplied logs record about the build that produced them.
+
+    Compared with the benchmark installed on this host, when it is: a host without
+    the benchmark judges nothing, and the jobs, which install it, say the same thing
+    to their investigators. A log that is not the declared task at all is a notice
+    here too, not a refusal: the audit may still read it, and a job that regrades it
+    will refuse on its own.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    from ._logs import LogMismatchError, distribution_of, provenance_of
+
+    staged = [
+        str(root / "inputs" / str(entry["staged"]).removeprefix("/inputs/"))
+        for entry in seed.get("logs") or []
+        if entry.get("staged")
+    ]
+    package = distribution_of(task)
+    if not staged or package is None:
+        return ()
+    try:
+        version(package)
+    except PackageNotFoundError:
+        return ()
+    try:
+        return tuple(provenance_of(staged, task_name=task, task_args=task_args, package=package))
+    except LogMismatchError as ex:
+        return (f"not checked against the installed benchmark: {ex}",)
+
+
 @task
 def audit(
     repo: str | None = None,
@@ -916,6 +949,9 @@ def audit(
         environment_json=canonical(benchmark_environment),
         source=source,
         supplied_logs=tuple(sorted(set(supplied))),
+        logs_provenance=(
+            _logs_provenance(root, seed, target_task, dict(task_args or {})) if target_task else ()
+        ),
         limits=permissions.limits,
         credential_mode=credential_mode,
         configuration_json=canonical(configuration),
@@ -976,6 +1012,7 @@ def audit(
             "subject_models": list(models.subjects),
             "judge_models": list(models.judges),
             "supplied_logs": inv.supplied,
+            "logs_provenance": list(launch_policy.logs_provenance),
         }
     tools.append(submit_findings(root, inv, target_task, selected_publisher.validate))
     # Common shell/image/budget/blocker tools survive the handoff. Skill and job

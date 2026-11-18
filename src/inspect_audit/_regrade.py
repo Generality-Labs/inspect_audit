@@ -369,5 +369,9 @@ def regrade_task(
         model_roles=roles or None,
         cost_limit=cost_limit,
         name=f"regrade/{name}",
-        metadata={"regraded_task": name, "regraded_logs": list(logs)},
+        metadata={
+            "regraded_task": name,
+            "regraded_logs": list(logs),
+            "provenance": list(index.provenance),
+        },
     )

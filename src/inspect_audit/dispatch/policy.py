@@ -99,6 +99,9 @@ class LaunchPolicy(FrozenModel):
     environment_json: str = "{}"
     source: str | None = None
     supplied_logs: tuple[str, ...] = ()
+    logs_provenance: tuple[str, ...] = ()
+    """How the supplied logs' recorded benchmark build differs from the installed one,
+    read at the audit's start; empty when it matches or could not be judged there."""
     limits: Limits = Limits()
     credential_mode: Literal["restricted", "user"] = "user"
     model_configs_json: str = "{}"

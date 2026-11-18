@@ -319,9 +319,12 @@ def regrade_task(
             if not source:
                 raise ValueError("a variant regrade needs the module that defines the task")
             their = variant_task(task, source, dict(task_args or {}), files)
+            # a variant is imported from a copy of the package, so Inspect registers it
+            # under its bare function name; the logs record the declared, namespaced one
+            name = task
         else:
             their = registry_create("task", task, **(task_args or {}))
-        name = registry_info(their).name
+            name = registry_info(their).name
         package = distribution_of(name)
     index = index_logs(logs, task_name=name, task_args=dict(task_args or {}), package=package)
     roles = configured_judges(index, judge_roles(index, judge))

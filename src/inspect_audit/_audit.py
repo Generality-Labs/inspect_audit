@@ -466,6 +466,9 @@ def run_eval(inv: Audit) -> Tool:
                     "epochs": epochs,
                     **({"files": files, "source": policy.source} if files else {}),
                 },
+                # Hawk's config carries an epochs of its own, which Inspect applies over
+                # the task's: without it here a three-epoch rescore ran once
+                epochs=epochs,
             )
             return await inv.launch(job, JobKind.REGRADE, note, diff)
         if not models:

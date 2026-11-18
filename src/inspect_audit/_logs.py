@@ -155,7 +155,7 @@ def _build_notice(package: str, logged: str | None, recorded: dict[str, str]) ->
     if logged is None:
         others = ", ".join(f"{n} {v}" for n, v in sorted(recorded.items()) if n != "inspect_ai")
         return (
-            f"produced without recording a {package} version"
+            f"produced without recording a version of {package}"
             + (f" (its recorded packages: {others})" if others else "")
             + f"; {package} {installed} is installed, so the recorded grades come from a "
             "different build of the benchmark"

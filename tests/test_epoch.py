@@ -508,9 +508,11 @@ def test_logs_from_another_build_are_a_notice_on_the_page(tmp_path: Path, monkey
     with_logs = findings(ten(1), phase1())
     with_logs.subject["supplied_logs"] = ["hawk:imported-epoch"]
     with_logs.subject["logs_provenance"] = [
-        "49 of 49 logs produced without recording an epoch-bench version (its recorded "
-        "packages: benchmarks 0.1.0); epoch-bench 0.0.1 is installed, so the recorded grades "
-        "come from a different build of the benchmark"
+        (
+            "49 of 49 logs produced without recording a version of epoch-bench (its recorded "
+            "packages: benchmarks 0.1.0); epoch-bench 0.0.1 is installed, so the recorded "
+            "grades come from a different build of the benchmark"
+        )
     ]
     source = bundle(tmp_path, with_logs)
     monkeypatch.setattr(epoch, "sandbox", lambda: Box(PROSE))

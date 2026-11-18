@@ -477,7 +477,7 @@ def test_a_log_from_a_different_run_is_refused(tmp_path: Path) -> None:
         package="pytest",
     )
     [notice] = unrecorded.provenance
-    assert notice.startswith("1 of 1 log produced without recording a pytest version")
+    assert notice.startswith("1 of 1 log produced without recording a version of pytest")
     assert "different build of the benchmark" in notice
 
 

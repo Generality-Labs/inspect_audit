@@ -346,7 +346,7 @@ def test_the_page_is_rendered_from_the_bundle(tmp_path: Path, monkeypatch) -> No
     page = (output / "epoch_review.md").read_text()
     assert page.startswith("# SimpleQA Verified Review")
     assert "Verdict: Incomplete" in page and "Benchmark creator: Google" in page
-    assert "Phase 1 of 2" in page
+    assert "Phase 1 only" in page
     assert "Scoring prevalence: 1 of 10 inspected tasks (10%); threshold 20%." in page
     assert "| s0 | Impossible as written |" in page
     assert "Audited without finding a defect (9): s1, s2" in page

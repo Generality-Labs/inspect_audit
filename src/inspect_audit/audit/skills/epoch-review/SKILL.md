@@ -1,6 +1,6 @@
 ---
 name: epoch-review
-description: Conduct the audit as an Epoch AI benchmark review, in two phases, rating the rubric's rows in auditor.ratings. Read at the start of an audit whose publisher is epoch, after the auditing skill; where the two differ, this one applies.
+description: Conduct the audit as an Epoch AI benchmark review, rating the rubric's rows in auditor.ratings; the task audit alone without logs, the task audit then the log-dependent rows in the same run with logs. Read at the start of an audit whose publisher is epoch, after the auditing skill; where the two differ, this one applies.
 ---
 
 The report is Epoch AI's benchmark review: a reviewability gate, four minimum-standard
@@ -35,21 +35,29 @@ The quality rows with a form take their numbers in `fields`: contamination `as_o
 `tasks_public_pct`, `solutions_public_pct`; score range `floor`, `ceiling`;
 statistical adequacy `runs_per_model`.
 
-## Two phases
+## Two phases, one audit
 
-Phase 1 is the task audit, with no evaluation logs. It writes three rows and nothing
-else: reviewability from the source; scoring from the sample labels; consistency from
-the source's version history, changelog and published methodology. Every row the
-description marks `needs logs` stays unrated, and submission refuses it. A Flag ends
-the audit as Flawed with the page filled to that row. A pass leaves it Incomplete: the
-page says phase 2 awaits the logs.
+Whether the audit was given evaluation logs (`supplied_logs` in the register's subject,
+the `logs` sources the operator declared) decides how far it goes. It always begins
+with phase 1 and, with logs, continues into phase 2 in the same run, before one
+submission.
 
-Phase 2 is an audit with the logs declared. It answers the remaining rows in rubric
-order from the headers and transcripts, elicitation and bias first (the first Flag ends
-the rubric: the rows after it stay unrated), then the quality rows, construct validity
-last with every other row in hand. With logs, a grading-labels check over the sample
-labels each item's recorded grades, and the defect rate is the union: an item defective
-as written or as graded counts once.
+Phase 1 is the task audit, done without reading any log, even when logs were supplied.
+It writes three rows and nothing else: reviewability from the source; scoring from the
+sample labels; consistency from the source's version history, changelog and published
+methodology. The question-labels investigators are sent with `logs=[]`, so each item is
+judged as written, blind to how models fared on it. An audit with no logs stops here
+and submits: every row the description marks `needs logs` stays unrated (submission
+refuses it), a Flag ends the audit as Flawed with the page filled to that row, and a
+pass leaves it Incomplete with the page saying the rest awaits the logs.
+
+Phase 2 follows in an audit with logs, once phase 1's three rows are rated and none is
+a Flag. It answers the remaining rows in rubric order from the headers and
+transcripts, elicitation and bias first (the first Flag ends the rubric: the rows after
+it stay unrated), then the quality rows, construct validity last with every other row in
+hand. A grading-labels check over the same sample, sent with the supplied logs, labels
+each item's recorded grades, and the defect rate is the union: an item defective as
+written or as graded counts once.
 
 | Stage | Evidence | Do | Rates |
 |---|---|---|---|
@@ -57,10 +65,10 @@ as written or as graded counts once.
 | 1 Reviewability | source | can tasks, scoring logic and settings be inspected? | reviewability |
 | 2 Items | the sample | question-labels on every sample: a two-item pilot, then the rest, then every item a worker left without a verdict re-run until resolved | scoring, with its sample design |
 | 3 Consistency | source history, changelog, published methodology | did the scorer, instructions or references change without a version bump? | consistency |
-| 4 Submit | the ratings | without logs: submit, and publish a Flawed or Incomplete page | |
-| 5 Grading (logs) | the logs | grading-labels over the sample; the union decides scoring | scoring, revisited |
+| 4 No logs | the ratings | without logs, or on a Flag: submit, and publish a Flawed or Incomplete page | |
+| 5 Grading (logs) | the logs | grading-labels over the same sample, `logs=` the supplied sources; the union decides scoring | scoring, revisited |
 | 6 Benchmark-wide (logs) | headers, transcripts | elicitation, then bias; stop at the first Flag | those rows |
-| 7 Quality (logs) | everything learned | the quality rows in order, construct validity last | those rows |
+| 7 Quality (logs) | everything learned | the quality rows in order, construct validity last; then submit and publish | those rows |
 
 ## Rules for the item audit
 

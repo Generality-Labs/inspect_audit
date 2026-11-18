@@ -8,11 +8,12 @@ labels standing in the register), derives the verdict by the methodology's proce
 computes the scoring measure from the labels, checks the prose the publisher is given,
 and renders the page. No rubric text, scale or limit lives here.
 
-The review has two phases. Phase 1 audits the tasks without evaluation logs: the
-reviewability, scoring and consistency rows, nothing else, and a Flag ends it as
-Flawed while a pass leaves it Incomplete. Phase 2, with the logs, answers the rows
-the methodology marks `needs_logs` and can reach Verified. Which phase a bundle is in
-is read from the logs the audit was given (`subject.supplied_logs`).
+The review has two phases, run in one audit. Phase 1 audits the tasks without
+reading evaluation logs: the reviewability, scoring and consistency rows, nothing
+else. An audit given no logs stops there, and a Flag ends it as Flawed while a pass
+leaves it Incomplete. An audit given logs (`subject.supplied_logs`) goes on to phase
+2 in the same run: the rows the methodology marks `needs_logs`, and it can reach
+Verified.
 """
 
 import json
@@ -922,10 +923,10 @@ def phase_rule(method: Methodology, assessments: dict[str, Assessment], with_log
     rated = [c.id for c in method.checks if c.needs_logs and assessments[c.id].assessed]
     if rated:
         raise ValueError(
-            "no evaluation logs were supplied, so this is phase 1, the task audit: the "
-            f"checks answered from logs stay {method.verdict.procedure.unfinished['level']}: "
-            + ", ".join(rated)
-            + ". A phase-2 audit with the logs declared answers them."
+            "no evaluation logs were supplied, so this audit is phase 1 only, the task "
+            f"audit: the checks answered from logs stay "
+            f"{method.verdict.procedure.unfinished['level']}: " + ", ".join(rated) + ". An "
+            "audit with the logs declared answers them, in the same run, after phase 1."
         )
 
 

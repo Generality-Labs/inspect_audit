@@ -27,8 +27,8 @@ PAGE = "epoch_review.md"
 def validate(findings: Findings) -> None:
     """What submission requires.
 
-    Rubric rows on their scales, the rubric's stop rule, phase 1's log-dependent rows
-    unrated, and a scoring row that agrees with its measure.
+    Rubric rows on their scales, the rubric's stop rule, the log-dependent rows
+    unrated when no logs were supplied, and a scoring row that agrees with its measure.
     """
     _epoch.validate(findings)
 

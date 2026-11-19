@@ -143,6 +143,31 @@ def hawk_state(word: Any) -> JobState:
     }.get(None if word is None else str(word), JobState.RUNNING)
 
 
+def _finished_but_unimported(found: Any) -> bool:
+    """Job-status that may hide a finished job: not yet started by its word, no pods.
+
+    Only when Hawk's pod read succeeded and found none (`pod_status_error` unset): a
+    failed read is no evidence the pods are gone.
+    """
+    pods = found.pod_status.pods if found.pod_status is not None else []
+    return (
+        str(found.status) in {"pending", "queued", "unknown"}
+        and not pods
+        and getattr(found, "pod_status_error", None) is None
+    )
+
+
+def _all_samples_done(live: Any) -> bool:
+    """Hawk's live eval-set status: complete, its tasks read, and every sample done."""
+    samples = [s for task in live.tasks for s in task.samples or []]
+    return (
+        str(live.status) == "complete"
+        and "tasks" not in (live.errors or {})
+        and bool(samples)
+        and all(s.completed for s in samples)
+    )
+
+
 async def submit_eval_set(
     config: dict[str, Any],
     *,
@@ -343,6 +368,15 @@ class HawkRuns:
     async def status(self, run_id: str) -> JobState:
         async with self._client() as client:
             found = await client.get_job_status(run_id)
+            if found is not None and _finished_but_unimported(found):
+                # Hawk 4.2's job-status reads "pending" for a finished job whose pods
+                # are gone when the warehouse never imported its log
+                # (`monitoring_server._derive_job_status`), so it would stay "running"
+                # here forever. Its live eval-set status reads the log itself: if that
+                # says complete with every sample done, the job is complete.
+                live = await client.get_eval_set_status(run_id)
+                if _all_samples_done(live):
+                    return JobState.COMPLETE
         return hawk_state(found.status if found is not None else None)
 
     async def usage(self, run_id: str) -> tuple[dict[str, Any], int]:

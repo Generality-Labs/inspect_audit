@@ -100,6 +100,57 @@ def test_a_stuck_job_settles_and_a_stopped_one_finishes(tmp_path: Path) -> None:
     asyncio.run(run())
 
 
+def test_a_finished_job_the_warehouse_never_imported_is_complete_not_pending() -> None:
+    """Hawk 4.2's job-status reads "pending" once a finished job's pods are gone if its
+    log was never imported; its eval-set status, read from the log, says complete."""
+
+    async def run() -> None:
+        async with FakeHawk() as hawk:
+            runs = HawkRuns(hawk.url, credential_mode="restricted")
+            run_id = await runs.submit(JOB)
+            job = hawk.jobs[run_id]
+            job.status, job.live_status = "pending", "complete"
+            job.samples = [(True, None), (True, None)]
+            assert await runs.status(run_id) is JobState.COMPLETE
+
+            # pods still there: job-status is believed, as before
+            job.pods = ["Running"]
+            assert await runs.status(run_id) is JobState.RUNNING
+            job.pods = []
+
+            # a sample not done, or the live status not complete: still running
+            job.samples = [(True, None), (False, None)]
+            assert await runs.status(run_id) is JobState.RUNNING
+            job.samples = [(True, None), (True, None)]
+            job.live_status = "running"
+            assert await runs.status(run_id) is JobState.RUNNING
+
+            # not yet launched: no pods and no samples
+            job.live_status, job.samples = "pending", []
+            assert await runs.status(run_id) is JobState.RUNNING
+
+    asyncio.run(run())
+
+
+def test_a_job_status_word_other_than_pending_is_not_second_guessed() -> None:
+    async def run() -> None:
+        async with FakeHawk() as hawk:
+            runs = HawkRuns(hawk.url, credential_mode="restricted")
+            run_id = await runs.submit(JOB)
+            job = hawk.jobs[run_id]
+            job.samples = [(True, None)]
+            for word, state in [
+                ("importing", JobState.RUNNING),
+                ("running", JobState.RUNNING),
+                ("failed", JobState.FAILED),
+                ("stuck", JobState.STUCK),
+            ]:
+                job.status, job.live_status = word, "complete"
+                assert await runs.status(run_id) is state, word
+
+    asyncio.run(run())
+
+
 def test_models_the_proxy_does_not_serve_are_named_before_any_spend() -> None:
     async def run() -> None:
         async with FakeHawk(served=["gpt-6-luna"]) as hawk:

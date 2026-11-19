@@ -36,6 +36,11 @@ class FakeJob:
     samples: list[SampleUsage] = field(default_factory=list)
     runner_log: list[str] = field(default_factory=list)
     stopped: bool = False
+    # its pods' phases, as job-status reports them
+    pods: list[str] = field(default_factory=list)
+    # eval-set-status's own word, when it differs from job-status's (Hawk 4.2's
+    # job-status reads "pending" for a finished job its warehouse never imported)
+    live_status: str | None = None
 
 
 class FakeHawk:
@@ -133,7 +138,14 @@ class FakeHawk:
         reply = monitoring.JobStatusResponse(
             job_type="eval_set",
             status=job.status,  # pyright: ignore[reportArgumentType]
-            pod_status=None,
+            pod_status=monitoring.PodStatusData(
+                pods=[
+                    monitoring.PodStatusInfo(name=f"pod-{n}", namespace="fake", phase=phase)
+                    for n, phase in enumerate(job.pods)
+                ]
+            )
+            if job.pods
+            else None,
             details=monitoring.EvalSetDetails(import_summary=None, warehouse_sample_count=0),
         )
         return web.json_response(json.loads(reply.model_dump_json()))
@@ -161,7 +173,7 @@ class FakeHawk:
             etag="0",
             data=monitoring.EvalSetStatus(
                 job_id=request.match_info["id"],
-                status=job.status,  # pyright: ignore[reportArgumentType]
+                status=job.live_status or job.status,  # pyright: ignore[reportArgumentType]
                 progress=monitoring.StatusProgress(),
                 tasks=[
                     monitoring.TaskStatus(

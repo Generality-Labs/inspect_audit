@@ -730,3 +730,17 @@ def test_sources_name_competing_answers_where_a_reader_can_find_them() -> None:
     # rows recorded before sources existed still validate
     legacy = {k: v for k, v in row.items() if k != "sources"}
     assert QuestionAssessment.model_validate(legacy).sources == []
+
+
+def test_with_no_review_the_workers_majority_stands() -> None:
+    def take(run: str, label: str) -> dict[str, Any]:
+        return {"by": "investigator", "label": label, "run": run}
+
+    label = _epoch._standing_label  # pyright: ignore[reportPrivateUsage]
+    assert label([]) is None
+    assert label([take("a", "DEFECT"), take("a", "NO_ISSUE_FOUND")]) == "NO_ISSUE_FOUND"
+    three = [take("a", "NO_ISSUE_FOUND"), take("b", "DEFECT"), take("c", "NO_ISSUE_FOUND")]
+    assert label(three) == "NO_ISSUE_FOUND"
+    assert label([take("a", "NO_ISSUE_FOUND"), take("b", "UNRESOLVED")]) == "DEFECT"
+    assert label([take("a", "DEFECT"), take("b", "NO_VERDICT")]) == "DEFECT"
+    assert label([*three, {"by": "auditor", "label": "DEFECT"}]) == "DEFECT"

@@ -16,7 +16,7 @@ from inspect_ai.tool import Tool, ToolError, tool
 from inspect_ai.util import StoreModel, sandbox, store_as
 from pydantic import BaseModel, Field, JsonValue
 
-from ._labels import Source
+from ._labels import TIE, Source, majority_label
 from ._verdicts import Evidence, InvestigationItemSkill
 
 if TYPE_CHECKING:
@@ -179,10 +179,39 @@ def add_takes(register: Register, rows: list[dict[str, Any]]) -> list[str]:
     return added
 
 
-def standing(takes: list[Take]) -> Take | None:
-    """The take that stands: the auditor's latest, else the investigators' latest."""
+def _voter(take: Take) -> str:
+    """The investigator a take is from: its job, so each job votes once."""
+    return take.run or take.eval_id or ""
+
+
+def standing(takes: list[Take], skill: InvestigationItemSkill | None = None) -> Take | None:
+    """The take that stands: the auditor's latest, else the investigators' majority.
+
+    With no auditor take, each investigator's latest verdict votes (NO_VERDICT does
+    not) and the majority grade stands, represented by the latest take that gave it;
+    a tie stands as a flagged grade (`majority_label`; DEFECT on the label checks), for
+    the auditor. A single investigator's latest take stands as before.
+    """
     mine = [t for t in takes if t.by == "auditor"]
-    return (mine or takes or [None])[-1]
+    if mine:
+        return mine[-1]
+    if not takes:
+        return None
+    flags = skill.flags if skill else (TIE,)
+    label = majority_label([(_voter(t), t.label) for t in takes], flags)
+    if label is None:
+        return takes[-1]
+    latest = {_voter(t): t for t in takes}
+    for take in reversed(takes):
+        if take.label == label and latest[_voter(take)] is take:
+            return take
+    return Take(
+        by="investigator",
+        label=label,
+        explanation="The investigators tied ("
+        + ", ".join(sorted(t.label for t in latest.values() if t.label != "NO_VERDICT"))
+        + f"); the cell stands as {label} until the auditor rules.",
+    )
 
 
 def apply_reviews(
@@ -208,9 +237,11 @@ def cell_states(takes: list[Take], skill: InvestigationItemSkill | None) -> set[
     if not takes:
         return {"missing"}
     found: set[str] = set()
-    top = standing(takes)
+    top = standing(takes, skill)
     if skill and top and (top.label not in skill.grades or top.label in skill.unresolved):
         found.add("unresolved")
+    if skill and top and top.by != "auditor" and top.label in skill.flags:
+        found.add("flagged")
     last_review = max((i for i, take in enumerate(takes) if take.by == "auditor"), default=-1)
     if skill and any(t.label in skill.flags for t in takes[last_review + 1 :]):
         found.add("flagged")
@@ -255,7 +286,8 @@ def select(
             "check": name,
             "labels": [f"{t.by}:{t.label}" for t in takes],
             "standing": (
-                standing(takes) or Take(by="investigator", label="-", explanation="")
+                standing(takes, checks.get(name))
+                or Take(by="investigator", label="-", explanation="")
             ).label,
         }
         for sample_id, name, takes in cells

@@ -433,3 +433,48 @@ def test_a_model_the_task_loads_by_default_is_recorded(
     asyncio.run(_register.start_register("register_fixture", policy))
     # a model name ("/"), under a model-like parameter, left unset by the audit's arguments
     assert _register.population().subject["model_defaults"] == {"judge_model": "anthropic/claude-x"}
+
+
+def _take(run: str, label: str, by: str = "investigator") -> "_register.Take":
+    return _register.Take(by=by, label=label, explanation="e", run=run)  # type: ignore[arg-type]
+
+
+def test_with_no_review_the_investigators_majority_stands() -> None:
+    skill = next(s for s in investigation_items() if s.name == "question-labels")
+    standing = _register.standing
+    # one investigator: its latest take stands, as before, NO_VERDICT included
+    one = [_take("a", "DEFECT"), _take("a", "NO_ISSUE_FOUND")]
+    assert standing(one, skill) is one[-1]
+    assert standing([_take("a", "NO_VERDICT")], skill).label == "NO_VERDICT"  # type: ignore[union-attr]
+    # each job votes once, by its latest take; the latest take of the majority stands
+    takes = [
+        _take("a", "DEFECT"),
+        _take("a", "NO_ISSUE_FOUND"),
+        _take("b", "NO_ISSUE_FOUND"),
+        _take("c", "DEFECT"),
+    ]
+    assert standing(takes, skill) is takes[2]
+    # NO_VERDICT does not vote
+    votes = [_take("a", "DEFECT"), _take("b", "NO_VERDICT"), _take("c", "NO_VERDICT")]
+    assert standing(votes, skill) is votes[0]
+    assert standing([_take("a", "NO_VERDICT"), _take("b", "NO_VERDICT")], skill).label == (  # type: ignore[union-attr]
+        "NO_VERDICT"
+    )
+    # a tie stands as a defect, the latest defect take representing it
+    tie = [_take("a", "DEFECT"), _take("b", "NO_ISSUE_FOUND")]
+    assert standing(tie, skill) is tie[0]
+    # a tie without a defect take still stands as one, and is flagged for the auditor
+    odd = [_take("a", "UNRESOLVED"), _take("b", "NO_ISSUE_FOUND")]
+    top = standing(odd, skill)
+    assert top is not None and top.label == "DEFECT" and "tied" in top.explanation
+    assert "flagged" in _register.cell_states(odd, skill)
+    # five workers, three clean: clean stands, but the two flags still wait for review
+    five = [
+        _take(f"w{i}", label) for i, label in enumerate(["DEFECT"] * 2 + ["NO_ISSUE_FOUND"] * 3)
+    ]
+    assert standing(five, skill).label == "NO_ISSUE_FOUND"  # type: ignore[union-attr]
+    assert {"flagged", "disputed"} <= _register.cell_states(five, skill)
+    # the auditor's ruling stands over any majority
+    ruled = [*five, _take("", "DEFECT", by="auditor")]
+    assert standing(ruled, skill) is ruled[-1]
+    assert "flagged" not in _register.cell_states(ruled, skill)

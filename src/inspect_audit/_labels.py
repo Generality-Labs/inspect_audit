@@ -1,5 +1,7 @@
 """Validation of per-question labels recorded by the question-labels check."""
 
+from collections import Counter
+from collections.abc import Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
@@ -43,6 +45,38 @@ class Source(BaseModel):
     quote: str = Field(min_length=1)
     # whether this is the answer the benchmark's reference takes
     key: bool = False
+
+
+# what a tie between investigators stands as until the auditor rules, on the label
+# checks: a defect, so the cell is flagged for review rather than settled by whichever
+# verdict arrived last
+TIE = "DEFECT"
+
+
+def majority_label(votes: list[tuple[str, str]], flags: Sequence[str] = (TIE,)) -> str | None:
+    """The grade most investigators gave a cell, before any auditor ruling.
+
+    `votes` are (investigator, label) in the order recorded; each investigator (one
+    job) counts once, by its latest label, and NO_VERDICT does not vote. A tie stands
+    as a flagged grade, so the auditor sees it: the latest tied label that is one of
+    `flags`, else the first of `flags`, else (a check that flags nothing) the latest
+    tied label. None where fewer than two investigators recorded anything, or none
+    voted: the cell's latest take stands, as it always has.
+    """
+    latest: dict[str, str] = {}
+    for voter, label in votes:
+        latest[voter] = label
+    if len(latest) < 2:
+        return None
+    counted = Counter(label for label in latest.values() if label != "NO_VERDICT")
+    if not counted:
+        return None
+    top = max(counted.values())
+    tied = [label for label in latest.values() if counted.get(label) == top]
+    if len(set(tied)) == 1:
+        return tied[0]
+    flagged = [label for label in tied if label in flags]
+    return flagged[-1] if flagged else (flags[0] if flags else tied[-1])
 
 
 # a quoted claim is the passage that gives the answer, not the page around it

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ._labels import Source
+from ._labels import Source, majority_label
 from ._verdicts import Evidence
 
 if TYPE_CHECKING:
@@ -678,12 +678,17 @@ def logs_supplied(findings: "Findings") -> bool:
 def _standing_label(takes: list[dict[str, Any]]) -> str | None:
     """The label that stands on a cell.
 
-    The auditor's latest review, else the investigators' latest verdict; None where
-    nothing was recorded.
+    The auditor's latest review, else the investigators' majority as the register
+    takes it (`majority_label`: one vote per job, ties a defect), else the latest
+    verdict; None where nothing was recorded.
     """
     mine = [t for t in takes if t.get("by") == "auditor"]
-    chosen = (mine or takes or [None])[-1]
-    return str(chosen["label"]) if chosen else None
+    if mine:
+        return str(mine[-1]["label"])
+    if not takes:
+        return None
+    votes = [(str(t.get("run") or t.get("eval_id") or ""), str(t["label"])) for t in takes]
+    return majority_label(votes) or str(takes[-1]["label"])
 
 
 def _status(label: str | None) -> str:

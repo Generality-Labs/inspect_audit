@@ -12,7 +12,7 @@ from inspect_ai import Task, eval
 from inspect_ai.dataset import Sample
 from test_helpers.fake_hawk import FakeHawk, runner_hook
 
-from inspect_audit.dispatch import HawkLogin, HawkRuns, Job, JobState
+from inspect_audit.dispatch import FINISHED, HawkLogin, HawkRuns, Job, JobState
 from inspect_audit.dispatch.jobs import settled
 
 
@@ -132,6 +132,42 @@ def test_a_finished_job_the_warehouse_never_imported_is_complete_not_pending() -
     asyncio.run(run())
 
 
+def test_a_finished_job_whose_import_never_ends_reads_its_logs_word() -> None:
+    """Hawk 4.2's job-status reads "importing" ("Importing samples") with no pods when a
+    finished job's warehouse import never completes: g-luna-2/3, 49 scored and 1 errored,
+    log status "error", blocked the auditor's submit_findings as running."""
+
+    async def run() -> None:
+        async with FakeHawk() as hawk:
+            runs = HawkRuns(hawk.url, credential_mode="restricted")
+            run_id = await runs.submit(JOB)
+            job = hawk.jobs[run_id]
+            job.status, job.live_status = "importing", "complete"
+            job.samples = [(True, None), (True, None)]
+            assert await runs.status(run_id) is JobState.COMPLETE
+
+            # finished with errors: some samples scored, one errored. Hawk's live word is
+            # complete; the job is collected like any finished one, its errored item
+            # left without a verdict to re-send
+            job.errored = {1}
+            assert await runs.status(run_id) is JobState.COMPLETE
+            assert JobState.COMPLETE in FINISHED
+
+            # every sample errored: Hawk's live word is failed, and so is ours
+            job.errored, job.live_status = {0, 1}, "failed"
+            assert await runs.status(run_id) is JobState.FAILED
+
+            # a sample still going, or pods still there: running, as before
+            job.errored, job.live_status = {1}, "complete"
+            job.samples = [(True, None), (False, None)]
+            assert await runs.status(run_id) is JobState.RUNNING
+            job.samples = [(True, None), (True, None)]
+            job.pods = ["Running"]
+            assert await runs.status(run_id) is JobState.RUNNING
+
+    asyncio.run(run())
+
+
 def test_a_job_status_word_other_than_pending_is_not_second_guessed() -> None:
     async def run() -> None:
         async with FakeHawk() as hawk:
@@ -140,7 +176,6 @@ def test_a_job_status_word_other_than_pending_is_not_second_guessed() -> None:
             job = hawk.jobs[run_id]
             job.samples = [(True, None)]
             for word, state in [
-                ("importing", JobState.RUNNING),
                 ("running", JobState.RUNNING),
                 ("failed", JobState.FAILED),
                 ("stuck", JobState.STUCK),

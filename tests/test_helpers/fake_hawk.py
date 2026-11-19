@@ -41,6 +41,8 @@ class FakeJob:
     # eval-set-status's own word, when it differs from job-status's (Hawk 4.2's
     # job-status reads "pending" for a finished job its warehouse never imported)
     live_status: str | None = None
+    # positions of samples that ended in an error (done, phase "errored")
+    errored: set[int] = field(default_factory=set)
 
 
 class FakeHawk:
@@ -158,8 +160,11 @@ class FakeHawk:
             monitoring.SampleStatus(
                 id=str(n + 1),
                 epoch=1,
-                phase="completed" if finished else "running",  # pyright: ignore[reportArgumentType]
+                phase=("errored" if n in job.errored else "completed")  # pyright: ignore[reportArgumentType]
+                if finished
+                else "running",
                 completed=finished,
+                error="RuntimeError: boom" if finished and n in job.errored else None,
                 model_usage=None
                 if usage is None
                 else {

@@ -144,28 +144,42 @@ def hawk_state(word: Any) -> JobState:
 
 
 def _finished_but_unimported(found: Any) -> bool:
-    """Job-status that may hide a finished job: not yet started by its word, no pods.
+    """Job-status that may hide a finished job: not started or still importing, no pods.
 
-    Only when Hawk's pod read succeeded and found none (`pod_status_error` unset): a
-    failed read is no evidence the pods are gone.
+    "importing" is Hawk 4.2's word ("Importing samples" in its CLI) for a job whose
+    pods are gone while the warehouse import is pending or in progress; one that never
+    completes leaves the job there for good. Only when Hawk's pod read succeeded and
+    found none (`pod_status_error` unset): a failed read is no evidence the pods are
+    gone.
     """
     pods = found.pod_status.pods if found.pod_status is not None else []
     return (
-        str(found.status) in {"pending", "queued", "unknown"}
+        str(found.status) in {"pending", "queued", "unknown", "importing"}
         and not pods
         and getattr(found, "pod_status_error", None) is None
     )
 
 
-def _all_samples_done(live: Any) -> bool:
-    """Hawk's live eval-set status: complete, its tasks read, and every sample done."""
+# a sample's phases in Hawk's live status once it can change no more
+_SAMPLE_ENDED = frozenset({"completed", "errored", "limit", "canceled"})
+
+
+def _finished_state(live: Any) -> JobState | None:
+    """A finished job's state from Hawk's live eval-set status, read from its logs.
+
+    Its tasks read and every sample ended: complete when Hawk says so, which it does
+    when any sample finished even if others errored (the log reads "error"; the
+    scored samples are collected and the errored ones show unresolved, to re-send);
+    failed when every sample errored. None while anything may still change.
+    """
     samples = [s for task in live.tasks for s in task.samples or []]
-    return (
-        str(live.status) == "complete"
-        and "tasks" not in (live.errors or {})
-        and bool(samples)
-        and all(s.completed for s in samples)
-    )
+    if (
+        "tasks" in (live.errors or {})
+        or not samples
+        or not all(s.completed or str(s.phase) in _SAMPLE_ENDED for s in samples)
+    ):
+        return None
+    return {"complete": JobState.COMPLETE, "failed": JobState.FAILED}.get(str(live.status))
 
 
 async def submit_eval_set(
@@ -370,13 +384,13 @@ class HawkRuns:
             found = await client.get_job_status(run_id)
             if found is not None and _finished_but_unimported(found):
                 # Hawk 4.2's job-status reads "pending" for a finished job whose pods
-                # are gone when the warehouse never imported its log
-                # (`monitoring_server._derive_job_status`), so it would stay "running"
-                # here forever. Its live eval-set status reads the log itself: if that
-                # says complete with every sample done, the job is complete.
+                # are gone when the warehouse never imported its log, and "importing"
+                # when its import never finishes (`monitoring_server._derive_job_status`),
+                # so it would stay "running" here forever. Its live eval-set status
+                # reads the log itself: once every sample has ended, its word stands.
                 live = await client.get_eval_set_status(run_id)
-                if _all_samples_done(live):
-                    return JobState.COMPLETE
+                if (state := _finished_state(live)) is not None:
+                    return state
         return hawk_state(found.status if found is not None else None)
 
     async def usage(self, run_id: str) -> tuple[dict[str, Any], int]:

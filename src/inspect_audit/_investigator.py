@@ -27,6 +27,7 @@ from ._grade import grade_tool
 from ._image import view_image
 from ._logs import LogIndex, sliced_logs
 from ._reset import reset_tool
+from ._search import tavily_results
 from ._source import SourceCopy
 from ._verdicts import (
     LOG_SKILLS,
@@ -218,7 +219,12 @@ def investigator(
             view_image(INVESTIGATOR),
         ]
         if search is not None:
-            tools.append(web_search(providers=search))
+            # Tavily through Inspect shows only Tavily's own answer; list the results instead
+            tools.append(
+                tavily_results()
+                if set(search) == {"tavily"} and search["tavily"]
+                else web_search(providers=search)
+            )
         if their_scorers:
             tools.append(grade_tool(state, their_messages, their_scorers, index))
         if benchmark_box:

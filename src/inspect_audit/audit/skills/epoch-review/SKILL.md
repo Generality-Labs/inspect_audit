@@ -128,8 +128,8 @@ written or as graded counts once.
 When the register's subject carries `logs_provenance`, the supplied logs were recorded
 by a build of the benchmark other than the one installed here (Epoch's own package
 against a reconstruction, or an older release). That is not a reason to stop: the
-review looks for problems in those logs. It is a reason to say so, in the limitations
-and wherever a reproduced grade disagrees with a recorded one, where the build
+review looks for problems in those logs. The page prints a notice saying so; say so
+too wherever a reproduced grade disagrees with a recorded one, where the build
 difference is the first suspect until the transcript shows the grader's reasoning.
 
 ## Evidence and the page

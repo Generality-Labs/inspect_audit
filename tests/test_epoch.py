@@ -355,8 +355,11 @@ def test_the_page_is_rendered_from_the_bundle(tmp_path: Path, monkeypatch) -> No
     assert "Audited without finding a defect (9): s1, s2" in page
     assert "**Partial**" in page and "**[proceed to 2]**" in page
     assert "**Not Reviewed**" in page  # elicitation and the quality rows wait for phase 2
-    assert "[^1]: Sample s0" in page
-    assert "without requesting additional information from Google" in page
+    # the page ends after the errors and the notices: the summary's footnote and the
+    # disclaimer are not printed, and the prose the page leaves out is kept
+    assert "[^1]" not in page and "## Footnotes" not in page
+    assert "without requesting additional information from Google" not in page
+    assert json.loads((output / "prose.json").read_text())["summary"] == PROSE["summary"]
     verdict = json.loads((output / "verdict.json").read_text())
     assert verdict["verdict"] == "Incomplete" and verdict["logs_supplied"] is False
     assert json.loads((output / "coverage.json").read_text())["counts"]["DEFECT"] == 1
@@ -385,6 +388,31 @@ def test_prose_that_oversteps_the_verdict_or_the_defects_is_refused(
 
         with pytest.raises(ToolError, match=message), reported("Preview"):
             asyncio.run(epoch.build(tmp_path, source))
+
+
+def test_the_errors_alone_make_a_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The blocks the page does not render are optional; only cited footnotes print."""
+    page = _epoch.template()
+    assert page.ends_after_opening
+    summary = page.block("summary")
+    assert summary.required and not page.renders(summary)
+    rendered = {"representative_errors", "error_examples"}
+    assert {b.id for b in page.blocks if page.renders(b)} == rendered
+    source = bundle(tmp_path, findings(ten(1), phase1()))
+    minimal = {
+        "profile": PROSE["profile"],
+        "representative_errors": ["Impossible as written (1 row): two defensible years.[^1]"],
+        "error_examples": PROSE["error_examples"],
+        "footnotes": PROSE["footnotes"],
+    }
+    monkeypatch.setattr(epoch, "sandbox", lambda: Box(minimal))
+    output = asyncio.run(epoch.build(tmp_path, source))
+    text = (output / "epoch_review.md").read_text()
+    assert "## Footnotes\n\n[^1]: Sample s0" in text
+    assert text.index("Phase 1 only") < text.index("## Footnotes")
+    assert "summary" not in json.loads((output / "prose.json").read_text())
+    staged = _epoch.methodology_markdown(_epoch.methodology(), page)
+    assert "### summary (not rendered; optional)" in staged and "leave them out" in staged
 
 
 def test_a_plain_cell_speaks_of_the_benchmark_not_the_audit(tmp_path: Path, monkeypatch) -> None:
@@ -570,15 +598,12 @@ def test_the_page_opens_with_the_rubric_then_the_representative_errors(
         "| s0 | Impossible as written |",
         "Audited without finding a defect (9)",
         "Phase 1 only",
-        "## Summary",
-        "## Methodology",
-        "## Limitations",
-        "## Disclaimer",
-        "## Recommendations",
-        "## Footnotes",
     ]
     positions = [page.index(marker) for marker in order]
     assert positions == sorted(positions)
+    assert page.rstrip().endswith("*")  # the notice is the last thing on the page
+    for dropped in ("Summary", "Methodology", "Limitations", "Disclaimer", "Recommendations"):
+        assert f"## {dropped}" not in page
     # findings without sources print no sources section
     assert "Competing answers" not in page
 
@@ -597,7 +622,7 @@ def test_competing_answers_are_printed_with_their_sources(tmp_path: Path, monkey
     output = asyncio.run(epoch.build(tmp_path, source))
     page = (output / "epoch_review.md").read_text()
     section = page[page.index("### Competing answers and their sources") :]
-    assert section.index("**s0**: Impossible as written") < section.index("## Summary")
+    assert "**s0**: Impossible as written" in section and "## Summary" not in page
     assert (
         "- **Long Good Bye** (the reference answer): Catalogue of Long Good Bye, “The first EP "
         "was Long Good Bye.” <https://label.example/long-good-bye>"

@@ -315,6 +315,10 @@ class Template(BaseModel):
     # notices and the other blocks follow, in template order; without it the blocks
     # come first and the rubric after them
     opening: list[str] = Field(default_factory=list)
+    # the page ends after the opening and the notices: the other blocks and the
+    # disclaimer are not rendered, so none is required (one written is still checked
+    # and kept in prose.json), and only the footnotes the page refers to are printed
+    ends_after_opening: bool = False
 
     @model_validator(mode="after")
     def _consistent(self) -> "Template":
@@ -325,6 +329,8 @@ class Template(BaseModel):
             raise ValueError(f"opening names unknown blocks {', '.join(sorted(unknown))}")
         if any(b.closing for b in self.blocks if b.id in self.opening):
             raise ValueError("a closing block cannot open the page")
+        if self.ends_after_opening and "rubric" not in self.opening:
+            raise ValueError("a page that ends after its opening must open with the rubric")
         default = self.style.get("max_sentences_per_paragraph")
         for block in self.blocks:
             if block.kind == "table" and not block.columns:
@@ -334,6 +340,10 @@ class Template(BaseModel):
             if set(block.required) - set(block.when):
                 raise ValueError(f"{block.id}: required verdicts must be among `when`")
         return self
+
+    def renders(self, block: Block) -> bool:
+        """Whether the page prints the block at all (for a verdict that shows it)."""
+        return not self.ends_after_opening or block.id in self.opening
 
     def block(self, id: str) -> Block:
         for b in self.blocks:
@@ -429,13 +439,28 @@ def methodology_markdown(method: Methodology, page: Template) -> str:
         "",
     ]
     if page.opening:
-        out += [
-            "The page opens, after its header, with "
-            + ", then ".join("the rubric" if i == "rubric" else f"`{i}`" for i in page.opening)
-            + "; the notices and the other blocks follow.",
-            "",
-        ]
+        opening = ", then ".join("the rubric" if i == "rubric" else f"`{i}`" for i in page.opening)
+        if page.ends_after_opening:
+            out += [
+                (
+                    f"The page shows, after its header, {opening}, then the notices, and "
+                    "ends there. The other blocks below are not rendered: leave them out. "
+                    "One written anyway is checked against its limits and kept in prose.json."
+                ),
+                "",
+            ]
+        else:
+            out += [
+                (
+                    f"The page opens, after its header, with {opening}; the notices and "
+                    "the other blocks follow."
+                ),
+                "",
+            ]
     for block in page.blocks:
+        if not page.renders(block):
+            out += [f"### {block.id} (not rendered; optional)", ""]
+            continue
         limits = [
             f"{k.replace('max_', 'at most ').replace('_', ' ')} {v}"
             for k, v in block.model_dump().items()
@@ -1108,7 +1133,11 @@ class Prose(BaseModel):
                 f"prose.json: unknown blocks {', '.join(sorted(unknown))}; the template "
                 f"declares {', '.join(sorted(known))} beside profile"
             )
-        missing = [b.id for b in page.blocks if b.required_for(verdict) and not self.present(b)]
+        missing = [
+            b.id
+            for b in page.blocks
+            if b.required_for(verdict) and page.renders(b) and not self.present(b)
+        ]
         if missing:
             raise ValueError(f"a {verdict} review needs the {', '.join(missing)} block(s)")
         if page.footnotes:
@@ -1213,7 +1242,10 @@ def check_prose(
         missing = [
             b.id
             for b in page.blocks
-            if b.required_when_defects and b.shown_for(verdict) and not prose.present(b)
+            if b.required_when_defects
+            and b.shown_for(verdict)
+            and page.renders(b)
+            and not prose.present(b)
         ]
         if missing:
             raise ValueError(
@@ -1456,7 +1488,8 @@ def render(
 
     The header, then what the template's `opening` names (the rubric, then the
     representative errors with their sources), then the notices and the other blocks,
-    the disclaimer, the closing blocks and the footnotes.
+    the disclaimer, the closing blocks and the footnotes. A template that ends after its
+    opening stops at the notices, with only the footnotes the page refers to.
     """
     verdict = derived["verdict"]
     profile = prose.profile
@@ -1557,6 +1590,14 @@ def render(
             _render_block(block)
     for notice in derived.get("notices") or []:
         out += [f"*{notice}*", ""]
+    if page.ends_after_opening:
+        cited = set(footnote_marks("\n".join(out)))
+        notes = [(i, n) for i, n in enumerate(footnotes, 1) if i in cited]
+        if notes and page.footnotes:
+            out += [f"## {page.footnotes.title}", ""]
+            out += [f"[^{i}]: {note.strip()}" for i, note in notes]
+            out.append("")
+        return "\n".join(out)
     for block in page.blocks:
         if block.closing or block.id in page.opening or not _shown(block):
             continue

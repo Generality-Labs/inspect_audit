@@ -1718,6 +1718,7 @@ remote = [
 runner = [
     { name = "aiofiles", marker = "python_full_version >= '3.13'" },
     { name = "hawk", extra = ["client"], marker = "python_full_version >= '3.13'" },
+    { name = "joserfc", marker = "python_full_version >= '3.13'" },
 ]
 
 [package.dev-dependencies]
@@ -1763,6 +1764,7 @@ requires-dist = [
     { name = "hawk", extras = ["client"], marker = "python_full_version >= '3.13' and extra == 'runner'", specifier = ">=3.4,<5" },
     { name = "inspect-ai", specifier = "==0.3.285" },
     { name = "inspect-k8s-sandbox", marker = "extra == 'k8s'", specifier = ">=0.13" },
+    { name = "joserfc", marker = "python_full_version >= '3.13' and extra == 'runner'", specifier = ">=1.7.4,<2" },
     { name = "openai", specifier = ">=1.0" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "playwright", marker = "extra == 'publishing'", specifier = ">=1.49" },

@@ -38,6 +38,9 @@ remote = [
 runner = [
     "hawk[client]>=3.4,<5; python_version >= '3.13'",
     "aiofiles; python_version >= '3.13'",
+    # hawk 4.2's hawk.cli.download, which fetches `hawk:` logs, imports hawk.cli.util.auth
+    # and through it joserfc, which only the CLI extra declares
+    "joserfc>=1.7.4,<2; python_version >= '3.13'",
 ]
 publishing = ["playwright>=1.49"]
 k8s = [

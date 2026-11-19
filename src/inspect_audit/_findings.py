@@ -12,6 +12,7 @@ from inspect_ai.tool import Tool, ToolError, tool
 from inspect_ai.util import StoreModel, sandbox, store_as
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from ._labels import Source
 from ._verdicts import Evidence
 
 if TYPE_CHECKING:
@@ -37,6 +38,9 @@ class Review(BaseModel):
     label: str
     explanation: str = Field(min_length=1)
     evidence: list[Evidence] = Field(min_length=1)
+    # the competing answers a DEFECT rests on, each with its source, when the review
+    # decides the item on them; empty to keep the investigator's
+    sources: list[Source] = Field(default_factory=list)
 
 
 class Rating(BaseModel):
@@ -143,9 +147,12 @@ def validate_draft(data: Any, register: "Register") -> Findings:
     from ._register import apply_reviews
 
     apply_reviews(register.model_copy(deep=True), draft.auditor.reviews, checks)
+    from ._labels import check_sources
+
     for review in draft.auditor.reviews:
         if not review.explanation.strip():
             raise ValueError("Reviews need an explanation")
+        check_sources(f"review of {review.sample_id} ({review.check})", review.sources)
     for rating in draft.auditor.ratings.values():
         if not rating.label.strip() or not rating.explanation.strip():
             raise ValueError("Ratings need a label and explanation")

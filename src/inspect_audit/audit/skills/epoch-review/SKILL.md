@@ -105,6 +105,15 @@ written or as graded counts once.
 - **A scorer that would credit a plainly wrong answer is a false positive**, whether or
   not a model has been seen to give one. Demonstrate it with a benign wrong answer
   through the real scorer; do not compose attacks on it.
+- **Competing answers carry their sources.** The page prints, under the errors
+  table, each defective item's competing answers, each with its source, its link and
+  the quoted claim, from the investigators' `sources`. Where a DEFECT rests on
+  conflicting sources or a second defensible answer and the standing worker recorded
+  none, or you decide the item on other sources, give `sources` on your review:
+  `[{answer, source, url, quote, key}]`, at least the key's answer (`key: true`) and the
+  one it rejects, each with the public URL (never a local copy under /workspace or
+  /tmp) or an exact citation, and the passage quoted. A review's sources replace the
+  worker's for that check.
 - **Your reviews, not the workers' labels, stand.** Where you disagree with a
   worker, record a review with the evidence that overturns it. Apply the bars above to
   every worker DEFECT, question or grading, and overturn one that does not meet them,

@@ -16,6 +16,7 @@ from inspect_ai.tool import Tool, ToolError, tool
 from inspect_ai.util import StoreModel, sandbox, store_as
 from pydantic import BaseModel, Field, JsonValue
 
+from ._labels import Source
 from ._verdicts import Evidence, InvestigationItemSkill
 
 if TYPE_CHECKING:
@@ -41,6 +42,8 @@ class Take(BaseModel):
     model: str | None = None
     record: dict[str, JsonValue] | None = None
     """The verdict exactly as the investigator recorded it."""
+    sources: list[Source] = Field(default_factory=list)
+    """An auditor's review: the competing answers it rests on, each with its source."""
     at: str = Field(default_factory=now)
 
 

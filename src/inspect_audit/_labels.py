@@ -25,6 +25,55 @@ DEFECT_TYPES = (
 GRADING_DEFECT_TYPES = ("false_negative", "false_positive", "grader_failure")
 
 
+class Source(BaseModel):
+    """One competing answer and where it is published, for the page's reader to check.
+
+    A defect that rests on conflicting sources, or on a second defensible answer, lists
+    every competing answer this way, the key's included: the page prints each with its
+    source, its link and the passage that makes the claim.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    answer: str = Field(min_length=1)
+    # the work and who published it: "Discogs release 7082924", "UK.PROJECT label page"
+    source: str = Field(min_length=1)
+    # the public URL, or an exact citation (volume, page, document number) for print
+    url: str = Field(min_length=1)
+    # the passage, quoted, that gives this answer
+    quote: str = Field(min_length=1)
+    # whether this is the answer the benchmark's reference takes
+    key: bool = False
+
+
+# a quoted claim is the passage that gives the answer, not the page around it
+QUOTE_WORDS = 60
+
+
+def check_sources(name: str, sources: list[Source]) -> None:
+    """Competing answers: at least two, each cited where a reader can find it."""
+    if not sources:
+        return
+    answers = {" ".join(s.answer.lower().split()) for s in sources}
+    if len(answers) < 2:
+        raise ValueError(
+            f"{name}: sources list competing answers, at least two different ones (the "
+            "key's and the one it rejects); one answer is evidence, not a conflict"
+        )
+    for i, source in enumerate(sources, 1):
+        if any(not v.strip() for v in (source.answer, source.source, source.url, source.quote)):
+            raise ValueError(f"{name}: source {i} needs answer, source, url and quote")
+        if len(source.quote.split()) > QUOTE_WORDS:
+            raise ValueError(
+                f"{name}: source {i} quotes {len(source.quote.split())} words; quote the "
+                f"passage that gives the answer, at most {QUOTE_WORDS}"
+            )
+        if source.url.strip().startswith(("/", "~", "file:")):
+            raise ValueError(
+                f"{name}: source {i} cites a local copy ({source.url}); give the public URL "
+                "the copy was fetched from, or an exact citation"
+            )
+
+
 class QuestionAssessment(BaseModel):
     """One question's validity, independent of a model's recorded pass or failure."""
 
@@ -44,6 +93,8 @@ class QuestionAssessment(BaseModel):
     # one plain sentence for the page's reader saying what is wrong, required on a
     # grading-labels defect, where the page prints it beside the item
     headline: str | None = None
+    # the competing answers a defect rests on, each with its source; see `Source`
+    sources: list[Source] = Field(default_factory=list)
 
 
 def validate_labels(
@@ -87,4 +138,5 @@ def validate_labels(
             raise ValueError(f"{row.question_id}: duplicate defect types")
         if any(not s.strip() for s in row.checks + row.evidence + row.defect_types):
             raise ValueError(f"{row.question_id}: empty check or evidence reference")
+        check_sources(row.question_id, row.sources)
     return rows

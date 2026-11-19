@@ -4,7 +4,9 @@ The auditor rates the rubric's rows in `auditor.ratings` during the audit (the
 epoch-review skill says how) and, after submission, writes the page's prose blocks to
 `/workspace/report/prose.json`. Everything else on the page, the verdict, the defect
 rate, the rubric tables and the list of audited items, is derived from the bundle by
-`inspect_audit._epoch`, so the page cannot say more than the findings show.
+`inspect_audit._epoch`, so the page cannot say more than the findings show. The page
+opens with the rubric and follows it with the representative errors, each defective
+item's competing answers printed with their sources from the findings.
 """
 
 import json
@@ -76,6 +78,7 @@ def render(output: Path, findings: Findings, prose: _epoch.Prose, findings_sha25
                     "template",
                     "logs_supplied",
                     "sampling",
+                    "warnings",
                 )
             }
             | {"findings_sha256": findings_sha256}
@@ -83,6 +86,8 @@ def render(output: Path, findings: Findings, prose: _epoch.Prose, findings_sha25
     )
     (output / "coverage.json").write_bytes(encoded(derived["coverage"]))
     (output / "assessments.json").write_bytes(encoded(derived["assessments"]))
+    # each defective item's competing answers with their sources, as the page prints them
+    (output / "sources.json").write_bytes(encoded(derived["sources"]))
     (output / "prose.json").write_bytes(encoded(prose.model_dump(mode="json")))
     # the description the page was rendered against, so a reader can check a row's
     # form and scale against what the auditor was asked
@@ -105,10 +110,13 @@ def preview_review(root: Path) -> Tool:
             output = await build(root, await restore_bundle(root))
         await sandbox().write_file(f"/workspace/report/{PAGE}", (output / PAGE).read_text())
         verdict = json.loads((output / "verdict.json").read_text())
+        warnings = "".join(f" Check: {w}." for w in verdict.get("warnings") or [])
         return (
             f"Preview ready at /workspace/report/{PAGE}. Verdict {verdict['verdict']}: "
             + "; ".join(verdict["reasons"])
-            + ". Read the page as its reader would, revise prose.json, then publish_document."
+            + "."
+            + warnings
+            + " Read the page as its reader would, revise prose.json, then publish_document."
         )
 
     return execute
@@ -177,6 +185,8 @@ def main(argv: list[str] | None = None) -> int:
     output = render(args.out, findings, prose, digest)
     verdict = json.loads((output / "verdict.json").read_text())
     print(f"{output / PAGE}: {verdict['verdict']}; " + "; ".join(verdict["reasons"]))
+    for warning in verdict.get("warnings") or []:
+        print(f"check: {warning}")
     return 0
 
 

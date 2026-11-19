@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ._labels import Source
 from ._verdicts import Evidence
 
 if TYPE_CHECKING:
@@ -220,6 +221,9 @@ class Column(BaseModel):
     max_sentences: int | None = None
     # one sentence about the item for its reader, with no account of the audit
     plain: bool = False
+    # each row's own text: a run of words repeated from another row's cell is reported
+    # by the preview, as a row edited into the wrong place
+    distinct: bool = False
 
 
 class Block(BaseModel):
@@ -242,6 +246,9 @@ class Block(BaseModel):
     closing: bool = False
     lead: str | dict[str, str] = ""
     footer: Literal["", "coverage_ids"] = ""
+    # a table of items: after it, each item's competing answers with their sources,
+    # from the findings, never from the prose
+    sources: bool = False
 
     def shown_for(self, verdict: str) -> bool:
         return verdict in self.when
@@ -304,12 +311,20 @@ class Template(BaseModel):
     blocks: list[Block]
     footnotes: Footnotes | None = None
     rubric: Rubric
+    # what the page opens with after its header, in order: "rubric" and block ids. The
+    # notices and the other blocks follow, in template order; without it the blocks
+    # come first and the rubric after them
+    opening: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _consistent(self) -> "Template":
         ids = [b.id for b in self.blocks]
         if len(set(ids)) != len(ids):
             raise ValueError("block ids must be unique")
+        if unknown := set(self.opening) - set(ids) - {"rubric"}:
+            raise ValueError(f"opening names unknown blocks {', '.join(sorted(unknown))}")
+        if any(b.closing for b in self.blocks if b.id in self.opening):
+            raise ValueError("a closing block cannot open the page")
         default = self.style.get("max_sentences_per_paragraph")
         for block in self.blocks:
             if block.kind == "table" and not block.columns:
@@ -413,6 +428,13 @@ def methodology_markdown(method: Methodology, page: Template) -> str:
         "Written after submission in `/workspace/report/prose.json`.",
         "",
     ]
+    if page.opening:
+        out += [
+            "The page opens, after its header, with "
+            + ", then ".join("the rubric" if i == "rubric" else f"`{i}`" for i in page.opening)
+            + "; the notices and the other blocks follow.",
+            "",
+        ]
     for block in page.blocks:
         limits = [
             f"{k.replace('max_', 'at most ').replace('_', ' ')} {v}"
@@ -704,6 +726,57 @@ def coverage_ids(coverage: dict[str, Any] | None, status: str) -> list[str]:
 
 def has_defects(coverage: dict[str, Any] | None) -> bool:
     return bool(coverage_ids(coverage, "DEFECT"))
+
+
+def _listed_sources(record: Any, question_id: str) -> list[Any]:
+    """The sources an investigator's assessment rows give for one item."""
+    rows = record.get("question_assessments") if isinstance(record, dict) else None
+    rows = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    mine = [r for r in rows if str(r.get("question_id")) == question_id] or rows
+    return [s for r in mine for s in (r.get("sources") or [])]
+
+
+def sources_from(findings: "Findings") -> dict[str, list[dict[str, Any]]]:
+    """Each item's competing answers with their sources, as the findings record them.
+
+    Per label check, the auditor's latest review that gives sources, else the latest
+    investigator verdict whose assessment row for the item does; both checks' lists
+    are joined, an answer at the same address listed once. Findings from before
+    sources were recorded give none, and the page says nothing about them.
+    """
+    recorded = findings.investigators.get("samples")
+    samples: dict[str, Any] = dict(recorded) if isinstance(recorded, dict) else {}
+    reviewed: dict[tuple[str, str], list[Any]] = {}
+    for review in findings.auditor.reviews:
+        if review.sources:
+            reviewed[(review.sample_id, review.check)] = [s.model_dump() for s in review.sources]
+    out: dict[str, list[dict[str, Any]]] = {}
+    for sample_id, cells in samples.items():
+        if not isinstance(cells, dict):
+            continue
+        found: list[dict[str, Any]] = []
+        for check in LABEL_CHECKS:
+            chosen = reviewed.get((sample_id, check))
+            if chosen is None:
+                for take in reversed(cells.get(check) or []):
+                    listed = _listed_sources(
+                        take.get("record") if isinstance(take, dict) else None, sample_id
+                    )
+                    if listed:
+                        chosen = listed
+                        break
+            for raw in chosen or []:
+                try:
+                    source = Source.model_validate(raw).model_dump()
+                except ValueError:
+                    continue
+                if not any(
+                    (f["answer"], f["url"]) == (source["answer"], source["url"]) for f in found
+                ):
+                    found.append(source)
+        if found:
+            out[str(sample_id)] = found
+    return out
 
 
 def assessments_from(
@@ -1173,6 +1246,57 @@ def check_prose(
             )
 
 
+def _run_words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9][a-z0-9'\u2019.,-]*", text.lower())
+
+
+def shared_run(a: str, b: str) -> str:
+    """The longest run of consecutive words two cells share."""
+    x, y = _run_words(a), _run_words(b)
+    best: tuple[int, int] = (0, 0)
+    lengths = [0] * (len(y) + 1)
+    for i in range(1, len(x) + 1):
+        previous = 0
+        for j in range(1, len(y) + 1):
+            current = lengths[j]
+            lengths[j] = previous + 1 if x[i - 1].strip(".,") == y[j - 1].strip(".,") else 0
+            if lengths[j] > best[0]:
+                best = (lengths[j], i)
+            previous = current
+    return " ".join(x[best[1] - best[0] : best[1]])
+
+
+# a run of this many words shared between two rows' cells is a row copied or edited
+# into the wrong place more often than a turn of phrase
+SHARED_RUN = 6
+
+
+def prose_warnings(prose: Prose, page: Template) -> list[str]:
+    """What the preview points out without refusing: rows that repeat another row's words.
+
+    An auditor revising prose.json by list position can write one item's text into its
+    neighbour's row (an Affected logs cell describing the row above). The page cannot
+    tell a copy from a shared phrase, so it says so and leaves the call to the writer.
+    """
+    out: list[str] = []
+    for block in page.blocks:
+        value = prose.block(block.id)
+        if block.kind != "table" or not isinstance(value, list):
+            continue
+        for column in (c for c in block.columns if c.distinct):
+            cells = [str(row.get(column.key, "")) for row in value if isinstance(row, dict)]
+            for i in range(len(cells)):
+                for j in range(i + 1, len(cells)):
+                    run = shared_run(cells[i], cells[j])
+                    if len(run.split()) >= SHARED_RUN:
+                        out.append(
+                            f"{block.id} rows {i + 1} and {j + 1} ({value[i].get('task', '?')}, "
+                            f'{value[j].get("task", "?")}): {column.key} share "{run}"; '
+                            "check each row describes its own item"
+                        )
+    return out
+
+
 def ordinal_date(iso: str) -> str:
     d = date.fromisoformat(iso)
     suffix = "th" if 11 <= d.day % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(d.day % 10, "th")
@@ -1280,6 +1404,46 @@ def _measure_line(check: Check, row: Assessment, derived: dict[str, Any], unit: 
     return line
 
 
+def _source_line(source: dict[str, Any]) -> str:
+    quote = " ".join(str(source["quote"]).split())
+    where = str(source["url"]).strip()
+    link = f"<{where}>" if re.match(r"https?://", where) else where
+    marker = " (the reference answer)" if source.get("key") else ""
+    return f"- **{_cell(str(source['answer']))}**{marker}: {source['source'].strip()}, “{quote}” {link}"
+
+
+def _sources_section(
+    rows: list[dict[str, Any]],
+    coverage: dict[str, Any] | None,
+    sources: dict[str, list[dict[str, Any]]],
+) -> list[str]:
+    """Under the errors table: each defective item's competing answers, with their sources.
+
+    In the table's order; the items with none recorded are named in one line. Nothing
+    at all when no item records sources, as with findings written before they were.
+    """
+    defects = coverage_ids(coverage, "DEFECT")
+    if not any(qid in sources for qid in defects):
+        return []
+    out = ["### Competing answers and their sources", ""]
+    listed: list[str] = []
+    for row in rows:
+        task = str(row.get("task", ""))
+        for qid in (q for q in defects if re.search(rf"(?<![\w.-]){re.escape(q)}(?![\w.-])", task)):
+            if qid in listed:
+                continue
+            listed.append(qid)
+            if qid not in sources:
+                continue
+            out += [f"**{qid}**: {_cell(str(row.get('error_type', '')))}", ""]
+            out += [_source_line(s) for s in sources[qid]] + [""]
+    missing = [q for q in listed if q not in sources]
+    missing += [q for q in defects if q not in listed and q not in sources]
+    if missing:
+        out += [f"No competing sources recorded ({len(missing)}): {', '.join(missing)}", ""]
+    return out
+
+
 def render(
     page: Template,
     method: Methodology,
@@ -1288,16 +1452,20 @@ def render(
     derived: dict[str, Any],
     coverage: dict[str, Any] | None,
 ) -> str:
-    """The page, rendered from the records so it cannot drift from them."""
+    """The page, rendered from the records so it cannot drift from them.
+
+    The header, then what the template's `opening` names (the rubric, then the
+    representative errors with their sources), then the notices and the other blocks,
+    the disclaimer, the closing blocks and the footnotes.
+    """
     verdict = derived["verdict"]
     profile = prose.profile
+    sources: dict[str, list[dict[str, Any]]] = derived.get("sources") or {}
     out: list[str] = [f"# {page.title.format(benchmark=profile.benchmark)}", ""]
     for i, line in enumerate(page.header):
         trailer = "  " if i < len(page.header) - 1 else ""
         out.append(f"{line.label}: {_header_value(line, profile, verdict)}{trailer}")
     out.append("")
-    for notice in derived.get("notices") or []:
-        out += [f"*{notice}*", ""]
     footnotes: list[str] = prose.footnote_list() if page.footnotes else []
 
     def _render_block(block: Block) -> None:
@@ -1316,6 +1484,8 @@ def render(
             out.append("")
             if block.footer == "coverage_ids":
                 out.extend(coverage_id_lines(coverage))
+            if block.sources:
+                out.extend(_sources_section(value, coverage, sources))
             return
         if block.title:
             out.extend([f"## {block.title}", ""])
@@ -1327,57 +1497,73 @@ def render(
         else:
             out.extend([f"- {b.strip()}" for b in value] + [""])
 
+    def _render_rubric() -> None:
+        rub = page.rubric
+        out.extend([f"## {rub.title}", ""])
+        if rub.intro:
+            out.extend([method.intro[rub.intro], ""])
+        for sec in rub.sections:
+            out.extend([f"### {sec.title}", ""])
+            if sec.intro:
+                out.extend([method.intro[sec.intro], ""])
+            if sec.measure_line:
+                for check in method.by_section(sec.section):
+                    line = _measure_line(
+                        check, assessments[check.id], derived, method.sampling.unit
+                    )
+                    if line:
+                        out.extend([line, ""])
+            out.extend([f"| {' | '.join(sec.columns)} |", "|" + "---|" * len(sec.columns)])
+            for check in method.by_section(sec.section):
+                row = assessments[check.id]
+                if sec.layout == "levels":
+                    form = check.form if isinstance(check.form, dict) else {}
+                    for level, spec in form.items():
+                        chosen = level == row.level
+                        notes = _cell(row.notes) if chosen else ""
+                        status = f"**{spec['status']}**" if chosen else spec["status"]
+                        out.append(
+                            f"| {f'**{level}**' if chosen else level} | {spec['meaning']} | "
+                            f"{status} | {notes} |"
+                        )
+                elif sec.layout == "defect_classes":
+                    form = check.form if isinstance(check.form, dict) else {}
+                    failing = row.level == method.verdict.procedure.minimum["fail_at"]
+                    notes = row.notes
+                    if failing and row.impact.strip() and page.footnotes:
+                        footnotes.append(f"Impact: {row.impact.strip()}")
+                        notes = f"{row.notes.strip()}[^{len(footnotes)}]"
+                    elif failing and row.impact.strip():
+                        notes = f"{row.notes.strip()} Impact: {row.impact.strip()}"
+                    out.append(
+                        f"| {check.name} | {_bullets(list(form.get('examples') or []))} | "
+                        f"{form.get('default_threshold', '')} | "
+                        f"{_options(_status_options(check), _chosen_option(check, row.level))} | "
+                        f"{_cell(notes)} |"
+                    )
+                else:
+                    out.append(
+                        f"| {check.question} | {_question_status(check, row)} | {_cell(row.notes)} |"
+                    )
+            out.append("")
+
+    def _shown(block: Block) -> bool:
+        return block.shown_for(verdict) and prose.present(block)
+
+    for item in page.opening:
+        if item == "rubric":
+            _render_rubric()
+        elif _shown(block := page.block(item)):
+            _render_block(block)
+    for notice in derived.get("notices") or []:
+        out += [f"*{notice}*", ""]
     for block in page.blocks:
-        if block.closing or not block.shown_for(verdict) or not prose.present(block):
+        if block.closing or block.id in page.opening or not _shown(block):
             continue
         _render_block(block)
-
+    if "rubric" not in page.opening:
+        _render_rubric()
     rub = page.rubric
-    out += [f"## {rub.title}", ""]
-    if rub.intro:
-        out += [method.intro[rub.intro], ""]
-    for sec in rub.sections:
-        out += [f"### {sec.title}", ""]
-        if sec.intro:
-            out += [method.intro[sec.intro], ""]
-        if sec.measure_line:
-            for check in method.by_section(sec.section):
-                line = _measure_line(check, assessments[check.id], derived, method.sampling.unit)
-                if line:
-                    out += [line, ""]
-        out += [f"| {' | '.join(sec.columns)} |", "|" + "---|" * len(sec.columns)]
-        for check in method.by_section(sec.section):
-            row = assessments[check.id]
-            if sec.layout == "levels":
-                form = check.form if isinstance(check.form, dict) else {}
-                for level, spec in form.items():
-                    chosen = level == row.level
-                    notes = _cell(row.notes) if chosen else ""
-                    status = f"**{spec['status']}**" if chosen else spec["status"]
-                    out.append(
-                        f"| {f'**{level}**' if chosen else level} | {spec['meaning']} | "
-                        f"{status} | {notes} |"
-                    )
-            elif sec.layout == "defect_classes":
-                form = check.form if isinstance(check.form, dict) else {}
-                failing = row.level == method.verdict.procedure.minimum["fail_at"]
-                notes = row.notes
-                if failing and row.impact.strip() and page.footnotes:
-                    footnotes.append(f"Impact: {row.impact.strip()}")
-                    notes = f"{row.notes.strip()}[^{len(footnotes)}]"
-                elif failing and row.impact.strip():
-                    notes = f"{row.notes.strip()} Impact: {row.impact.strip()}"
-                out.append(
-                    f"| {check.name} | {_bullets(list(form.get('examples') or []))} | "
-                    f"{form.get('default_threshold', '')} | "
-                    f"{_options(_status_options(check), _chosen_option(check, row.level))} | "
-                    f"{_cell(notes)} |"
-                )
-            else:
-                out.append(
-                    f"| {check.question} | {_question_status(check, row)} | {_cell(row.notes)} |"
-                )
-        out.append("")
     if rub.disclaimer:
         out += [
             "## Disclaimer",
@@ -1386,7 +1572,7 @@ def render(
             "",
         ]
     for block in page.blocks:
-        if block.closing and block.shown_for(verdict) and prose.present(block):
+        if block.closing and _shown(block):
             _render_block(block)
     if footnotes and page.footnotes:
         out += [f"## {page.footnotes.title}", ""]
@@ -1415,6 +1601,8 @@ def review(findings: "Findings", prose: Prose) -> dict[str, Any]:
     if not prose.profile.review_date:
         prose.profile.review_date = datetime.now(UTC).date().isoformat()
     check_prose(prose, page, derived["verdict"], derived["coverage"], assessments)
+    derived["warnings"] = prose_warnings(prose, page)
+    derived["sources"] = sources_from(findings)
     derived["template"] = page.id
     derived["assessments"] = {k: v.model_dump(mode="json") for k, v in assessments.items()}
     derived["page"] = render(page, method, prose, assessments, derived, derived["coverage"])

@@ -7,7 +7,7 @@ metadata:
   unresolved: [UNRESOLVED]
   tools: [grade]
   details:
-    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check, headline}, the same contract as question-labels. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED and labels the recorded grades, not the item. Include each ID from assessment_ids in /audit/item.json exactly once. defect_types is required and nonempty for DEFECT, from false_negative, false_positive, grader_failure. headline is required for DEFECT: one plain sentence, at most 25 words, saying what the grader got wrong, with no account of the audit. scoring_effect lists the misgraded submissions. grader_instability, optional, records one-off grader variance that is not a defect.'
+    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check, headline}, the same contract as question-labels. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED and labels the recorded grades, not the item. Include each ID from assessment_ids in /audit/item.json exactly once. defect_types is required and nonempty for DEFECT, from false_negative, false_positive, grader_failure. headline is required for DEFECT: one plain sentence, at most 25 words, saying what the grader got wrong, with no account of the audit. scoring_effect lists the misgraded submissions. grader_instability, optional, records one-off grader variance that is not a defect. sources, as in question-labels ({answer, source, url, quote, key}), lists the competing answers when a misgrade turns on what sources say, such as a rejected answer a credible source gives; empty otherwise.'
     misgraded: 'List of objects {question_id, log, sample, epoch, model, submission, recorded_grade, correct_grade, why}, one per recorded submission whose grade is wrong; empty when none is. log, sample and epoch locate the submission in /audit/logs exactly.'
 ---
 
@@ -71,6 +71,11 @@ the question open can check, naming what the grader got wrong. The register to m
 - The grader rejects "Ghulam Mohammad Shah" for the reference "Gul Shah".
 - Answers in kilometres are marked wrong although the reference is in miles.
 - A submission naming two candidates, one of them right, was graded correct.
+
+When a misgrade turns on what sources say (a rejected answer that a credible source
+gives, a key that excludes a published value), list the competing answers in the row's
+`sources` as question-labels does: answer, source, public URL or exact citation, the
+quoted passage, and `key: true` on the reference answer's own source.
 
 `scoring_effect` lists the misgraded submissions; `misgraded` holds them as records,
 one per submission. The auditor fills the page's Affected logs column from them. An

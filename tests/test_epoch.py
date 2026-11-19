@@ -518,3 +518,190 @@ def test_logs_from_another_build_are_a_notice_on_the_page(tmp_path: Path, monkey
     assert "recorded by another build of the benchmark" in page
     assert "benchmarks 0.1.0" in page
     assert "Phase 1 only" not in page
+
+
+# ------------------------------------------------------------------ order and sources
+
+
+def sourced(answer: str, url: str, *, key: bool = False) -> dict[str, Any]:
+    return {
+        "answer": answer,
+        "source": f"Catalogue of {answer}",
+        "url": url,
+        "quote": f"The first EP was {answer}.",
+        "key": key,
+    }
+
+
+def twenty(defects: int) -> dict[str, str | None]:
+    return {f"s{i}": "DEFECT" if i < defects else "NO_ISSUE_FOUND" for i in range(20)}
+
+
+def with_sources(bundle_findings: Findings, sample: str, sources: list[dict[str, Any]]) -> Findings:
+    """An investigator's question-labels verdict whose assessment row lists sources."""
+    samples = bundle_findings.investigators["samples"]
+    assert isinstance(samples, dict)
+    cells = samples[sample]
+    assert isinstance(cells, dict)
+    cells["question-labels"] = [
+        {
+            **take("DEFECT"),
+            "record": {
+                "question_assessments": [
+                    {"question_id": sample, "status": "DEFECT", "sources": sources}
+                ]
+            },
+        }
+    ]
+    return bundle_findings
+
+
+def test_the_page_opens_with_the_rubric_then_the_representative_errors(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = bundle(tmp_path, findings(ten(1), phase1()))
+    monkeypatch.setattr(epoch, "sandbox", lambda: Box(PROSE))
+    page = (asyncio.run(epoch.build(tmp_path, source)) / "epoch_review.md").read_text()
+    order = [
+        "Verdict: Incomplete",
+        "## Benchmark Review Rubric",
+        "### 3. Evaluation Quality",
+        "## Representative Errors",
+        "| s0 | Impossible as written |",
+        "Audited without finding a defect (9)",
+        "Phase 1 only",
+        "## Summary",
+        "## Methodology",
+        "## Limitations",
+        "## Disclaimer",
+        "## Recommendations",
+        "## Footnotes",
+    ]
+    positions = [page.index(marker) for marker in order]
+    assert positions == sorted(positions)
+    # findings without sources print no sources section
+    assert "Competing answers" not in page
+
+
+def test_competing_answers_are_printed_with_their_sources(tmp_path: Path, monkeypatch) -> None:
+    recorded = with_sources(
+        findings(ten(1), phase1()),
+        "s0",
+        [
+            sourced("Long Good Bye", "https://label.example/long-good-bye", key=True),
+            sourced("The First Mini Demo Album", "https://catalogue.example/7082924"),
+        ],
+    )
+    source = bundle(tmp_path, recorded)
+    monkeypatch.setattr(epoch, "sandbox", lambda: Box(PROSE))
+    output = asyncio.run(epoch.build(tmp_path, source))
+    page = (output / "epoch_review.md").read_text()
+    section = page[page.index("### Competing answers and their sources") :]
+    assert section.index("**s0**: Impossible as written") < section.index("## Summary")
+    assert (
+        "- **Long Good Bye** (the reference answer): Catalogue of Long Good Bye, “The first EP "
+        "was Long Good Bye.” <https://label.example/long-good-bye>"
+    ) in section
+    assert "- **The First Mini Demo Album**: Catalogue of" in section
+    assert json.loads((output / "sources.json").read_text())["s0"][1]["url"].endswith("7082924")
+
+    # the auditor's review, where it gives sources, replaces the worker's
+    reviewed = recorded.model_copy(deep=True)
+    reviewed.auditor.reviews = [
+        Review(
+            sample_id="s0",
+            check="question-labels",
+            label="DEFECT",
+            explanation="Two catalogues disagree.",
+            evidence=EVIDENCE,
+            sources=[
+                sourced("1925", "FRUS 1969-76, vol. XXV, doc. 35", key=True),
+                sourced("1927", "https://history.example/stations"),
+            ],
+        )
+    ]
+    (tmp_path / "r").mkdir()
+    page = (
+        asyncio.run(epoch.build(tmp_path, bundle(tmp_path / "r", reviewed))) / "epoch_review.md"
+    ).read_text()
+    assert (
+        "- **1925** (the reference answer): Catalogue of 1925, “The first EP was 1925.” FRUS"
+        in page
+    )
+    assert "Long Good Bye" not in page
+
+
+def test_a_defect_without_sources_is_named_beside_those_with_them(
+    tmp_path: Path, monkeypatch
+) -> None:
+    recorded = with_sources(
+        findings(twenty(2), phase1()),
+        "s0",
+        [sourced("A", "https://a.example"), sourced("B", "https://b.example", key=True)],
+    )
+    rows = [
+        PROSE["error_examples"][0],
+        {**PROSE["error_examples"][0], "task": "s1", "notes": "The grader rejects a valid unit."},
+    ]
+    prose = {**PROSE, "error_examples": rows}
+    monkeypatch.setattr(epoch, "sandbox", lambda: Box(prose))
+    page = (
+        asyncio.run(epoch.build(tmp_path, bundle(tmp_path, recorded))) / "epoch_review.md"
+    ).read_text()
+    assert "**s0**: Impossible as written" in page and "**s1**" not in page
+    assert "No competing sources recorded (1): s1" in page
+
+
+def test_rows_that_repeat_each_others_words_are_pointed_out(tmp_path: Path, capsys) -> None:
+    """An edit by list position wrote one item's Affected logs into the next row."""
+    recorded = findings(twenty(2), phase1())
+    rows = [
+        {
+            **PROSE["error_examples"][0],
+            "affected_logs": "2 of 49: two received credit without choosing shipbuilding alone",
+        },
+        {
+            **PROSE["error_examples"][0],
+            "task": "s1",
+            "notes": "The catalogue counts a demo as an EP.",
+            "affected_logs": "2 of 49 received credit without choosing shipbuilding alone",
+        },
+    ]
+    prose = tmp_path / "prose.json"
+    prose.write_text(json.dumps({**PROSE, "error_examples": rows}))
+    source = bundle(tmp_path, recorded)
+    assert epoch.main([str(source), "--prose", str(prose), "--out", str(tmp_path / "out")]) == 0
+    printed = capsys.readouterr().out
+    assert "check: error_examples rows 1 and 2 (s0, s1): affected_logs share" in printed
+    assert "received credit without choosing shipbuilding alone" in printed
+    warnings = json.loads((tmp_path / "out/verdict.json").read_text())["warnings"]
+    assert len(warnings) == 1
+    assert _epoch.prose_warnings(_epoch.Prose.model_validate(PROSE), _epoch.template()) == []
+
+
+def test_sources_name_competing_answers_where_a_reader_can_find_them() -> None:
+    from inspect_audit._labels import QuestionAssessment, validate_labels
+
+    row = {
+        "question_id": "s0",
+        "status": "DEFECT",
+        "checks": ["read both catalogues"],
+        "evidence": ["https://a.example"],
+        "explanation": "Two catalogues give different first EPs.",
+        "defect_types": ["missing_information"],
+        "sources": [sourced("A", "https://a.example", key=True), sourced("B", "https://b.example")],
+    }
+    assert validate_labels([row], ["s0"], require_classification=True)[0].sources[1].answer == "B"
+    for sources, message in (
+        ([sourced("A", "https://a.example"), sourced("a", "https://b.example")], "at least two"),
+        ([sourced("A", "https://a.example"), sourced("B", "/tmp/k/page.html")], "local copy"),
+        (
+            [sourced("A", "https://a.example"), {**sourced("B", "x"), "quote": "word " * 61}],
+            "at most 60",
+        ),
+    ):
+        with pytest.raises(ValueError, match=message):
+            validate_labels([{**row, "sources": sources}], ["s0"], require_classification=True)
+    # rows recorded before sources existed still validate
+    legacy = {k: v for k, v in row.items() if k != "sources"}
+    assert QuestionAssessment.model_validate(legacy).sources == []

@@ -20,6 +20,12 @@ its brief and its limits. Write /workspace/report/prose.json:
 }
 ```
 
+The page opens with the rubric, then the representative errors: your bullets, the
+errors table and, under it, each defective item's competing answers with their sources,
+printed from the findings. The summary, methodology, limitations and recommendations
+follow. Do not write URLs into the table; a source missing from the page is missing
+from the findings.
+
 `profile.benchmark` is the benchmark's common name and `creator` the organisation that
 published it; `review_date` is today's date when left out. Every other key is a block
 of the template, present only when the verdict calls for it: a Flawed review has no
@@ -27,7 +33,11 @@ interpretation, task-analysis or elicitation block, and `preview_review` refuses
 block the verdict does not show. The `representative_errors` bullets and the
 `error_examples` table are required on every page as soon as the sample records a
 defect, with one table row per defect naming its sample id in `task`; the items audited
-without a defect are listed under the table for you.
+without a defect are listed under the table for you. Write each row from that item's
+own records (its Affected logs from its grading-labels `scoring_effect` and
+`misgraded`), and revise a row by its `task`, never by its position in the list: an edit
+by index lands in the neighbouring row. `preview_review` points out rows whose cells
+share a run of words.
 
 ## Who reads this, and how
 

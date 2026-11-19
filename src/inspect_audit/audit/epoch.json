@@ -479,6 +479,11 @@
         "format": "ordinal_date"
       }
     ],
+    "opening": [
+      "rubric",
+      "representative_errors",
+      "error_examples"
+    ],
     "blocks": [
       {
         "id": "summary",
@@ -580,7 +585,7 @@
           "Flawed": "The following issues cross our threshold for a Flawed verdict.",
           "default": "The following errors were found in specific tasks. They do not cross our threshold for a Flawed verdict."
         },
-        "brief": "One bullet per defect class present in the errors table, in order of how many rows it covers: name the class as the table names it, say how many rows it covers, and give one or two of those rows as examples described by what is wrong, not by id. A run-level error gets its own bullet. Nothing else: no definitions of the classes, no caveats about unresolved or unassessed items, no sampling notes; those belong in the scoring row and the methodology block."
+        "brief": "One bullet per defect class present in the errors table, in order of how many rows it covers: name the class as the table names it, say how many rows it covers, and give one or two of those rows as examples described by what is wrong, not by id. A run-level error gets its own bullet. The page opens with the rubric and follows it directly with these bullets, the errors table and the competing answers with their sources, so the bullets are the reader's first account of what is wrong. Nothing else: no definitions of the classes, no caveats about unresolved or unassessed items, no sampling notes; those belong in the scoring row and the methodology block."
       },
       {
         "id": "error_examples",
@@ -610,14 +615,17 @@
             "key": "notes",
             "title": "Notes",
             "plain": true,
-            "max_words": 25
+            "max_words": 25,
+            "distinct": true
           },
           {
             "key": "affected_logs",
-            "title": "Affected logs"
+            "title": "Affected logs",
+            "distinct": true
           }
         ],
-        "brief": "Every recorded error. One row for each item coverage.json records as a defect, with Task naming its id, then any run-level errors; Error type is the defect class in a few words; Notes is one plain sentence saying what is wrong with the item, as its reader would see it, with no account of how that was found (start from the auditor's headline); Affected logs names the runs or models the error touches, with a count. The ids audited without a defect are listed under the table from coverage.json; you do not write them."
+        "brief": "Every recorded error. One row for each item coverage.json records as a defect, with Task naming its id, then any run-level errors; Error type is the defect class in a few words; Notes is one plain sentence saying what is wrong with the item, as its reader would see it, with no account of how that was found (start from the auditor's headline); Affected logs names the runs or models the error touches, with a count, taken from that item's own grading-labels record (its scoring_effect and misgraded). Revise a row by its task id, never by its position in the list: the preview reports rows that share a run of words. The ids audited without a defect are listed under the table from coverage.json, and each item's competing answers with their sources are printed under it from the findings (the investigators' `sources`, or your review's); you write neither, and no URLs in the table.",
+        "sources": true
       },
       {
         "id": "limitations",

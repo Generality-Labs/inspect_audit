@@ -7,7 +7,7 @@ metadata:
   unresolved: [UNRESOLVED]
   tools: [grade]
   details:
-    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include each ID from assessment_ids in /audit/item.json exactly once. Preserve ids exactly. defect_types is a list of mechanism names from the list in this skill, required and nonempty for DEFECT, empty otherwise. scoring_effect, next_check and grader_instability are optional strings.'
+    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check, sources}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include each ID from assessment_ids in /audit/item.json exactly once. Preserve ids exactly. defect_types is a list of mechanism names from the list in this skill, required and nonempty for DEFECT, empty otherwise. scoring_effect, next_check and grader_instability are optional strings. sources lists the competing answers a DEFECT rests on, as objects {answer, source, url, quote, key}: every competing answer, the key''s included (key: true), each with the work and its publisher, the public URL (or an exact citation for print), and the passage quoted; required whenever the defect is conflicting sources or a second defensible answer, at least two different answers, empty otherwise.'
 ---
 
 # Classify the question, not the model's answer
@@ -63,6 +63,24 @@ Classify established defects by cause, using only these names:
 `grader_context_omission`, `environment_failure`, `harness_failure`, or `other` (name
 the cause in the explanation). Multiple types may apply.
 Explain the actual missing requirement or contradiction, not just its category.
+
+## Competing answers carry their sources
+
+When a DEFECT rests on conflicting sources or on a second defensible answer, record
+every competing answer in the row's `sources`, the key's answer included, so a reader
+can check each one:
+
+```json
+{"answer": "Jimmy McHugh", "source": "International Swimming Hall of Fame, honoree page",
+ "url": "https://ishof.org/...", "quote": "With Sava's Crystal Plunge team she worked with Jimmy McHugh", "key": false}
+```
+
+`source` names the work and who published it; `url` is the public address you read it
+at (for a page you saved, the address you fetched, never the local copy), or an exact
+citation (volume, page, document number) for print; `quote` is the passage that gives
+the answer, a sentence or two, copied, not paraphrased. Mark the reference answer's
+own source with `"key": true`. A defect with no competing answer (a missing file, a
+broken harness) has no sources.
 
 A grader that scores the same answer differently on repeat grading is not a defect in
 the question. Label the question on its own merits and put the instability, with the

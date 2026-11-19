@@ -79,20 +79,36 @@ written or as graded counts once.
   sent again with the previous worker's notes and what remained open, as many times as
   the budget allows. Only after two workers still cannot settle an item may you decide
   it on the balance of their evidence, in a review that says so.
-- **More than one defensible answer is a defect.** A question is impossible as written
-  when a reader with the sources could reasonably give a second answer the key rejects:
-  an unanchored convention (which year a programme was "set up", whether a demo counts
-  as an EP, the country then or now), a date that differs by source. Apply this the
-  same way to a trivia key and to a function-calling trajectory.
-- **A credible secondary source is enough.** To establish a second defensible answer,
-  a reference work, a catalogue or an encyclopaedia citing a record suffices; a primary
-  record is not required. Say what would settle the item when sources conflict.
+- **More than one defensible answer is a defect, when the second is strongly
+  defensible.** A question is impossible as written when a reader with the sources
+  could reasonably give a second answer the key rejects: credible sources genuinely
+  conflict (a date, height or name that differs by source), or an unanchored
+  convention makes the other reading reasonably likely, roughly one careful reader in
+  three or more (which year a programme was "set up", whether a demo counts as an EP,
+  the country then or now). Wording that admits another reading only remotely, where a
+  careful reader would be about 70% or more confident of the intended one, is
+  NO_ISSUE_FOUND with a note. Apply this the same way to a trivia key and to a
+  function-calling trajectory. For example:
+  - credible references publish different heights, or different names, for the same
+    subject and the key takes one: DEFECT;
+  - a question asks what something ran "using" and the energy-source reading is the
+    evident one, though a device could be named: not a defect;
+  - "before the renovation" where the context makes the period clear: not a defect.
+- **A credible secondary source that conflicts with the key is enough.** To establish a
+  second defensible answer, a reference work, a catalogue or an encyclopaedia citing a
+  record suffices; a primary record is not required. A merely conceivable alternative
+  reading is not enough. Say what would settle the item when sources conflict.
+- **A one-off misgrade is not a defect.** A grading defect is systematic: the key, the
+  rubric or the grader instructions cause it, so it reproduces on re-grade or recurs
+  across submissions. A single grade that does not reproduce is grader variance,
+  NO_ISSUE_FOUND with the variance noted as a limitation.
 - **A scorer that would credit a plainly wrong answer is a false positive**, whether or
   not a model has been seen to give one. Demonstrate it with a benign wrong answer
   through the real scorer; do not compose attacks on it.
 - **Your reviews, not the workers' labels, stand.** Where you disagree with a
-  worker, record a review with the evidence that overturns it. Do not relabel an item
-  nobody finished: re-run it.
+  worker, record a review with the evidence that overturns it. Apply the bars above to
+  every worker DEFECT, question or grading, and overturn one that does not meet them,
+  saying which bar it fails. Do not relabel an item nobody finished: re-run it.
 
 ## Logs from another build
 

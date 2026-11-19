@@ -23,6 +23,15 @@ NO_ISSUE_FOUND means specified checks completed without finding a validity defec
 it is not proof the question is flawless. List the actual checks. DEFECT requires
 evidence for a concrete problem with the question or acceptance rule. An unexpected
 model failure, disagreement, or timeout alone does not establish a defect.
+A second answer makes a DEFECT only when it is strongly defensible: credible sources
+genuinely conflict with the key (one credible secondary source that conflicts is
+enough), or the other reading is reasonably likely, roughly 30% or more of careful
+readers. A merely conceivable reading is not: where a careful reader would be about
+70% or more confident of the intended reading, label NO_ISSUE_FOUND and note the
+ambiguity in the explanation. Credible references giving different heights or names
+for the same subject is a DEFECT; asking what something ran "using" when the
+energy-source reading is evident, or "before the renovation" when context fixes the
+period, is not.
 A recorded model objecting to the question, or hedging around it, is a claim to
 check against the source, not evidence of a defect. Establish the fact yourself:
 count, compute, quote the passage. A grade of your own authored answer is evidence

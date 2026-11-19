@@ -7,7 +7,7 @@ metadata:
   unresolved: [UNRESOLVED]
   tools: [grade]
   details:
-    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check, headline}, the same contract as question-labels. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED and labels the recorded grades, not the item. Include each ID from assessment_ids in /audit/item.json exactly once. defect_types is required and nonempty for DEFECT, from false_negative, false_positive, grader_failure. headline is required for DEFECT: one plain sentence, at most 25 words, saying what the grader got wrong, with no account of the audit. scoring_effect lists the misgraded submissions.'
+    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check, headline}, the same contract as question-labels. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED and labels the recorded grades, not the item. Include each ID from assessment_ids in /audit/item.json exactly once. defect_types is required and nonempty for DEFECT, from false_negative, false_positive, grader_failure. headline is required for DEFECT: one plain sentence, at most 25 words, saying what the grader got wrong, with no account of the audit. scoring_effect lists the misgraded submissions. grader_instability, optional, records one-off grader variance that is not a defect.'
     misgraded: 'List of objects {question_id, log, sample, epoch, model, submission, recorded_grade, correct_grade, why}, one per recorded submission whose grade is wrong; empty when none is. log, sample and epoch locate the submission in /audit/logs exactly.'
 ---
 
@@ -32,7 +32,8 @@ decide what grade the submission deserves. Then compare.
   question: a different entity, a partial answer, a hedge across several candidates
   of which one is right, a reference matched by lenience rather than by meaning.
 - A **grader failure** is a recorded grade that is not a judgment at all: the grader
-  errored, timed out, returned nothing parseable, or graded a truncated submission.
+  errored, timed out, returned nothing parseable, or graded a truncated submission,
+  and does so again on re-grade or across submissions.
 
 Not defects: an abstention graded as the benchmark's rule says; a wrong answer graded
 wrong; a submission that would be right only under a reading the question does not
@@ -45,16 +46,21 @@ grading.
 
 Use the grade tool to re-grade a submission you believe misgraded, with the current
 grader. A grade that reproduces is systematic; one that does not is grader variance.
-Both are defects when the recorded result is wrong, since the recorded result is what
-the leaderboard shows; say which it is in the explanation. A grader that rejects the
+Only a systematic misgrade is a defect: one the key, the rubric or the grader
+instructions cause, such as a key that rejects a valid form of the answer, shown by a
+misgrade that reproduces on re-grade or recurs across submissions. A one-off misgrade
+of a single submission that does not reproduce, or a grader that errored once, is
+NO_ISSUE_FOUND: record it, with the repeated grades, in `grader_instability` and the
+explanation as a limitation. A grader that rejects the
 reference answer itself, submitted verbatim, is the strongest evidence of a false
 negative and takes one call.
 
 ## Labels
 
 NO_ISSUE_FOUND means every recorded submission's grade was checked and found right; it
-is not proof the grader is perfect. List the actual checks. DEFECT requires at least
-one recorded submission whose grade is wrong, cited by log, sample and epoch, with the
+is not proof the grader is perfect. List the actual checks. DEFECT requires a systematic
+misgrade: at least one recorded submission whose grade is wrong for a reason the key,
+rubric or grader instructions explain, cited by log, sample and epoch, with the
 submission quoted and the grade it deserved. UNRESOLVED means you could not settle
 whether a submission is equivalent to the reference, or could not read a recorded
 grade. NOT_ASSESSED means no adequate assessment was undertaken. Never turn missing

@@ -98,10 +98,10 @@ written or as graded counts once.
   second defensible answer, a reference work, a catalogue or an encyclopaedia citing a
   record suffices; a primary record is not required. A merely conceivable alternative
   reading is not enough. Say what would settle the item when sources conflict.
-- **A one-off misgrade is not a defect.** A grading defect is systematic: the key, the
-  rubric or the grader instructions cause it, so it reproduces on re-grade or recurs
-  across submissions. A single grade that does not reproduce is grader variance,
-  NO_ISSUE_FOUND with the variance noted as a limitation.
+- **A one-off misgrade is not a defect.** A grading defect is systematic only if it
+  recurs across submissions or traces to the key, the rubric or the grader
+  instructions. A single submission misgraded, even one that reproduces on re-grade, is
+  a limitation, not a defect: NO_ISSUE_FOUND with the misgrade noted.
 - **A scorer that would credit a plainly wrong answer is a false positive**, whether or
   not a model has been seen to give one. Demonstrate it with a benign wrong answer
   through the real scorer; do not compose attacks on it.
@@ -109,6 +109,10 @@ written or as graded counts once.
   worker, record a review with the evidence that overturns it. Apply the bars above to
   every worker DEFECT, question or grading, and overturn one that does not meet them,
   saying which bar it fails. Do not relabel an item nobody finished: re-run it.
+  Also send a second, adversarial worker, briefed to find the strongest credible
+  competing answer, on NO_ISSUE_FOUND items where recorded models often gave the same
+  wrong answer, or where the first worker's search for a competing answer was thin.
+  Decide on both workers' evidence.
 
 ## Logs from another build
 

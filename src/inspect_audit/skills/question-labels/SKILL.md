@@ -20,7 +20,9 @@ Consult the other selected skills to audit task specification, grading and
 failure attribution. Reproduce consequential claims where the tools permit it.
 
 NO_ISSUE_FOUND means specified checks completed without finding a validity defect;
-it is not proof the question is flawless. List the actual checks. DEFECT requires
+it is not proof the question is flawless. List the actual checks, and record in
+checks and evidence the competing answers you looked for, the queries you ran and the
+pages you opened. A clean label without that search is NOT_ASSESSED. DEFECT requires
 evidence for a concrete problem with the question or acceptance rule. An unexpected
 model failure, disagreement, or timeout alone does not establish a defect.
 A second answer makes a DEFECT only when it is strongly defensible: credible sources

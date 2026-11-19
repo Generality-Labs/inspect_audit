@@ -45,13 +45,12 @@ grading.
 ## Reproduce before you record
 
 Use the grade tool to re-grade a submission you believe misgraded, with the current
-grader. A grade that reproduces is systematic; one that does not is grader variance.
-Only a systematic misgrade is a defect: one the key, the rubric or the grader
-instructions cause, such as a key that rejects a valid form of the answer, shown by a
-misgrade that reproduces on re-grade or recurs across submissions. A one-off misgrade
-of a single submission that does not reproduce, or a grader that errored once, is
-NO_ISSUE_FOUND: record it, with the repeated grades, in `grader_instability` and the
-explanation as a limitation. A grader that rejects the
+grader. A grade that does not reproduce is grader variance. Only a systematic misgrade
+is a defect: one that recurs across submissions, or that traces to the key, the rubric
+or the grader instructions, such as a key that rejects a valid form of the answer. A
+single submission misgraded, even one that reproduces on re-grade, or a grader that
+errored once, is NO_ISSUE_FOUND: record it, with the repeated grades, in
+`grader_instability` and the explanation as a limitation. A grader that rejects the
 reference answer itself, submitted verbatim, is the strongest evidence of a false
 negative and takes one call.
 

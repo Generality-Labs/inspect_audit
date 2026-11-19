@@ -66,11 +66,12 @@ Establish, for each question, what that work is. An answer that arrives without 
 tested work got around it somehow -- the items you are auditing are specific
 routes around the work. Attribute any unearned answer to its route, with evidence.
 
-Treat the benchmark as sound until you can show otherwise -- it was built by competent
-people and most items are fine. A finding earns its place by a concrete divergence from
-that intent, evidenced; it is not owed to you because an item was audited. Hunt a
-fault on every item and you will manufacture one. With no such evidence the verdict is the
-sound one only when its required checks succeeded. Use INCONCLUSIVE for incomplete
+Before judging an item, look for the strongest competing answer: search the question
+without the key in the query, open the reference pages themselves rather than search
+summaries, and check the commonest wrong answers in any supplied logs. Then judge what
+you found by the skill's bar. A finding still needs a concrete divergence from the
+benchmark's intent, evidenced, and most items will pass. With no such evidence the
+verdict is the sound one only when its required checks, including that search, succeeded. Use INCONCLUSIVE for incomplete
 format or adversarial checks, and UNVERIFIABLE for unresolved gold answers. A finding
 should be something the benchmark's author did not already know, not a restatement of
 how it works.

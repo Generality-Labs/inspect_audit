@@ -141,3 +141,4 @@ def variant(
     from ._variant import variant_task
 
     return variant_task(task, source, task_args or {}, files)
+from ._egress_probe import egress_probe as egress_probe

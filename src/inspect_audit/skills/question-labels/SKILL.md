@@ -7,7 +7,7 @@ metadata:
   unresolved: [UNRESOLVED]
   tools: [grade]
   details:
-    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check, sources}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include each ID from assessment_ids in /audit/item.json exactly once. Preserve ids exactly. defect_types is a list of mechanism names from the list in this skill, required and nonempty for DEFECT, empty otherwise. scoring_effect, next_check and grader_instability are optional strings. sources lists the competing answers a DEFECT rests on, as objects {answer, source, url, quote, key}: every competing answer, the key''s included (key: true), each with the work and its publisher, the public URL (or an exact citation for print), and the passage quoted; required whenever the defect is conflicting sources or a second defensible answer, at least two different answers, empty otherwise.'
+    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, epoch_class, sub_reason, defect_types, scoring_effect, next_check, sources}. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED. checks and evidence are arrays of nonempty strings. Include each ID from assessment_ids in /audit/item.json exactly once. Preserve ids exactly. epoch_class and sub_reason are required for DEFECT and absent otherwise: epoch_class is impossible_as_written, false_negative or false_positive, and sub_reason one of that class''s list in this skill. defect_types, optional, is a list of mechanism names from the list in this skill, empty unless DEFECT. scoring_effect, next_check and grader_instability are optional strings. sources lists the competing answers a DEFECT rests on, as objects {answer, source, url, quote, key}: every competing answer, the key''s included (key: true), each with the work and its publisher, the public URL (or an exact citation for print), and the passage quoted; required whenever the defect is conflicting sources or a second defensible answer, at least two different answers, empty otherwise.'
 ---
 
 # Classify the question, not the model's answer
@@ -55,13 +55,34 @@ hard resource limit interrupts the agent. Overall grade is DEFECT if any row has
 otherwise UNRESOLVED if any row is unresolved/unassessed; otherwise NO_ISSUE_FOUND.
 Return the table through record_verdict details, so it survives sandbox cleanup.
 
-## Defect mechanisms and follow-up
+## Class, sub-reason and follow-up
 
-Classify established defects by cause, using only these names:
-`missing_information`, `specification_test_contradiction`, `incorrect_reference_or_test`,
+Give every DEFECT one of Epoch's classes and one sub-reason from that class, naming
+the root cause:
+
+- `impossible_as_written`: a careful solver cannot reliably reach the keyed answer.
+  `ambiguous_wording` (the wording admits two readings), `conflicting_sources`
+  (credible sources disagree on the fact), `multiple_valid_answers` (several answers
+  fit and the key takes one), `missing_information` (a period, unit or scope the answer
+  depends on is not given), `hidden_requirement` (the key needs something the question
+  never asks), `false_premise`.
+- `false_negative`: a correct answer would be scored wrong. `incorrect_or_stale_key`,
+  `overly_strict_scorer` (a valid alias, full name, unit or granularity rejected),
+  `systematic_grader_error`, `live_state_drift` (the answer depends on live state that
+  changes), `environment_failure` (a sandbox or harness failure independent of the
+  agent).
+- `false_positive`: a wrong answer would be scored right. `lax_scorer`,
+  `systematic_grader_error`, `shortcut_or_leak` (the answer is reachable without the
+  skill, from the harness or a leak).
+
+`other` is allowed in every class, with the cause named in the explanation. A wrong
+key is a false negative even when one source repeats it; sources that disagree on the
+fact itself make the item impossible as written.
+
+Optionally, `defect_types` also names mechanisms: `missing_information`,
+`specification_test_contradiction`, `incorrect_reference_or_test`,
 `insufficient_test_coverage`, `hidden_requirement`, `surface_form_sensitivity`,
-`grader_context_omission`, `environment_failure`, `harness_failure`, or `other` (name
-the cause in the explanation). Multiple types may apply.
+`grader_context_omission`, `environment_failure`, `harness_failure`, or `other`.
 Explain the actual missing requirement or contradiction, not just its category.
 
 ## Competing answers carry their sources

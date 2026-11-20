@@ -13,9 +13,10 @@ from typing import Any
 
 import pytest
 
-from inspect_audit import _epoch
+from inspect_audit import _epoch, _findings
 from inspect_audit._findings import AuditorFindings, Findings, Rating, Review, encoded, read_bundle
 from inspect_audit._publishing import load_publisher
+from inspect_audit._register import Register
 from inspect_audit._verdicts import Evidence
 from inspect_audit.publishers import epoch
 
@@ -477,6 +478,8 @@ def test_grading_labels_carry_their_own_defect_types_and_a_headline() -> None:
         "evidence": ["/audit/logs/run.eval sample=s0 epoch=1"],
         "explanation": "The reference answer itself was graded incorrect.",
         "defect_types": ["false_negative"],
+        "epoch_class": "false_negative",
+        "sub_reason": "overly_strict_scorer",
     }
     with pytest.raises(ValueError, match="needs a headline"):
         validate_labels([row], ["s0"], require_classification=True, allowed=GRADING_DEFECT_TYPES)
@@ -492,6 +495,14 @@ def test_grading_labels_carry_their_own_defect_types_and_a_headline() -> None:
     # the item vocabulary is unchanged for question-labels
     with pytest.raises(ValueError, match="unknown defect type"):
         validate_labels([{**row, "headline": None}], ["s0"], require_classification=True)
+    # a recorded grade is wrong one way or the other: never impossible as written
+    with pytest.raises(ValueError, match="epoch_class must be one of false_negative"):
+        validate_labels(
+            [{**row, "epoch_class": "impossible_as_written", "sub_reason": "ambiguous_wording"}],
+            ["s0"],
+            require_classification=True,
+            allowed=GRADING_DEFECT_TYPES,
+        )
 
 
 # ------------------------------------------------------------------ the render command
@@ -677,6 +688,108 @@ def test_a_defect_without_sources_is_named_beside_those_with_them(
     assert "No competing sources recorded (1): s1" in page
 
 
+def test_errors_are_grouped_by_epoch_class_with_each_sub_reason(
+    tmp_path: Path, monkeypatch
+) -> None:
+    recorded = with_sources(
+        findings(twenty(3), phase1()),
+        "s0",
+        [sourced("A", "https://a.example", key=True), sourced("B", "https://b.example")],
+    )
+    samples = recorded.investigators["samples"]
+    assert isinstance(samples, dict)
+    # s0: a worker's row with a class; s1: an old row, read through its defect types;
+    # s2: the auditor's review decides the class
+    rows = samples["s0"]["question-labels"][0]["record"]["question_assessments"]  # type: ignore[index]
+    rows[0] |= {"epoch_class": "impossible_as_written", "sub_reason": "conflicting_sources"}  # type: ignore[index]
+    samples["s1"]["question-labels"] = [  # type: ignore[index]
+        {
+            **take("DEFECT"),
+            "record": {
+                "question_assessments": [
+                    {
+                        "question_id": "s1",
+                        "status": "DEFECT",
+                        "defect_types": ["incorrect_reference_or_test"],
+                    }
+                ]
+            },
+        }
+    ]
+    recorded.auditor.reviews = [
+        Review(
+            sample_id="s2",
+            check="question-labels",
+            label="DEFECT",
+            explanation="The scorer credits a hedge.",
+            evidence=EVIDENCE,
+            epoch_class="false_positive",
+            sub_reason="lax_scorer",
+        )
+    ]
+    row = PROSE["error_examples"][0]
+    prose = {
+        **PROSE,
+        "error_examples": [
+            {**row, "task": "s2", "notes": "The scorer credits an answer naming two years."},
+            {**row, "task": "s1", "notes": "The key misspells the governor's middle name."},
+            row,
+        ],
+    }
+    monkeypatch.setattr(epoch, "sandbox", lambda: Box(prose))
+    output = asyncio.run(epoch.build(tmp_path, bundle(tmp_path, recorded)))
+    page = (output / "epoch_review.md").read_text()
+    order = [
+        (
+            "Defective tasks by class:<br>1. Essentially impossible to correctly answer as "
+            "written: 1<br>2. False negative: 1<br>3. False positive: 1 |"
+        ),
+        "### 1. Essentially impossible to correctly answer as written (1)",
+        "| Task | Sub-reason | Notes | Affected logs |",
+        "| s0 | Conflicting sources |",
+        "### 2. False negative (1)",
+        "| s1 | Incorrect or stale key |",
+        "### 3. False positive (1)",
+        "| s2 | Lax scorer |",
+        "Audited without finding a defect (17)",
+        "**s0**: Conflicting sources",
+    ]
+    positions = [page.index(marker) for marker in order]
+    assert positions == sorted(positions)
+    classes = json.loads((output / "classes.json").read_text())
+    assert classes["s1"] == {
+        "epoch_class": "false_negative",
+        "sub_reason": "incorrect_or_stale_key",
+        "check": "question-labels",
+        "basis": "legacy",
+    }
+    assert classes["s2"]["basis"] == "recorded"
+
+
+def test_a_review_class_must_fit_its_check() -> None:
+    with pytest.raises(ValueError, match="sub_reason for false_negative"):
+        _findings.validate_draft(
+            findings(
+                ten(1),
+                phase1(),
+                reviews=[
+                    Review(
+                        sample_id="s0",
+                        check="question-labels",
+                        label="DEFECT",
+                        explanation="x",
+                        evidence=EVIDENCE,
+                        epoch_class="false_negative",
+                        sub_reason="lax_scorer",
+                    )
+                ],
+            ).model_dump(mode="json"),
+            Register.model_validate(
+                {"checks": ["question-labels"], "samples": {"s0": {"question-labels": []}}}
+            ),
+        )
+
+
 def test_rows_that_repeat_each_others_words_are_pointed_out(tmp_path: Path, capsys) -> None:
     """An edit by list position wrote one item's Affected logs into the next row."""
     recorded = findings(twenty(2), phase1())
@@ -714,6 +827,8 @@ def test_sources_name_competing_answers_where_a_reader_can_find_them() -> None:
         "evidence": ["https://a.example"],
         "explanation": "Two catalogues give different first EPs.",
         "defect_types": ["missing_information"],
+        "epoch_class": "impossible_as_written",
+        "sub_reason": "conflicting_sources",
         "sources": [sourced("A", "https://a.example", key=True), sourced("B", "https://b.example")],
     }
     assert validate_labels([row], ["s0"], require_classification=True)[0].sources[1].answer == "B"

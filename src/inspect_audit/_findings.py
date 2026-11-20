@@ -41,6 +41,10 @@ class Review(BaseModel):
     # the competing answers a DEFECT rests on, each with its source, when the review
     # decides the item on them; empty to keep the investigator's
     sources: list[Source] = Field(default_factory=list)
+    # on a DEFECT: Epoch's class and sub-reason for the item, when the review decides
+    # them or corrects the worker's (`_labels.SUB_REASONS`); empty to keep the worker's
+    epoch_class: str | None = None
+    sub_reason: str | None = None
 
 
 class Rating(BaseModel):
@@ -147,12 +151,19 @@ def validate_draft(data: Any, register: "Register") -> Findings:
     from ._register import apply_reviews
 
     apply_reviews(register.model_copy(deep=True), draft.auditor.reviews, checks)
-    from ._labels import check_sources
+    from ._labels import GRADING_CLASSES, check_class, check_sources
 
     for review in draft.auditor.reviews:
         if not review.explanation.strip():
             raise ValueError("Reviews need an explanation")
-        check_sources(f"review of {review.sample_id} ({review.check})", review.sources)
+        name = f"review of {review.sample_id} ({review.check})"
+        check_sources(name, review.sources)
+        if (review.epoch_class or review.sub_reason) and review.label != "DEFECT":
+            raise ValueError(f"{name}: only a DEFECT review gives a class")
+        if review.check == "grading-labels":
+            check_class(name, review.epoch_class, review.sub_reason, GRADING_CLASSES)
+        else:
+            check_class(name, review.epoch_class, review.sub_reason)
     for rating in draft.auditor.ratings.values():
         if not rating.label.strip() or not rating.explanation.strip():
             raise ValueError("Ratings need a label and explanation")

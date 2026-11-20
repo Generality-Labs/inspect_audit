@@ -7,7 +7,7 @@ metadata:
   unresolved: [UNRESOLVED]
   tools: [grade]
   details:
-    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, defect_types, scoring_effect, next_check, headline}, the same contract as question-labels. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED and labels the recorded grades, not the item. Include each ID from assessment_ids in /audit/item.json exactly once. defect_types is required and nonempty for DEFECT, from false_negative, false_positive, grader_failure. headline is required for DEFECT: one plain sentence, at most 25 words, saying what the grader got wrong, with no account of the audit. scoring_effect lists the misgraded submissions. grader_instability, optional, records one-off grader variance that is not a defect. sources, as in question-labels ({answer, source, url, quote, key}), lists the competing answers when a misgrade turns on what sources say, such as a rejected answer a credible source gives; empty otherwise.'
+    question_assessments: 'List of objects {question_id, status, checks, evidence, explanation, epoch_class, sub_reason, defect_types, scoring_effect, next_check, headline}, the same contract as question-labels. status is NO_ISSUE_FOUND, DEFECT, UNRESOLVED or NOT_ASSESSED and labels the recorded grades, not the item. Include each ID from assessment_ids in /audit/item.json exactly once. epoch_class and sub_reason are required for DEFECT: epoch_class is false_negative or false_positive, sub_reason one of that class''s list in this skill. defect_types, optional, from false_negative, false_positive, grader_failure. headline is required for DEFECT: one plain sentence, at most 25 words, saying what the grader got wrong, with no account of the audit. scoring_effect lists the misgraded submissions. grader_instability, optional, records one-off grader variance that is not a defect. sources, as in question-labels ({answer, source, url, quote, key}), lists the competing answers when a misgrade turns on what sources say, such as a rejected answer a credible source gives; empty otherwise.'
     misgraded: 'List of objects {question_id, log, sample, epoch, model, submission, recorded_grade, correct_grade, why}, one per recorded submission whose grade is wrong; empty when none is. log, sample and epoch locate the submission in /audit/logs exactly.'
 ---
 
@@ -34,6 +34,14 @@ decide what grade the submission deserves. Then compare.
 - A **grader failure** is a recorded grade that is not a judgment at all: the grader
   errored, timed out, returned nothing parseable, or graded a truncated submission,
   and does so again on re-grade or across submissions.
+
+Each DEFECT names its class and the sub-reason that explains the misgrade:
+`false_negative` with `incorrect_or_stale_key` (the key is wrong), `overly_strict_scorer`
+(a valid alias, form, precision or granularity rejected), `systematic_grader_error`
+(the grader misjudges for a reason the key does not explain, or fails as described
+above), `live_state_drift` or `environment_failure`; or `false_positive` with
+`lax_scorer` (a wrong, partial or hedged answer credited), `systematic_grader_error` or
+`shortcut_or_leak`. `other`, in either, names the cause in the explanation.
 
 Not defects: an abstention graded as the benchmark's rule says; a wrong answer graded
 wrong; a submission that would be right only under a reading the question does not

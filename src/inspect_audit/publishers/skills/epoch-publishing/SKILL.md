@@ -17,8 +17,10 @@ its brief and its limits. Write /workspace/report/prose.json:
 ```
 
 The page is the header, the rubric, then the representative errors: your bullets, the
-errors table and, under it, each defective item's competing answers with their sources,
-printed from the findings; any notice (no logs, logs from another build) follows, and
+errors table, grouped by Epoch's class (impossible as written, false negative, false
+positive) with each group's count and each row's sub-reason taken from the findings,
+and, under it, each defective item's competing answers with their sources, printed
+from the findings; any notice (no logs, logs from another build) follows, and
 the page ends there. Do not write URLs into the table; a source missing from the page
 is missing from the findings.
 

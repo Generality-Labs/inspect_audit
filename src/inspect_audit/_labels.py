@@ -26,6 +26,82 @@ DEFECT_TYPES = (
 # label the grades given to an item's recorded submissions, not the item
 GRADING_DEFECT_TYPES = ("false_negative", "false_positive", "grader_failure")
 
+# Epoch's per-item defect classes (Rubric v1, the scoring row's examples), in Epoch's
+# order; the fourth, a task that egregiously does not measure the claimed capability,
+# is a rubric-level judgment and never an item's label. Each defect names one class
+# and one sub-reason from that class's list; `other` keeps an unlisted cause sayable,
+# with the explanation naming it.
+EPOCH_CLASSES = ("impossible_as_written", "false_negative", "false_positive")
+SUB_REASONS: dict[str, tuple[str, ...]] = {
+    "impossible_as_written": (
+        "ambiguous_wording",
+        "conflicting_sources",
+        "multiple_valid_answers",
+        "missing_information",
+        "hidden_requirement",
+        "false_premise",
+        "other",
+    ),
+    "false_negative": (
+        "incorrect_or_stale_key",
+        "overly_strict_scorer",
+        "systematic_grader_error",
+        "live_state_drift",
+        "environment_failure",
+        "other",
+    ),
+    "false_positive": ("lax_scorer", "systematic_grader_error", "shortcut_or_leak", "other"),
+}
+# a recorded grade is wrong one way or the other; whether the item can be answered as
+# written is the question-labels check's call
+GRADING_CLASSES = ("false_negative", "false_positive")
+CLASS_TITLES = {
+    "impossible_as_written": "Essentially impossible to correctly answer as written",
+    "false_negative": "False negative",
+    "false_positive": "False positive",
+}
+
+# Findings recorded before classes were: each old defect type read as a class and
+# sub-reason. A row's first type that maps decides it; `other` maps to nothing.
+LEGACY_CLASSES: dict[str, tuple[str, str]] = {
+    "missing_information": ("impossible_as_written", "missing_information"),
+    "hidden_requirement": ("impossible_as_written", "hidden_requirement"),
+    "specification_test_contradiction": ("false_negative", "incorrect_or_stale_key"),
+    "incorrect_reference_or_test": ("false_negative", "incorrect_or_stale_key"),
+    "surface_form_sensitivity": ("false_negative", "overly_strict_scorer"),
+    "grader_context_omission": ("false_negative", "systematic_grader_error"),
+    "environment_failure": ("false_negative", "environment_failure"),
+    "harness_failure": ("false_negative", "environment_failure"),
+    "insufficient_test_coverage": ("false_positive", "lax_scorer"),
+    # grading-labels
+    "false_negative": ("false_negative", "overly_strict_scorer"),
+    "grader_failure": ("false_negative", "systematic_grader_error"),
+    "false_positive": ("false_positive", "lax_scorer"),
+}
+
+
+def legacy_class(defect_types: Sequence[str]) -> tuple[str, str] | None:
+    """The class and sub-reason an old row's defect types stand for, if any maps."""
+    return next((LEGACY_CLASSES[t] for t in defect_types if t in LEGACY_CLASSES), None)
+
+
+def check_class(
+    name: str,
+    epoch_class: str | None,
+    sub_reason: str | None,
+    classes: Sequence[str] = EPOCH_CLASSES,
+) -> None:
+    """A class from `classes` and a sub-reason from that class's list, or neither."""
+    if epoch_class is None and sub_reason is None:
+        return
+    if epoch_class is None or epoch_class not in classes:
+        raise ValueError(f"{name}: epoch_class must be one of {', '.join(classes)}")
+    allowed = SUB_REASONS[epoch_class]
+    if sub_reason not in allowed:
+        raise ValueError(
+            f"{name}: sub_reason for {epoch_class} must be one of {', '.join(allowed)}"
+        )
+
 
 class Source(BaseModel):
     """One competing answer and where it is published, for the page's reader to check.
@@ -117,8 +193,12 @@ class QuestionAssessment(BaseModel):
     checks: list[str]
     evidence: list[str]
     explanation: str = Field(min_length=1)
-    # Empty on historical logs; new defect verdicts require a classification.
+    # Empty on historical logs; kept, optional, beside the class below.
     defect_types: list[str] = Field(default_factory=list)
+    # Epoch's class for a DEFECT and its sub-reason (`SUB_REASONS`); required on new
+    # defect verdicts, absent on historical ones, which `legacy_class` reads instead
+    epoch_class: str | None = None
+    sub_reason: str | None = None
     scoring_effect: str | None = None
     next_check: str | None = None
     # The grader scoring the same answer differently: about the grader, not this
@@ -149,11 +229,22 @@ def validate_labels(
     if len(ids) != len(set(ids)) or set(ids) != set(expected):
         raise ValueError("question_assessments must contain every expected question exactly once")
     grading = allowed is GRADING_DEFECT_TYPES
+    classes = GRADING_CLASSES if grading else EPOCH_CLASSES
     for row in rows:
         if row.status in ("NO_ISSUE_FOUND", "DEFECT") and (not row.checks or not row.evidence):
             raise ValueError(f"{row.question_id}: assessed labels need checks and evidence")
-        if require_classification and row.status == "DEFECT" and not row.defect_types:
-            raise ValueError(f"{row.question_id}: defects need at least one defect type")
+        if (
+            require_classification
+            and row.status == "DEFECT"
+            and not (row.epoch_class and row.sub_reason)
+        ):
+            raise ValueError(
+                f"{row.question_id}: defects need epoch_class ({', '.join(classes)}) and a "
+                "sub_reason from that class's list"
+            )
+        if (row.epoch_class or row.sub_reason) and row.status != "DEFECT":
+            raise ValueError(f"{row.question_id}: only established defects have a class")
+        check_class(row.question_id, row.epoch_class, row.sub_reason, classes)
         unknown = set(row.defect_types) - set(allowed)
         if require_classification and unknown:
             raise ValueError(

@@ -63,7 +63,7 @@ def test_recorded_question_verdicts_retain_labels(tmp_path, units):
             }
             with pytest.raises(ToolError, match="every expected question"):
                 await record(**args, details=json.dumps({"question_assessments": []}))
-            with pytest.raises(ToolError, match="defect type"):
+            with pytest.raises(ToolError, match="epoch_class"):
                 await record(
                     **{**args, "grade": "DEFECT"},
                     details=json.dumps(
@@ -94,17 +94,54 @@ def test_recorded_question_verdicts_retain_labels(tmp_path, units):
 
 
 def test_defect_classification_is_required_for_new_verdicts():
-    with pytest.raises(ValueError, match="defect type"):
+    with pytest.raises(ValueError, match="epoch_class"):
         validate_labels([label("old", "DEFECT")], ["old"], require_classification=True)
     assert validate_labels([label("old", "DEFECT")], ["old"])
-    # new verdicts name causes from one list, so they can be counted (FRICTION 28);
-    # historical free-text names still read
-    custom = {**label("new", "DEFECT"), "defect_types": ["judge_errors"]}
+    classed = {
+        **label("new", "DEFECT"),
+        "epoch_class": "impossible_as_written",
+        "sub_reason": "conflicting_sources",
+    }
+    assert validate_labels([classed], ["new"], require_classification=True)
+    # defect types stay optional; when given, new verdicts name causes from one list
+    # (FRICTION 28), and historical free-text names still read
+    custom = {**classed, "defect_types": ["judge_errors"]}
     with pytest.raises(ValueError, match="grader_instability"):
         validate_labels([custom], ["new"], require_classification=True)
-    assert validate_labels([custom], ["new"])
-    listed = {**label("new", "DEFECT"), "defect_types": ["hidden_requirement", "other"]}
+    assert validate_labels([{**label("new", "DEFECT"), "defect_types": ["judge_errors"]}], ["new"])
+    listed = {**classed, "defect_types": ["hidden_requirement", "other"]}
     assert validate_labels([listed], ["new"], require_classification=True)
+
+
+def test_a_sub_reason_belongs_to_its_epoch_class():
+    row = {
+        **label("1", "DEFECT"),
+        "epoch_class": "false_positive",
+        "sub_reason": "ambiguous_wording",
+    }
+    with pytest.raises(ValueError, match="sub_reason for false_positive"):
+        validate_labels([row], ["1"], require_classification=True)
+    with pytest.raises(ValueError, match="epoch_class must be one of"):
+        validate_labels([{**row, "epoch_class": "unmeasured"}], ["1"])
+    with pytest.raises(ValueError, match="only established defects have a class"):
+        validate_labels([{**row, "status": "UNRESOLVED", "sub_reason": "lax_scorer"}], ["1"])
+    assert validate_labels([{**row, "sub_reason": "other"}], ["1"], require_classification=True)
+
+
+def test_old_defect_types_read_as_a_class():
+    from inspect_audit._labels import LEGACY_CLASSES, SUB_REASONS, legacy_class
+
+    assert legacy_class(["other", "missing_information"]) == (
+        "impossible_as_written",
+        "missing_information",
+    )
+    assert legacy_class(["incorrect_reference_or_test", "missing_information"]) == (
+        "false_negative",
+        "incorrect_or_stale_key",
+    )
+    assert legacy_class(["false_positive"]) == ("false_positive", "lax_scorer")
+    assert legacy_class(["other"]) is None and legacy_class([]) is None
+    assert all(sub in SUB_REASONS[cls] for cls, sub in LEGACY_CLASSES.values())
 
 
 def test_grader_instability_is_recorded_without_making_a_defect():

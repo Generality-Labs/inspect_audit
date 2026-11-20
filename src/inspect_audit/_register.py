@@ -44,6 +44,9 @@ class Take(BaseModel):
     """The verdict exactly as the investigator recorded it."""
     sources: list[Source] = Field(default_factory=list)
     """An auditor's review: the competing answers it rests on, each with its source."""
+    epoch_class: str | None = None
+    sub_reason: str | None = None
+    """An auditor's review of a DEFECT: Epoch's class and sub-reason for the item."""
     at: str = Field(default_factory=now)
 
 

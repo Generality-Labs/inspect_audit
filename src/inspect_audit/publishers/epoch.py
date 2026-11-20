@@ -5,8 +5,9 @@ epoch-review skill says how) and, after submission, writes the page's prose bloc
 `/workspace/report/prose.json`. Everything else on the page, the verdict, the defect
 rate, the rubric tables and the list of audited items, is derived from the bundle by
 `inspect_audit._epoch`, so the page cannot say more than the findings show. The page
-opens with the rubric and follows it with the representative errors, each defective
-item's competing answers printed with their sources from the findings.
+opens with the rubric and follows it with the representative errors, grouped by
+Epoch's defect class with each item's sub-reason, and each defective item's competing
+answers printed with their sources from the findings.
 """
 
 import json
@@ -88,6 +89,8 @@ def render(output: Path, findings: Findings, prose: _epoch.Prose, findings_sha25
     (output / "assessments.json").write_bytes(encoded(derived["assessments"]))
     # each defective item's competing answers with their sources, as the page prints them
     (output / "sources.json").write_bytes(encoded(derived["sources"]))
+    # each defective item's Epoch class and sub-reason, as the page groups them
+    (output / "classes.json").write_bytes(encoded(derived["classes"]))
     (output / "prose.json").write_bytes(encoded(prose.model_dump(mode="json")))
     # the description the page was rendered against, so a reader can check a row's
     # form and scale against what the auditor was asked

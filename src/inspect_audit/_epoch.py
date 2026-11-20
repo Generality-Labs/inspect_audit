@@ -24,7 +24,15 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ._labels import Source, majority_label
+from ._labels import (
+    CLASS_TITLES,
+    EPOCH_CLASSES,
+    GRADING_CLASSES,
+    SUB_REASONS,
+    Source,
+    legacy_class,
+    majority_label,
+)
 from ._verdicts import Evidence
 
 if TYPE_CHECKING:
@@ -249,6 +257,9 @@ class Block(BaseModel):
     # a table of items: after it, each item's competing answers with their sources,
     # from the findings, never from the prose
     sources: bool = False
+    # a table of items grouped by Epoch's defect class, in Epoch's order, each group
+    # with its count; this column prints the item's sub-reason from the findings
+    by_class: str = ""
 
     def shown_for(self, verdict: str) -> bool:
         return verdict in self.when
@@ -806,6 +817,67 @@ def sources_from(findings: "Findings") -> dict[str, list[dict[str, Any]]]:
                     found.append(source)
         if found:
             out[str(sample_id)] = found
+    return out
+
+
+def _row_class(record: Any, question_id: str, *, legacy: bool) -> tuple[str, str] | None:
+    """An investigator's class for one item: as recorded, or (legacy) as its types map."""
+    rows = record.get("question_assessments") if isinstance(record, dict) else None
+    rows = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    for row in rows:
+        if str(row.get("question_id")) != question_id or row.get("status") != "DEFECT":
+            continue
+        if not legacy and row.get("epoch_class") and row.get("sub_reason"):
+            return str(row["epoch_class"]), str(row["sub_reason"])
+        if legacy:
+            types = row.get("defect_types")
+            return legacy_class([str(t) for t in types] if isinstance(types, list) else [])
+    return None
+
+
+def classes_from(
+    findings: "Findings", coverage: dict[str, Any] | None
+) -> dict[str, dict[str, str]]:
+    """Each defective item's Epoch class and sub-reason, as the findings record them.
+
+    From the label checks under which the item stands as a DEFECT, the item as written
+    first: the auditor's latest review that gives a class, else the latest investigator
+    row that does. Findings from before classes were recorded have their defect types
+    read through `legacy_class` (`basis` says which); an item none of this classifies
+    is left out, and the page prints it unclassified.
+    """
+    recorded = findings.investigators.get("samples")
+    samples: dict[str, Any] = dict(recorded) if isinstance(recorded, dict) else {}
+    reviewed: dict[tuple[str, str], tuple[str, str]] = {}
+    for review in findings.auditor.reviews:
+        if review.label == "DEFECT" and review.epoch_class and review.sub_reason:
+            reviewed[(review.sample_id, review.check)] = (review.epoch_class, review.sub_reason)
+    out: dict[str, dict[str, str]] = {}
+    for item in (coverage or {}).get("questions") or []:
+        if item["status"] != "DEFECT":
+            continue
+        qid = str(item["question_id"])
+        cells = samples.get(qid) if isinstance(samples.get(qid), dict) else {}
+        defective = [c for c in LABEL_CHECKS if (item.get("by_check") or {}).get(c) == "DEFECT"]
+        for basis in ("recorded", "legacy"):
+            for check in defective:
+                found = reviewed.get((qid, check)) if basis == "recorded" else None
+                for take in reversed((cells or {}).get(check) or []):
+                    if found:
+                        break
+                    if isinstance(take, dict) and take.get("label") == "DEFECT":
+                        found = _row_class(take.get("record"), qid, legacy=basis == "legacy")
+                allowed = GRADING_CLASSES if check == "grading-labels" else EPOCH_CLASSES
+                if found and found[0] in allowed and found[1] in SUB_REASONS[found[0]]:
+                    out[qid] = {
+                        "epoch_class": found[0],
+                        "sub_reason": found[1],
+                        "check": check,
+                        "basis": basis,
+                    }
+                    break
+            if qid in out:
+                break
     return out
 
 
@@ -1441,6 +1513,31 @@ def _measure_line(check: Check, row: Assessment, derived: dict[str, Any], unit: 
     return line
 
 
+def sub_reason_label(sub_reason: str) -> str:
+    return sub_reason.replace("_", " ").capitalize()
+
+
+def class_counts(classes: dict[str, dict[str, str]], coverage: dict[str, Any] | None) -> str:
+    """The defective items per Epoch class, in Epoch's order, for the scoring row."""
+    defects = coverage_ids(coverage, "DEFECT")
+    if not defects or not classes:
+        return ""
+    parts = [
+        f"{i}. {CLASS_TITLES[c]}: {sum(1 for q in defects if classes.get(q, {}).get('epoch_class') == c)}"
+        for i, c in enumerate(EPOCH_CLASSES, 1)
+    ]
+    unclassified = sum(1 for q in defects if q not in classes)
+    if unclassified:
+        parts.append(f"not classified: {unclassified}")
+    return "Defective tasks by class:\n" + "\n".join(parts)
+
+
+def _row_ids(row: dict[str, Any], defects: list[str]) -> list[str]:
+    """The defective items a table row names in its task cell."""
+    task = str(row.get("task", ""))
+    return [q for q in defects if re.search(rf"(?<![\w.-]){re.escape(q)}(?![\w.-])", task)]
+
+
 def _source_line(source: dict[str, Any]) -> str:
     quote = " ".join(str(source["quote"]).split())
     where = str(source["url"]).strip()
@@ -1453,6 +1550,7 @@ def _sources_section(
     rows: list[dict[str, Any]],
     coverage: dict[str, Any] | None,
     sources: dict[str, list[dict[str, Any]]],
+    label: Any = None,
 ) -> list[str]:
     """Under the errors table: each defective item's competing answers, with their sources.
 
@@ -1465,14 +1563,14 @@ def _sources_section(
     out = ["### Competing answers and their sources", ""]
     listed: list[str] = []
     for row in rows:
-        task = str(row.get("task", ""))
-        for qid in (q for q in defects if re.search(rf"(?<![\w.-]){re.escape(q)}(?![\w.-])", task)):
+        for qid in _row_ids(row, defects):
             if qid in listed:
                 continue
             listed.append(qid)
             if qid not in sources:
                 continue
-            out += [f"**{qid}**: {_cell(str(row.get('error_type', '')))}", ""]
+            kind = label(qid, row) if label else str(row.get("error_type", ""))
+            out += [f"**{qid}**: {_cell(kind)}", ""]
             out += [_source_line(s) for s in sources[qid]] + [""]
     missing = [q for q in listed if q not in sources]
     missing += [q for q in defects if q not in listed and q not in sources]
@@ -1499,6 +1597,7 @@ def render(
     verdict = derived["verdict"]
     profile = prose.profile
     sources: dict[str, list[dict[str, Any]]] = derived.get("sources") or {}
+    classes: dict[str, dict[str, str]] = derived.get("classes") or {}
     out: list[str] = [f"# {page.title.format(benchmark=profile.benchmark)}", ""]
     for i, line in enumerate(page.header):
         trailer = "  " if i < len(page.header) - 1 else ""
@@ -1506,8 +1605,59 @@ def render(
     out.append("")
     footnotes: list[str] = prose.footnote_list() if page.footnotes else []
 
+    def _table(block: Block, rows: list[dict[str, Any]], label: Any = None) -> None:
+        titles = [
+            "Sub-reason" if label and c.key == block.by_class else c.title for c in block.columns
+        ]
+        out.extend([f"| {' | '.join(titles)} |", "|" + "---|" * len(block.columns)])
+        out.extend(
+            "| "
+            + " | ".join(
+                _cell(label(None, row) if label and c.key == block.by_class else str(row[c.key]))
+                for c in block.columns
+            )
+            + " |"
+            for row in rows
+        )
+        out.append("")
+
+    def _render_by_class(block: Block, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The rows grouped by Epoch class, in Epoch's order; returns them in that order."""
+        defects = coverage_ids(coverage, "DEFECT")
+
+        def of(row: dict[str, Any]) -> str | None:
+            found = [classes[q]["epoch_class"] for q in _row_ids(row, defects) if q in classes]
+            return found[0] if found else None
+
+        def label(qid: str | None, row: dict[str, Any]) -> str:
+            ids = [qid] if qid else _row_ids(row, defects)
+            named = [classes[q]["sub_reason"] for q in ids if q in classes]
+            return sub_reason_label(named[0]) if named else str(row.get(block.by_class, ""))
+
+        ordered: list[dict[str, Any]] = []
+        groups = [(c, CLASS_TITLES[c], [r for r in value if of(r) == c]) for c in EPOCH_CLASSES]
+        rest = [r for r in value if of(r) is None]
+        for i, (_, title, rows) in enumerate(groups, 1):
+            out.extend([f"### {i}. {title} ({len(rows)})", ""])
+            if rows:
+                _table(block, rows, label)
+                ordered += rows
+            else:
+                out.extend(["None among the inspected tasks.", ""])
+        if rest:
+            out.extend([f"### Not classified ({len(rest)})", ""])
+            _table(block, rest, label)
+            ordered += rest
+        out.extend(coverage_id_lines(coverage) if block.footer == "coverage_ids" else [])
+        if block.sources:
+            out.extend(_sources_section(ordered, coverage, sources, label))
+        return ordered
+
     def _render_block(block: Block) -> None:
         value = prose.block(block.id)
+        if block.kind == "table" and block.by_class and classes:
+            _render_by_class(block, value)
+            return
         if block.kind == "table":
             out.extend(
                 [
@@ -1573,6 +1723,10 @@ def render(
                         notes = f"{row.notes.strip()}[^{len(footnotes)}]"
                     elif failing and row.impact.strip():
                         notes = f"{row.notes.strip()} Impact: {row.impact.strip()}"
+                    # the defective tasks per Epoch class, on the row the labels decide
+                    counts = class_counts(classes, coverage) if check.threshold else ""
+                    if counts:
+                        notes = f"{notes.strip()}\n{counts}"
                     out.append(
                         f"| {check.name} | {_bullets(list(form.get('examples') or []))} | "
                         f"{form.get('default_threshold', '')} | "
@@ -1649,6 +1803,7 @@ def review(findings: "Findings", prose: Prose) -> dict[str, Any]:
     check_prose(prose, page, derived["verdict"], derived["coverage"], assessments)
     derived["warnings"] = prose_warnings(prose, page)
     derived["sources"] = sources_from(findings)
+    derived["classes"] = classes_from(findings, derived["coverage"])
     derived["template"] = page.id
     derived["assessments"] = {k: v.model_dump(mode="json") for k, v in assessments.items()}
     derived["page"] = render(page, method, prose, assessments, derived, derived["coverage"])

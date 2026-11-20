@@ -114,6 +114,26 @@ written or as graded counts once.
   one it rejects, each with the public URL (never a local copy under /workspace or
   /tmp) or an exact citation, and the passage quoted. A review's sources replace the
   worker's for that check.
+- **Every defect carries Epoch's class and a sub-reason.** The page groups the errors
+  by class, in Epoch's order, with counts. Check the worker's `epoch_class` and
+  `sub_reason` against its evidence; where you decide them, or the worker's are wrong or
+  missing (older findings), give both on your DEFECT review:
+  - `impossible_as_written`, a careful solver cannot reliably reach the keyed answer:
+    `ambiguous_wording` (two readings), `conflicting_sources` (credible sources
+    disagree on the fact), `multiple_valid_answers` (several answers fit, the key takes
+    one), `missing_information` (a period, unit or scope the answer depends on is not
+    given), `hidden_requirement`, `false_premise`;
+  - `false_negative`, a correct answer is scored wrong: `incorrect_or_stale_key`,
+    `overly_strict_scorer` (an alias, full name, unit or granularity rejected),
+    `systematic_grader_error`, `live_state_drift`, `environment_failure`;
+  - `false_positive`, a wrong answer is scored right: `lax_scorer`,
+    `systematic_grader_error`, `shortcut_or_leak`.
+  `other` in any class, with the cause named in the explanation. Pick the root cause:
+  a wrong key is a false negative even when sources disagree about it; two credible
+  sources for different facts make the item impossible as written. A grading-labels
+  review takes only `false_negative` or `false_positive`. Epoch's fourth class, a task
+  that does not measure the claimed capability, is the construct-validity row, never
+  an item's class.
 - **Your reviews, not the workers' labels, stand.** Where you disagree with a
   worker, record a review with the evidence that overturns it. Apply the bars above to
   every worker DEFECT, question or grading, and overturn one that does not meet them,

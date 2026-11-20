@@ -3,7 +3,7 @@ packages:
 - inspect-ai==0.3.285
 - joserfc>=1.7.4,<2
 - inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@70fb3f08955288e1ff0479296d607ae90a5b46ca
-- epoch-bench[hle] @ git+https://github.com/LaurenceWroe/epoch_bench.git@f091d99c2d789f7f95441c9726dd9b6fd71053d1
+- epoch-bench[hle] @ git+https://github.com/Generality-Labs/epoch_bench.git@f091d99c2d789f7f95441c9726dd9b6fd71053d1
 tasks:
 - package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@70fb3f08955288e1ff0479296d607ae90a5b46ca
   name: inspect_audit
@@ -16,11 +16,11 @@ tasks:
       # questions. Task only: no logs, so this is phase 1 of the Epoch review. cais/hle is
       # gated: HF_TOKEN must reach this runner (hawk --secret HF_TOKEN) and, through
       # child_secrets, every child job.
-      repo: https://github.com/LaurenceWroe/epoch_bench.git
+      repo: https://github.com/Generality-Labs/epoch_bench.git
       revision: f091d99c2d789f7f95441c9726dd9b6fd71053d1
       target_task: bench/hle
       source: bench.task.hle
-      task_package: epoch-bench[hle] @ git+https://github.com/LaurenceWroe/epoch_bench.git@f091d99c2d789f7f95441c9726dd9b6fd71053d1
+      task_package: epoch-bench[hle] @ git+https://github.com/Generality-Labs/epoch_bench.git@f091d99c2d789f7f95441c9726dd9b6fd71053d1
       paths:
       - bench/task/hle
       child_secrets:

@@ -1,0 +1,173 @@
+name: ia-epoch-bfcl-lw
+packages:
+- inspect-ai==0.3.285
+- joserfc>=1.7.4,<2
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@70fb3f08955288e1ff0479296d607ae90a5b46ca
+- epoch-bench[bfcl] @ git+https://github.com/LaurenceWroe/epoch_bench.git@d775fd957547df2e2debf0d9cc3e4c83eb1940f8
+tasks:
+- package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@70fb3f08955288e1ff0479296d607ae90a5b46ca
+  name: inspect_audit
+  items:
+  - name: audit
+    args:
+      # BFCL v4 as inspect_evals builds it (inspect_evals@4e0615e, Gorilla data @dac44e7),
+      # through Laurence's bench/bfcl wrapper, which lifts inspect_evals' two load gates
+      # (memory prereq snapshot, SERPAPI key) so every scored category loads. Task only:
+      # no logs, so this is phase 1 of the Epoch review.
+      repo: https://github.com/LaurenceWroe/epoch_bench.git
+      revision: d775fd957547df2e2debf0d9cc3e4c83eb1940f8
+      target_task: bench/bfcl
+      source: bench.task.bfcl
+      task_package: epoch-bench[bfcl] @ git+https://github.com/LaurenceWroe/epoch_bench.git@d775fd957547df2e2debf0d9cc3e4c83eb1940f8
+      paths:
+      - bench/task/bfcl
+      investigation_samples:
+      - irrelevance_228
+      - live_irrelevance_558-171-0
+      - live_multiple_209-91-3
+      - live_simple_125-81-0
+      - memory_kv_23-customer-23
+      - memory_kv_86-student-6
+      - memory_kv_39-healthcare-9
+      - memory_kv_71-finance-16
+      - memory_kv_87-student-7
+      - memory_kv_91-student-11
+      - memory_kv_97-student-17
+      - multi_turn_base_23
+      - multi_turn_miss_func_55
+      - multi_turn_miss_func_129
+      - multi_turn_miss_func_154
+      - multi_turn_miss_param_6
+      - multi_turn_miss_param_143
+      - multi_turn_miss_param_183
+      - multi_turn_long_context_139
+      - parallel_189
+      - web_search_base_20
+      - web_search_base_57
+      - web_search_base_54
+      - web_search_base_35
+      - simple_python_327
+      - simple_java_14
+      - multiple_6
+      - parallel_multiple_70
+      - live_multiple_285-129-0
+      - live_multiple_457-145-8
+      - live_parallel_multiple_21-18-0
+      - irrelevance_189
+      - live_irrelevance_89-2-77
+      - live_irrelevance_604-193-6
+      - multi_turn_base_7
+      - multi_turn_base_8
+      - multi_turn_base_108
+      - multi_turn_miss_func_59
+      - multi_turn_miss_param_50
+      - multi_turn_long_context_166
+      - multi_turn_long_context_179
+      - web_search_base_0
+      - web_search_base_28
+      - web_search_base_53
+      - web_search_base_75
+      - web_search_base_89
+      - web_search_base_97
+      - memory_kv_24-customer-24
+      - memory_kv_26-customer-26
+      - memory_kv_55-finance-0
+      checks:
+      - question-labels
+      publisher: epoch
+      policy:
+        models:
+          auditor:
+          - openai/openrouter/openai/gpt-6.2-sol
+          investigators:
+          - openai/openrouter/openai/gpt-6.2-sol
+          subjects: []
+          judges: []
+        limits:
+          max_concurrent_jobs: 10
+          budget_usd: 100.0
+          investigator_budget_usd: 4.0
+      runs: hawk
+      hawk_api_url: https://api.hawk.hawk.generalitylabs.ai
+      credential_mode: user
+      box: k8s
+      overview: "The Berkeley Function Calling Leaderboard (BFCL) v4 tests whether a model
+        calls functions correctly: single-turn AST categories (simple_python, simple_java,
+        simple_javascript, multiple, parallel, parallel_multiple and their live_* user-contributed
+        counterparts) are scored by matching the call against per-parameter lists of
+        accepted values; irrelevance and live_irrelevance are scored as correct when the
+        model makes no call; multi_turn_* are scored by executing the ground-truth and
+        the model's calls on stateful backends (file system, trading, travel, messaging
+        and others) and comparing state and responses, with miss_func and miss_param
+        withholding a function or a parameter the model should ask for, and long_context
+        padding the environment; memory_* ask about facts from earlier prerequisite conversations
+        the model stored through a memory backend, and web_search_* ask multi-hop live
+        questions, both scored by a word-boundary substring match of normalised text
+        against a list of accepted answers. The task under review is bench/bfcl, a thin
+        wrapper (bench/task/bfcl in the snapshot) over inspect_evals' own BFCL loaders,
+        converters, solver and scorer at inspect_evals@4e0615e5 (task version 8-B), which
+        reads the Gorilla dataset at ShishirPatil/gorilla@dac44e7ac9db5ff26a01ab0c1ec5de5a1e703b7a;
+        the wrapper only lifts inspect_evals' two load gates (a per-model memory snapshot
+        and a SerpAPI key), which concern running a model, not the items. The benchmark
+        code is the installed inspect_evals package (inspect_evals/bfcl: score/, solve/,
+        backends/, data.py), and loading the task downloads the dataset, the multi-turn
+        function docs, the memory prerequisite conversations and the backend source into
+        ~/.cache/inspect_evals/BFCL. The population is BFCL v4's 5,106 scored items in
+        22 categories; memory_vector and memory_rec_sum repeat memory_kv's questions and
+        keys, and web_search_no_snippet repeats web_search_base's. No evaluation logs
+        are supplied: this is the task audit alone (phase 1), and no row that needs logs
+        is rated. The sample is 50 items drawn at random by Laurence Wroe, stratified
+        by the leaderboard's overall weighting: 5 non-live AST, 5 live AST, 5 irrelevance,
+        15 multi-turn, 10 memory (memory_kv), 10 web search (web_search_base)."
+      instructions: "An Epoch review, task only: phase 1 as the epoch-review skill says,
+        no supplied logs, then submit and publish. No smoke routine. The whole review
+        has $100. Jobs: send_investigators with check question-labels and logs=[] on the
+        50 investigation_samples (the skill's two-item pilot, then the rest in one job);
+        every sample must end resolved (re-send any item left without a verdict or UNRESOLVED,
+        with the previous worker's notes). Apply the epoch-review skill's adversarial
+        second-worker step to NO_ISSUE_FOUND items where the first worker's search for
+        a competing answer or an accepted alternative was thin, and decide on both workers'
+        evidence. Brief workers by category, with the item's metadata (tools, turns, initial_config,
+        involved_classes, raw/parsed ground truth) in /audit/item.json: for AST items, check
+        whether the question fixes every required argument, whether the function docs
+        agree with the key, and whether a correct call the key omits (an equivalent value,
+        format or unit, an optional argument passed at its default) would be rejected,
+        using the grade tool to push candidate calls through the real scorer; for irrelevance
+        items, whether any offered function could in fact serve the request; for multi-turn
+        items, whether each turn gives what the ground-truth calls need, whether another
+        valid call sequence would leave the same state yet fail the checker, and, for
+        miss_func and miss_param, whether the withheld function or parameter is the one
+        the ground truth expects the model to stop for; for memory items, whether the
+        key follows from the prerequisite conversations (memory_prereq_conversation in
+        the BFCL data) and nothing there contradicts it; for web search items, whether
+        the key is right today and at the date the question implies, with live_state_drift
+        and conflicting_sources in mind. Workers have no search tool: tell them to fetch
+        pages (Wikipedia, official sites, the cited sources, search result pages) with
+        curl from their own box, and on a 403 or 404 fall back to an archived copy (https://web.archive.org/web/2026/<url>)
+        or https://r.jina.ai/<url>; the benchmark is installed in their box and loads with
+        `from bench.task.bfcl import bfcl`, which downloads the BFCL data. A property of
+        the scorer shared by a whole category (for example the agentic substring match
+        crediting a hedged answer that lists the key among others) is reported once, in
+        the scoring explanation and the limitations; it makes an item DEFECT only where
+        the item's own key makes the misgrade likely for a plausible answer. Rate reviewability
+        and benchmark_consistency from the source (inspect_evals' BFCL changelog and eval
+        version, the Gorilla repository's BFCL changelog and data revisions), and scoring_integrity
+        from the sample labels. Scoring row fields: sample_design stratified; drawn_by
+        'Laurence Wroe (random, stratified by leaderboard weight: 5 non-live AST, 5 live
+        AST, 5 irrelevance, 15 multi-turn, 10 memory, 10 web search)'; population 'BFCL
+        v4, 5,106 scored items; memory and web search drawn from memory_kv and web_search_base,
+        whose questions the other variants repeat'. In its explanation give the defect
+        counts per stratum as well as overall, and say the strata follow the leaderboard's
+        weights rather than item counts. Each investigator has its own $4 budget: one that
+        reaches it is stopped and records its best estimate with its reasoning (its scores
+        carry budget_capped: true). Review those verdicts like any other, do not relaunch
+        them, and report in the limitations how many investigators reached their budget
+        (count budget_capped in the collected job logs). Be budget-aware: keep enough for
+        re-sends, submission and publishing. Submit, then publish with the epoch publisher:
+        write prose.json, preview_review, publish_document."
+models:
+- package: inspect-ai
+  items:
+  - name: openai/openrouter/openai/gpt-6.2-sol
+message_limit: 1500
+retry_attempts: 0

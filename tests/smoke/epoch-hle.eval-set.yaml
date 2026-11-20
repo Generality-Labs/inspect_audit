@@ -1,0 +1,188 @@
+name: ia-epoch-hle-lw
+packages:
+- inspect-ai==0.3.285
+- joserfc>=1.7.4,<2
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@70fb3f08955288e1ff0479296d607ae90a5b46ca
+- epoch-bench[hle] @ git+https://github.com/LaurenceWroe/epoch_bench.git@f091d99c2d789f7f95441c9726dd9b6fd71053d1
+tasks:
+- package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@70fb3f08955288e1ff0479296d607ae90a5b46ca
+  name: inspect_audit
+  items:
+  - name: audit
+    args:
+      # Humanity's Last Exam as inspect_evals builds it (inspect_evals@4e0615e, task
+      # version 8-E, cais/hle @5a81a4c), through Laurence's bench/hle wrapper, which only
+      # flips only_hle_verified_gold to False so the population is the original 2,500
+      # questions. Task only: no logs, so this is phase 1 of the Epoch review. cais/hle is
+      # gated: HF_TOKEN must reach this runner (hawk --secret HF_TOKEN) and, through
+      # child_secrets, every child job.
+      repo: https://github.com/LaurenceWroe/epoch_bench.git
+      revision: f091d99c2d789f7f95441c9726dd9b6fd71053d1
+      target_task: bench/hle
+      source: bench.task.hle
+      task_package: epoch-bench[hle] @ git+https://github.com/LaurenceWroe/epoch_bench.git@f091d99c2d789f7f95441c9726dd9b6fd71053d1
+      paths:
+      - bench/task/hle
+      child_secrets:
+      - HF_TOKEN
+      investigation_samples:
+      - hle_4fc3e84f
+      - hle_e4fa00bf
+      - hle_e0cf89e0
+      - hle_1acd3b29
+      - hle_33c2b799
+      - hle_d89d103a
+      - hle_96d55ebc
+      - hle_3e9eb90c
+      - hle_c8fe227f
+      - hle_f00fa98c
+      - hle_1c106caf
+      - hle_0f24d33c
+      - hle_4458c400
+      - hle_8da99fc2
+      - hle_6d963e58
+      - hle_f0170cd5
+      - hle_a5ba449b
+      - hle_40039c20
+      - hle_110ce552
+      - hle_dde46449
+      - hle_82d26472
+      - hle_161eb0e8
+      - hle_d54991ec
+      - hle_bf965694
+      - hle_95d13153
+      - hle_22ec1d76
+      - hle_40a6e0c8
+      - hle_f14a1ab8
+      - hle_065e1abc
+      - hle_702a1e44
+      - hle_4ecbb22f
+      - hle_215dd771
+      - hle_166a04da
+      - hle_37c1af9f
+      - hle_f1378d5e
+      - hle_403e66bc
+      - hle_69293b33
+      - hle_bf57fa11
+      - hle_1d4eac0f
+      - hle_827729b5
+      - hle_5ce58ea0
+      - hle_8854a7d0
+      - hle_d6ba9c8c
+      - hle_c362971f
+      - hle_2e07a9ea
+      - hle_4ad551b3
+      - hle_141cd3ef
+      - hle_5f1a0485
+      checks:
+      - question-labels
+      publisher: epoch
+      policy:
+        models:
+          auditor:
+          - openai/openrouter/openai/gpt-6.2-sol
+          investigators:
+          - openai/openrouter/openai/gpt-6.2-sol
+          subjects: []
+          # the default scorer's two judges (inspect_evals hle run_configs/default.yaml:
+          # roles grader and grader_2), spelled as Hawk's proxy routes OpenRouter
+          judges:
+          - openai/openrouter/z-ai/glm-5.3-flash
+          - openai/openrouter/google/gemini-3.7-flash
+        limits:
+          max_concurrent_jobs: 10
+          budget_usd: 100.0
+          investigator_budget_usd: 6.0
+      # the judges' settings from run_configs/default.yaml (the glm judge's fp8 provider
+      # pin is OpenRouter's routing field, sent as extra_body)
+      model_configs:
+        openai/openrouter/z-ai/glm-5.3-flash:
+          config:
+            temperature: 0
+            max_tokens: 32768
+            extra_body:
+              provider:
+                quantizations:
+                - fp8
+        openai/openrouter/google/gemini-3.7-flash:
+          config:
+            temperature: 0
+            max_tokens: 32768
+      runs: hawk
+      hawk_api_url: https://api.hawk.hawk.generalitylabs.ai
+      credential_mode: user
+      box: k8s
+      overview: "Humanity's Last Exam (HLE, Center for AI Safety and Scale AI) is 2,500
+        closed-ended expert questions contributed by the public across eight categories
+        (Math, Biology/Medicine, Computer Science/AI, Physics, Humanities/Social Science,
+        Chemistry, Engineering, Other); about a quarter are multiple choice and the rest
+        exact-answer, and about 14% carry an image. The model is asked for an explanation,
+        a final answer and a confidence. inspect_evals' default scorer asks two LLM judges
+        (model roles grader = openai/openrouter/z-ai/glm-5.3-flash and grader_2 = openai/openrouter/google/gemini-3.7-flash, temperature 0) through
+        model_graded_qa with a regex-parsed grade whether the response's final answer
+        matches the answer key, up to three attempts each; each judge gives its own score
+        column. The task under review is bench/hle, a thin wrapper (bench/task/hle in the
+        snapshot) over inspect_evals/hle at inspect_evals@4e0615e5 (task version 8-E),
+        which reads cais/hle at revision 5a81a4c7271a2a2a312b9a690f0c2fde837e4c29; the
+        wrapper only sets only_hle_verified_gold=False (inspect_evals defaults to HLE-Verified's
+        668-item gold subset), so the items are the original static set, not HLE-Rolling
+        or HLE-Verified. Sample ids are hle_ plus the first 8 hex digits of md5(uid). The
+        benchmark code is the installed inspect_evals package (inspect_evals/hle: dataset.py,
+        prompts.py, scorers.py, run_configs/default.yaml); cais/hle is a gated Hugging Face
+        dataset and loads with HF_TOKEN, which every box has. The population is HLE's 2,500
+        questions. No evaluation logs are supplied: this is the task audit alone (phase
+        1), and no row that needs logs is rated. The sample is 48 items drawn at random
+        by Laurence Wroe, 6 from each of the eight categories; 12 carry an image."
+      instructions: "An Epoch review, task only: phase 1 as the epoch-review skill says,
+        no supplied logs, then submit and publish. No smoke routine. The whole review
+        has $100. Jobs: send_investigators with check question-labels, logs=[] and judge
+        {\"grader\": \"openai/openrouter/z-ai/glm-5.3-flash\", \"grader_2\": \"openai/openrouter/google/gemini-3.7-flash\"}
+        on the 48 investigation_samples (the skill's two-item pilot, then the rest in one
+        job); every sample must end resolved (re-send any item left without a verdict or
+        UNRESOLVED, with the previous worker's notes). Apply the epoch-review skill's adversarial
+        second-worker step to NO_ISSUE_FOUND items where the first worker's search for
+        a competing answer or an accepted alternative was thin, and decide on both workers'
+        evidence. Brief workers with the item in /audit/item.json (question, answer key,
+        answer_type, rationale, category, raw_subject; an image item's image is written
+        into the box: tell them to look at it with view_image). For every item they check:
+        whether the question can be answered correctly as written (no missing assumption,
+        no contradictory premise, a single defensible interpretation, an objective answer);
+        whether the answer key is right, working the problem themselves and checking the
+        key against the author's own rationale; for multiple choice, whether exactly one
+        option is correct and it is the keyed one; whether a correct answer in another
+        natural form (an equivalent expression, unit, notation, rounding, name or abbreviation)
+        would be judged incorrect; and whether a plausible wrong answer would be judged
+        correct. Use the grade tool to push candidate responses, written in the format
+        the system prompt asks for, through the real two-judge scorer, and note where the
+        two judges disagree. Workers have no search tool: tell them to fetch pages (Wikipedia,
+        papers, official sites, search result pages) with curl from their own box, and
+        on a 403 or 404 fall back to an archived copy (https://web.archive.org/web/2026/<url>)
+        or https://r.jina.ai/<url>; the benchmark is installed in their box and loads with
+        `from bench.task.hle import hle`, which downloads cais/hle (HF_TOKEN is set). A
+        property of the scorer shared by every item (for example how the judges treat
+        a hedged answer or a missing confidence) is reported once, in the scoring explanation
+        and the limitations. An item is DEFECT only if it is impossible to answer correctly
+        as written, its key is wrong, or a plausible answer, one a competent model would
+        naturally give, is misgraded; use your own judgment of plausibility. A mismatch
+        you can show only with a constructed or unlikely answer leaves the item NO_ISSUE_FOUND,
+        with the mismatch recorded in its notes. Give workers this same bar in their brief.
+        Rate reviewability and benchmark_consistency from the source (inspect_evals' HLE
+        changelog and eval version, the cais/hle dataset revisions and the authors' published
+        corrections), and scoring_integrity from the sample labels. Scoring row fields:
+        sample_design stratified; drawn_by 'Laurence Wroe (random, stratified by category:
+        6 from each of HLE's 8 categories)'; population 2500 (an integer). In its explanation
+        say the population is HLE's 2,500 original questions; give the defect counts per
+        category as well as overall, and say the strata are equal per category rather than
+        proportional to category size (Math is far larger than the rest). Each investigator
+        has its own $6 budget: one that reaches it is stopped and records its best estimate
+        with its reasoning (its scores carry budget_capped: true). Review those verdicts
+        like any other, do not relaunch them, and report in the limitations how many investigators
+        reached their budget (count budget_capped in the collected job logs). Be budget-aware:
+        keep enough for re-sends, submission and publishing. Submit, then publish with
+        the epoch publisher: write prose.json, preview_review, publish_document."
+models:
+- package: inspect-ai
+  items:
+  - name: openai/openrouter/openai/gpt-6.2-sol
+message_limit: 1500
+retry_attempts: 0

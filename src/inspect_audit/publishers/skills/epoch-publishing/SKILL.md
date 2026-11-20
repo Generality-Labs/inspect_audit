@@ -30,7 +30,13 @@ required; one written anyway is checked against its limits and kept in prose.jso
 but spend the effort on the rubric notes and the errors instead.
 
 `profile.benchmark` is the benchmark's common name and `creator` the organisation that
-published it; `review_date` is today's date when left out. The `representative_errors` bullets and the
+published it; `review_date` is today's date when left out. Write the
+`representative_errors` bullets one per Epoch class the table shows, in Epoch's order
+(impossible as written, false negative, false positive): open each with the class as
+the group heading names it, its count and the sub-reasons in it, in bold, then one or
+two of its items described by what is wrong. Take each item's class and sub-reason
+from the findings, as the preview's class groups print them; do not invent groupings
+of your own, which those groups would contradict. The `representative_errors` bullets and the
 `error_examples` table are required on every page as soon as the sample records a
 defect, with one table row per defect naming its sample id in `task`; the items audited
 without a defect are listed under the table for you. Write each row from that item's

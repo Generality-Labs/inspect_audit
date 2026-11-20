@@ -1,0 +1,155 @@
+name: ia-epoch-chess-lw
+packages:
+- inspect-ai==0.3.285
+- joserfc>=1.7.4,<2
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@70fb3f08955288e1ff0479296d607ae90a5b46ca
+- epoch-bench @ git+https://github.com/Generality-Labs/epoch_bench.git@d631a8b8466e917f3844532556fc87b706db9cd9
+tasks:
+- package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@70fb3f08955288e1ff0479296d607ae90a5b46ca
+  name: inspect_audit
+  items:
+  - name: audit
+    args:
+      # Epoch AI's Chess Puzzles 2.1.0 as epoch-research/chess-puzzles-mirror@62f4f8d3
+      # defines it, vendored into Laurence's epoch_bench as bench/chess_puzzles_v2 (the
+      # mirror's package is also named `bench`). Its two required arguments default to
+      # Epoch's settings (1M output tokens, compaction at 945k). Task only: no logs, so
+      # this is phase 1 of the Epoch review. No judges and no secrets: scoring is a
+      # deterministic UCI/SAN match.
+      repo: https://github.com/Generality-Labs/epoch_bench.git
+      revision: d631a8b8466e917f3844532556fc87b706db9cd9
+      target_task: bench/chess_puzzles_v2
+      source: bench.task.chess_puzzles_v2
+      task_package: epoch-bench @ git+https://github.com/Generality-Labs/epoch_bench.git@d631a8b8466e917f3844532556fc87b706db9cd9
+      paths:
+      - bench/task/chess_puzzles_v2
+      # all 100 puzzles (census); Laurence's Oct 2026 Generality Labs audit checked all
+      # 100 keys with Stockfish 19 at depth 18
+      investigation_samples:
+      - "1"
+      - "2"
+      - "3"
+      - "4"
+      - "5"
+      - "6"
+      - "7"
+      - "8"
+      - "9"
+      - "10"
+      - "11"
+      - "12"
+      - "13"
+      - "14"
+      - "15"
+      - "16"
+      - "17"
+      - "18"
+      - "19"
+      - "20"
+      - "21"
+      - "22"
+      - "23"
+      - "24"
+      - "25"
+      - "26"
+      - "27"
+      - "28"
+      - "29"
+      - "30"
+      - "31"
+      - "32"
+      - "33"
+      - "34"
+      - "35"
+      - "36"
+      - "37"
+      - "38"
+      - "39"
+      - "40"
+      - "41"
+      - "42"
+      - "43"
+      - "44"
+      - "45"
+      - "46"
+      - "47"
+      - "48"
+      - "49"
+      - "50"
+      - "51"
+      - "52"
+      - "53"
+      - "54"
+      - "55"
+      - "56"
+      - "57"
+      - "58"
+      - "59"
+      - "60"
+      - "61"
+      - "62"
+      - "63"
+      - "64"
+      - "65"
+      - "66"
+      - "67"
+      - "68"
+      - "69"
+      - "70"
+      - "71"
+      - "72"
+      - "73"
+      - "74"
+      - "75"
+      - "76"
+      - "77"
+      - "78"
+      - "79"
+      - "80"
+      - "81"
+      - "82"
+      - "83"
+      - "84"
+      - "85"
+      - "86"
+      - "87"
+      - "88"
+      - "89"
+      - "90"
+      - "91"
+      - "92"
+      - "93"
+      - "94"
+      - "95"
+      - "96"
+      - "97"
+      - "98"
+      - "99"
+      - "100"
+      checks:
+      - question-labels
+      publisher: epoch
+      policy:
+        models:
+          auditor:
+          - openai/openrouter/openai/gpt-6.2-sol
+          investigators:
+          - openai/openrouter/openai/gpt-6.2-sol
+          subjects: []
+          judges: []
+        limits:
+          max_concurrent_jobs: 10
+          budget_usd: 100.0
+          investigator_budget_usd: 3.0
+      runs: hawk
+      hawk_api_url: https://api.hawk.hawk.generalitylabs.ai
+      credential_mode: user
+      box: k8s
+      overview: "Chess Puzzles (Epoch AI) is 100 chess positions, generated programmatically by Epoch, each given as a FEN string; the model must name the single best next move for the side to move. Positions come from games in which the first six full moves are random and the rest are played by Stockfish at a random Elo; full-strength Stockfish (depth 18 by Epoch's account; the Stockfish version is not recorded) then keeps positions with a single best move the weaker player missed, using three thresholds on the engine's evaluations (best move > -100 cp, second-best < 80 cp, gap > 180 cp), and drops positions whose best move captures an undefended piece or a higher-value piece with a lower-value one. The task under review is bench/chess_puzzles_v2, Epoch's Chess Puzzles version 2.1.0 vendored unchanged (imports aside) from epoch-research/chess-puzzles-mirror @62f4f8d3 into bench/task/chess_puzzles_v2: the model runs in qa_agent (qa_agent.py) with a submit_answer tool, an output-token budget of 1,000,000 (the wrapper's default, Epoch's setting), continuation of cut-off responses and a forced final answer when the budget runs out; scorer.py (bench/exact) credits the submitted string if it equals the key after normalising case and wrapping, or, failing that, if it reads as the key's move in the position: UCI with a separator or check mark, or SAN (including long algebraic and castling) parsed with python-chess, which must name exactly one legal move (so an ambiguous SAN such as Rd3 when two rooks reach d3 scores incorrect). Each item has one key in UCI from-to notation; there are no judge models. CHANGELOG.md in the same directory is Epoch's version history (1.x used an LLM answer extractor; 2.0.0 moved to qa_agent and exact match; 2.1.0 added SAN). Sample ids are 1-100 in puzzles.csv order. All 100 keys are legal moves; none is a promotion or castling; 28 are captures and 12 give check; 51 positions have White to move. No evaluation logs are supplied: this is the task audit alone (phase 1), and no row that needs logs is rated. The sample is the whole population, all 100 puzzles (census)."
+      instructions: "An Epoch review, task only: phase 1 as the epoch-review skill says, no supplied logs, then submit and publish. No smoke routine. The whole review has $100. Jobs: send_investigators with check question-labels and logs=[] on the 100 investigation_samples (the skill's two-item pilot, then the rest in one job); every sample must end resolved (re-send any item left without a verdict or UNRESOLVED, with the previous worker's notes). Apply the epoch-review skill's adversarial second-worker step to NO_ISSUE_FOUND items where the first worker's engine check was shallow or found a second move close to the key, and decide on both workers' evidence. Brief workers with the item in /audit/item.json (FEN and key). Each worker installs a current Stockfish in its box (apt-get install -y stockfish, or the official Linux binary from https://github.com/official-stockfish/Stockfish/releases, fetched with curl) and uses python-chess (installed with the benchmark) to drive it, and records the Stockfish version, depth and MultiPV lines it used. For every item they check: whether the FEN is a legal, well-formed position whose side to move, castling and en passant fields are consistent; whether the key is a legal move and the best move by a clear margin when analysed with MultiPV of at least 3 to depth 24 or more (deeper where the top two are close or the evaluation changes with depth), comparing against depth 18; whether another move is as good as the key for practical purposes (for example both win decisively, both mate, or both are within about 50 cp of each other in a balanced or winning position), so that a strong player's answer other than the key would be marked wrong; whether Epoch's stated thresholds (best > -100 cp, second-best < 80 cp, gap > 180 cp) hold at depth 18 and at depth, noting where they fail without that alone being a defect; and whether a correct answer written in a natural form (UCI, UCI with a separator or check mark, SAN, long algebraic, a lowercase piece letter) would be scored incorrect, using the grade tool to push candidate submissions through the real scorer. The benchmark is installed in their box and loads with `from bench.task.chess_puzzles_v2 import chess_puzzles_v2`; scorer.py there holds read_move. An item is DEFECT only if its key is wrong (not the best move at depth), another move is as good as the key so a strong player's natural answer is misgraded, the position is malformed or cannot be answered as written, or a plausible answer, one a competent model would naturally give, is misgraded; use your own judgment of plausibility. A mismatch you can show only with a constructed or unlikely answer, or a threshold that fails while the key stays clearly best, leaves the item NO_ISSUE_FOUND, with the mismatch recorded in its notes. Give workers this same bar in their brief. A property of the scorer shared by every item (for example how ambiguous SAN is treated) is reported once, in the scoring explanation and the limitations. Rate reviewability and benchmark_consistency from the source (CHANGELOG.md, the mirror README and Epoch's published methodology at https://epoch.ai/benchmarks/chess-puzzles), and scoring_integrity from the sample labels. Scoring row fields: sample_design census; drawn_by 'Laurence Wroe (all 100 puzzles)'; population 100 (an integer). In its explanation say the population is the benchmark's 100 puzzles, give the defect counts by kind (key not best, a co-best alternative, scorer misgrade), and report how many items failed Epoch's thresholds at depth 18 while their key stayed best. Each investigator has its own $3 budget: one that reaches it is stopped and records its best estimate with its reasoning (its scores carry budget_capped: true). Review those verdicts like any other, do not relaunch them, and report in the limitations how many investigators reached their budget (count budget_capped in the collected job logs). Be budget-aware: keep enough for re-sends, submission and publishing. Submit, then publish with the epoch publisher: write prose.json, preview_review, publish_document."
+models:
+- package: inspect-ai
+  items:
+  - name: openai/openrouter/openai/gpt-6.2-sol
+message_limit: 1500
+retry_attempts: 0

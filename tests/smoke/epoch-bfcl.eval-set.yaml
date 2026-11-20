@@ -148,17 +148,20 @@ tasks:
         `from bench.task.bfcl import bfcl`, which downloads the BFCL data. A property of
         the scorer shared by a whole category (for example the agentic substring match
         crediting a hedged answer that lists the key among others) is reported once, in
-        the scoring explanation and the limitations; it makes an item DEFECT only where
-        the item's own key makes the misgrade likely for a plausible answer. Rate reviewability
+        the scoring explanation and the limitations. An item is DEFECT only if a plausible
+        answer, one a competent model would naturally give, is misgraded; use your own
+        judgment of plausibility. A mismatch you can show only with a constructed or unlikely
+        answer leaves the item NO_ISSUE_FOUND, with the mismatch recorded in its notes.
+        Give workers this same bar in their brief. Rate reviewability
         and benchmark_consistency from the source (inspect_evals' BFCL changelog and eval
         version, the Gorilla repository's BFCL changelog and data revisions), and scoring_integrity
         from the sample labels. Scoring row fields: sample_design stratified; drawn_by
         'Laurence Wroe (random, stratified by leaderboard weight: 5 non-live AST, 5 live
-        AST, 5 irrelevance, 15 multi-turn, 10 memory, 10 web search)'; population 'BFCL
-        v4, 5,106 scored items; memory and web search drawn from memory_kv and web_search_base,
-        whose questions the other variants repeat'. In its explanation give the defect
-        counts per stratum as well as overall, and say the strata follow the leaderboard's
-        weights rather than item counts. Each investigator has its own $4 budget: one that
+        AST, 5 irrelevance, 15 multi-turn, 10 memory, 10 web search)'; population 5106
+        (an integer). In its explanation say the population is BFCL v4's 5,106 scored items,
+        with memory and web search drawn from memory_kv and web_search_base, whose questions
+        the other variants repeat; give the defect counts per stratum as well as overall,
+        and say the strata follow the leaderboard's weights rather than item counts. Each investigator has its own $4 budget: one that
         reaches it is stopped and records its best estimate with its reasoning (its scores
         carry budget_capped: true). Review those verdicts like any other, do not relaunch
         them, and report in the limitations how many investigators reached their budget

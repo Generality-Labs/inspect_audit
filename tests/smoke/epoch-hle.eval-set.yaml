@@ -2,10 +2,10 @@ name: ia-epoch-hle-lw
 packages:
 - inspect-ai==0.3.285
 - joserfc>=1.7.4,<2
-- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@70fb3f08955288e1ff0479296d607ae90a5b46ca
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@8bace6132282f86db4bfef80b303120d01009814
 - epoch-bench[hle] @ git+https://github.com/Generality-Labs/epoch_bench.git@f091d99c2d789f7f95441c9726dd9b6fd71053d1
 tasks:
-- package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@70fb3f08955288e1ff0479296d607ae90a5b46ca
+- package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@8bace6132282f86db4bfef80b303120d01009814
   name: inspect_audit
   items:
   - name: audit

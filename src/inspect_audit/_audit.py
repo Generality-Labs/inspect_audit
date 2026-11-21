@@ -892,6 +892,11 @@ def audit(
             )
     model_configs = _checked_model_configs(model_configs or {})
     child_secrets = _checked_child_secrets(child_secrets or [], runs)
+    # the auditor's box reads the benchmark too (the register's population): a gated
+    # dataset needs the same keys there, given to that probe's process alone
+    from . import _in_box
+
+    _in_box.PROBE_SECRETS = tuple(child_secrets)
     _check_search(investigator_search or {}, runs, child_secrets)
     task_args = json.loads(canonical(task_args or {}))
     credential_mode = resolve_credential_mode(runs, credential_mode)

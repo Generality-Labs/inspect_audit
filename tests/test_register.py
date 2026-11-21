@@ -1,6 +1,7 @@
 """The register: one machine-readable record of every take in an audit."""
 
 import asyncio
+import hashlib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -399,6 +400,51 @@ def test_a_probe_killed_for_memory_says_so() -> None:
     killed = "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n"
     with local_box(), pytest.raises(ToolError, match="most likely ran out of memory"):
         asyncio.run(run_probe("killed", killed, {}))
+
+
+def test_a_probe_gets_the_child_secrets_and_the_transcript_does_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HLE: cais/hle is gated, and the register's read in the auditor's box ran with no
+    environment, so the population could not be loaded. The probe now gets the audit's
+    child_secrets as environment, and its exec leaves no event that would record them."""
+    from inspect_ai.log._transcript import Transcript, init_transcript
+    from inspect_ai.util._sandbox.context import sandbox_environments_context_var
+    from inspect_ai.util._sandbox.events import SandboxEnvironmentProxy
+
+    from inspect_audit import _in_box
+
+    secret = "hf_probe_secret_value"
+    monkeypatch.setenv("PROBE_FIXTURE_TOKEN", secret)
+    monkeypatch.setattr(_in_box, "PROBE_SECRETS", ("PROBE_FIXTURE_TOKEN", "PROBE_UNSET"))
+    monkeypatch.delenv("PROBE_UNSET", raising=False)
+    seen: list[dict[str, str] | None] = []
+    # the script answers with the value's digest: the value itself never enters the box
+    digest = hashlib.sha256(secret.encode()).hexdigest()
+    script = (
+        "import hashlib, json, os, sys\n"
+        "value = os.environ.get('PROBE_FIXTURE_TOKEN', '').encode()\n"
+        "json.dump({'digest': hashlib.sha256(value).hexdigest()}, open(sys.argv[2], 'w'))\n"
+    )
+    transcript = Transcript()
+    init_transcript(transcript)
+    with local_box() as box:
+        original = box.exec
+
+        async def exec(*args: Any, **kwargs: Any) -> Any:
+            seen.append(kwargs.get("env"))
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(box, "exec", exec)
+        proxied = sandbox_environments_context_var.set({"default": SandboxEnvironmentProxy(box)})
+        try:
+            answer = asyncio.run(_in_box.run_probe("secret", script, {}))
+        finally:
+            sandbox_environments_context_var.reset(proxied)
+    assert answer == {"digest": digest}
+    # only the declared names that are set, passed to the probe's exec
+    assert seen == [{"PROBE_FIXTURE_TOKEN": secret}]
+    assert secret not in "".join(e.model_dump_json() for e in transcript.events)
 
 
 def test_a_model_the_task_loads_by_default_is_recorded(

@@ -5,9 +5,16 @@ user mode, the operator's login). Importing a benchmark runs its code, and build
 task may download its dataset, so neither happens here: a small script runs in the box,
 where the benchmark is installed (`install_benchmark`) and no credentials are held, and
 hands back JSON. The scripts import only Inspect and the benchmark, which the box has.
+
+The one exception is `PROBE_SECRETS`: a benchmark whose dataset is gated (HLE's cais/hle
+needs HF_TOKEN) cannot be read without its key. `audit` names its `child_secrets` there;
+each probe's process, and only it, gets them as environment (never the agent's shell), and
+that exec is kept out of the transcript so the values are not recorded.
 """
 
 import json
+import os
+from contextlib import nullcontext
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -15,6 +22,10 @@ from inspect_ai.tool import ToolError
 from inspect_ai.util import sandbox
 
 WORK = "/tmp/inspect-audit-probe"
+
+# Environment variable names given to each probe's process, from the runner's environment
+# (`audit` sets them to its child_secrets). Empty: the probe gets no environment.
+PROBE_SECRETS: tuple[str, ...] = ()
 
 # The task's samples with the ids an eval gives them (`_task.numbered`'s rule: id-less
 # samples are numbered by position + 1, over the whole dataset).
@@ -83,9 +94,15 @@ async def run_probe(name: str, script: str, request: dict[str, Any]) -> Any:
     await box.write_file(f"{WORK}/{name}.py", script)
     await box.write_file(f"{WORK}/{name}.request.json", json.dumps(request))
     answer = f"{WORK}/{name}.answer.json"
-    result = await box.exec(
-        ["python", f"{WORK}/{name}.py", f"{WORK}/{name}.request.json", answer], timeout=1800
-    )
+    env = {key: os.environ[key] for key in PROBE_SECRETS if os.environ.get(key)}
+    # a SandboxEvent records an exec's env: with secrets in it, record no event at all
+    no_events = getattr(box, "no_events", None)
+    with no_events() if env and no_events else nullcontext():
+        result = await box.exec(
+            ["python", f"{WORK}/{name}.py", f"{WORK}/{name}.request.json", answer],
+            env=env or None,
+            timeout=1800,
+        )
     if not result.success:
         killed = (
             # SIGKILL: on a pod, the kernel's out-of-memory killer (breadth round, docvqa:

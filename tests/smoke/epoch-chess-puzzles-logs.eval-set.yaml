@@ -164,3 +164,8 @@ models:
   - name: openai/openrouter/openai/gpt-6.2-sol
 message_limit: 2000
 retry_attempts: 0
+# the audit task fetches its hawk: logs when it loads, and Hawk does not tell a
+# runner where its own API is
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

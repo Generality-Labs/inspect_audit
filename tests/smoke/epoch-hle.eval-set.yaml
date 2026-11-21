@@ -144,7 +144,15 @@ tasks:
         a competing answer or an accepted alternative was thin, and decide on both workers'
         evidence. Brief workers with the item in /audit/item.json (question, answer key,
         answer_type, rationale, category, raw_subject; an image item's image is written
-        into the box: tell them to look at it with view_image). For every item they check:
+        into the box: tell them to look at it with view_image). Exception: never open
+        or view the image for hle_82d26472, and do not let any worker view it: it trips
+        the model provider's content filter, and once it is in context every later call
+        fails and kills the run. Judge hle_82d26472 from the question text, the answer
+        key, the rationale and any other evidence, and say in the limitations that its
+        image was not viewed and why. Generally, if any view_image call is refused by
+        the provider's content policy, do not view that image again. Put both of these
+        rules in every worker's brief (and tell hle_82d26472's workers not to open or
+        decode its image file in any way). For every item they check:
         whether the question can be answered correctly as written (no missing assumption,
         no contradictory premise, a single defensible interpretation, an objective answer);
         whether the answer key is right, working the problem themselves and checking the

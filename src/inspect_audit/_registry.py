@@ -33,6 +33,7 @@ def investigation(
     checks: list[str],
     cost_limit: float | None = None,
     task_args: dict[str, Any] | None = None,
+    sample_selecting_args: list[str] | None = None,
     logs: list[str] | None = None,
     judge: dict[str, str] | None = None,
     judge_configs: dict[str, dict[str, Any]] | None = None,
@@ -73,6 +74,7 @@ def investigation(
         samples=samples if samples == "all" else list(samples),
         checks=checks,
         task_args=task_args,
+        sample_selecting_args=sample_selecting_args or (),
         logs=log_files(logs) if logs else None,
         judge=judge,
         judge_configs=judge_configs,
@@ -108,6 +110,7 @@ def regrade(
     cost_limit: float | None = None,
     files: dict[str, str] | None = None,
     source: str | None = None,
+    sample_selecting_args: list[str] | None = None,
 ) -> Task:
     """Re-grade recorded attempts with the benchmark's own scorers (`regrade_task` in `_regrade`).
 
@@ -126,6 +129,7 @@ def regrade(
         cost_limit=cost_limit,
         files=files,
         source=source,
+        sample_selecting_args=sample_selecting_args or (),
     )
 
 

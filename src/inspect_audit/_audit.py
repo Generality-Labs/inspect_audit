@@ -460,6 +460,7 @@ def run_eval(inv: Audit) -> Tool:
                 task_args={
                     "task": inv.task,
                     "task_args": args,
+                    **_sample_selecting(policy),
                     "logs": _logs_named(inv, rescore),
                     "judge": judges,
                     "samples": samples,
@@ -544,6 +545,7 @@ def send_investigators(inv: Audit) -> Tool:
             task_args={
                 "task": inv.task,
                 "task_args": json.loads(policy.task_args_json),
+                **_sample_selecting(policy),
                 "samples": samples,
                 "checks": checks,
                 "source": policy.source,
@@ -729,8 +731,21 @@ async def _continue(state: AgentState, interactive: bool) -> bool | str:
     return await operator_turn(state)
 
 
+def _sample_selecting(policy: LaunchPolicy) -> dict[str, Any]:
+    """The job argument naming the policy's sample-selecting task arguments; none when empty."""
+    return (
+        {"sample_selecting_args": list(policy.sample_selecting_args)}
+        if policy.sample_selecting_args
+        else {}
+    )
+
+
 def _logs_provenance(
-    root: Path, seed: dict[str, Any], task: str, task_args: dict[str, Any]
+    root: Path,
+    seed: dict[str, Any],
+    task: str,
+    task_args: dict[str, Any],
+    sample_selecting_args: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
     """What the supplied logs record about the build that produced them.
 
@@ -757,7 +772,15 @@ def _logs_provenance(
     except PackageNotFoundError:
         return ()
     try:
-        return tuple(provenance_of(staged, task_name=task, task_args=task_args, package=package))
+        return tuple(
+            provenance_of(
+                staged,
+                task_name=task,
+                task_args=task_args,
+                package=package,
+                sample_selecting_args=sample_selecting_args,
+            )
+        )
     except LogMismatchError as ex:
         return (f"not checked against the installed benchmark: {ex}",)
 
@@ -789,6 +812,7 @@ def audit(
     instructions: str | None = None,
     policy: dict[str, Any] | None = None,
     task_args: dict[str, Any] | None = None,
+    sample_selecting_args: list[str] | None = None,
     investigation_samples: list[str] | str | None = None,
     checks: list[str] | None = None,
     source: str | None = None,
@@ -850,6 +874,10 @@ def audit(
             (budget_usd, max_concurrent_jobs, coverage). Changes on resume are refused;
             start a new audit instead.
         task_args: Fixed benchmark arguments for every child job and the register.
+        sample_selecting_args: Names in `task_args` that only choose which samples run
+            (e.g. ExploitBench's `vulnerability_ids`, one CVE per log). Supplied logs may
+            record any value for them; each item is still checked against the installed
+            dataset. Every other argument must match the logs exactly.
         investigation_samples: Permitted sample IDs, or "all". Subset requests are allowed.
         checks: Permitted investigation checks; defaults to the package's available checks.
         source: Optional fixed benchmark source module for investigation jobs.
@@ -983,11 +1011,20 @@ def audit(
         samples=tuple(investigation_samples) if isinstance(investigation_samples, list) else None,
         checks=permitted_checks,
         task_args_json=canonical(task_args),
+        sample_selecting_args=tuple(sample_selecting_args or ()),
         environment_json=canonical(benchmark_environment),
         source=source,
         supplied_logs=tuple(sorted(set(supplied))),
         logs_provenance=(
-            _logs_provenance(root, seed, target_task, dict(task_args or {})) if target_task else ()
+            _logs_provenance(
+                root,
+                seed,
+                target_task,
+                dict(task_args or {}),
+                tuple(sample_selecting_args or ()),
+            )
+            if target_task
+            else ()
         ),
         limits=permissions.limits,
         credential_mode=credential_mode,

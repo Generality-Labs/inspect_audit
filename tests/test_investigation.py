@@ -481,6 +481,59 @@ def test_a_log_from_a_different_run_is_refused(tmp_path: Path) -> None:
     assert "different build of the benchmark" in notice
 
 
+def test_logs_that_each_select_other_samples_share_one_declaration(tmp_path: Path) -> None:
+    """ExploitBench runs one CVE per log (`vulnerability_ids=[cve]`): declared as a
+    sample-selecting argument, any recorded value is accepted, and every other argument
+    still binds. Undeclared, it is refused as before."""
+    from inspect_ai import Task, task
+    from inspect_ai import eval as inspect_eval
+
+    from inspect_audit._logs import LogMismatchError, index_logs, provenance_of
+
+    @task
+    def per_item(ids: list[str] | None = None, agent: str = "react") -> Task:
+        chosen = ids or ["a", "b"]
+        return Task(dataset=[Sample(id=i, input=f"q{i}", target="x") for i in chosen])
+
+    logs = [
+        inspect_eval(
+            per_item(ids=[item], agent="react"),
+            model="mockllm/model",
+            log_dir=str(tmp_path / item),
+            display="none",
+        )[0]
+        for item in ("a", "b")
+    ]
+    name = logs[0].eval.task_registry_name or logs[0].eval.task
+    files = [log.location for log in logs]
+    declared = {"ids": None, "agent": "react"}
+
+    with pytest.raises(LogMismatchError, match="ids"):
+        index_logs(files, task_name=name, task_args=declared, package=None)
+    with pytest.raises(LogMismatchError, match="does not declare: ids"):
+        index_logs(files, task_name=name, task_args={"agent": "react"}, package=None)
+
+    index = index_logs(
+        files, task_name=name, task_args=declared, package=None, sample_selecting_args=["ids"]
+    )
+    assert sorted(index.attempts) == ["a", "b"]
+    assert (
+        provenance_of(
+            files, task_name=name, task_args=declared, package=None, sample_selecting_args=["ids"]
+        )
+        == []
+    )
+    # the other arguments still bind
+    with pytest.raises(LogMismatchError, match="agent"):
+        index_logs(
+            files,
+            task_name=name,
+            task_args={"ids": None, "agent": "codex"},
+            package=None,
+            sample_selecting_args=["ids"],
+        )
+
+
 def test_a_chat_input_matches_its_log_whatever_its_message_ids(tmp_path: Path) -> None:
     """A chat's messages get fresh random ids on every load; only their content counts."""
     from inspect_ai import Task, eval

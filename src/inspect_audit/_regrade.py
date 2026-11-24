@@ -11,6 +11,7 @@ that needs the benchmark's box is reported, not worked around.
 import asyncio
 import csv
 import math
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from functools import partial
@@ -298,6 +299,7 @@ def regrade_task(
     cost_limit: float | None = None,
     files: dict[str, str] | None = None,
     source: str | None = None,
+    sample_selecting_args: Sequence[str] = (),
 ) -> Task:
     """Re-grade recorded attempts with the benchmark's own scorers, as an Inspect task.
 
@@ -323,7 +325,13 @@ def regrade_task(
             their = registry_create("task", task, **(task_args or {}))
         name = registry_info(their).name
         package = distribution_of(name)
-    index = index_logs(logs, task_name=name, task_args=dict(task_args or {}), package=package)
+    index = index_logs(
+        logs,
+        task_name=name,
+        task_args=dict(task_args or {}),
+        package=package,
+        sample_selecting_args=sample_selecting_args,
+    )
     roles = configured_judges(index, judge_roles(index, judge))
     scorers: list[Scorer] = (
         list(their.scorer) if isinstance(their.scorer, list) else [s for s in [their.scorer] if s]

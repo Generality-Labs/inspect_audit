@@ -99,6 +99,9 @@ class LaunchPolicy(FrozenModel):
     samples: tuple[str, ...] | None = None
     checks: tuple[str, ...]
     task_args_json: str = "{}"
+    sample_selecting_args: tuple[str, ...] = ()
+    """Names in the task arguments that only select samples: supplied logs may record
+    other values for them (see `_logs._check_header`)."""
     environment_json: str = "{}"
     source: str | None = None
     supplied_logs: tuple[str, ...] = ()
@@ -216,6 +219,7 @@ INVESTIGATION_ARGS = frozenset(
     {
         "task",
         "task_args",
+        "sample_selecting_args",
         "samples",
         "checks",
         "source",
@@ -242,6 +246,7 @@ REGRADE_ARGS = frozenset(
         "epochs",
         "files",
         "source",
+        "sample_selecting_args",
     }
 )
 
@@ -364,6 +369,8 @@ class AuditAuthorizer:
             raise ToolError("a variant needs the policy's declared benchmark.source module")
         if args.get("task") != p.task or canonical(args.get("task_args", {})) != p.task_args_json:
             raise ToolError("regrade task and task_args are fixed by the launch policy")
+        if tuple(args.get("sample_selecting_args") or ()) != p.sample_selecting_args:
+            raise ToolError("sample_selecting_args are fixed by the launch policy")
         judges = [str(m) for m in (args.get("judge") or {}).values()]
         # runs as its judge, or, for a grader that calls no model, as a mock model
         if job.models != (judges[:1] or ["mockllm/model"]):
@@ -457,6 +464,8 @@ class AuditAuthorizer:
                 raise ToolError("investigation source must match the launch policy")
             roles = args.get("judge") or {}
             benchmark_args = args.get("task_args", {})
+            if tuple(args.get("sample_selecting_args") or ()) != p.sample_selecting_args:
+                raise ToolError("sample_selecting_args are fixed by the launch policy")
         elif kind is JobKind.VARIANT:
             if set(args) - VARIANT_ARGS or args.get("task") != p.task:
                 raise ToolError("variant job contains configuration outside the launch contract")

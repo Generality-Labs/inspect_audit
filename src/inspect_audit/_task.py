@@ -205,6 +205,7 @@ def investigation_task(
     samples: Sequence[str] | Literal["all"],
     checks: Sequence[str],
     task_args: dict[str, Any] | None = None,
+    sample_selecting_args: Sequence[str] = (),
     logs: Sequence[str] | None = None,
     judge: dict[str, str] | None = None,
     judge_configs: dict[str, dict[str, Any]] | None = None,
@@ -233,6 +234,8 @@ def investigation_task(
         samples: The sample ids to investigate, or `"all"`.
         checks: The checks to run on each sample, by skill name.
         task_args: The benchmark task's arguments, exactly as the logs ran it.
+        sample_selecting_args: Names in `task_args` that only select samples (e.g.
+            `vulnerability_ids`): logs may record other values for them.
         logs: `.eval` files recording attempts at this task; every header must
             match the declared task, arguments and installed benchmark version.
         judge: Model roles for their scorers (the LLM judge), role -> model. Taken
@@ -294,7 +297,13 @@ def investigation_task(
         raise ValueError("assessment_ids names samples that are not being investigated")
 
     index = (
-        index_logs(list(logs), task_name=name, task_args=dict(task_args or {}), package=package)
+        index_logs(
+            list(logs),
+            task_name=name,
+            task_args=dict(task_args or {}),
+            package=package,
+            sample_selecting_args=sample_selecting_args,
+        )
         if logs is not None
         else None
     )

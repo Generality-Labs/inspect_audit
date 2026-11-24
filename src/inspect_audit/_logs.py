@@ -6,7 +6,7 @@ Read native logs on the host; export selected content through tools.
 
 import inspect
 import re
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from logging import getLogger
@@ -193,6 +193,11 @@ def _same_task(recorded: str, task_file: str | None, task_name: str) -> bool:
     return len(logged) >= 2 and declared[-2:] == logged[-2:]
 
 
+def _binding(args: dict[str, Any], sample_selecting: Collection[str]) -> dict[str, Any]:
+    """The arguments a log must share with the declaration: all but the sample-selecting ones."""
+    return {key: value for key, value in args.items() if key not in sample_selecting}
+
+
 def _check_header(
     path: str,
     header: EvalLog,
@@ -200,12 +205,19 @@ def _check_header(
     task_name: str,
     task_args: dict[str, Any],
     package: str | None,
+    sample_selecting_args: Collection[str] = (),
 ) -> str | None:
     """Refuse a log of another task or other task arguments; say when the build differs.
+
+    `sample_selecting_args` name arguments that only choose which samples run (e.g.
+    ExploitBench's `vulnerability_ids`, one CVE per log): a log may record any value
+    for them, as its items are still checked one by one against the installed dataset
+    (`check_same_items`). Every other argument binds.
 
     The returned notice names the difference; None when the build matches or no
     package was named.
     """
+    task_args = _binding(task_args, sample_selecting_args)
     spec = header.eval
     if spec.task_registry_name == WRAPPER:
         # the auditor's `benchmark` wrapper: its header names the wrapper, and the
@@ -213,7 +225,10 @@ def _check_header(
         wrapped = (spec.metadata or {}).get(WRAPPED)
         if not isinstance(wrapped, dict):
             raise LogMismatchError(f"{path} is a benchmark-wrapper log with no recorded run")
-        if wrapped.get("task") != task_name or wrapped.get("task_args") != task_args:
+        recorded_args = wrapped.get("task_args")
+        if isinstance(recorded_args, dict):
+            recorded_args = _binding(recorded_args, sample_selecting_args)
+        if wrapped.get("task") != task_name or recorded_args != task_args:
             raise LogMismatchError(
                 f"{path} wrapped {wrapped.get('task')!r} with {wrapped.get('task_args')!r}, "
                 f"not the declared {task_name!r} with {task_args!r}"
@@ -231,7 +246,7 @@ def _check_header(
                 f"{path} ran {task_name} with {key}={spec.task_args.get(key)!r}, "
                 f"not the declared {value!r}"
             )
-    undeclared = set(spec.task_args_passed) - set(task_args)
+    undeclared = set(spec.task_args_passed) - set(task_args) - set(sample_selecting_args)
     if undeclared:
         raise LogMismatchError(
             f"{path} passed task argument(s) the investigation does not declare: "
@@ -260,7 +275,12 @@ def _aggregate(notices: dict[str, int], total: int) -> list[str]:
 
 
 def provenance_of(
-    files: Sequence[str], *, task_name: str, task_args: dict[str, Any], package: str | None
+    files: Sequence[str],
+    *,
+    task_name: str,
+    task_args: dict[str, Any],
+    package: str | None,
+    sample_selecting_args: Collection[str] = (),
 ) -> list[str]:
     """What the logs say about the build that produced them, against the installed one.
 
@@ -271,7 +291,12 @@ def provenance_of(
     for path in files:
         header = read_eval_log(path, header_only=True)
         notice = _check_header(
-            path, header, task_name=task_name, task_args=task_args, package=package
+            path,
+            header,
+            task_name=task_name,
+            task_args=task_args,
+            package=package,
+            sample_selecting_args=sample_selecting_args,
         )
         if notice:
             notices[notice] = notices.get(notice, 0) + 1
@@ -300,6 +325,7 @@ def index_logs(
     task_name: str,
     task_args: dict[str, Any],
     package: str | None,
+    sample_selecting_args: Collection[str] = (),
 ) -> LogIndex:
     """Check every declared log against the declared run and index its attempts."""
     if not files:
@@ -311,7 +337,12 @@ def index_logs(
     for path in files:
         header = read_eval_log(path, header_only=True)
         notice = _check_header(
-            path, header, task_name=task_name, task_args=task_args, package=package
+            path,
+            header,
+            task_name=task_name,
+            task_args=task_args,
+            package=package,
+            sample_selecting_args=sample_selecting_args,
         )
         if notice:
             notices[notice] = notices.get(notice, 0) + 1

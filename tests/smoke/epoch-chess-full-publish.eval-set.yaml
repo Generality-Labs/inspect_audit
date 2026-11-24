@@ -22,6 +22,10 @@ tasks:
         name: epoch
         full_page: true
       box: k8s
+      # the default ./publications is relative to the runner's working directory, which
+      # is not writable (ia-epoch-chess-full-pub-l-ia50l3kdmyojpkab: PermissionError at
+      # load); the audit's own default is under the home directory
+      output_dir: ~/.inspect-audit/publications
       # gpt-6.2-sol at Hawk's price ($2/M input, $10/M output): 4M tokens is about $8
       # if every token were uncached input, so roughly $10 at most
       token_limit: 4000000

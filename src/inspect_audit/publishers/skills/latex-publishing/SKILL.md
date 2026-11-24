@@ -20,8 +20,7 @@ The findings are final at /inputs/findings/findings.json. The GL rubric is in th
 ## Evidence
 
 - Paraphrase evidence in your own words. When one piece of evidence carries a finding (a few lines of a transcript, or a test input with its expected and actual output), insert it with the excerpt component instead of describing it. Use excerpts judiciously: at most one per finding, the shortest that proves the point, followed by one sentence on what it shows.
-- Never print a benchmark's answer key or a full gold answer. Redact it in any excerpt.
-- Paths, log ids and hashes are listed in the sources appendix automatically. Refer to a source by its number.
+- The report prints no paths, log ids or hashes, and neither should the prose. Where each piece of evidence came from is kept with the published findings.
 
 ## Prose and excerpts
 
@@ -36,18 +35,19 @@ Grades, ratings, finding boxes, counts and evidence come from the frozen finding
 An excerpt is declared in `excerpts` and placed in any of those fields with `{{excerpt:<id>}}` on its own line. Declare where the text is; the publisher reads it, so never type the quoted text yourself:
 
 ```json
-{"id": "replay", "caption": "GPT-5, bibliography converter in Go, first attempt",
+{"id": "replay", "caption": "GPT-5, bibliography converter in Go, attempt 1",
  "source": "/inputs/logs/20/run.eval", "sample": "bib2json_go", "epoch": 1, "message": "FKN3ZHh2j9d6PxM4az5BG2",
- "start": "// Try precomputed mapping", "end": "// Fallback", "redact": []}
+ "start": "// Try precomputed mapping", "end": "// Fallback"}
 ```
 
 - `source`: a file the findings cite (/workspace/... as in the manifest's `artifacts`), or a log in the manifest's `log_references` (its `source` or `address`) with `sample`, `epoch` and `message` (a message id, or its 0-based position).
 - Choose lines with `lines: [first, last]` (1-based), or `start` and optionally `end`: text copied exactly from the first and last lines to show. Without either, the whole text is shown.
 - `max_lines` (default 12, at most 40): further lines are cut and the box says how many.
-- `redact`: strings replaced by "[redacted]"; each must occur in the selected lines. A transcript's recorded answer (4+ characters) is redacted automatically.
-- `caption`: one plain line naming whose output or which document it is. The source's path and position go to the sources appendix.
+- `kind`: `text` for prose (a prompt, a model's message, a document or paper), set as a block quotation in the report's font; `code` for recorded output (a program, a command, a tool's output, test results), set line for line in a monospace box. Unset, a tool call or tool output, or a file with a code extension, is `code`, and anything else is `text`. Set it only when that guess is wrong.
+- Nothing is redacted unless you ask. `redact` (optional) lists strings to replace with "[redacted]", each of which must occur in the selected lines. Use it only for a deliberate reason, never by default.
+- `caption`: a plain label naming whose words or which document it is (model, item, attempt; or the document and section), with no description of what it shows. It is the link text: an excerpt from a Hawk log links to that sample in the Hawk log viewer. Say what the excerpt shows in the sentence after it.
 
-preview_report fails, naming the excerpt, if a source, sample, message, line or start/end text cannot be found, or an excerpt is unplaced or placed twice. It writes the excerpts exactly as quoted to /workspace/report/excerpts.txt.
+preview_report fails, naming the excerpt, if a source, sample, message, line or start/end text cannot be found, or an excerpt is unplaced or placed twice. It writes the excerpts exactly as quoted, with where each was read and its link, to /workspace/report/excerpts.txt.
 
 ## Rendering
 

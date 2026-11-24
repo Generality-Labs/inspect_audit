@@ -35,22 +35,15 @@
 \newcommand{\iaissue}[3]{%
   \gl@issuesep{\bfseries\textcolor{#3}{#1}}~\glupfirst{#2}\gdef\gl@issuesep{\par}}
 
-% ---- Evidence, with its source as a numbered reference --------------
-% \iaevidence{label}{items}: items are \iaitem{observed}{ref numbers}
+% ---- Evidence, as observed ----------------------------------------------
+% \iaevidence{label}{\item observed ...}. Where each item was found is kept with the
+% published findings, not printed.
 \newcommand{\iaevidence}[2]{%
   \par\smallskip\ifblank{#1}{}{\noindent\textbf{#1}\par\nopagebreak}%
   {\small\begin{itemize}[nosep, leftmargin=1.2em, label=\textbullet]#2\end{itemize}}\par}
-\newcommand{\iaitem}[2]{\item #1\,\iaref{#2}}
-\newcommand{\iaref}[1]{%
-  \textsuperscript{\renewcommand*{\do}[1]{\gl@refsep\hyperlink{iasource.##1}{##1}\def\gl@refsep{,}}%
-    \def\gl@refsep{}\docsvlist{#1}}}
 % A dimension's supporting evidence, after its table and prose
 \newcommand{\iaevidenceheading}{%
   \par\medskip\noindent\textbf{Evidence}\par\nopagebreak}
-% Sources appendix: \iasource{n}{text}
-\newcommand{\iasource}[2]{%
-  \par\noindent\hangindent=2.2em\hangafter=1%
-  \makebox[2.2em][l]{\hypertarget{iasource.#1}{[#1]}}#2\par}
 
 % ---- Field lists without empty values -------------------------------
 \newcommand{\iafieldlist}[2]{%
@@ -58,22 +51,39 @@
   {\small\begin{itemize}[nosep, leftmargin=1.2em, label=\textbullet]#2\end{itemize}}\par\vspace{2pt}}
 
 % ---- Excerpts: verbatim evidence, quoted by the publisher -------------
-% \begin{iaexcerpt}{caption}{source ref} \iaxline{...}... \end{iaexcerpt}
-% Each \iaxline is one recorded line, spaces kept; a line too long for the box wraps
-% with a hanging indent. \iaxelided{n} says how many selected lines are not shown.
+% Recorded output (code, a command, a tool's output):
+%   \begin{iaexcerpt}{caption} \iaxline{indent}{...}... \end{iaexcerpt}
+% Each \iaxline is one recorded line, spaces kept; a line too long for the box
+% continues under its own indentation (indent: its leading spaces), a little further in.
+% Prose (a prompt, a model's message, a document), as a block quotation:
+%   \begin{iaquote}{caption} \iaqpar{...}... \end{iaquote}
+% The caption is a plain label, linked to its sample where there is one.
+% \iaxelided{n} says how many selected lines are not shown.
 % The template sets its text in OT1, which has no typewriter braces, quotes or angle
 % brackets: excerpts use T1, declared here if nothing else has.
 \RequirePackage[varqu,scaled=0.86]{zi4}
 \@ifundefined{T1-cmd}{\input{t1enc.def}}{}
-\newtcolorbox{iaexcerpt}[2]{%
-  enhanced, breakable, sharp corners,
-  colback=black!3, colframe=brandTeal, boxrule=0pt, leftrule=2pt,
+\tcbset{ia excerpt/.style={%
+  enhanced, breakable, sharp corners, colframe=brandTeal, boxrule=0pt, leftrule=2pt,
   left=3mm, right=2mm, top=1.5mm, bottom=1.5mm,
-  before skip=6pt plus 2pt, after skip=6pt plus 2pt,
-  fontupper=\footnotesize,
-  before upper={\setlength{\parskip}{0pt}\raggedright
-    \noindent{\small\bfseries #1}\,\iaref{#2}\par\nopagebreak\vspace{3pt}\fontencoding{T1}\ttfamily\selectfont}}
-\newcommand{\iaxline}[1]{\par\noindent\hangindent=2em\hangafter=1 #1\mbox{}\par}
+  before skip=6pt plus 2pt, after skip=6pt plus 2pt}}
+% (a linked caption in the rule's colour: a label first, a link second)
+\newcommand{\iacaption}[1]{%
+  \noindent{\hypersetup{urlcolor=brandTeal}\small\bfseries #1}\par\nopagebreak\vspace{3pt}}
+\newtcolorbox{iaexcerpt}[1]{%
+  ia excerpt, colback=black!3, fontupper=\footnotesize,
+  before upper={\setlength{\parskip}{0pt}\raggedright\iacaption{#1}%
+    \fontencoding{T1}\ttfamily\selectfont}}
+\newcommand{\iaxline}[2]{%
+  \par\noindent\hangindent=\dimexpr #1\fontdimen2\font+3\fontdimen2\font\relax
+  \hangafter=1 #2\mbox{}\par}
+\newtcolorbox{iaquote}[1]{%
+  ia excerpt, colback=brandTeal!4, fontupper=\small,
+  before upper={\setlength{\parskip}{0pt}\iacaption{#1}}}
+\newcommand{\iaqpar}[1]{\par\noindent #1\par\vspace{3pt}}
+% in prose: `inline code`, and a fenced block's lines
+\newcommand{\iatt}[1]{{\fontencoding{T1}\ttfamily\selectfont #1}}
+\newcommand{\iaqcode}[2]{{\footnotesize\fontencoding{T1}\ttfamily\selectfont\iaxline{#1}{#2}}}
 \newcommand{\iaxelided}[1]{%
   \par\noindent{\normalfont\itshape\color{black!55}[\ldots\ #1 more lines not shown]}\par}
 

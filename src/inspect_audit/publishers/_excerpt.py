@@ -3,17 +3,25 @@
 The publishing agent names where a piece of evidence is (a file in the findings bundle,
 or one message of a recorded attempt in a log the findings reference) and which lines
 of it to show. The publisher reads the text itself, so a quotation is never retyped:
-what the reader sees is what the source records, shortened only where it says so and
-with named strings (answer keys) replaced by "[redacted]". A declaration that does not
-resolve to text in its source is an error the agent fixes before it publishes.
+what the reader sees is what the source records, shortened only where it says so. Nothing
+is redacted unless the declaration names it. A declaration that does not resolve to text
+in its source is an error the agent fixes before it publishes.
+
+An excerpt is prose (`text`: a prompt, a model's message, a document) or recorded output
+(`code`: a program, a command, a tool's output), and the report sets each as a reader
+reads it. Its caption is the link text: an excerpt from a Hawk log links to that sample
+in the Hawk log viewer. Where it was read from stays in the published bundle
+(excerpts.txt), never in the report.
 """
 
 import json
+import os
 import re
 import textwrap
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from pathlib import Path, PurePosixPath
+from typing import Any, Literal
+from urllib.parse import quote
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -25,9 +33,78 @@ DEFAULT_LINES = 12
 MOST_LINES = 40
 # one recorded line can be a whole minified file
 LINE_CHARACTERS = 240
-# a recorded answer shorter than this is not redacted by itself (a lone "B" or "9" would
-# blank every occurrence); the agent names it in `redact` if the excerpt shows it
-TARGET_CHARACTERS = 4
+# a file with one of these suffixes is recorded output, set as code; any other is prose
+CODE_SUFFIXES = frozenset(
+    {
+        ".py",
+        ".pyi",
+        ".go",
+        ".rs",
+        ".c",
+        ".h",
+        ".cc",
+        ".cpp",
+        ".hpp",
+        ".java",
+        ".kt",
+        ".scala",
+        ".js",
+        ".mjs",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".rb",
+        ".php",
+        ".pl",
+        ".lua",
+        ".r",
+        ".jl",
+        ".hs",
+        ".ml",
+        ".ex",
+        ".exs",
+        ".erl",
+        ".clj",
+        ".swift",
+        ".m",
+        ".cs",
+        ".fs",
+        ".vb",
+        ".sql",
+        ".adb",
+        ".ads",
+        ".ada",
+        ".f90",
+        ".zig",
+        ".nim",
+        ".dart",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".ps1",
+        ".bat",
+        ".mk",
+        ".cmake",
+        ".json",
+        ".jsonl",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".xml",
+        ".csv",
+        ".tsv",
+        ".log",
+        ".out",
+        ".err",
+        ".diff",
+        ".patch",
+        ".eval",
+        ".tex",
+        ".bib",
+    }
+)
 
 
 class Excerpt(BaseModel):
@@ -54,7 +131,15 @@ class Excerpt(BaseModel):
         default=None, description="Verbatim text on the last line to show (first one after start)"
     )
     max_lines: int = Field(default=DEFAULT_LINES, ge=1, le=MOST_LINES)
-    caption: str = Field(min_length=1)
+    caption: str = Field(
+        min_length=1,
+        description="A plain label (whose message or which document); it is the link text",
+    )
+    kind: Literal["text", "code"] | None = Field(
+        default=None,
+        description="text: prose, set as a quotation; code: recorded output, set as "
+        "recorded. Unset: code for a tool call or its output, or a code file; else text",
+    )
     redact: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -86,7 +171,49 @@ class Quote:
     """Selected lines not shown (beyond max_lines)."""
     redactions: int
     reference: str
-    """The source as the Sources appendix lists it."""
+    """Where it was read from, kept with the published bundle (excerpts.txt)."""
+    kind: Literal["text", "code"] = "code"
+    link: str | None = None
+    """The sample in the Hawk log viewer, for an excerpt from a Hawk log."""
+
+
+def viewer_base() -> str | None:
+    """The Hawk log viewer's address, as the hawk CLI is configured here, or None.
+
+    HAWK_LOG_VIEWER_URL first (the CLI's own setting), then the CLI's configuration.
+    Without one, excerpts are not linked; the report is otherwise the same.
+    """
+    if base := os.environ.get("HAWK_LOG_VIEWER_URL"):
+        return base.rstrip("/")
+    try:
+        from hawk.cli.config import get_config  # pyright: ignore[reportMissingImports]
+
+        base = str(get_config().log_viewer_url or "")  # pyright: ignore[reportUnknownMemberType]
+    except Exception:  # no hawk CLI, or no deployment to ask
+        return None
+    return base.rstrip("/") or None
+
+
+def sample_link(
+    address: str, sample: str, epoch: int, message: str | None, base: str | None
+) -> str | None:
+    """A sample's page in the Hawk log viewer, at one message, for a `hawk:` log address.
+
+    The viewer's own sample URL (Hawk's `getSampleViewUrl`, as `hawk search` exports it):
+    <viewer>/eval-set/<eval set id>#/logs/<log file>/samples/sample/<id>/<epoch>/
+    """
+    if not base or not address.startswith("hawk:") or "," in address:
+        return None
+    eval_set, _, file = address.removeprefix("hawk:").strip("/").partition("/")
+    if not eval_set or not file:
+        return None
+    url = (
+        f"{base}/eval-set/{quote(eval_set, safe='')}#/logs/{quote(file, safe='/')}"
+        f"/samples/sample/{quote(sample, safe='')}/{epoch}/"
+    )
+    if message:
+        url += f"messages?message={quote(message, safe='')}"
+    return url
 
 
 def _read_file(excerpt: Excerpt, bundle: Path, manifest: dict[str, Any]) -> tuple[str, str]:
@@ -124,9 +251,13 @@ def _log_path(reference: dict[str, Any], root: Path | None) -> str:
     return address
 
 
-def _message_text(message: Any) -> str:
-    """A message as the transcript shows it: its text, then any tool calls it made."""
+def _message_text(message: Any) -> tuple[str, int]:
+    """A message as the transcript shows it: its text, then any tool calls it made.
+
+    With how many of its lines are the message's own text (the rest are tool calls).
+    """
     parts = [message.text] if message.text else []
+    prose = len(message.text.split("\n")) if message.text else 0
     for call in getattr(message, "tool_calls", None) or []:
         arguments = call.arguments
         values = list(arguments.values())
@@ -135,7 +266,7 @@ def _message_text(message: Any) -> str:
             parts.append(f"{call.function}: {values[0]}")
         else:
             parts.append(f"{call.function}: {json.dumps(arguments, indent=1, ensure_ascii=False)}")
-    return "\n".join(parts)
+    return "\n".join(parts), prose
 
 
 def _read_message(
@@ -143,7 +274,13 @@ def _read_message(
     manifest: dict[str, Any],
     root: Path | None,
     samples: dict[tuple[str, str, int], Any],
-) -> tuple[str, str, list[str]]:
+    viewer: str | None,
+) -> tuple[str, str, int, str | None]:
+    """The message's text, where it was read, how many lines are prose, and its link.
+
+    Prose lines: all of a user's or system's message, a model's own words before its
+    tool calls, none of a tool's output.
+    """
     from inspect_ai.log import read_eval_log_sample
 
     references = manifest.get("log_references") or []
@@ -185,16 +322,21 @@ def _read_message(
         if not found:
             raise ValueError(f"excerpt {excerpt.id}: no message has id {excerpt.message}")
         position, message = found[0]
-    target = sample.target if isinstance(sample.target, list) else [sample.target]
-    answers = [str(t).strip() for t in target if len(str(t).strip()) >= TARGET_CHARACTERS]
     where = (
         f"{excerpt.source}, sample {excerpt.sample}, epoch {excerpt.epoch}, "
         f"message {position} ({message.role}, id {message.id})"
     )
-    return _message_text(message), where, answers
+    text, prose = _message_text(message)
+    if message.role == "tool":
+        prose = 0
+    elif message.role != "assistant":
+        prose = len(text.split("\n"))
+    link = sample_link(str(reference["address"]), excerpt.sample, excerpt.epoch, message.id, viewer)
+    return text, where, prose, link
 
 
-def _select(excerpt: Excerpt, text: str) -> tuple[list[str], str]:
+def _select(excerpt: Excerpt, text: str) -> tuple[list[str], str, int]:
+    """The selected lines, their span as words, and the 0-based index past the last."""
     # lines as an editor numbers them: a form feed or a Unicode separator does not end one
     lines = [line.removesuffix("\r") for line in text.expandtabs(4).removesuffix("\n").split("\n")]
     if excerpt.lines:
@@ -203,9 +345,9 @@ def _select(excerpt: Excerpt, text: str) -> tuple[list[str], str]:
             raise ValueError(
                 f"excerpt {excerpt.id}: lines {first}-{last} run past the source's {len(lines)} lines"
             )
-        return lines[first - 1 : last], f"lines {first}-{last}"
+        return lines[first - 1 : last], f"lines {first}-{last}", last
     if excerpt.start is None:
-        return lines, ""
+        return lines, "", len(lines)
     joined = "\n".join(lines)
     begin = joined.find(excerpt.start.expandtabs(4))
     if begin < 0:
@@ -224,7 +366,7 @@ def _select(excerpt: Excerpt, text: str) -> tuple[list[str], str]:
             )
         last = joined.count("\n", 0, finish + len(excerpt.end.expandtabs(4)))
     last = min(last, len(lines) - 1)
-    return lines[first : last + 1], f"lines {first + 1}-{last + 1}"
+    return lines[first : last + 1], f"lines {first + 1}-{last + 1}", last + 1
 
 
 def resolve(
@@ -233,16 +375,26 @@ def resolve(
     manifest: dict[str, Any],
     root: Path | None = None,
     samples: dict[tuple[str, str, int], Any] | None = None,
+    viewer: str | None = None,
 ) -> Quote:
-    """Read an excerpt's text from its source; any declaration that does not resolve fails."""
-    answers: list[str] = []
+    """Read an excerpt's text from its source; any declaration that does not resolve fails.
+
+    `viewer` is the Hawk log viewer's address (`viewer_base`), to link Hawk excerpts.
+    """
+    link: str | None = None
+    prose = 0
     if excerpt.sample is None:
         text, where = _read_file(excerpt, bundle, manifest)
+        kind = "code" if PurePosixPath(excerpt.source).suffix.lower() in CODE_SUFFIXES else "text"
     else:
-        text, where, answers = _read_message(
-            excerpt, manifest, root, {} if samples is None else samples
+        text, where, prose, link = _read_message(
+            excerpt, manifest, root, {} if samples is None else samples, viewer
         )
-    selected, span = _select(excerpt, text)
+        kind = "code"
+    selected, span, past = _select(excerpt, text)
+    if excerpt.sample is not None and past <= prose:
+        # only the message's own words: a prompt, or what the model said
+        kind = "text"
     # trim blank edges and the indentation every shown line shares
     while selected and not selected[0].strip():
         selected.pop(0)
@@ -258,7 +410,7 @@ def resolve(
                 "lines; check its spelling, or drop it"
             )
     redactions = 0
-    for name in sorted({*excerpt.redact, *answers}, key=len, reverse=True):
+    for name in sorted(set(excerpt.redact), key=len, reverse=True):
         redactions += body.count(name)
         body = body.replace(name, REDACTED)
     shown = textwrap.dedent(body).split("\n")
@@ -274,11 +426,17 @@ def resolve(
         elided=elided,
         redactions=redactions,
         reference=where + (f", {span}" if span else ""),
+        kind=excerpt.kind or kind,
+        link=link,
     )
 
 
 def resolve_all(
-    excerpts: list[Excerpt], bundle: Path, manifest: dict[str, Any], root: Path | None = None
+    excerpts: list[Excerpt],
+    bundle: Path,
+    manifest: dict[str, Any],
+    root: Path | None = None,
+    viewer: str | None = None,
 ) -> dict[str, Quote]:
     """Every declared excerpt, resolved; ids are unique."""
     seen: set[str] = set()
@@ -287,12 +445,16 @@ def resolve_all(
             raise ValueError(f"excerpt id {excerpt.id} is declared twice")
         seen.add(excerpt.id)
     samples: dict[tuple[str, str, int], Any] = {}
-    return {e.id: resolve(e, bundle, manifest, root, samples) for e in excerpts}
+    return {e.id: resolve(e, bundle, manifest, root, samples, viewer) for e in excerpts}
 
 
 def plain(quote: Quote) -> str:
-    """An excerpt as text, for the agent to check what the report quotes."""
+    """An excerpt as text, for the agent to check what the report quotes.
+
+    With where it was read from and its link: the report shows neither.
+    """
     tail = [f"[... {quote.elided} more lines not shown]"] if quote.elided else []
-    return "\n".join(
-        [f"== {quote.id}: {quote.caption}", f"   from {quote.reference}", *quote.lines, *tail]
-    )
+    head = [f"== {quote.id} ({quote.kind}): {quote.caption}", f"   from {quote.reference}"]
+    if quote.link:
+        head.append(f"   link {quote.link}")
+    return "\n".join([*head, *quote.lines, *tail])

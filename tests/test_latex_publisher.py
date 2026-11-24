@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -94,9 +95,11 @@ def test_fixture_pdf_uses_bundle_scorecard_and_finding_boxes(
     # the datasheet with all of them compiled (pdftotext splits accented letters, so the
     # check is its plain words), and nothing unsettable reached the source
     assert "quoted" in text and "\u2588" not in generated and "\U0001f600" not in generated
-    # the excerpt as recorded, redacted, with what it quoted kept beside the report
+    # the excerpt as recorded, with the string it names redacted; where it was read
+    # from is kept beside the report, not printed in it
     assert "The correct reference value is [redacted]." in text
     assert "/workspace/reference.txt" in (output / "excerpts.txt").read_text()
+    assert "/workspace/reference.txt" not in text and "Appendix" not in text
     for title in (
         "Cover Sheet",
         "Contents",
@@ -117,7 +120,9 @@ def test_fixture_pdf_uses_bundle_scorecard_and_finding_boxes(
     assert "1/3 selected samples" in text
     for finding in findings.auditor.findings:
         assert finding.issue in text
-        assert finding.evidence[0].source in text
+        # evidence as observed, without its source path or a reference number
+        assert finding.evidence[0].observed in text
+        assert finding.evidence[0].source not in text
     assert (output / "report.pdf").read_bytes().startswith(b"%PDF")
     assert json.loads((output / "template-provenance.json").read_text()) == pin
     shutil.copyfile(output / "report.pdf", tmp_path / "fixture.pdf")
@@ -156,7 +161,7 @@ def test_source_preserves_bracketed_findings_and_benchmark_wide_scope(tmp_path: 
     (tmp_path / "reports/Example/Example_Audit.tex").write_text(r"\evalscore{A}")
     findings, manifest = read_bundle(FIXTURE)
     findings.auditor.ratings["overall"].explanation = "Issue [sample 12]"
-    findings.auditor.ratings["overall"].evidence[0].source = "reference [v2]"
+    findings.auditor.ratings["overall"].evidence[0].observed = "reference [v2]"
     findings.subject["domain"] = "science [physics]"
     findings.auditor.findings[0].sample_ids = []
     _, content = latex.source(findings, manifest, latex.Prose(), tmp_path)
@@ -354,17 +359,26 @@ def test_a_file_excerpt_is_read_from_the_bundle_and_quoted_in_place(tmp_path: Pa
     quotes = resolve_all(prose.excerpts, FIXTURE, manifest)
     assert quotes["ref"].lines == ["The correct reference value is [redacted]."]
     assert quotes["ref"].reference == "/workspace/reference.txt, lines 1-1"
+    # a .txt file is prose: a block quotation in the text font, not a code box
+    assert quotes["ref"].kind == "text" and quotes["ref"].link is None
     _, content = latex.source(findings, manifest, prose, _example(tmp_path), quotes)
-    box = content[content.index(r"\begin{iaexcerpt}") : content.index(r"\end{iaexcerpt}")]
-    assert r"\iaxline{The\ correct\ reference\ value\ is\ [redacted].}" in box
-    assert "{The cited reference}" in box
-    # numbered into the sources appendix with the line range; text before and after kept
-    number = box.removeprefix(r"\begin{iaexcerpt}{The cited reference}{").split("}")[0]
-    assert r"\iasource{" + number + "}{/" in content and "lines 1-1" in content
+    box = content[content.index(r"\begin{iaquote}") : content.index(r"\end{iaquote}")]
+    assert box == (
+        r"\begin{iaquote}{The cited reference}\iaqpar{The correct reference value is [redacted].}"
+    )
+    # where it was read from is not printed; the text before and after is kept
+    assert "reference.txt" not in content and "iasource" not in content
     assert "The reference disagrees." in content and "It says 9, not 7." in content
+    # declared as code, it is set line for line
+    code = resolve_all([prose.excerpts[0].model_copy(update={"kind": "code"})], FIXTURE, manifest)[
+        "ref"
+    ]
+    assert latex.excerpt_box(code).startswith(
+        r"\begin{iaexcerpt}{The cited reference}\iaxline{0}{The\ correct"
+    )
 
 
-def test_a_transcript_excerpt_is_read_from_its_log_with_the_answer_redacted(
+def test_a_transcript_excerpt_is_read_from_its_log_as_recorded(
     tmp_path: Path,
 ) -> None:
     from inspect_audit.publishers._excerpt import Excerpt, resolve_all
@@ -383,17 +397,28 @@ def test_a_transcript_excerpt_is_read_from_its_log_with_the_answer_redacted(
     by_position = by_id.model_copy(
         update={"id": "result", "message": 2, "start": "key:", "redact": []}
     )
-    quotes = resolve_all([by_id, by_position], FIXTURE, manifest)
+    prompt = by_id.model_copy(update={"id": "prompt", "message": 0})
+    words = by_id.model_copy(update={"id": "words", "lines": (1, 1)})
+    quotes = resolve_all([by_id, by_position, prompt, words], FIXTURE, manifest)
     # the call's command as written, not JSON-quoted
     assert quotes["lookup"].lines == [
         "I will look it up.",
         "bash: grep -n 'six' answers.txt",
         "cat key.txt",
     ]
-    # the recorded answer never reaches the report
-    assert quotes["result"].lines == ["key: [redacted]"]
-    assert quotes["result"].redactions == 1
+    # nothing is redacted unless the declaration says so, the recorded answer included
+    assert quotes["result"].lines == ["key: thirteen"]
+    assert quotes["result"].redactions == 0
     assert "sample item-1, epoch 2, message 2 (tool, id result-msg)" in quotes["result"].reference
+    # a tool call or its output is code; a prompt, or a model's own words, is prose
+    assert [quotes[n].kind for n in ("lookup", "result", "prompt", "words")] == [
+        "code",
+        "code",
+        "text",
+        "text",
+    ]
+    # a log not on Hawk has no viewer page to link to
+    assert all(q.link is None for q in quotes.values())
     # a log known only by its place in the audit's inputs is read from the audit's host
     staged = tmp_path / "audit/inputs/logs/0/attempt.eval"
     staged.parent.mkdir(parents=True)
@@ -422,7 +447,7 @@ def test_long_excerpts_are_cut_and_say_what_they_left_out(tmp_path: Path) -> Non
     [quote] = resolve_all([excerpt], FIXTURE, manifest).values()
     assert quote.lines == ["I will look it up."] and quote.elided == 2
     assert plain(quote).endswith("[... 2 more lines not shown]")
-    assert r"\iaxelided{2}" in latex.excerpt_box(quote, "1")
+    assert r"\iaxelided{2}" in latex.excerpt_box(quote)
 
 
 @pytest.mark.parametrize(
@@ -511,3 +536,113 @@ def test_the_latex_publisher_stages_the_rubric_it_explains(tmp_path: Path) -> No
     # the audit's own setup staged it already: staging again leaves the same files
     stage_framework(tmp_path)
     assert json.loads((tmp_path / "framework/checks.json").read_text())["C.1"]["name"]
+
+
+def test_a_hawk_excerpt_links_its_caption_to_the_sample_in_the_viewer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inspect_audit.publishers import _excerpt
+    from inspect_audit.publishers._excerpt import Excerpt, plain, resolve_all
+
+    viewer = "https://viewer.example"
+    address = "hawk:my-set-1/2026-01-01T00-00-00_task_X.eval"
+    assert _excerpt.sample_link(address, "item 1", 2, "m#1", viewer) == (
+        "https://viewer.example/eval-set/my-set-1#/logs/2026-01-01T00-00-00_task_X.eval"
+        "/samples/sample/item%201/2/messages?message=m%231"
+    )
+    assert _excerpt.sample_link("/inputs/logs/0/a.eval", "a", 1, None, viewer) is None
+    assert _excerpt.sample_link(address, "a", 1, None, None) is None
+    monkeypatch.setenv("HAWK_LOG_VIEWER_URL", viewer + "/")
+    assert _excerpt.viewer_base() == viewer
+
+    _, manifest = read_bundle(FIXTURE)
+    log = _transcript(tmp_path / "attempt.eval")
+    manifest = _with_log(manifest, "/inputs/logs/0/attempt.eval", address)
+    import inspect_audit._log_sources as sources
+
+    def hawk_logs(address: str) -> list[str]:
+        return [log]
+
+    monkeypatch.setattr(sources, "hawk_logs", hawk_logs)
+    excerpt = Excerpt(
+        id="prompt",
+        source=address,
+        sample="item-1",
+        epoch=2,
+        message=0,
+        caption="Mock model, item 1, attempt 2",
+    )
+    [quote] = resolve_all([excerpt], FIXTURE, manifest, viewer=viewer).values()
+    assert quote.link is not None and quote.link.startswith(
+        "https://viewer.example/eval-set/my-set-1#/logs/"
+    )
+    assert f"link {quote.link}" in plain(quote)
+    box = latex.excerpt_box(quote)
+    # the caption is the link; hyperref reads the URL's own # and % escaped
+    assert box.startswith(r"\begin{iaquote}{\href{https://viewer.example/eval-set/my-set-1\#/logs/")
+    assert r"}{Mock model, item 1, attempt 2}}\iaqpar{What is six plus seven?}" in box
+
+
+def test_recorded_prose_is_set_as_paragraphs() -> None:
+    lines = [
+        "A sentence wrapped",
+        "by its source.",
+        "",
+        "- an item",
+        "- another with `code {x}`",
+        "```",
+        "  kept as is",
+        "```",
+    ]
+    assert latex.prose(lines) == (
+        r"\iaqpar{A sentence wrapped by its source.}"
+        r"\iaqpar{- an item}"
+        r"\iaqpar{- another with \iatt{code\ \{x\}}}"
+        r"\iaqcode{2}{\ \ kept\ as\ is}"
+    )
+
+
+def test_supplied_logs_are_summarised_in_words_not_listed() -> None:
+    notes = [
+        (
+            "2 of 4 logs produced by mc 0.1.192; mc 0.1.193 is installed, so the recorded "
+            "grades come from a different build of the benchmark"
+        ),
+        (
+            "1 of 4 logs produced by mc 0.1.200; mc 0.1.193 is installed, so the recorded "
+            "grades come from a different build of the benchmark"
+        ),
+        (
+            "1 of 4 logs produced by mc 0.1.96; mc 0.1.193 is installed, so the recorded "
+            "grades come from a different build of the benchmark"
+        ),
+    ]
+    logs = [f"hawk:set-{n}" for n in range(4)]
+    assert latex.logs_in_words(logs, notes) == (
+        "4 supplied, recorded by mc 0.1.96 (1), 0.1.192 (2), 0.1.200 (1); mc 0.1.193 is "
+        "installed, so the recorded grades come from a different build of the benchmark"
+    )
+    assert latex.logs_in_words(logs, ["something else"]) == "4 supplied; something else"
+
+
+def test_the_report_prints_no_log_ids_paths_or_hashes(tmp_path: Path) -> None:
+    findings, manifest = read_bundle(FIXTURE)
+    findings.subject["repo"] = "https://github.com/example/bench"
+    findings.subject["supplied_logs"] = ["hawk:set-aaaa", "hawk:set-bbbb"]
+    findings.subject["logs_provenance"] = [
+        "2 of 2 logs produced by bench 1.0; bench 1.1 is installed"
+    ]
+    manifest = _with_log(manifest, "/inputs/logs/0/a.eval", "hawk:set-aaaa/a.eval")
+    _, content = latex.source(findings, manifest, latex.Prose(), _example(tmp_path))
+    printed = re.sub(r"\\href\{[^}]*\}", "", content)
+    for ref in ("set-aaaa", "abc123456789", "evidence/reference.txt", "a.eval", "SHA-256"):
+        assert ref not in printed
+    assert (
+        r"\dsfield{logs}{2 supplied, recorded by bench 1.0 (2); bench 1.1 is installed}" in content
+    )
+    # the repository links to the audited commit, which is not printed
+    assert (
+        r"\href{https://github.com/example/bench/tree/abc123456789}{example/\allowbreak{}bench}"
+        in content
+    )
+    assert "1 recorded logs read" in content

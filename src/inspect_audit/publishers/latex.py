@@ -17,7 +17,7 @@ from .._framework import REGISTRY, stage_framework
 from .._framework import SKILL as FRAMEWORK_SKILL
 from .._publishing import Publisher
 from .._verdicts import Evidence
-from ._excerpt import MARKER, Excerpt, Quote, plain, resolve_all
+from ._excerpt import MARKER, Excerpt, Quote, plain, resolve_all, viewer_base
 from ._render import box_has, render_in_box, reported, tree
 from ._template import template
 
@@ -152,6 +152,7 @@ _CODE = {
 
 def code(line: str) -> str:
     """One recorded line in the typewriter font: every space kept, long runs breakable."""
+    line = line.rstrip()
     escaped = []
     for word in re.split(r"( +)", _settable(line)):
         if word.startswith(" "):
@@ -167,20 +168,105 @@ def code(line: str) -> str:
     return "".join(escaped)
 
 
-def excerpt_box(quote: Quote, reference: str) -> str:
-    """A quotation box: its caption with a source reference, then its lines as recorded."""
-    lines = "".join(r"\iaxline{" + code(line) + "}" for line in quote.lines)
-    if quote.elided:
-        lines += r"\iaxelided{" + str(quote.elided) + "}"
-    return (
-        r"\begin{iaexcerpt}{"
-        + tex(quote.caption)
-        + "}{"
-        + reference
-        + "}"
-        + lines
-        + r"\end{iaexcerpt}"
+def _code_line(line: str) -> str:
+    # a line too long for the box continues under its own indentation, a little further in
+    indent = len(line) - len(line.lstrip(" "))
+    return r"\iaxline{" + str(indent) + "}{" + code(line) + "}"
+
+
+# a line of prose that starts a list item, a heading or a quotation keeps its own line
+_ITEM = re.compile(r"^\s*(?:[-*+\u2022]\s|\d{1,3}[.)]\s|#{1,6}\s|>\s?)")
+_INLINE_CODE = re.compile(r"`([^`\n]+)`")
+
+
+def _prose_line(line: str) -> str:
+    """Prose in the text font, with `inline code` set as code."""
+    parts = _INLINE_CODE.split(line)
+    return "".join(
+        tex(part) if i % 2 == 0 else r"\iatt{" + code(part) + "}" for i, part in enumerate(parts)
     )
+
+
+def prose(lines: list[str]) -> str:
+    """Recorded prose, set as a reader reads it.
+
+    Lines wrapped by the source join into paragraphs; a blank line ends one, and a list
+    item or heading starts its own line. A fenced block (```) is kept line for line.
+    """
+    out: list[str] = []
+    paragraph: list[str] = []
+    fenced = False
+
+    def flush() -> None:
+        if paragraph:
+            out.append(r"\iaqpar{" + " ".join(paragraph) + "}")
+            paragraph.clear()
+
+    for line in lines:
+        if line.strip().startswith("```"):
+            flush()
+            fenced = not fenced
+            continue
+        if fenced:
+            out.append(_code_line(line).replace(r"\iaxline", r"\iaqcode", 1))
+        elif not line.strip():
+            flush()
+        else:
+            if _ITEM.match(line):
+                flush()
+            paragraph.append(_prose_line(line.strip()))
+    flush()
+    return "".join(out)
+
+
+def _href(url: str, label: str) -> str:
+    """A link inside a macro's argument: its URL's own # and % escaped for hyperref."""
+    url = url.replace("~", "%7E").replace("%", r"\%").replace("#", r"\#")
+    return r"\href{" + url + "}{" + label + "}"
+
+
+def excerpt_box(quote: Quote) -> str:
+    """A quotation: its caption (the link to its sample), then its lines.
+
+    Prose is set as a block quotation in the text font; recorded output as recorded.
+    """
+    caption = tex(quote.caption)
+    if quote.link:
+        caption = _href(quote.link, caption)
+    if quote.kind == "text":
+        body, environment = prose(quote.lines), "iaquote"
+    else:
+        body, environment = "".join(_code_line(line) for line in quote.lines), "iaexcerpt"
+    if quote.elided:
+        body += r"\iaxelided{" + str(quote.elided) + "}"
+    return r"\begin{" + environment + "}{" + caption + "}" + body + r"\end{" + environment + "}"
+
+
+_PRODUCED = re.compile(r"^(\d+) of (\d+) logs produced by (\S+) (\S+); (.*)$")
+
+
+def _version_key(version: str) -> list[tuple[int, str]]:
+    return [(int(p), "") if p.isdigit() else (-1, p) for p in re.split(r"[.+-]", version)]
+
+
+def logs_in_words(logs: list[Any], provenance: object) -> str:
+    """The supplied logs as a reader takes them in: how many, and what recorded them.
+
+    Their addresses are in the published findings; a list of ids tells a reader nothing.
+    """
+    said = f"{len(logs)} supplied" if len(logs) != 1 else "1 supplied"
+    notes = [str(p) for p in provenance] if isinstance(provenance, list) else []
+    matched = [_PRODUCED.match(n) for n in notes]
+    if notes and all(matched):
+        found = [m for m in matched if m]
+        packages, tails = {m[3] for m in found}, {m[5] for m in found}
+        if len(packages) == 1 and len(tails) == 1:
+            package = packages.pop()
+            builds = sorted(found, key=lambda m: _version_key(m[4]))
+            counts = ", ".join(f"{m[4]} ({m[1]})" for m in builds)
+            tail = tails.pop().removeprefix(f"{package} ")
+            return f"{said}, recorded by {package} {counts}; {package} {tail}"
+    return "; ".join([said, *notes])
 
 
 def source(
@@ -222,13 +308,8 @@ def source(
             else "Not assessed in the submitted findings."
         )
 
-    # Evidence sources (log paths, files, URLs) are numbered references to an appendix,
-    # in order of first citation, rather than paths inline after every observation.
-    sources: dict[str, int] = {}
-
-    def cite(source: str) -> str:
-        return str(sources.setdefault(source, len(sources) + 1))
-
+    # Evidence is printed as observed. Where each piece was found (log paths, files,
+    # hashes) is kept in the published findings, not printed: a reader cannot use it.
     placed: list[str] = []
 
     def text(value: str) -> str:
@@ -243,11 +324,7 @@ def source(
             if name in placed:
                 raise ValueError(f"excerpt {name} is placed twice; place each excerpt once")
             placed.append(name)
-            out += [
-                r"\par",
-                excerpt_box(quotes[name], cite(quotes[name].reference)),
-                tex(after.strip()),
-            ]
+            out += [r"\par", excerpt_box(quotes[name]), tex(after.strip())]
         return "".join(out)
 
     def evidence(label: str, records: list[Evidence]) -> str:
@@ -257,7 +334,7 @@ def source(
             r"\iaevidence{"
             + label
             + "}{"
-            + "".join(r"\iaitem{" + tex(e.observed) + "}{" + cite(e.source) + "}" for e in records)
+            + "".join(r"\item " + tex(e.observed) for e in records)
             + "}"
         )
 
@@ -268,6 +345,26 @@ def source(
         # unset metadata is left out, not shown as "Not recorded"
         if value is None or value == "" or value == [] or value == {}:
             return ""
+        if name == "revision" and isinstance(findings.subject.get("repo"), str):
+            return ""  # the repository links to it
+        if name == "repo" and isinstance(value, str) and value.startswith("https://"):
+            revision = findings.subject.get("revision")
+            target = (
+                value.rstrip("/") + "/tree/" + str(revision)
+                if revision and "github.com/" in value
+                else value
+            )
+            label = re.sub(r"^https://(www\.)?(github\.com/)?", "", value).rstrip("/")
+            return (
+                r"\dsfield{repo}{"
+                + _href(target, tex(label))
+                + (r", at the audited commit" if revision else "")
+                + "}\n"
+            )
+        if name == "supplied_logs" and isinstance(value, list):
+            return field("logs", logs_in_words(value, findings.subject.get("logs_provenance")))
+        if name == "logs_provenance" and isinstance(findings.subject.get("supplied_logs"), list):
+            return ""  # said with the logs
         if isinstance(value, list) and all(isinstance(v, str) and len(v) < 60 for v in value):
             # identifiers: one wrapped line, not one line each
             return field(tex(name), ", ".join(value))
@@ -403,7 +500,11 @@ def source(
             field("Samples", f"{investigated}/{samples} selected samples have investigator results")
             + field("Jobs", len(manifest.get("jobs", [])))
             + (
-                field("Logs", f"{len(log_references)} referenced by address and SHA-256 (Appendix)")
+                field(
+                    "Logs",
+                    f"{len(log_references)} recorded logs read; their addresses and "
+                    "checksums are kept with the published findings",
+                )
                 if log_references
                 else ""
             ),
@@ -481,34 +582,6 @@ def source(
             f"excerpts {', '.join(unplaced)} are declared but not placed: put "
             "{{excerpt:<id>}} where each belongs in the prose, or remove it"
         )
-    if sources or log_references:
-        parts += [
-            r"\auditpart{Appendix: Sources}{sources}\begin{reportpart}{Appendix: Sources}{sources}{sec:sources}\auditdestination{sources}",
-            box(
-                "Evidence sources",
-                r"\footnotesize "
-                + "".join(r"\iasource{" + str(n) + "}{" + tex(s) + "}" for s, n in sources.items()),
-            )
-            if sources
-            else "",
-            box(
-                "Log references",
-                r"\footnotesize "
-                + "".join(
-                    r"\iasource{L"
-                    + str(n)
-                    + "}{"
-                    + tex(ref["address"])
-                    + r"\newline SHA-256 "
-                    + tex(ref["sha256"])
-                    + "}"
-                    for n, ref in enumerate(log_references, 1)
-                ),
-            )
-            if log_references
-            else "",
-            r"\end{reportpart}",
-        ]
     parts += [
         r"\auditpart{Scoring Criteria}{criteria}\auditdestination{criteria}",
         r"\input{template/sections/ScoringCriteria}\auditpartsend\end{maincontentstyled}",
@@ -529,14 +602,6 @@ def source(
         r"\usepackage{auditframework}", r"\usepackage{auditframework}\usepackage{inspectaudit}", 1
     )
     content = "\n".join(parts)
-    if sources or log_references:
-        content = content.replace(
-            r"\auditcontentsrow{criteria}",
-            r"\auditcontentsrow{sources}{Appendix: Sources}"
-            "\n"
-            r"\auditcontentsrow{criteria}",
-            1,
-        )
     return wrapper, content
 
 
@@ -550,7 +615,8 @@ async def build(root: Path, bundle: Path) -> Path:
         ) from ex
     upstream = await asyncio.to_thread(template)
     # read where they are recorded: the bundle, the audit's inputs, or a log's address
-    quotes = await asyncio.to_thread(resolve_all, prose.excerpts, bundle, manifest, root)
+    viewer = await asyncio.to_thread(viewer_base) if prose.excerpts else None
+    quotes = await asyncio.to_thread(resolve_all, prose.excerpts, bundle, manifest, root, viewer)
     wrapper, content = source(findings, manifest, prose, upstream, quotes)
     output = root / "rendered-latex"
     if output.exists():
@@ -568,7 +634,7 @@ async def build(root: Path, bundle: Path) -> Path:
     (output / "Content.tex").write_text(content)
     (output / "prose.json").write_bytes(encoded(prose.model_dump()))
     if quotes:
-        # what the report quotes, as resolved, beside where it was read from
+        # what the report quotes, as resolved, beside where it was read from and its link
         (output / "excerpts.txt").write_text("\n\n".join(plain(q) for q in quotes.values()) + "\n")
     (output / "template-provenance.json").write_bytes(
         (Path(__file__).with_name("template.json")).read_bytes()
@@ -641,7 +707,10 @@ def preview_report(root: Path) -> Tool:
             await sandbox().write_file(
                 "/workspace/report/excerpts.txt", (output / "excerpts.txt").read_text()
             )
-            quoted = " The excerpts as quoted, with their sources, are in /workspace/report/excerpts.txt."
+            quoted = (
+                " The excerpts as quoted, with their sources and links, are in "
+                "/workspace/report/excerpts.txt."
+            )
         return (
             "Preview ready at /workspace/report/report.pdf."
             + quoted

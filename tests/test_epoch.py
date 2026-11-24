@@ -859,3 +859,134 @@ def test_with_no_review_the_workers_majority_stands() -> None:
     assert label([take("a", "NO_ISSUE_FOUND"), take("b", "UNRESOLVED")]) == "DEFECT"
     assert label([take("a", "DEFECT"), take("b", "NO_VERDICT")]) == "DEFECT"
     assert label([*three, {"by": "auditor", "label": "DEFECT"}]) == "DEFECT"
+
+
+# ------------------------------------------------------------------ the full page
+
+# pages and the staged methodology.md rendered by the publisher before `full_page`
+# existed: the default must stay byte for byte what it was
+GOLDEN = Path(__file__).parent / "fixtures/epoch_pages"
+VERIFIED_PROSE = {
+    **PROSE,
+    "interpretation": "One score is the share of questions answered right.",
+    "task_analysis": "Short factual questions graded against one reference answer.",
+    "elicitation_and_scaffolding": "One prompt, no tools.",
+}
+
+
+def golden_cases() -> list[tuple[str, Findings]]:
+    return [
+        ("incomplete", findings(ten(1), phase1())),
+        ("verified", findings(ten(1), phase2(), logs=True)),
+    ]
+
+
+def test_the_default_page_renders_exactly_as_before(tmp_path: Path, monkeypatch) -> None:
+    for name, case in golden_cases():
+        expected = (GOLDEN / f"{name}.md").read_text()
+        text = (GOLDEN / f"{name}.prose.json").read_text()
+        for full_page in ((), (False,)):
+            prose = _epoch.Prose.model_validate_json(text)
+            assert _epoch.review(case, prose, *full_page)["page"] == expected
+        # through the publisher, named alone or with its default option
+        for spec in ("epoch", {"name": "epoch"}, {"name": "epoch", "full_page": False}):
+            (where := tmp_path / f"{name}-{len(str(spec))}").mkdir()
+            source = bundle(where, case)
+            monkeypatch.setattr(epoch, "sandbox", lambda text=text: Box(json.loads(text)))
+            output = asyncio.run(load_publisher(spec).build(tmp_path / "out", source))
+            assert (output / "epoch_review.md").read_text() == expected
+            assert "full_page" not in json.loads((output / "verdict.json").read_text())
+    staged = tmp_path / "analysis"
+    load_publisher("epoch").stage(staged)  # pyright: ignore[reportOptionalCall]
+    expected = (GOLDEN / "methodology.md").read_text()
+    assert (staged / "epoch/methodology.md").read_text() == expected
+    assert _epoch.methodology_markdown(_epoch.methodology(), _epoch.template()) == expected
+
+
+def test_the_full_page_renders_every_block_the_verdict_shows(tmp_path: Path, monkeypatch) -> None:
+    source = bundle(tmp_path, findings(ten(1), phase2(), logs=True))
+    publisher = load_publisher({"name": "epoch", "full_page": True})
+    monkeypatch.setattr(epoch, "sandbox", lambda: Box(VERIFIED_PROSE))
+    output = asyncio.run(publisher.build(tmp_path, source))
+    page = (output / "epoch_review.md").read_text()
+    order = [
+        "Verdict: Verified",
+        "## Benchmark Review Rubric",
+        "## Representative Errors",
+        "| s0 | Impossible as written |",
+        "Audited without finding a defect (9)",
+        "## Summary",
+        "## Methodology",
+        "## Interpretation",
+        "## Task Analysis",
+        "## Elicitation and Scaffolding",
+        "## Limitations",
+        "## Disclaimer",
+        "without requesting additional information from Google",
+        "## Recommendations",
+        "## Footnotes",
+        "[^1]: Sample s0",
+    ]
+    positions = [page.index(marker) for marker in order]
+    assert positions == sorted(positions)
+    assert json.loads((output / "verdict.json").read_text())["full_page"] is True
+    # an Incomplete review's notice sits between the opening and the other blocks
+    (tmp_path / "phase1").mkdir()
+    source = bundle(tmp_path / "phase1", findings(ten(1), phase1()))
+    monkeypatch.setattr(epoch, "sandbox", lambda: Box(PROSE))
+    page = (asyncio.run(publisher.build(tmp_path, source)) / "epoch_review.md").read_text()
+    assert (
+        page.index("## Representative Errors")
+        < page.index("Phase 1 only")
+        < page.index("## Summary")
+    )
+    assert "## Interpretation" not in page  # not part of an Incomplete review
+
+
+def test_a_full_page_refuses_a_missing_or_overlong_required_block(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = bundle(tmp_path, findings(ten(1), phase2(), logs=True))
+    full = load_publisher({"name": "epoch", "full_page": True})
+    for missing in ("summary", "task_analysis", "elicitation_and_scaffolding", "recommendations"):
+        prose = {k: v for k, v in VERIFIED_PROSE.items() if k != missing}
+        if missing == "summary":
+            prose["footnotes"] = []
+        monkeypatch.setattr(epoch, "sandbox", lambda prose=prose: Box(prose))
+        with pytest.raises(ValueError, match=f"Verified review needs the {missing}"):
+            asyncio.run(full.build(tmp_path, source))
+        if missing != "summary":
+            # the default page ends after the opening: the same prose is accepted
+            asyncio.run(load_publisher("epoch").build(tmp_path, source))
+    long = {**VERIFIED_PROSE, "summary": " ".join(["word"] * 151) + ".[^1]"}
+    monkeypatch.setattr(epoch, "sandbox", lambda: Box(long))
+    with pytest.raises(ValueError, match="summary"):
+        asyncio.run(full.build(tmp_path, source))
+
+
+def test_the_full_page_is_a_publisher_option(tmp_path: Path, capsys) -> None:
+    full = load_publisher({"name": "epoch", "full_page": True})
+    assert full.stage is not None
+    full.stage(tmp_path / "full")
+    staged = (tmp_path / "full/epoch/methodology.md").read_text()
+    assert "not rendered" not in staged and "leave them out" not in staged
+    assert "### task_analysis (prose; shown for Verified; required for Verified)" in staged
+    assert "Write every block marked required for the verdict" in staged
+    for spec, message in (
+        ({"name": "epoch", "full": True}, "takes no option"),
+        ({"name": "latex", "full_page": True}, "takes no option"),
+        ({"full_page": True}, "a mapping with a `name`"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            load_publisher(spec)
+    with pytest.raises(TypeError, match="full_page"):
+        load_publisher({"name": "epoch", "full_page": "yes"})
+    # the render command takes it too
+    source = bundle(tmp_path, findings(ten(1), phase2(), logs=True))
+    prose = tmp_path / "prose.json"
+    prose.write_text(json.dumps(VERIFIED_PROSE))
+    out = tmp_path / "out"
+    assert epoch.main([str(source), "--prose", str(prose), "--out", str(out), "--full-page"]) == 0
+    assert "## Task Analysis" in (out / "epoch_review.md").read_text()
+    assert epoch.main([str(source), "--prose", str(prose), "--out", str(out)]) == 0
+    assert "## Task Analysis" not in (out / "epoch_review.md").read_text()

@@ -530,6 +530,68 @@ def fetch_eval_sets(eval_sets: str) -> str:
     return str(fetched)
 
 
+async def download_artifacts(address: str, token: str, out_dir: Path, api_url: str) -> int:
+    """A Hawk sample's artifacts under one folder, into `out_dir`, keeping their paths.
+
+    `address` is `<eval set id>/artifacts/<sample uuid>[/<folder>]`, as `hawk fs ls`
+    names it under `evals/`. Through `HawkClient`'s sample-artifact listing and
+    presigned URLs, with the token it is given. A truncated listing, or a collapsed
+    folder whose files are not listed, is refused: the copy would be incomplete.
+    """
+    from hawk.cli.download import download_file
+    from hawk.client import HawkClient
+
+    eval_set, _, rest = address.partition("/")
+    kind, _, rest = rest.partition("/")
+    sample, _, folder = rest.partition("/")
+    if kind != "artifacts" or not eval_set or not sample:
+        raise ValueError(
+            f"hawk:{address}: name a sample's artifacts as "
+            "hawk:<eval set id>/artifacts/<sample uuid>[/<folder>]"
+        )
+    prefix = folder.strip("/") + "/" if folder.strip("/") else ""
+    async with HawkClient(token=token, api_url=api_url) as client:
+        listing = await client.list_sample_artifacts(eval_set, sample)
+        if listing.truncated:
+            raise ValueError(f"hawk:{address}: Hawk truncated the artifact listing")
+        entries = [e for e in listing.entries if e.key.startswith(prefix)]
+        if collapsed := [e.key for e in entries if e.collapsed]:
+            raise ValueError(f"hawk:{address}: folders not listed in full: {', '.join(collapsed)}")
+        for entry in entries:
+            relative = Path(entry.key.removeprefix(prefix))
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError(f"hawk:{address}: unsafe artifact path {entry.key!r}")
+            destination = out_dir / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            presigned = await client.get_sample_artifact_file_url(eval_set, sample, entry.key)
+            await download_file(presigned.url, destination)
+    return len(entries)
+
+
+def fetch_artifacts(address: str) -> str:
+    """A Hawk sample's artifact folder, downloaded to a reproducible local folder.
+
+    `<eval set id>/artifacts/<sample uuid>[/<folder>]`; Hawk's API is HAWK_API_URL and
+    the token this process's own (`HawkLogin`), as for `fetch_eval_sets`.
+    """
+    api = os.environ.get("HAWK_API_URL")
+    if not api:
+        raise ValueError("fetching hawk: artifacts needs HAWK_API_URL, Hawk's API address")
+    from .._paths import stable_dir
+
+    fetched = stable_dir("hawk-artifacts", address)
+
+    async def fetch() -> None:
+        token = await HawkLogin(api).access_token()
+        if not await download_artifacts(address, token, fetched, api):
+            raise ValueError(f"No artifacts found at hawk:{address}")
+
+    from .._sync import run
+
+    run(fetch())
+    return str(fetched)
+
+
 def declared_transcripts() -> dict[str, str] | None:
     """The eval sets Hawk resolved for this run (Hawk 4 `transcripts`), else None."""
     try:

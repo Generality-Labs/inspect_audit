@@ -1,10 +1,13 @@
 """Publishing packages and phase-dependent tools, using Inspect's ToolSource API."""
 
 import importlib
+import inspect
+import json
 import shutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from inspect_ai import Task, task
@@ -46,23 +49,49 @@ class Publisher:
     stage: Callable[[Path], None] | None = None
 
 
-def load_publisher(name: str) -> Publisher:
+PublisherSpec = str | dict[str, Any]
+
+
+def publisher_spec(spec: PublisherSpec) -> tuple[str, dict[str, Any]]:
+    """A publisher's name and options, from its name or a mapping that names it.
+
+    `"epoch"`, or `{"name": "epoch", "full_page": true}`: the other keys are the
+    publisher factory's keyword arguments, so an audit or a publishing run declares them
+    beside the name.
+    """
+    if isinstance(spec, str):
+        return spec, {}
+    if isinstance(spec, dict) and isinstance(spec.get("name"), str):  # pyright: ignore[reportUnnecessaryIsInstance]
+        options = {k: v for k, v in spec.items() if k != "name"}
+        return spec["name"], options
+    raise ValueError(
+        f"publisher must be a name or a mapping with a `name` and its options, not {spec!r}"
+    )
+
+
+def load_publisher(spec: PublisherSpec) -> Publisher:
+    name, options = publisher_spec(spec)
     if name == "latex":
-        from .publishers.latex import publisher
-
-        return publisher()
-    if name == "gl":
-        from .publishers.gl import publisher
-
-        return publisher()
-    if name == "epoch":
-        from .publishers.epoch import publisher
-
-        return publisher()
-    module, separator, factory = name.partition(":")
-    if not separator:
-        raise ValueError("publisher must be 'latex', 'gl', 'epoch' or an installed module:factory")
-    result = getattr(importlib.import_module(module), factory)()
+        from .publishers.latex import publisher as factory
+    elif name == "gl":
+        from .publishers.gl import publisher as factory
+    elif name == "epoch":
+        from .publishers.epoch import publisher as factory
+    else:
+        module, separator, attribute = name.partition(":")
+        if not separator:
+            raise ValueError(
+                "publisher must be 'latex', 'gl', 'epoch' or an installed module:factory"
+            )
+        factory = getattr(importlib.import_module(module), attribute)
+    signature = inspect.signature(factory)
+    takes_any = any(p.kind is p.VAR_KEYWORD for p in signature.parameters.values())
+    if not takes_any and (unknown := sorted(set(options) - set(signature.parameters))):
+        raise ValueError(
+            f"publisher {name} takes no option(s) {', '.join(unknown)}"
+            + (f"; it takes {', '.join(signature.parameters)}" if signature.parameters else "")
+        )
+    result = factory(**options)
     if not isinstance(result, Publisher):
         raise TypeError("Publisher factories must return inspect_audit.Publisher")
     return result
@@ -179,30 +208,44 @@ class PhaseTools:
 @task
 def publish(
     bundle: str,
-    publisher: str = "latex",
+    publisher: PublisherSpec = "latex",
     output_dir: str = "./publications",
     instructions: str = "",
     box: str = "docker",
     auditor_image: str | None = None,
     token_limit: int | None = None,
+    artifact_dir: str | None = None,
 ) -> Task:
     """Publish an existing findings bundle, without loading the benchmark or launching jobs.
 
     Args:
-        bundle: Local directory containing findings.json, manifest.json and evidence.
-        publisher: 'latex', 'gl' or an installed module:factory returning a Publisher.
+        bundle: The findings bundle (findings.json, manifest.json and evidence), or a
+            published folder holding one under findings/: a local directory,
+            `hawk:<eval set id>/artifacts/<sample uuid>/<folder>` (a Hawk sample's
+            artifacts, read through Hawk's API with this runner's own token), or an
+            s3:// or gs:// folder this process can read.
+        publisher: 'latex', 'gl', 'epoch' or an installed module:factory returning a
+            Publisher; or a mapping naming one with its options, e.g.
+            `{"name": "epoch", "full_page": true}`.
         output_dir: Where immutable report bundles are saved.
         instructions: Presentation instructions for the publishing agent.
         box: docker or k8s, independently of where the original audit ran.
         auditor_image: Optional published image for the Kubernetes workspace.
         token_limit: Inspect token limit for this publishing run.
+        artifact_dir: Where the published report is also saved, under this sample, as
+            for `audit`. None: on a Hawk runner (box k8s), the job's own artifacts
+            directory; elsewhere the host only.
     """
     from ._audit_workspace import configure, docker_box, stage_inputs
+    from ._log_sources import fetch_bundle
     from .containers import AUDITOR_IMAGE
 
-    source = Path(bundle).expanduser().resolve()
+    source = Path(fetch_bundle(bundle)).expanduser().resolve()
     if source.name == "findings.json" and source.is_file():
         source = source.parent
+    if not (source / "manifest.json").exists() and (source / "findings/manifest.json").exists():
+        # a published folder: the bundle it was rendered from is beside the page
+        source = source / "findings"
     findings, manifest = read_bundle(source)
     root = Path(output_dir).expanduser().resolve() / uuid4().hex
     (root / "inputs").mkdir(parents=True)
@@ -210,6 +253,10 @@ def publish(
     shutil.copytree(source, root / "inputs/findings")
     selected = load_publisher(publisher)
     selected.validate(findings)
+    if selected.stage:
+        # what the publisher's skill reads (the Epoch description and its briefs), as an
+        # audit stages it; the bundle does not carry it
+        selected.stage(root / "work/analysis")
     tools = PhaseTools(
         root,
         [
@@ -246,6 +293,13 @@ def publish(
         raise ValueError("box must be docker or k8s")
     image = auditor_image or AUDITOR_IMAGE
     environment = docker_box(root, image) if box == "docker" else configure(root, image)
+    if not artifact_dir and box == "k8s":
+        from ._audit_workspace import hawk_artifact_dir
+
+        # without it the page lives only on the runner, which Hawk discards
+        artifact_dir = hawk_artifact_dir()
+    if artifact_dir:
+        (root / "artifacts.json").write_text(json.dumps({"artifact_dir": artifact_dir}))
     return Task(
         dataset=[
             Sample(
@@ -264,5 +318,5 @@ def publish(
         scorer=audit_outcome(),
         checkpoint=CheckpointConfig(sandbox_paths={"default": ["/workspace", "/inputs"]}),
         token_limit=token_limit,
-        metadata={"audit_dir": str(root), "publisher": publisher},
+        metadata={"audit_dir": str(root), "publisher": publisher, "bundle": bundle},
     )

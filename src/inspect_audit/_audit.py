@@ -796,7 +796,7 @@ def audit(
     child_secrets: list[str] | None = None,
     benchmark_environment: dict[str, str] | None = None,
     model_configs: dict[str, dict[str, Any]] | None = None,
-    publisher: str | None = None,
+    publisher: str | dict[str, Any] | None = None,
     investigator_search: dict[str, Any] | None = None,
 ) -> Task:
     """Audit a benchmark, submit findings, then use the selected publisher.
@@ -865,17 +865,20 @@ def audit(
         model_configs: Inspect ModelConfig settings keyed by full model name.
             Child models and judge roles use these fixed settings.
         publisher: Publishing package, revealed only after findings submission.
-            Defaults to latex; installed module:factory packages can replace it.
+            Defaults to latex; installed module:factory packages can replace it. A
+            mapping names one with its options, e.g. `{"name": "epoch", "full_page":
+            true}` for the whole Epoch review page.
         investigator_search: Inspect `web_search` providers for investigators, e.g.
             {"tavily": true}; external providers need their key in child_secrets.
             None gives investigators no search tool (they still have the internet in
             their box).
     """
     from ._findings import Findings, encoded, submit_findings
-    from ._publishing import PhaseTools, load_publisher, preflight_publisher
+    from ._publishing import PhaseTools, load_publisher, preflight_publisher, publisher_spec
 
     publisher = publisher or "latex"
-    selected_publisher = load_publisher(str(publisher))
+    publisher_name, publisher_options = publisher_spec(publisher)
+    selected_publisher = load_publisher(publisher)
     box = box or "docker"
     hawk_api_url = hawk_api_url or os.environ.get("HAWK_API_URL")
     interactive = bool(interactive)
@@ -953,7 +956,8 @@ def audit(
     seed_path = root / "inputs" / "seed.json"
     seed = json.loads(seed_path.read_text())
     seed["publisher"] = {
-        "name": str(publisher),
+        "name": publisher_name,
+        **({"options": publisher_options} if publisher_options else {}),
         "audit_skills": [Path(p).name for p in selected_publisher.audit_skills],
     }
     if runs:
@@ -1149,7 +1153,7 @@ def audit(
                 + "Read /inputs/seed.json and invoke the auditing skill. "
                 + (
                     "The report is published by the "
-                    f"{publisher} publisher, whose "
+                    f"{publisher_name} publisher, whose "
                     f"{', '.join(Path(p).name for p in selected_publisher.audit_skills)} "
                     "skill says how this audit is conducted and rated: invoke it too, "
                     "and follow it where the two differ. "

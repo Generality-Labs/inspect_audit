@@ -2,7 +2,9 @@
 
 A local `.eval`/`.json` file or folder, `hawk:<eval set id>[/<file>]` (declared
 Hawk inputs first, else the warehouse), or an `s3://`, `gs://` or `http(s)://` URL.
-Reading a log, once it is local, is `_logs`' business.
+Reading a log, once it is local, is `_logs`' business. A saved findings bundle is
+named the same ways (`fetch_bundle`): a local folder, a Hawk sample's artifact folder,
+or a folder URL.
 """
 
 from pathlib import Path
@@ -10,7 +12,7 @@ from pathlib import Path
 from inspect_ai.log import list_eval_logs
 
 from ._paths import stable_dir
-from .dispatch.hawk import declared_transcripts, fetch_eval_sets
+from .dispatch.hawk import declared_transcripts, fetch_artifacts, fetch_eval_sets
 
 
 def is_remote_logs(source: str) -> bool:
@@ -90,3 +92,46 @@ def _download(url: str) -> str:
         with fsspec.open(name, "rb") as remote:  # pyright: ignore[reportUnknownMemberType]
             (fetched / Path(name).name).write_bytes(remote.read())  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue,reportUnknownArgumentType]
     return str(fetched / Path(url).name) if len(names) == 1 and names[0] == url else str(fetched)
+
+
+def fetch_bundle(source: str) -> str:
+    """A saved findings folder, named locally or remotely, as a local folder.
+
+    `hawk:<eval set id>/artifacts/<sample uuid>/<folder>` downloads that folder of a
+    Hawk sample's artifacts through Hawk's API with this process's own token (what
+    `hawk fs ls evals/<eval set id>/artifacts/...` lists); an `s3://` or `gs://` (any
+    fsspec) folder is copied with fsspec, which needs this process's own read access;
+    a local path passes through. Which folder it is (a bundle or a published folder
+    holding one) is the reader's business.
+    """
+    if source.startswith("hawk:"):
+        address = source.removeprefix("hawk:").strip("/")
+        cached = _FETCHED.get(source)
+        if cached is None or not Path(cached).exists():
+            cached = _FETCHED[source] = fetch_artifacts(address)
+        return cached
+    if source.startswith(("http://", "https://")):
+        raise ValueError(
+            f"{source}: a findings bundle is a folder; name it as a local path, "
+            "hawk:<eval set id>/artifacts/<sample uuid>/<folder>, or an s3:// or gs:// URL"
+        )
+    if "://" in source:
+        cached = _FETCHED.get(source)
+        if cached is None or not Path(cached).exists():
+            import fsspec  # pyright: ignore[reportMissingTypeStubs]
+
+            folder = source.rstrip("/")
+            fetched = stable_dir("remote-bundle", folder)
+            fs, path = fsspec.core.url_to_fs(folder)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+            names = [str(n) for n in fs.find(path)]  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType,reportUnknownArgumentType]
+            if not names:
+                raise ValueError(f"No files found at {source}")
+            for name in names:
+                relative = Path(name).relative_to(path)
+                if ".." in relative.parts:
+                    raise ValueError(f"{source}: unsafe path {name!r}")
+                (fetched / relative).parent.mkdir(parents=True, exist_ok=True)
+                fs.get_file(name, str(fetched / relative))  # pyright: ignore[reportUnknownMemberType]
+            cached = _FETCHED[source] = str(fetched)
+        return cached
+    return source

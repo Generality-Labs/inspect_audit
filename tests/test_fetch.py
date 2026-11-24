@@ -124,3 +124,90 @@ def test_directory_sources_accept_inspect_file_uris(tmp_path: Path) -> None:
     originals = list(folder.glob("*.eval"))
     assert len(originals) == 1
     assert log_files([str(folder)]) == [str(originals[0])]
+
+
+# ------------------------------------------------------------------ findings bundles
+
+
+def _published(tmp_path: Path) -> tuple[Path, Path]:
+    """A sample's artifact tree as an audit leaves it: published/<id>/ with its bundle."""
+    import shutil
+
+    from test_epoch import PROSE, bundle, findings, phase1, ten
+
+    made = tmp_path / "made"
+    made.mkdir()
+    source = bundle(made, findings(ten(1), phase1()))
+    artifacts = tmp_path / "artifacts"
+    shutil.copytree(source, artifacts / "published/abc/findings")
+    (artifacts / "published/abc/prose.json").write_text(json.dumps(PROSE))
+    return artifacts, source
+
+
+def test_a_findings_bundle_is_fetched_from_a_hawk_samples_artifacts(
+    tmp_path: Path, hawk: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`publish` on a Hawk runner reads a finished audit's published folder through
+    Hawk's sample-artifact API with the runner's own token, and finds its bundle."""
+    from inspect_audit._log_sources import fetch_bundle
+    from inspect_audit._publishing import publish
+
+    artifacts, source = _published(tmp_path)
+    hawk.artifacts[("audit-run", "S1")] = artifacts
+    monkeypatch.setenv("HAWK_API_URL", hawk.url)
+    fetched = Path(fetch_bundle("hawk:audit-run/artifacts/S1/published/abc"))
+    assert (fetched / "prose.json").exists()
+    assert (fetched / "findings/findings.json").read_bytes() == (
+        source / "findings.json"
+    ).read_bytes()
+    # the page renders again from the fetched folder, with the prose.json beside it
+    from inspect_audit.publishers import epoch
+
+    out = tmp_path / "again"
+    assert epoch.main([str(fetched), "--out", str(out), "--full-page"]) == 0
+    assert "## Summary" in (out / "epoch_review.md").read_text()
+    task = publish(
+        "hawk:audit-run/artifacts/S1/published/abc",
+        publisher={"name": "epoch", "full_page": True},
+        output_dir=str(tmp_path / "out"),
+    )
+    assert task.metadata is not None
+    root = Path(task.metadata["audit_dir"])
+    assert (root / "inputs/findings/findings.json").read_bytes() == (
+        source / "findings.json"
+    ).read_bytes()
+    assert task.metadata["publisher"] == {"name": "epoch", "full_page": True}
+    # the publisher's skill reads the full page's briefs, staged as an audit stages them
+    staged = (root / "work/analysis/epoch/methodology.md").read_text()
+    assert "required for Verified" in staged and "not rendered" not in staged
+    # off Hawk, with no artifact_dir, the page stays on this host
+    assert not (root / "artifacts.json").exists()
+    kept = publish(
+        str(source), publisher="epoch", output_dir=str(tmp_path / "kept"), artifact_dir="s3://b/x"
+    )
+    assert kept.metadata is not None
+    settings = json.loads((Path(kept.metadata["audit_dir"]) / "artifacts.json").read_text())
+    assert settings == {"artifact_dir": "s3://b/x"}
+    assert set(hawk.tokens_seen) == {"Bearer test-token"}
+    with pytest.raises(ValueError, match="artifacts/<sample uuid>"):
+        fetch_bundle("hawk:audit-run/S1/published/abc")
+
+
+def test_a_findings_bundle_is_copied_from_a_bucket(tmp_path: Path) -> None:
+    """An s3:// or gs:// folder is copied with fsspec (here its in-memory filesystem)."""
+    import fsspec
+
+    from inspect_audit._log_sources import fetch_bundle
+
+    artifacts, source = _published(tmp_path)
+    fs = fsspec.filesystem("memory")
+    for path in artifacts.rglob("*"):
+        if path.is_file():
+            fs.pipe(f"/bucket/run/{path.relative_to(artifacts).as_posix()}", path.read_bytes())
+    fetched = Path(fetch_bundle("memory://bucket/run/published/abc/findings/"))
+    assert sorted(p.name for p in fetched.rglob("*") if p.is_file()) == sorted(
+        p.name for p in source.rglob("*") if p.is_file()
+    )
+    assert fetch_bundle(str(source)) == str(source)
+    with pytest.raises(ValueError, match="is a folder"):
+        fetch_bundle("https://example.com/bundle")

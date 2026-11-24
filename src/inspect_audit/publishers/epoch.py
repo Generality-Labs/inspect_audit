@@ -36,8 +36,8 @@ def validate(findings: Findings) -> None:
     _epoch.validate(findings)
 
 
-def report(findings: Findings, prose: _epoch.Prose) -> dict[str, Any]:
-    return _epoch.review(findings, prose)
+def report(findings: Findings, prose: _epoch.Prose, full_page: bool = False) -> dict[str, Any]:
+    return _epoch.review(findings, prose, full_page)
 
 
 async def _prose() -> _epoch.Prose:
@@ -51,17 +51,32 @@ async def _prose() -> _epoch.Prose:
         raise ToolError(f"{PROSE} is not a valid prose record: {ex}") from ex
 
 
-async def build(root: Path, bundle: Path) -> Path:
+async def build(root: Path, bundle: Path, full_page: bool = False) -> Path:
     findings, manifest = read_bundle(bundle)
     prose = await _prose()
     return render(
-        root / "rendered-epoch", findings, prose, manifest["files"]["findings.json"]["sha256"]
+        root / "rendered-epoch",
+        findings,
+        prose,
+        manifest["files"]["findings.json"]["sha256"],
+        full_page,
     )
 
 
-def render(output: Path, findings: Findings, prose: _epoch.Prose, findings_sha256: str) -> Path:
-    """Write the page and its derived records to `output`, replacing what was there."""
-    derived = report(findings, prose)
+def render(
+    output: Path,
+    findings: Findings,
+    prose: _epoch.Prose,
+    findings_sha256: str,
+    full_page: bool = False,
+) -> Path:
+    """Write the page and its derived records to `output`, replacing what was there.
+
+    `full_page` renders every block the verdict shows after the opening (summary,
+    methodology, interpretation and the rest), with their `required` rules applied;
+    without it the page ends after the opening, as the template says.
+    """
+    derived = report(findings, prose, full_page)
     page = derived.pop("page")
     if output.exists():
         shutil.rmtree(output)
@@ -83,6 +98,8 @@ def render(output: Path, findings: Findings, prose: _epoch.Prose, findings_sha25
                 )
             }
             | {"findings_sha256": findings_sha256}
+            # recorded only when set, so a default page's records are as before
+            | ({"full_page": True} if full_page else {})
         )
     )
     (output / "coverage.json").write_bytes(encoded(derived["coverage"]))
@@ -99,7 +116,7 @@ def render(output: Path, findings: Findings, prose: _epoch.Prose, findings_sha25
 
 
 @tool(parallel=False)
-def preview_review(root: Path) -> Tool:
+def preview_review(root: Path, full_page: bool = False) -> Tool:
     async def execute() -> str:
         """Render the Epoch review page from the frozen findings and prose.json.
 
@@ -110,7 +127,7 @@ def preview_review(root: Path) -> Tool:
         from .._findings import restore_bundle
 
         with reported("Preview"):
-            output = await build(root, await restore_bundle(root))
+            output = await build(root, await restore_bundle(root), full_page)
         await sandbox().write_file(f"/workspace/report/{PAGE}", (output / PAGE).read_text())
         verdict = json.loads((output / "verdict.json").read_text())
         warnings = "".join(f" Check: {w}." for w in verdict.get("warnings") or [])
@@ -135,7 +152,16 @@ def _findings_from(source: Path) -> tuple[Findings, str, Path | None]:
 
     if source.is_dir() and (source / "findings/manifest.json").exists():
         findings, manifest = read_bundle(source / "findings")
-        prose = source / "rendered-epoch/prose.json"
+        # publish_document copies the rendered folder's files beside the bundle; a
+        # rendered-epoch/ folder is the publisher's own output before that copy
+        prose = next(
+            (
+                p
+                for p in (source / "prose.json", source / "rendered-epoch/prose.json")
+                if p.exists()
+            ),
+            source / "rendered-epoch/prose.json",
+        )
         return (
             findings,
             manifest["files"]["findings.json"]["sha256"],
@@ -179,13 +205,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--prose", type=Path, help="prose.json, when the source does not carry one")
     parser.add_argument("--out", type=Path, default=Path("epoch-review"), help="output folder")
+    parser.add_argument(
+        "--full-page",
+        action="store_true",
+        help="render every block the verdict shows, not only the opening",
+    )
     args = parser.parse_args(argv)
     findings, digest, found = _findings_from(args.source)
     prose_path = args.prose or found
     if prose_path is None:
         parser.error("no prose.json beside the findings; pass --prose")
     prose = _epoch.Prose.model_validate_json(prose_path.read_text())
-    output = render(args.out, findings, prose, digest)
+    output = render(args.out, findings, prose, digest, args.full_page)
     verdict = json.loads((output / "verdict.json").read_text())
     print(f"{output / PAGE}: {verdict['verdict']}; " + "; ".join(verdict["reasons"]))
     for warning in verdict.get("warnings") or []:
@@ -193,15 +224,27 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def publisher() -> Publisher:
+def publisher(full_page: bool = False) -> Publisher:
+    """The Epoch review publisher.
+
+    Args:
+        full_page: Render the whole review (summary, methodology, interpretation, task
+            analysis, elicitation and scaffolding, limitations, the disclaimer and
+            recommendations) after the opening, each block required as the template
+            says. Default: the page ends after the rubric and the errors.
+    """
+    from functools import partial
+
     here = Path(__file__).parent
+    if not isinstance(full_page, bool):
+        raise TypeError(f"full_page must be true or false, not {full_page!r}")
     return Publisher(
         skills=[str(here / "skills/epoch-publishing")],
-        build=build,
-        tools=lambda root: [preview_review(root)],
+        build=partial(build, full_page=full_page) if full_page else build,
+        tools=lambda root: [preview_review(root, full_page)],
         validate=validate,
         audit_skills=[str(here.parent / "audit/skills/epoch-review")],
-        stage=_epoch.stage,
+        stage=partial(_epoch.stage, full_page=full_page) if full_page else _epoch.stage,
     )
 
 

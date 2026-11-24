@@ -381,11 +381,19 @@ def methodology() -> Methodology:
     return Methodology.model_validate(description()["methodology"])
 
 
-def template() -> Template:
+def template(full_page: bool = False) -> Template:
+    """The page template; `full_page` renders past the opening, whatever the template says.
+
+    A full page keeps the opening, then the notices and every other block the verdict
+    shows, the disclaimer, the closing blocks and the footnotes, and each block's
+    `required` rule applies. Without it the template is rendered as written.
+    """
     doc = description()
     method = Methodology.model_validate(doc["methodology"])
     page = Template.model_validate(doc["template"])
     page.check_methodology(method)
+    if full_page:
+        page = page.model_copy(update={"ends_after_opening": False})
     return page
 
 
@@ -463,8 +471,11 @@ def methodology_markdown(method: Methodology, page: Template) -> str:
         else:
             out += [
                 (
-                    f"The page opens, after its header, with {opening}; the notices and "
-                    "the other blocks follow."
+                    f"The page opens, after its header, with {opening}; the notices "
+                    "follow, then every other block below that the verdict shows, in this "
+                    "order, then the disclaimer, the closing blocks and the footnotes. "
+                    "Write every block marked required for the verdict, within its "
+                    "limits: a missing one is refused."
                 ),
                 "",
             ]
@@ -499,12 +510,12 @@ def methodology_markdown(method: Methodology, page: Template) -> str:
     return "\n".join(line for line in out if line is not None)
 
 
-def stage(analysis: Path) -> None:
+def stage(analysis: Path, full_page: bool = False) -> None:
     """Stage the description where the auditor reads it: data and its plain reading."""
     target = analysis / "epoch"
     target.mkdir(parents=True, exist_ok=True)
     (target / "epoch.json").write_bytes(DESCRIPTION.read_bytes())
-    (target / "methodology.md").write_text(methodology_markdown(methodology(), template()))
+    (target / "methodology.md").write_text(methodology_markdown(methodology(), template(full_page)))
 
 
 # ------------------------------------------------------------------ text rules
@@ -1781,9 +1792,9 @@ def render(
     return "\n".join(out)
 
 
-def review(findings: "Findings", prose: Prose) -> dict[str, Any]:
+def review(findings: "Findings", prose: Prose, full_page: bool = False) -> dict[str, Any]:
     """Validate the bundle and the prose together, derive the verdict, render the page."""
-    method, page = methodology(), template()
+    method, page = methodology(), template(full_page)
     derived = validate(findings)
     assessments, _ = assessments_from(findings, method)
     notices: list[str] = []

@@ -1,0 +1,29 @@
+{
+  "profile": {
+    "benchmark": "SimpleQA Verified",
+    "creator": "Google",
+    "review_date": "2026-11-24"
+  },
+  "summary": "The benchmark asks short factual questions. One sampled question has two defensible answers.[^1]",
+  "methodology": "Fifty questions were audited against their sources with no evaluation logs.",
+  "representative_errors": [
+    "Impossible as written (1 row): the key accepts one of two defensible years."
+  ],
+  "error_examples": [
+    {
+      "task": "s0",
+      "error_type": "Impossible as written",
+      "notes": "The question does not say whether the first EP counts as an album.",
+      "affected_logs": "Not assessed; no logs supplied"
+    }
+  ],
+  "limitations": [
+    "The evaluation logs were not supplied, so grading was not reviewed."
+  ],
+  "recommendations": [
+    "Check that each question determines a unique answer."
+  ],
+  "footnotes": [
+    "Sample s0: the key names the 2013 album; the label's discography makes the 2017 one third."
+  ]
+}

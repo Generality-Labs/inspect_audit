@@ -1,6 +1,6 @@
 ---
 name: epoch-publishing
-description: Publish frozen findings as an Epoch AI benchmark review page. The verdict, the defect rate, the rubric tables and the list of audited items are generated from the findings; you write the representative errors (bullets and table), within their limits.
+description: Publish frozen findings as an Epoch AI benchmark review page. The verdict, the defect rate, the rubric tables and the list of audited items are generated from the findings; you write the representative errors (bullets and table) and, on a full page, every other block the verdict requires, within their limits.
 ---
 
 Findings are final at /inputs/findings/findings.json. Read them with their manifest,
@@ -16,18 +16,40 @@ its brief and its limits. Write /workspace/report/prose.json:
 }
 ```
 
-The page is the header, the rubric, then the representative errors: your bullets, the
-errors table, grouped by Epoch's class (impossible as written, false negative, false
-positive) with each group's count and each row's sub-reason taken from the findings,
-and, under it, each defective item's competing answers with their sources, printed
-from the findings; any notice (no logs, logs from another build) follows, and
-the page ends there. Do not write URLs into the table; a source missing from the page
-is missing from the findings.
+On a full page the other blocks sit beside these under their ids, e.g.
+`"summary": "..."`, `"limitations": ["..."]`, `"recommendations": ["..."]`.
 
-Write nothing else. The summary, methodology, limitations, recommendations and the
-other blocks methodology.md lists as "not rendered" are not on the page and not
-required; one written anyway is checked against its limits and kept in prose.json,
-but spend the effort on the rubric notes and the errors instead.
+The page opens with the header, the rubric, then the representative errors: your
+bullets, the errors table, grouped by Epoch's class (impossible as written, false
+negative, false positive) with each group's count and each row's sub-reason taken from
+the findings, and, under it, each defective item's competing answers with their
+sources, printed from the findings; any notice (no logs, logs from another build)
+follows. Do not write URLs into the table; a source missing from the page is missing
+from the findings.
+
+Whether the page ends there is set by the publisher; methodology.md's "Prose blocks"
+section says which:
+
+- **The page ends after the opening** (methodology.md says it "ends there" and lists
+  the other blocks as "not rendered; optional"). Write nothing else. The summary,
+  methodology, limitations, recommendations and the other blocks are not on the page
+  and not required; one written anyway is checked against its limits and kept in
+  prose.json, but spend the effort on the rubric notes and the errors instead.
+- **The full page** (methodology.md says the other blocks follow the notices, and lists
+  each with "shown for" and "required for"). After the notices come, in methodology.md's
+  order, the remaining blocks the verdict shows (for example `summary`, `methodology`,
+  `interpretation`, `task_analysis`, `elicitation_and_scaffolding`, `limitations`), the
+  disclaimer, which is generated, then `recommendations` and the footnotes. Write every
+  block methodology.md marks required for the derived verdict, each to its brief and
+  within its limits (words, paragraphs, sentences per paragraph, bullets): a missing
+  required block, one over a limit, or one the verdict does not show is refused. Add
+  a block the verdict shows but does not require only when its brief has something
+  supported to say. Each block says something the others do not: the summary leads
+  with the verdict and why; the methodology says what was done, not the counts the
+  rubric prints; the interpretation, task analysis and elicitation blocks explain the
+  benchmark to its reader from the findings and the evidence in the bundle, not the
+  course of the audit. Prose blocks are strings (paragraphs separated by a blank line);
+  `limitations` and `recommendations` are lists of strings, one bullet each.
 
 `profile.benchmark` is the benchmark's common name and `creator` the organisation that
 published it; `review_date` is today's date when left out. Write the

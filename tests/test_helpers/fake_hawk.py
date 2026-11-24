@@ -58,6 +58,9 @@ class FakeHawk:
         # Hawk unreachable for status and monitoring calls
         self.down = False
         self.tokens_seen: list[str] = []
+        # a sample's artifact tree, served as Hawk's sample-artifacts API serves it:
+        # (eval set id, sample uuid) -> the local folder holding it
+        self.artifacts: dict[tuple[str, str], Path] = {}
         # the identity provider's side: refresh tokens presented, and whether it rotates them
         self.grants: list[str] = []
         self.rotate = True
@@ -255,6 +258,37 @@ class FakeHawk:
             reply["refresh_token"] = f"refresh-{n}"
         return web.json_response(reply)
 
+    async def _artifact_listing(self, request: web.Request) -> web.Response:
+        self._seen(request)
+        root = self.artifacts[(request.match_info["id"], request.match_info["sample"])]
+        entries = [
+            {
+                "name": p.name,
+                "key": p.relative_to(root).as_posix(),
+                "size_bytes": p.stat().st_size,
+                "last_modified": None,
+            }
+            for p in sorted(root.rglob("*"))
+            if p.is_file()
+        ]
+        return web.json_response({"entries": entries, "truncated": False})
+
+    async def _artifact_url(self, request: web.Request) -> web.Response:
+        self._seen(request)
+        eval_set, sample = request.match_info["id"], request.match_info["sample"]
+        key = request.match_info["path"]
+        assert (self.artifacts[(eval_set, sample)] / key).is_file()
+        return web.json_response(
+            {
+                "url": f"{self.url}/artifact-files/{eval_set}/{sample}/{key}",
+                "expires_in_seconds": 900,
+            }
+        )
+
+    async def _artifact_file(self, request: web.Request) -> web.StreamResponse:
+        root = self.artifacts[(request.match_info["id"], request.match_info["sample"])]
+        return web.FileResponse(root / request.match_info["path"])
+
     async def _moved(self, request: web.Request) -> web.Response:
         raise web.HTTPFound(f"{self.url}/elsewhere")
 
@@ -273,6 +307,11 @@ class FakeHawk:
         app.router.add_post("/view/logs/log-download-urls", self._download_urls)
         app.router.add_get("/files/{id}/{name}", self._file)
         app.router.add_get("/usage/prices", self._prices)
+        app.router.add_get("/meta/samples/{id}/{sample}/artifacts", self._artifact_listing)
+        app.router.add_get(
+            "/meta/samples/{id}/{sample}/artifacts/file/{path:.+}", self._artifact_url
+        )
+        app.router.add_get("/artifact-files/{id}/{sample}/{path:.+}", self._artifact_file)
         app.router.add_post("/middleman/permitted_models_info", self._permitted)
         # a proxy path that redirects: credentials must not follow it
         app.router.add_put("/middleman/moved", self._moved)

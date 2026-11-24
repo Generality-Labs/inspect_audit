@@ -19,7 +19,7 @@ its brief and its limits. Write /workspace/report/prose.json:
 On a full page the other blocks sit beside these under their ids, e.g.
 `"summary": "..."`, `"limitations": ["..."]`, `"recommendations": ["..."]`.
 
-The page opens with the header, the rubric, then the representative errors: your
+The default page opens with the header, the rubric, then the representative errors: your
 bullets, the errors table, grouped by Epoch's class (impossible as written, false
 negative, false positive) with each group's count and each row's sub-reason taken from
 the findings, and, under it, each defective item's competing answers with their
@@ -35,11 +35,12 @@ section says which:
   methodology, limitations, recommendations and the other blocks are not on the page
   and not required; one written anyway is checked against its limits and kept in
   prose.json, but spend the effort on the rubric notes and the errors instead.
-- **The full page** (methodology.md says the other blocks follow the notices, and lists
-  each with "shown for" and "required for"). After the notices come, in methodology.md's
-  order, the remaining blocks the verdict shows (for example `summary`, `methodology`,
-  `interpretation`, `task_analysis`, `elicitation_and_scaffolding`, `limitations`), the
-  disclaimer, which is generated, then `recommendations` and the footnotes. Write every
+- **The full page** (methodology.md lists each block with "shown for" and "required
+  for"). After the header come, in methodology.md's order, the blocks the verdict shows
+  (for example `summary`, `methodology`, `interpretation`, `task_analysis`,
+  `elicitation_and_scaffolding`, `limitations`, `recommendations`), then the disclaimer,
+  which is generated, then the rubric, the representative errors as above, any notice
+  and all the footnotes. Write every
   block methodology.md marks required for the derived verdict, each to its brief and
   within its limits (words, paragraphs, sentences per paragraph, bullets): a missing
   required block, one over a limit, or one the verdict does not show is refused. Add

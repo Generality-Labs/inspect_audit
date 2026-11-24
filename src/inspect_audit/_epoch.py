@@ -384,8 +384,8 @@ def methodology() -> Methodology:
 def template(full_page: bool = False) -> Template:
     """The page template; `full_page` renders past the opening, whatever the template says.
 
-    A full page keeps the opening, then the notices and every other block the verdict
-    shows, the disclaimer, the closing blocks and the footnotes, and each block's
+    A full page prints every other block the verdict shows, the closing blocks and the
+    disclaimer, then the opening, the notices and the footnotes, and each block's
     `required` rule applies. Without it the template is rendered as written.
     """
     doc = description()
@@ -471,9 +471,10 @@ def methodology_markdown(method: Methodology, page: Template) -> str:
         else:
             out += [
                 (
-                    f"The page opens, after its header, with {opening}; the notices "
-                    "follow, then every other block below that the verdict shows, in this "
-                    "order, then the disclaimer, the closing blocks and the footnotes. "
+                    "The page shows, after its header, every block below that the "
+                    "verdict shows except the opening ones, in this order with the "
+                    f"closing blocks last, then the disclaimer, then {opening}, the "
+                    "notices and the footnotes. "
                     "Write every block marked required for the verdict, within its "
                     "limits: a missing one is refused."
                 ),
@@ -1600,10 +1601,11 @@ def render(
 ) -> str:
     """The page, rendered from the records so it cannot drift from them.
 
-    The header, then what the template's `opening` names (the rubric, then the
-    representative errors with their sources), then the notices and the other blocks,
-    the disclaimer, the closing blocks and the footnotes. A template that ends after its
-    opening stops at the notices, with only the footnotes the page refers to.
+    A template that ends after its opening (the default page) prints the header, what
+    its `opening` names (the rubric, then the representative errors with their sources)
+    and the notices, with only the footnotes the page refers to. The full page prints
+    the header, the other blocks the verdict shows in template order (the closing ones
+    last), the disclaimer, then the opening and the notices, and every footnote.
     """
     verdict = derived["verdict"]
     profile = prose.profile
@@ -1753,14 +1755,17 @@ def render(
     def _shown(block: Block) -> bool:
         return block.shown_for(verdict) and prose.present(block)
 
-    for item in page.opening:
-        if item == "rubric":
-            _render_rubric()
-        elif _shown(block := page.block(item)):
-            _render_block(block)
-    for notice in derived.get("notices") or []:
-        out += [f"*{notice}*", ""]
+    def _render_opening() -> None:
+        for item in page.opening:
+            if item == "rubric":
+                _render_rubric()
+            elif _shown(block := page.block(item)):
+                _render_block(block)
+        for notice in derived.get("notices") or []:
+            out.extend([f"*{notice}*", ""])
+
     if page.ends_after_opening:
+        _render_opening()
         cited = set(footnote_marks("\n".join(out)))
         notes = [(i, n) for i, n in enumerate(footnotes, 1) if i in cited]
         if notes and page.footnotes:
@@ -1768,12 +1773,11 @@ def render(
             out += [f"[^{i}]: {note.strip()}" for i, note in notes]
             out.append("")
         return "\n".join(out)
-    for block in page.blocks:
-        if block.closing or block.id in page.opening or not _shown(block):
-            continue
+    # the full page: the prose blocks first, the disclaimer, then the opening (the
+    # rubric and the representative errors with their sources), the notices, footnotes
+    rest = [b for b in page.blocks if b.id not in page.opening and _shown(b)]
+    for block in [b for b in rest if not b.closing] + [b for b in rest if b.closing]:
         _render_block(block)
-    if "rubric" not in page.opening:
-        _render_rubric()
     rub = page.rubric
     if rub.disclaimer:
         out += [
@@ -1782,9 +1786,9 @@ def render(
             method.intro[rub.disclaimer].format(creator=profile.creator),
             "",
         ]
-    for block in page.blocks:
-        if block.closing and _shown(block):
-            _render_block(block)
+    if "rubric" not in page.opening:
+        _render_rubric()
+    _render_opening()
     if footnotes and page.footnotes:
         out += [f"## {page.footnotes.title}", ""]
         out += [f"[^{i}]: {note.strip()}" for i, note in enumerate(footnotes, 1)]

@@ -72,9 +72,10 @@ def render(
 ) -> Path:
     """Write the page and its derived records to `output`, replacing what was there.
 
-    `full_page` renders every block the verdict shows after the opening (summary,
-    methodology, interpretation and the rest), with their `required` rules applied;
-    without it the page ends after the opening, as the template says.
+    `full_page` renders every block the verdict shows (summary, methodology,
+    interpretation and the rest) and the disclaimer before the opening, with their
+    `required` rules applied; without it the page ends after the opening, as the
+    template says.
     """
     derived = report(findings, prose, full_page)
     page = derived.pop("page")
@@ -228,10 +229,11 @@ def publisher(full_page: bool = False) -> Publisher:
     """The Epoch review publisher.
 
     Args:
-        full_page: Render the whole review (summary, methodology, interpretation, task
-            analysis, elicitation and scaffolding, limitations, the disclaimer and
-            recommendations) after the opening, each block required as the template
-            says. Default: the page ends after the rubric and the errors.
+        full_page: Render the whole review: summary, methodology, interpretation, task
+            analysis, elicitation and scaffolding, limitations, recommendations and the
+            disclaimer, then the rubric, the errors and all footnotes, each block
+            required as the template says. Default: the page ends after the rubric and
+            the errors.
     """
     from functools import partial
 

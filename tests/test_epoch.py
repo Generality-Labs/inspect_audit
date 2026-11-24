@@ -909,36 +909,41 @@ def test_the_full_page_renders_every_block_the_verdict_shows(tmp_path: Path, mon
     monkeypatch.setattr(epoch, "sandbox", lambda: Box(VERIFIED_PROSE))
     output = asyncio.run(publisher.build(tmp_path, source))
     page = (output / "epoch_review.md").read_text()
+    # the prose first, then the disclaimer, the rubric, the errors and the footnotes
     order = [
         "Verdict: Verified",
-        "## Benchmark Review Rubric",
-        "## Representative Errors",
-        "| s0 | Impossible as written |",
-        "Audited without finding a defect (9)",
         "## Summary",
         "## Methodology",
         "## Interpretation",
         "## Task Analysis",
         "## Elicitation and Scaffolding",
         "## Limitations",
+        "## Recommendations",
         "## Disclaimer",
         "without requesting additional information from Google",
-        "## Recommendations",
+        "## Benchmark Review Rubric",
+        "## Representative Errors",
+        "| s0 | Impossible as written |",
+        "Audited without finding a defect (9)",
         "## Footnotes",
         "[^1]: Sample s0",
     ]
     positions = [page.index(marker) for marker in order]
     assert positions == sorted(positions)
+    assert all(page.count(marker) == 1 for marker in order if marker.startswith("## "))
     assert json.loads((output / "verdict.json").read_text())["full_page"] is True
-    # an Incomplete review's notice sits between the opening and the other blocks
+    # an Incomplete review's notice follows the errors and precedes the footnotes
     (tmp_path / "phase1").mkdir()
     source = bundle(tmp_path / "phase1", findings(ten(1), phase1()))
     monkeypatch.setattr(epoch, "sandbox", lambda: Box(PROSE))
     page = (asyncio.run(publisher.build(tmp_path, source)) / "epoch_review.md").read_text()
     assert (
-        page.index("## Representative Errors")
+        page.index("## Summary")
+        < page.index("## Disclaimer")
+        < page.index("## Benchmark Review Rubric")
+        < page.index("## Representative Errors")
         < page.index("Phase 1 only")
-        < page.index("## Summary")
+        < page.index("## Footnotes")
     )
     assert "## Interpretation" not in page  # not part of an Incomplete review
 

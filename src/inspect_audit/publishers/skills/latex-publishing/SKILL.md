@@ -3,7 +3,7 @@ name: latex-publishing
 description: Write and publish the GL audit report from the frozen findings, in Laurence's template.
 ---
 
-A person will read this report. They need to decide whether to trust this benchmark's scores, they have not seen the audit, and their time is limited. Write for them, not for a checker.
+A person will read this report in one sitting. They need to decide whether to trust this benchmark's scores, they have not seen the audit, and their time is limited. Give them a concise, nicely formatted PDF: the conclusions, why, and what to do about them. The detail (every evidence item, its source, each criterion's full rationale, the auditor's limitations) stays in the published findings.json, where their follow-up questions go. Write for them, not for a checker.
 
 The findings are final at /inputs/findings/findings.json. The GL rubric is in the audit-framework skill: use its criteria to explain each rating in plain words, not to repeat its codes.
 
@@ -11,26 +11,27 @@ The findings are final at /inputs/findings/findings.json. The GL rubric is in th
 
 - Open each section with its main finding in one sentence. No preamble.
 - No jargon. Explain every term in plain English the first time you use it. Never put variable names, job ids, criterion codes or file paths in the prose. Call each thing by one name throughout.
-- Be dense. Every sentence should tell the reader something they did not already have. Cut restatement, filler and hedging. Keep sentences short and avoid chains of clauses joined by commas.
+- Be concise; every sentence earns its place. Tell the reader something they did not already have from the ratings table or the finding boxes. Cut restatement, filler and hedging. Keep sentences short and avoid chains of clauses joined by commas. A dimension with no concern needs a sentence or two, not a page.
+- Do not try to restate every evidence item or every number in the findings. Pick the few that carry the conclusion.
 - Use the number that changes the conclusion, with its denominator, and say what happened to the remainder ("77 of 112 attempts did X; the other 35 did Y").
 - Calibrate. Write "shows" only when the evidence shows it; otherwise "suggests". A one-off grader slip or an unlikely reading is a note, not a defect. Put the findings that most change what the scores mean first.
-- For each finding, say what happens, how you established it, what it does to the scores, and what should change.
+- For the findings that matter most, say what happens, how you established it, what it does to the scores, and what should change. The finding boxes already print each finding's statement: do not repeat it.
 - Use literal language: no metaphors, no dramatic or promotional words, no em-dashes.
 
 ## Evidence
 
 - Paraphrase evidence in your own words. When one piece of evidence carries a finding (a few lines of a transcript, or a test input with its expected and actual output), insert it with the excerpt component instead of describing it. Use excerpts judiciously: at most one per finding, the shortest that proves the point, followed by one sentence on what it shows.
-- The report prints no paths, log ids or hashes, and neither should the prose. Where each piece of evidence came from is kept with the published findings.
+- The report prints no paths, log ids, hashes or file names, and neither should the prose. Do not point the reader at files or fields in the bundle (no source lists, no "see x.csv"). Where each piece of evidence came from is kept with the published findings.
 
 ## Prose and excerpts
 
 Write /workspace/report/prose.json. Only these fields are accepted, as plain text (not LaTeX); a blank line starts a paragraph:
 
 - `datasheet`: what the benchmark is and asks, in the Eval Datasheet.
-- `setup`: what this audit did and did not cover, under Scope of Report.
-- `dimensions`: `{"A": "...", ..., "I": "..."}`, one entry per dimension, printed after that dimension's ratings table and before its evidence and findings. A criterion's text (C.1) belongs under its letter.
+- `setup`: what this audit did and did not cover, under Scope of Report. The auditor's limitations are not printed, so state here, briefly, the ones that bound the conclusions.
+- `dimensions`: `{"A": "...", ..., "I": "..."}`, one entry per dimension, printed after that dimension's ratings table and before its findings. A criterion's text (C.1) belongs under its letter.
 
-Grades, ratings, finding boxes, counts and evidence come from the frozen findings and cannot be changed here.
+The report prints from the frozen findings: the executive summary, grades and ratings, each dimension's assessment with a one-line summary per criterion, and each finding's title, statement and samples. It does not print the evidence lists. None of this can be changed here.
 
 An excerpt is declared in `excerpts` and placed in any of those fields with `{{excerpt:<id>}}` on its own line. Declare where the text is; the publisher reads it, so never type the quoted text yourself:
 
@@ -51,6 +52,6 @@ preview_report fails, naming the excerpt, if a source, sample, message, line or 
 
 ## Rendering
 
-- Call preview_report and look at every page as the reader will. Before publishing, fix blank pages, clipped tables and any section that reads as a wall of text. If something cannot be fixed from the prose, say so in the report.
+- Call preview_report and look at every page as the reader will. Before publishing, fix blank pages, clipped tables and any section that reads as a wall of text; usually the fix is to cut. If something cannot be fixed from the prose, say so in the report.
 - Before publishing, check that no number, name, quote or verdict differs from the findings.
 - Then call publish_document. It preserves the PDF, its sources, the template provenance and the findings bundle.

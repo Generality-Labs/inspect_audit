@@ -120,8 +120,8 @@ def test_fixture_pdf_uses_bundle_scorecard_and_finding_boxes(
     assert "1/3 selected samples" in text
     for finding in findings.auditor.findings:
         assert finding.issue in text
-        # evidence as observed, without its source path or a reference number
-        assert finding.evidence[0].observed in text
+        # the evidence lists stay in the published findings; the PDF is read in one sitting
+        assert finding.evidence[0].observed not in text
         assert finding.evidence[0].source not in text
     assert (output / "report.pdf").read_bytes().startswith(b"%PDF")
     assert json.loads((output / "template-provenance.json").read_text()) == pin
@@ -161,7 +161,7 @@ def test_source_preserves_bracketed_findings_and_benchmark_wide_scope(tmp_path: 
     (tmp_path / "reports/Example/Example_Audit.tex").write_text(r"\evalscore{A}")
     findings, manifest = read_bundle(FIXTURE)
     findings.auditor.ratings["overall"].explanation = "Issue [sample 12]"
-    findings.auditor.ratings["overall"].evidence[0].observed = "reference [v2]"
+    findings.auditor.findings[0].explanation = "reference [v2]"
     findings.subject["domain"] = "science [physics]"
     findings.auditor.findings[0].sample_ids = []
     _, content = latex.source(findings, manifest, latex.Prose(), tmp_path)
@@ -646,3 +646,55 @@ def test_the_report_prints_no_log_ids_paths_or_hashes(tmp_path: Path) -> None:
         in content
     )
     assert "1 recorded logs read" in content
+
+
+def test_the_report_shows_short_frozen_fields_and_leaves_detail_in_the_findings(
+    tmp_path: Path,
+) -> None:
+    """James, MirrorCode: evidence lists, full rationales, limitations, audit flags and
+    hashes rendered as walls of text. The PDF shows short fields; the bundle keeps the rest."""
+    findings, manifest = read_bundle(FIXTURE)
+    findings.subject.update(
+        ids="declared",
+        items_read="before the agent started",
+        task_args={"compaction_thresh": 300000},
+        revision="819db252edc4e72feed767cb92b04ac2a5bc6792",
+    )
+    findings.auditor.limitations = ["A long limitation the scope prose summarises."]
+    rating = findings.auditor.ratings["C.1"]
+    rating.explanation = "The key is wrong, e.g. on item 3. A second sentence of detail."
+    findings.auditor.findings[0].sample_ids = [f"item-{n}" for n in range(8)]
+    upstream = _example(tmp_path)
+    (upstream / "reports/Example/Example_Audit.tex").write_text(
+        r"\reportno{GL-[number]} \evalscore{?} \commitref{[commit]}"
+    )
+    wrapper, content = latex.source(findings, manifest, latex.Prose(), upstream)
+    for hidden in (
+        "declared",
+        "before the agent started",
+        "compaction",
+        "A long limitation",
+        "A second sentence",
+        "Headline evidence",
+        "Report no.",
+        r"\findingfield{Criterion}",
+        *(e.observed for r in findings.auditor.ratings.values() for e in r.evidence),
+    ):
+        assert latex.tex(hidden) not in content, hidden
+    assert "The key is wrong, e.g. on item 3." in content
+    assert r"\findingfield{Samples}{" + latex.tex("8/3") + "}" in content
+    assert r"\commitref{819db25}" in wrapper
+    assert re.search(r"\\reportno\{GL-[0-9A-F]{6}\}", wrapper)
+
+
+def test_first_sentence_keeps_abbreviations_and_numbers() -> None:
+    assert latex.first_sentence("A vs. B differ at 0.5 s. Then more.") == "A vs. B differ at 0.5 s."
+    assert latex.first_sentence("No full stop") == "No full stop"
+    assert latex.affected([], 26).startswith("Benchmark-wide")
+    assert latex.affected(["a", "b"], 26) == "2/26: a, b"
+
+
+def test_comparisons_and_arrows_are_set_not_shown_as_question_marks() -> None:
+    assert latex.tex(
+        "\u226599% \u2192 x"
+    ) == r"\ensuremath{\geq}99% \ensuremath{\rightarrow} x".replace("%", r"\%")

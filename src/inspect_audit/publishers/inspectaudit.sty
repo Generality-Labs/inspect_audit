@@ -35,21 +35,6 @@
 \newcommand{\iaissue}[3]{%
   \gl@issuesep{\bfseries\textcolor{#3}{#1}}~\glupfirst{#2}\gdef\gl@issuesep{\par}}
 
-% ---- Evidence, as observed ----------------------------------------------
-% \iaevidence{label}{\item observed ...}. Where each item was found is kept with the
-% published findings, not printed.
-\newcommand{\iaevidence}[2]{%
-  \par\smallskip\ifblank{#1}{}{\noindent\textbf{#1}\par\nopagebreak}%
-  {\small\begin{itemize}[nosep, leftmargin=1.2em, label=\textbullet]#2\end{itemize}}\par}
-% A dimension's supporting evidence, after its table and prose
-\newcommand{\iaevidenceheading}{%
-  \par\medskip\noindent\textbf{Evidence}\par\nopagebreak}
-
-% ---- Field lists without empty values -------------------------------
-\newcommand{\iafieldlist}[2]{%
-  \noindent\textbf{#1:}\par\nopagebreak
-  {\small\begin{itemize}[nosep, leftmargin=1.2em, label=\textbullet]#2\end{itemize}}\par\vspace{2pt}}
-
 % ---- Excerpts: verbatim evidence, quoted by the publisher -------------
 % Recorded output (code, a command, a tool's output):
 %   \begin{iaexcerpt}{caption} \iaxline{indent}{...}... \end{iaexcerpt}

@@ -16,7 +16,6 @@ from .._findings import Findings, encoded, read_bundle
 from .._framework import REGISTRY, stage_framework
 from .._framework import SKILL as FRAMEWORK_SKILL
 from .._publishing import Publisher
-from .._verdicts import Evidence
 from ._excerpt import MARKER, Excerpt, Quote, plain, resolve_all, viewer_base
 from ._render import box_has, render_in_box, reported, tree
 from ._template import template
@@ -53,6 +52,7 @@ _SETTABLE = {
     *(chr(c) for c in range(0x20, 0x7F)),
     *(chr(c) for c in range(0xA0, 0x180)),
     *"\n\t\u2013\u2014\u2018\u2019\u201c\u201d\u2022\u2026\u20ac\u2032\u2033",
+    *"\u2190\u2192\u2194\u2212\u2248\u2260\u2264\u2265",
 }
 
 
@@ -74,6 +74,15 @@ _TEX = {
     "<": r"\textless{}",
     ">": r"\textgreater{}",
     "|": r"\textbar{}",
+    # comparisons and arrows the findings use ("\u226599%"), set rather than shown as "?"
+    "\u2190": r"\ensuremath{\leftarrow}",
+    "\u2192": r"\ensuremath{\rightarrow}",
+    "\u2194": r"\ensuremath{\leftrightarrow}",
+    "\u2212": r"\ensuremath{-}",
+    "\u2248": r"\ensuremath{\approx}",
+    "\u2260": r"\ensuremath{\neq}",
+    "\u2264": r"\ensuremath{\leq}",
+    "\u2265": r"\ensuremath{\geq}",
 }
 
 
@@ -269,6 +278,31 @@ def logs_in_words(logs: list[Any], provenance: object) -> str:
     return "; ".join([said, *notes])
 
 
+# subject metadata about how the audit ran, not about the benchmark
+_INTERNAL = {"ids", "items_read"}
+
+# a full stop that does not end a sentence
+_ABBREVIATION = re.compile(r"(?:\b(?:e\.g|i\.e|vs|etc|cf|approx|incl|Fig|Sec)|\b[A-Z])\.$")
+
+
+def first_sentence(text: str) -> str:
+    """The first sentence of a frozen explanation, for a one-line table cell."""
+    text = text.strip()
+    for match in re.finditer(r"[.!?](?=\s+[A-Z0-9\"(])", text):
+        if not _ABBREVIATION.search(text[: match.end()]):
+            return text[: match.end()]
+    return text
+
+
+def affected(sample_ids: list[str], samples: int) -> str:
+    """Which samples a finding covers: named when a few, counted when many."""
+    if not sample_ids:
+        return "Benchmark-wide finding; no individual sample count claimed."
+    if len(sample_ids) > 6:
+        return f"{len(sample_ids)}/{samples}"
+    return f"{len(sample_ids)}/{samples}: " + ", ".join(sample_ids)
+
+
 def source(
     findings: Findings,
     manifest: dict[str, Any],
@@ -308,8 +342,9 @@ def source(
             else "Not assessed in the submitted findings."
         )
 
-    # Evidence is printed as observed. Where each piece was found (log paths, files,
-    # hashes) is kept in the published findings, not printed: a reader cannot use it.
+    # The report is read in one sitting. The auditor's evidence lists, sources and
+    # full per-criterion rationales stay in the published findings, where a reader's
+    # follow-up questions go; the PDF shows the ratings, the findings and the prose.
     placed: list[str] = []
 
     def text(value: str) -> str:
@@ -327,23 +362,17 @@ def source(
             out += [r"\par", excerpt_box(quotes[name]), tex(after.strip())]
         return "".join(out)
 
-    def evidence(label: str, records: list[Evidence]) -> str:
-        if not records:
-            return ""
-        return (
-            r"\iaevidence{"
-            + label
-            + "}{"
-            + "".join(r"\item " + tex(e.observed) for e in records)
-            + "}"
-        )
-
     def field(name: str, value: object) -> str:
         return r"\dsfield{" + name + "}{" + tex(value) + "}\n"
 
     def subject_field(name: str, value: object) -> str:
-        # unset metadata is left out, not shown as "Not recorded"
-        if value is None or value == "" or value == [] or value == {}:
+        # unset metadata is left out, not shown as "Not recorded"; so are the audit's own
+        # flags and structured settings, which read as a wall (they are in the findings)
+        if value is None or value == "" or value == [] or value == {} or name in _INTERNAL:
+            return ""
+        if isinstance(value, dict) or (
+            isinstance(value, list) and not all(isinstance(v, str) for v in value)
+        ):
             return ""
         if name == "revision" and isinstance(findings.subject.get("repo"), str):
             return ""  # the repository links to it
@@ -365,22 +394,13 @@ def source(
             return field("logs", logs_in_words(value, findings.subject.get("logs_provenance")))
         if name == "logs_provenance" and isinstance(findings.subject.get("supplied_logs"), list):
             return ""  # said with the logs
-        if isinstance(value, list) and all(isinstance(v, str) and len(v) < 60 for v in value):
-            # identifiers: one wrapped line, not one line each
-            return field(tex(name), ", ".join(value))
         if isinstance(value, list):
-            return (
-                r"\iafieldlist{"
-                + tex(name)
-                + "}{"
-                + "".join(
-                    r"\item " + tex(json.dumps(v) if isinstance(v, (dict, list)) else v)
-                    for v in value
-                )
-                + "}\n"
-            )
-        if isinstance(value, dict):
-            value = ", ".join(f"{k}={json.dumps(v)}" for k, v in value.items())
+            # a few short names on one line; anything longer is in the findings
+            if len(value) > 6 or any(len(v) >= 60 for v in value):
+                return ""
+            return field(tex(name), ", ".join(value))
+        if len(str(value)) > 200:
+            return ""
         return field(tex(name), value)
 
     def box(title: str, content: str) -> str:
@@ -388,8 +408,9 @@ def source(
 
     def gist(text: str) -> str:
         # the scorecard row is the template's "[one-line description]", in a box that
-        # cannot break across pages; the full explanation is in the dimension's part
-        return tex(re.split(r"(?<=\.)\s", text.strip(), maxsplit=1)[0])
+        # cannot break across pages; so is each contribution row. The full explanation
+        # is in the published findings.
+        return tex(first_sentence(text))
 
     parts = []
     for letter, definition in dimensions.items():
@@ -419,19 +440,9 @@ def source(
         box(
             "Document",
             field("Title", findings.subject.get("task", "Evaluation audit"))
-            + field("Report no.", manifest["files"]["findings.json"]["sha256"][:12])
-            + field("Prepared by", "Automated audit")
-            + field(
-                "Revision",
-                "Generated from the immutable submitted findings; this publication "
-                "preserves their checksum.",
-            ),
+            + field("Prepared by", "Automated audit"),
         ),
         box("Executive Summary", tex(findings.auditor.summary)),
-        # the overall grade's evidence; the scorecard keeps to its one page
-        box("Headline evidence", evidence("", ratings["overall"].evidence))
-        if ratings["overall"].evidence
-        else "",
         r"\end{adjustwidth}\begin{maincontentstyled}",
     ]
     # Reuse the pinned Example's navigation and scorecard layout.
@@ -499,18 +510,11 @@ def source(
             "Run Setup",
             field("Samples", f"{investigated}/{samples} selected samples have investigator results")
             + field("Jobs", len(manifest.get("jobs", [])))
-            + (
-                field(
-                    "Logs",
-                    f"{len(log_references)} recorded logs read; their addresses and "
-                    "checksums are kept with the published findings",
-                )
-                if log_references
-                else ""
-            ),
+            + (field("Logs", f"{len(log_references)} recorded logs read") if log_references else "")
+            + (field("Investigator models", ", ".join(models)) if models else ""),
         ),
-        box("Models", tex(", ".join(models))) if models else "",
-        box("Limitations", tex("\n\n".join(findings.auditor.limitations) or "None recorded.")),
+        # The auditor's limitations are long and in the findings; what bounds the
+        # conclusions is said in the Scope of Report prose.
         r"\end{reportpart}",
         r"\auditpart{Audit Findings}{audit}\begin{reportpart}{Audit Findings}{audit}{sec:auditreport}\auditdestination{findings}",
     ]
@@ -524,33 +528,15 @@ def source(
             + "}{"
             + assessment(code)
             + "}{"
-            + explanation(code)
+            + (gist(ratings[code].explanation) if code in ratings else explanation(code))
             + "}"
             for code, row in definitions.items()
             if code.startswith(letter + ".")
-        )
-        supporting = "".join(
-            evidence(
-                (
-                    r"\textcolor{brandTeal}{"
-                    + code
-                    + r"}~"
-                    + r"\glupfirst{"
-                    + tex(row["name"])
-                    + "}"
-                    if "." in code
-                    else "Overall"
-                ),
-                ratings[code].evidence,
-            )
-            for code, row in definitions.items()
-            if (code == letter or code.startswith(letter + ".")) and code in ratings
         )
         parts += [
             r"\begin{dimensionreview}{" + key + "}",
             r"\dimensionoverview{" + key + "}{" + explanation(letter) + "}{" + contributions + "}",
             text(prose.dimensions.get(letter, "")),
-            (r"\iaevidenceheading " + supporting) if supporting else "",
         ]
         for finding in findings.auditor.findings:
             if finding.criterion.split(".")[0] != letter:
@@ -563,16 +549,8 @@ def source(
             )
             parts += [
                 r"\begin{finding}" + label + "{" + tex(finding.issue) + "}{" + severity + "}",
-                r"\findingfield{Criterion}{" + tex(finding.criterion) + "}",
                 r"\findingfield{Condition}{" + tex(finding.explanation) + "}",
-                r"\findingfield{Samples}{"
-                + tex(
-                    f"{len(finding.sample_ids)}/{samples}: " + ", ".join(finding.sample_ids)
-                    if finding.sample_ids
-                    else "Benchmark-wide finding; no individual sample count claimed."
-                )
-                + "}",
-                evidence("Evidence:", finding.evidence),
+                r"\findingfield{Samples}{" + tex(affected(finding.sample_ids, samples)) + "}",
                 r"\end{finding}",
             ]
         parts.append(r"\end{dimensionreview}")
@@ -587,11 +565,13 @@ def source(
         r"\input{template/sections/ScoringCriteria}\auditpartsend\end{maincontentstyled}",
     ]
     wrapper = (upstream / "reports/Example/Example_Audit.tex").read_text()
+    # short references in the page header: the template's "GL-[number]", and a commit
+    # abbreviated as git does
     for command, value in {
-        "reportno": manifest["files"]["findings.json"]["sha256"][:12],
+        "reportno": "GL-" + manifest["files"]["findings.json"]["sha256"][:6].upper(),
         "evalname": findings.subject.get("task", "Evaluation"),
         "evalscore": ratings["overall"].label,
-        "commitref": str(findings.subject.get("revision") or "Unknown")[:12],
+        "commitref": str(findings.subject.get("revision") or "Unknown")[:7],
     }.items():
         wrapper = re.sub(
             r"\\" + command + r"\{[^}]*\}",

@@ -13,7 +13,11 @@ tasks:
       # (ia-epoch-chess-logs-lw-7fc5ja4ub990mykh, Verified, 3/100 defects), as its
       # audit published them. No re-audit: a fresh publishing agent writes the full
       # page's prose from these findings; the benchmark is not loaded and no jobs run.
-      bundle: s3://arcadia-impact-generality-inspect/evals/ia-epoch-chess-logs-lw-7fc5ja4ub990mykh/artifacts/ANBxQCsP8vXPAKMi4S4Y2j/published/55cf18145a11488fa6f2227aa16db371/findings/
+      # read through Hawk's sample-artifact API with the runner's own token: the
+      # runner's S3 session may not list another eval set's folder (the s3:// form of
+      # this path failed at load, ia-epoch-chess-full-pub-l-pwtrdg5qrzaf44y4: no
+      # s3:ListBucket on arcadia-impact-generality-inspect)
+      bundle: hawk:ia-epoch-chess-logs-lw-7fc5ja4ub990mykh/artifacts/ANBxQCsP8vXPAKMi4S4Y2j/published/55cf18145a11488fa6f2227aa16db371/findings
       publisher:
         name: epoch
         full_page: true

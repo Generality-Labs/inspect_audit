@@ -69,6 +69,9 @@ def tex(value: object) -> str:
         "}": r"\}",
         "~": r"\textasciitilde{}",
         "^": r"\textasciicircum{}",
+        "<": r"\textless{}",
+        ">": r"\textgreater{}",
+        "|": r"\textbar{}",
     }
 
     def word(w: str) -> str:
@@ -79,6 +82,20 @@ def tex(value: object) -> str:
         return "".join(substitutions.get(c, c) + (r"\allowbreak{}" if c in "/_" else "") for c in w)
 
     return "".join(word(w) for w in re.split(r"(\s+)", str(value))).replace("\n\n", "\\par ")
+
+
+# inspect_audit's layout over the pinned template, loaded after auditframework
+STYLE = Path(__file__).with_name("inspectaudit.sty")
+
+# assessment colours, as the template's \assess macros use them
+COLOURS = {
+    "Critical": "ratingDarkRed",
+    "Major": "ratingRed",
+    "Minor": "ratingAmber",
+    "None": "ratingGreen",
+    "Not applicable": "ratingGrey",
+    "Not assessed": "ratingSlate",
+}
 
 
 RULE = (
@@ -144,11 +161,48 @@ def source(
             else "Not assessed in the submitted findings."
         )
 
-    def evidence(records: list[Evidence]) -> str:
-        return r"\par ".join(tex(e.observed) + " --- " + tex(e.source) for e in records)
+    # Evidence sources (log paths, files, URLs) are numbered references to an appendix,
+    # in order of first citation, rather than paths inline after every observation.
+    sources: dict[str, int] = {}
+
+    def cite(source: str) -> str:
+        return str(sources.setdefault(source, len(sources) + 1))
+
+    def evidence(label: str, records: list[Evidence]) -> str:
+        if not records:
+            return ""
+        return (
+            r"\iaevidence{"
+            + label
+            + "}{"
+            + "".join(r"\iaitem{" + tex(e.observed) + "}{" + cite(e.source) + "}" for e in records)
+            + "}"
+        )
 
     def field(name: str, value: object) -> str:
         return r"\dsfield{" + name + "}{" + tex(value) + "}\n"
+
+    def subject_field(name: str, value: object) -> str:
+        # unset metadata is left out, not shown as "Not recorded"
+        if value is None or value == "" or value == [] or value == {}:
+            return ""
+        if isinstance(value, list) and all(isinstance(v, str) and len(v) < 60 for v in value):
+            # identifiers: one wrapped line, not one line each
+            return field(tex(name), ", ".join(value))
+        if isinstance(value, list):
+            return (
+                r"\iafieldlist{"
+                + tex(name)
+                + "}{"
+                + "".join(
+                    r"\item " + tex(json.dumps(v) if isinstance(v, (dict, list)) else v)
+                    for v in value
+                )
+                + "}\n"
+            )
+        if isinstance(value, dict):
+            value = ", ".join(f"{k}={json.dumps(v)}" for k, v in value.items())
+        return field(tex(name), value)
 
     def box(title: str, content: str) -> str:
         return r"\begin{dsbox}[breakable]{" + title + "}\n" + content + "\n" + r"\end{dsbox}" + "\n"
@@ -161,12 +215,12 @@ def source(
     parts = []
     for letter, definition in dimensions.items():
         contributions = " ".join(
-            r"\issue{"
+            r"\iaissue{"
             + key
             + "}{"
             + tex(definitions[key]["name"])
             + "}{"
-            + gist(rating.explanation)
+            + COLOURS[rating.label]
             + "}"
             for key, rating in ratings.items()
             if key.startswith(letter + ".") and rating.label in ("Minor", "Major", "Critical")
@@ -186,17 +240,19 @@ def source(
         box(
             "Document",
             field("Title", findings.subject.get("task", "Evaluation audit"))
-            + field("Report no.", manifest["files"]["findings.json"]["sha256"][:12]),
+            + field("Report no.", manifest["files"]["findings.json"]["sha256"][:12])
+            + field("Prepared by", "Automated audit")
+            + field(
+                "Revision",
+                "Generated from the immutable submitted findings; this publication "
+                "preserves their checksum.",
+            ),
         ),
         box("Executive Summary", tex(findings.auditor.summary)),
-        box(
-            "Traceability",
-            field("Prepared by", "Automated audit")
-            + field("Verified by", "Not recorded")
-            + field("Approved by", "Not recorded"),
-        ),
-        box("Distribution", "Generated from immutable submitted findings."),
-        box("Revision History", "This publication preserves the submitted findings checksum."),
+        # the overall grade's evidence; the scorecard keeps to its one page
+        box("Headline evidence", evidence("", ratings["overall"].evidence))
+        if ratings["overall"].evidence
+        else "",
         r"\end{adjustwidth}\begin{maincontentstyled}",
     ]
     # Reuse the pinned Example's navigation and scorecard layout.
@@ -216,25 +272,25 @@ def source(
         "[release date, leaderboard, maintenance status]": "status",
     }
     values = {
-        placeholder: tex(findings.subject.get(key, "Not recorded"))
+        placeholder: tex(findings.subject[key])
         for placeholder, key in replacements.items()
+        if findings.subject.get(key) not in (None, "")
     }
-    values.update(
-        dict.fromkeys(
-            (
-                "[sandbox/API, dataset size, content handling]",
-                r"[cost per model/episode incl.\ judges; audit total]",
-                "[wall-clock per model/episode]",
-                r"[port location; commit \ccommitref]",
-            ),
-            "Not recorded",
-        )
+    # Fields nothing records (the Example's requirements, unset subject metadata) are
+    # left out rather than shown as "Not recorded", and a box left empty goes with them.
+    scorecard = re.sub(
+        r"(?m)^[ \t]*\\dsfield\{[^}]*\}\{\[(?!Headline)[^\n]*\]\}[ \t]*\n",
+        lambda match: match[0] if any(key in match[0] for key in values) else "",
+        scorecard,
+    )
+    scorecard = re.sub(
+        r"\\noindent\s*\\begin\{dsbox\}(\[[^\]]*\])?\{[^}]*\}\s*\\end\{dsbox\}", "", scorecard
     )
     # One pass over template placeholders: inserted findings are never reinterpreted.
     scorecard = re.sub(
-        r"\[Headline assessment:.*?\]|" + "|".join(re.escape(key) for key in values),
+        "|".join([r"\[Headline assessment:.*?\]", *(re.escape(key) for key in values)]),
         lambda match: (
-            tex(ratings["overall"].explanation) + r"\par " + evidence(ratings["overall"].evidence)
+            tex(ratings["overall"].explanation)
             if match[0].startswith("[Headline assessment:")
             else values[match[0]]
         ),
@@ -242,51 +298,36 @@ def source(
         flags=re.DOTALL,
     )
     parts.append(scorecard)
-    subject = "".join(
-        field(
-            tex(key),
-            json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value,
-        )
-        for key, value in findings.subject.items()
+    subject = "".join(subject_field(key, value) for key, value in findings.subject.items())
+    models = sorted(
+        {
+            take["model"]
+            for checks in rows.values()
+            for takes in checks.values()
+            for take in takes
+            if take.get("model")
+        }
     )
+    log_references = manifest.get("log_references", [])
     parts += [
         r"\auditpart{Eval Datasheet}{datasheet}\begin{reportpart}{Eval Datasheet}{datasheet}{sec:datasheet}\auditdestination{datasheet}",
+        box("Overview", tex(prose.datasheet)) if prose.datasheet else "",
         box("Benchmark", subject),
-        box("Overview", tex(prose.datasheet)),
         r"\end{reportpart}",
         r"\auditpart{Audit Setup}{methodology}\begin{reportpart}{Audit Setup}{methodology}{sec:methodology}\auditdestination{methodology}",
         box("Scope of Report", tex(prose.setup)),
         box(
             "Run Setup",
             field("Samples", f"{investigated}/{samples} selected samples have investigator results")
-            + field("Jobs", len(manifest.get("jobs", []))),
-        ),
-        box(
-            "Models",
-            tex(
-                ", ".join(
-                    sorted(
-                        {
-                            take["model"]
-                            for checks in rows.values()
-                            for takes in checks.values()
-                            for take in takes
-                            if take.get("model")
-                        }
-                    )
-                )
-                or "Not recorded"
+            + field("Jobs", len(manifest.get("jobs", [])))
+            + (
+                field("Logs", f"{len(log_references)} referenced by address and SHA-256 (Appendix)")
+                if log_references
+                else ""
             ),
         ),
+        box("Models", tex(", ".join(models))) if models else "",
         box("Limitations", tex("\n\n".join(findings.auditor.limitations) or "None recorded.")),
-        box(
-            "Log references",
-            r"\par ".join(
-                tex(ref["address"]) + " --- " + tex(ref["sha256"])
-                for ref in manifest.get("log_references", [])
-            )
-            or "None recorded.",
-        ),
         r"\end{reportpart}",
         r"\auditpart{Audit Findings}{audit}\begin{reportpart}{Audit Findings}{audit}{sec:auditreport}\auditdestination{findings}",
     ]
@@ -301,15 +342,32 @@ def source(
             + assessment(code)
             + "}{"
             + explanation(code)
-            + (r"\par " + evidence(ratings[code].evidence) if code in ratings else "")
             + "}"
             for code, row in definitions.items()
             if code.startswith(letter + ".")
+        )
+        supporting = "".join(
+            evidence(
+                (
+                    r"\textcolor{brandTeal}{"
+                    + code
+                    + r"}~"
+                    + r"\glupfirst{"
+                    + tex(row["name"])
+                    + "}"
+                    if "." in code
+                    else "Overall"
+                ),
+                ratings[code].evidence,
+            )
+            for code, row in definitions.items()
+            if (code == letter or code.startswith(letter + ".")) and code in ratings
         )
         parts += [
             r"\begin{dimensionreview}{" + key + "}",
             r"\dimensionoverview{" + key + "}{" + explanation(letter) + "}{" + contributions + "}",
             tex(prose.dimensions.get(letter, "")),
+            (r"\iaevidenceheading " + supporting) if supporting else "",
         ]
         for finding in findings.auditor.findings:
             if finding.criterion.split(".")[0] != letter:
@@ -331,12 +389,41 @@ def source(
                     else "Benchmark-wide finding; no individual sample count claimed."
                 )
                 + "}",
-                r"\findingfield{Evidence}{" + evidence(finding.evidence) + "}",
+                evidence("Evidence:", finding.evidence),
                 r"\end{finding}",
             ]
         parts.append(r"\end{dimensionreview}")
+    parts.append(r"\end{reportpart}")
+    if sources or log_references:
+        parts += [
+            r"\auditpart{Appendix: Sources}{sources}\begin{reportpart}{Appendix: Sources}{sources}{sec:sources}\auditdestination{sources}",
+            box(
+                "Evidence sources",
+                r"\footnotesize "
+                + "".join(r"\iasource{" + str(n) + "}{" + tex(s) + "}" for s, n in sources.items()),
+            )
+            if sources
+            else "",
+            box(
+                "Log references",
+                r"\footnotesize "
+                + "".join(
+                    r"\iasource{L"
+                    + str(n)
+                    + "}{"
+                    + tex(ref["address"])
+                    + r"\newline SHA-256 "
+                    + tex(ref["sha256"])
+                    + "}"
+                    for n, ref in enumerate(log_references, 1)
+                ),
+            )
+            if log_references
+            else "",
+            r"\end{reportpart}",
+        ]
     parts += [
-        r"\end{reportpart}\auditpart{Scoring Criteria}{criteria}\auditdestination{criteria}",
+        r"\auditpart{Scoring Criteria}{criteria}\auditdestination{criteria}",
         r"\input{template/sections/ScoringCriteria}\auditpartsend\end{maincontentstyled}",
     ]
     wrapper = (upstream / "reports/Example/Example_Audit.tex").read_text()
@@ -351,7 +438,19 @@ def source(
             lambda _, command=command, value=value: "\\" + command + "{" + tex(value) + "}",
             wrapper,
         )
-    return wrapper, "\n".join(parts)
+    wrapper = wrapper.replace(
+        r"\usepackage{auditframework}", r"\usepackage{auditframework}\usepackage{inspectaudit}", 1
+    )
+    content = "\n".join(parts)
+    if sources or log_references:
+        content = content.replace(
+            r"\auditcontentsrow{criteria}",
+            r"\auditcontentsrow{sources}{Appendix: Sources}"
+            "\n"
+            r"\auditcontentsrow{criteria}",
+            1,
+        )
+    return wrapper, content
 
 
 async def build(root: Path, bundle: Path) -> Path:
@@ -375,6 +474,7 @@ async def build(root: Path, bundle: Path) -> Path:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(upstream / name, target)
     shutil.copyfile(upstream / ".latexmkrc", output / ".latexmkrc")
+    shutil.copyfile(STYLE, output / "template" / STYLE.name)
     (output / "report.tex").write_text(wrapper)
     (output / "Content.tex").write_text(content)
     (output / "prose.json").write_bytes(encoded(prose.model_dump()))

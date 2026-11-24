@@ -1,0 +1,60 @@
+% inspect_audit's layout on top of the pinned GL template (publishers/template/), loaded
+% after auditframework by the generated report.tex. The pinned files stay as shipped;
+% what the generated report needs differently is redefined here.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{inspectaudit}[2026/11/24 inspect_audit layout for generated GL reports]
+\RequirePackage{auditframework}
+
+% ---- Dimension overview -------------------------------------------------
+% The template keeps the overview and its contribution table in one minipage, which
+% cannot break. Generated explanations make it taller than a page: the breakable
+% dimension box then left whole pages blank before it and ran it past the footer.
+% Here it is ordinary paragraphs, and the table is one tabularx per row, so the box
+% breaks between rows.
+\renewcommand{\dimensionoverview}[3]{%
+  \auditdestination{dimension:#1}%
+  \noindent\textbf{Overall Assessment:} \dimassess{#1}\par\smallskip
+  #2\par
+  \contributionassessment{#3}}
+% (the header and each row share these column widths)
+\renewcommand{\contributionassessment}[1]{%
+  \par\medskip\noindent\textbf{Contribution Assessment}\par\nopagebreak\smallskip
+  {\small\renewcommand{\arraystretch}{1.15}%
+   \par\noindent\begin{tabularx}{\linewidth}{|L{0.75}|L{0.5}|L{1.75}|}\hline
+   \rowcolor{brandTeal!10}\textbf{Contribution} & \textbf{Assessment} & \textbf{Summary} \\ \hline
+   \end{tabularx}\par\nopagebreak
+   #1}\par\medskip}
+\renewcommand{\contributionrow}[4]{%
+  \par\nointerlineskip\noindent
+  \begin{tabularx}{\linewidth}{|L{0.75}|L{0.5}|L{1.75}|}
+  \textbf{\textcolor{brandTeal}{#1}}~\glupfirst{#2} & #3 & #4 \\ \hline
+  \end{tabularx}\par}
+
+% ---- Scorecard key contributions: code and name only -----------------
+% (the explanation is in the dimension's part; one page holds the table)
+\newcommand{\iaissue}[3]{%
+  \gl@issuesep{\bfseries\textcolor{#3}{#1}}~\glupfirst{#2}\gdef\gl@issuesep{\par}}
+
+% ---- Evidence, with its source as a numbered reference --------------
+% \iaevidence{label}{items}: items are \iaitem{observed}{ref numbers}
+\newcommand{\iaevidence}[2]{%
+  \par\smallskip\ifblank{#1}{}{\noindent\textbf{#1}\par\nopagebreak}%
+  {\small\begin{itemize}[nosep, leftmargin=1.2em, label=\textbullet]#2\end{itemize}}\par}
+\newcommand{\iaitem}[2]{\item #1\,\iaref{#2}}
+\newcommand{\iaref}[1]{%
+  \textsuperscript{\renewcommand*{\do}[1]{\gl@refsep\hyperlink{iasource.##1}{##1}\def\gl@refsep{,}}%
+    \def\gl@refsep{}\docsvlist{#1}}}
+% A dimension's supporting evidence, after its table and prose
+\newcommand{\iaevidenceheading}{%
+  \par\medskip\noindent\textbf{Evidence}\par\nopagebreak}
+% Sources appendix: \iasource{n}{text}
+\newcommand{\iasource}[2]{%
+  \par\noindent\hangindent=2.2em\hangafter=1%
+  \makebox[2.2em][l]{\hypertarget{iasource.#1}{[#1]}}#2\par}
+
+% ---- Field lists without empty values -------------------------------
+\newcommand{\iafieldlist}[2]{%
+  \noindent\textbf{#1:}\par\nopagebreak
+  {\small\begin{itemize}[nosep, leftmargin=1.2em, label=\textbullet]#2\end{itemize}}\par\vspace{2pt}}
+
+\endinput

@@ -13,7 +13,7 @@ Write /workspace/report/prose.json with these optional prose fields:
 Only these fields are accepted. They contain plain text, not LaTeX. Dimension keys
 are A-I. Grades, assessments, contributions, finding boxes, sample counts and evidence
 references are generated from the submitted findings; they cannot be changed here.
-Missing metadata is shown as not recorded. Do not invent approvals or measurements.
+Metadata the findings do not record is left out. Do not invent approvals or measurements.
 
 Call preview_report to compile, inspect report.pdf (rasterise its pages with pdftoppm
 if available), and revise prose as needed. Call publish_document to preserve the PDF,

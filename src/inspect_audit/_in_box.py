@@ -77,14 +77,19 @@ json.dump({"package": locations[0]}, open(sys.argv[2], "w"))
 """
 
 
-async def run_probe(name: str, script: str, request: dict[str, Any]) -> Any:
-    """Run `script` in the box with `request`; its JSON answer, or a tool error with why not."""
+async def run_probe(
+    name: str, script: str, request: dict[str, Any], env: dict[str, str] | None = None
+) -> Any:
+    """Run `script` in the box with `request` (and `env`); its JSON answer, or a tool error
+    with why not."""
     box = sandbox()
     await box.write_file(f"{WORK}/{name}.py", script)
     await box.write_file(f"{WORK}/{name}.request.json", json.dumps(request))
     answer = f"{WORK}/{name}.answer.json"
     result = await box.exec(
-        ["python", f"{WORK}/{name}.py", f"{WORK}/{name}.request.json", answer], timeout=1800
+        ["python", f"{WORK}/{name}.py", f"{WORK}/{name}.request.json", answer],
+        env=env or {},
+        timeout=1800,
     )
     if not result.success:
         killed = (
@@ -117,11 +122,21 @@ def why_it_failed(output: str, limit: int = 3000) -> str:
 
 
 async def population(
-    task: str, task_args: dict[str, Any], source: str | None = None
+    task: str,
+    task_args: dict[str, Any],
+    source: str | None = None,
+    environment: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """The benchmark's sample ids, whether they are positions, and its dataset's name."""
+    """The benchmark's sample ids, whether they are positions, and its dataset's name.
+
+    `environment` is the audit's benchmark_environment: building the task may need it
+    (ExploitBench refuses to load without EXPLOITBENCH_ACKNOWLEDGE_RISKS=1), and the box
+    does not inherit the runner's environment."""
     return await run_probe(
-        "population", POPULATION, {"task": task, "task_args": task_args, "source": source}
+        "population",
+        POPULATION,
+        {"task": task, "task_args": task_args, "source": source},
+        env=environment,
     )
 
 

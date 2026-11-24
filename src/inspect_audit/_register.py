@@ -321,7 +321,9 @@ async def start_register(
         raise ToolError(str(ex)) from ex
     # read in the box, where the benchmark is installed: its code never runs here
     try:
-        read = await in_box.population(task, args, policy.source)
+        read = await in_box.population(
+            task, args, policy.source, json.loads(policy.environment_json)
+        )
     except ToolError as ex:
         stored = store_as(RegisterStore)
         # its first line and its last (exit code, then the error): enough to say why,

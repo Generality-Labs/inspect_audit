@@ -15,6 +15,7 @@ The investigation is the benchmark's own Inspect task with the investigator in p
 | `_grade.py`        | `grade`: a copy of the live state with the transcript under test, handed to their scorers                            |
 | `_reset.py`        | `reset`: force-recreate their boxes, lay files and run setup again (Docker only)                                     |
 | `_logs.py`         | the declared logs: header checks, the attempt index, host-side reading tools                                         |
+| `_eval_slice.py`   | an `.eval` log's samples copied as recorded (still compressed) into a slice, the source read by range                |
 | `_verdicts.py`     | checks as skills, `record_verdict`, `submit`, one scorer per check                                                   |
 | `_image.py`        | `view_image`: an image in a box (the investigator's or the auditor's), SVGs rasterised there                         |
 | `_source.py`       | the benchmark's code for the investigator: the task's package followed by import, data files, install specs          |
@@ -28,7 +29,7 @@ One Inspect task: a react agent in its own box, launching benchmark and investig
 | --------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `_audit.py`           | `audit`: declared inputs staged on the host, the job tools, the budget tool, the task                      |
 | `dispatch/`           | jobs and where they run (`local`, `hawk`), `policy` and the authoriser, `packages`, the key launcher       |
-| `_log_sources.py`     | every way of naming logs (path, `hawk:`, URL) and a saved findings folder, resolved to local files         |
+| `_log_sources.py`     | every way of naming logs (path, `hawk:` read in place as `hawksrc://`, URL) and a saved findings folder    |
 | `_staging.py`         | the declared inputs on the host: repository snapshot, logs, paper, docs, starting workspace                |
 | `_repository.py`      | what a benchmark repository says about itself: its task, the paths to snapshot, its paper                  |
 | `_audit_workspace.py` | the auditor's box (Docker compose or k8s values, staging inputs, installing the benchmark), Hawk artifacts |
@@ -61,7 +62,7 @@ Structured YAML accepts `benchmark`, `investigation`, `policy` and `execution` s
 6. **Override, never inherit.** Every limit, the generate config, epochs, metrics and approval of theirs is replaced explicitly in `investigation_task`.
 7. **Fail loudly.** Unsupported inputs raise with the reason. A value the source never recorded is unknown, never a default.
 8. **Private Inspect imports in the investigator live in `_reset.py` only.** Everything else uses Inspect's public API. If you need an internal, the answer is an upstream request, not an import.
-9. **Only an investigator's own sample enters its box.** The host indexes and checks the declared logs; each investigator gets just its sample's epochs, sliced into an Inspect log in its own box (`/audit/logs/`), never another sample's.
+9. **Only an investigator's own sample enters its box.** The host indexes and checks the declared logs; each investigator gets just its sample's epochs, sliced into an Inspect log in its own box (`/audit/logs/`), never another sample's. Logs are read where they live, by range (`hawk:` as `hawksrc://`): a job never downloads or inflates a whole declared log, and a slice's entries are copied as recorded.
 
 ## Unsupported, on purpose
 

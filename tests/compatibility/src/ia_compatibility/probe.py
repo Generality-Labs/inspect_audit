@@ -49,14 +49,16 @@ def compatibility(expected: dict[str, bool]):
     return score
 
 
-# The item, and the recorded attempts as staged in the box (Inspect JSON logs), read
-# with plain json so the probe needs nothing installed there.
+# The item, and the recorded attempts as staged in the box (Inspect logs: .eval, whose
+# header and summaries are deflated, or .json), read with the standard library so the
+# probe needs nothing installed there.
 STAGED = (
     "python3 -c '"
     'import glob, json; d = json.load(open("/audit/item.json")); '
     'out = {k: d[k] for k in ["sample_id", "target", "choices", "files_in_their_box", "has_setup_script"]}; '
     'assert d.get("benchmark_source"), "no source manifest"; '
-    'logs = [json.load(open(f)) for f in sorted(glob.glob("/audit/logs/*.json"))]; '
+    'import zipfile; z = [zipfile.ZipFile(f) for f in sorted(glob.glob("/audit/logs/*.eval"))]; '
+    'logs = [dict(json.loads(f.read("header.json")), samples=json.loads(f.read("summaries.json"))) for f in z] + [json.load(open(f)) for f in sorted(glob.glob("/audit/logs/*.json"))]; '
     'out["attempts"] = [{"eval_id": g["eval"]["eval_id"], "epoch": s["epoch"]} for g in logs for s in g.get("samples") or []]; '
     "print(json.dumps(out))'"
 )

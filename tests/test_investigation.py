@@ -144,7 +144,11 @@ def test_an_investigation_runs_inside_the_benchmark(tmp_path: Path, sample_sandb
 
     script = [
         _call("benchmark_bash", command="cat /work/input.txt /work/setup_done"),
-        _call("investigator_bash", command="cat /audit/logs/*.json"),
+        _call(
+            "investigator_bash",
+            # a slice's metadata is deflated: the standard library reads it
+            command="python -c \"import glob,zipfile; [print(zipfile.ZipFile(f).read('header.json').decode()) for f in glob.glob('/audit/logs/*.eval')]\"",
+        ),
         _call("grade", answer="42", eval_id="", epoch=0),
         _call("benchmark_bash", command="rm -rf /work"),
         _call("grade", answer="42", eval_id="", epoch=0),
@@ -392,12 +396,14 @@ def test_every_task_setting_is_either_overridden_or_kept_on_purpose(tmp_path: Pa
 
 
 def test_a_sample_gets_only_its_own_attempts_as_an_inspect_log(tmp_path: Path) -> None:
-    """The box receives a JSON Inspect log per source run, holding only this sample's epochs."""
+    """The box receives an .eval log per source run, holding only this sample's epochs,
+    their entries copied exactly as recorded."""
     import json
+    import zipfile
 
     from inspect_ai import Task
     from inspect_ai import eval as inspect_eval
-    from inspect_ai.log import read_eval_log
+    from inspect_ai.log import read_eval_log, read_eval_log_sample
 
     from inspect_audit._logs import Attempt, LogIndex, sliced_logs
 
@@ -425,12 +431,24 @@ def test_a_sample_gets_only_its_own_attempts_as_an_inspect_log(tmp_path: Path) -
         }
     )
     [(name, data)] = sliced_logs(index, "7").items()
-    assert name.endswith(".json")
-    raw = json.loads(data)  # readable with no Inspect installed
-    assert [(s["id"], s["epoch"]) for s in raw["samples"]] == [("7", 1), ("7", 2)]
+    assert name.endswith(".eval")
     (tmp_path / name).write_bytes(data)
+    with zipfile.ZipFile(tmp_path / name) as z, zipfile.ZipFile(log.location) as source:
+        # readable with no Inspect installed: which attempts it holds
+        assert json.loads(z.read("header.json"))["eval"]["eval_id"] == log.eval.eval_id
+        assert sorted(
+            (s["id"], s["epoch"]) for s in json.loads(z.read("summaries.json"))
+        ) == [("7", 1), ("7", 2)]
+        assert sorted(n for n in z.namelist() if n.startswith("samples/")) == [
+            "samples/7_epoch_1.json",
+            "samples/7_epoch_2.json",
+        ]
+        for entry in ("samples/7_epoch_1.json", "samples/7_epoch_2.json"):
+            assert z.getinfo(entry).CRC == source.getinfo(entry).CRC
     sliced = read_eval_log(str(tmp_path / name))  # and as an ordinary Inspect log
     assert sliced.eval.eval_id == log.eval.eval_id and len(sliced.samples or []) == 2
+    original = read_eval_log_sample(log.location, id="7", epoch=2)
+    assert read_eval_log_sample(str(tmp_path / name), id="7", epoch=2) == original
 
 
 def test_a_log_names_the_same_build_only_by_commit_and_never_from_an_edited_tree() -> None:

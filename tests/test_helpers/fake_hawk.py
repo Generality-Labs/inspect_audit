@@ -58,6 +58,8 @@ class FakeHawk:
         # Hawk unreachable for status and monitoring calls
         self.down = False
         self.tokens_seen: list[str] = []
+        self.bytes_served = 0
+        """Bytes of logs served by range (hawksrc://): what a reader actually fetched."""
         # a sample's artifact tree, served as Hawk's sample-artifacts API serves it:
         # (eval set id, sample uuid) -> the local folder holding it
         self.artifacts: dict[tuple[str, str], Path] = {}
@@ -235,6 +237,34 @@ class FakeHawk:
                 return web.FileResponse(path)
         raise web.HTTPNotFound()
 
+    async def _source_listing(self, request: web.Request) -> web.Response:
+        """`GET /sources/{id}`: an eval set's logs with size and ETag (hawksrc://)."""
+        self._seen(request)
+        job = self.jobs.get(request.match_info["id"])
+        files = [
+            {"name": p.name, "size": p.stat().st_size, "etag": f"e{p.stat().st_mtime_ns}", "mtime": 0.0}
+            for p in (job.logs if job else [])
+        ]
+        return web.json_response({"files": files, "next_start_after": None})
+
+    async def _source_sign(self, request: web.Request) -> web.Response:
+        self._seen(request)
+        body = await request.json()
+        return web.json_response(
+            {"urls": {path: f"{self.url}/source-files/{path}" for path in body["paths"]}}
+        )
+
+    async def _source_file(self, request: web.Request) -> web.Response:
+        """A presigned GET: a byte range only, as S3 serves one; counted."""
+        run_id, name = request.match_info["id"], request.match_info["name"]
+        [path] = [p for p in self.jobs[run_id].logs if p.name == name]
+        first, _, last = request.headers["Range"].removeprefix("bytes=").partition("-")
+        with path.open("rb") as f:
+            f.seek(int(first))
+            data = f.read(int(last) - int(first) + 1)
+        self.bytes_served += len(data)
+        return web.Response(status=206, body=data)
+
     async def _prices(self, request: web.Request) -> web.Response:
         self._seen(request)
         return web.json_response(self.prices)
@@ -306,6 +336,9 @@ class FakeHawk:
         app.router.add_get("/view/logs/logs", self._log_files)
         app.router.add_post("/view/logs/log-download-urls", self._download_urls)
         app.router.add_get("/files/{id}/{name}", self._file)
+        app.router.add_get("/sources/{id}", self._source_listing)
+        app.router.add_post("/sources/sign", self._source_sign)
+        app.router.add_get("/source-files/{id}/{name}", self._source_file)
         app.router.add_get("/usage/prices", self._prices)
         app.router.add_get("/meta/samples/{id}/{sample}/artifacts", self._artifact_listing)
         app.router.add_get(

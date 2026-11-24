@@ -57,18 +57,52 @@ def test_a_log_url_is_downloaded_to_a_local_file(tmp_path: Path) -> None:
     assert local.is_file() and local.read_bytes() == b"log bytes"
 
 
-def test_one_hawk_log_is_fetched_without_the_runs_others(
-    tmp_path: Path, hawk: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`hawk:<set>/<file>.eval` ends in `.eval` but is not a local path (FRICTION 5), and
-    only that file is downloaded, not the run's partial logs."""
-    complete, _partial = _logs_on_hawk(hawk, tmp_path, "run", ["complete.eval", "partial.eval"])
+def _written_on_hawk(hawk: Any, tmp_path: Path, run_id: str, names: list[str], **kw: Any) -> list[Path]:
+    """`_logs_on_hawk` with logs written by Inspect's writer (no eval run, no network)."""
+    from test_helpers.fake_hawk import FakeJob
+    from test_helpers.logs import write_fixture_log
+
+    logs = [Path(write_fixture_log(str(tmp_path / name), **kw)) for name in names]
+    hawk.jobs[run_id] = FakeJob(config={}, body={}, status="complete", logs=logs)
+    return logs
+
+
+@pytest.fixture
+def hawksrc(hawk: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Hawk's hawksrc:// filesystem, talking to the fake Hawk."""
+    import fsspec
+
     monkeypatch.setenv("HAWK_API_URL", hawk.url)
+    for name in ("HAWK_RUNNER_RESTRICTED_API_URL", "HAWK_RUNNER_API_URL"):
+        monkeypatch.delenv(name, raising=False)
+    fsspec.get_filesystem_class("hawksrc").clear_instance_cache()
+    yield hawk
+    fsspec.get_filesystem_class("hawksrc").clear_instance_cache()
+
+
+def test_a_hawk_log_is_read_in_place_by_range_never_downloaded(tmp_path: Path, hawksrc: Any) -> None:
+    """`hawk:<set>/<file>.eval` (FRICTION 5) names only that file, read where it lives:
+    a job reads the header, the summaries and the sample it needs, not the whole log."""
+    from inspect_ai.log import read_eval_log, read_eval_log_sample, read_eval_log_sample_summaries
+
+    complete, _partial = _written_on_hawk(
+        hawksrc, tmp_path, "run", ["complete.eval", "partial.eval"], padding={"c": 16_000_000}
+    )
     [found] = log_files(["hawk:run/complete.eval"])
-    assert Path(found).name == "complete.eval"
-    assert Path(found).read_bytes() == complete.read_bytes()
-    assert not list(Path(found).parent.glob("partial.eval"))
-    assert set(hawk.tokens_seen) == {"Bearer test-token"}
+    assert found == "hawksrc://evals/run/complete.eval"
+    assert sorted(log_files(["hawk:run"])) == [
+        "hawksrc://evals/run/complete.eval",
+        "hawksrc://evals/run/partial.eval",
+    ]
+    assert read_eval_log(found, header_only=True).eval.task == "fixture"
+    assert len(read_eval_log_sample_summaries(found)) == 6
+    assert read_eval_log_sample(found, id="a", epoch=2) == read_eval_log_sample(
+        str(complete), id="a", epoch=2
+    )
+    assert 0 < hawksrc.bytes_served < complete.stat().st_size / 4
+    assert set(hawksrc.tokens_seen) == {"Bearer test-token"}
+    with pytest.raises(ValueError, match="exactly one"):
+        log_files(["hawk:run/missing.eval"])
 
 
 def test_a_remote_log_is_fetched_once_per_process(
@@ -105,8 +139,9 @@ def test_a_declared_hawk_input_is_read_in_place_and_others_downloaded(
     tmp_path: Path, hawk: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Declaring inputs needs restricted credentials, which cannot launch jobs, so an audit
-    on Hawk reads its own runs' logs by download; a declared input is used in place
-    (FRICTION 83). Declared inputs are what a Hawk runner puts in its environment."""
+    on Hawk reads its own runs' logs with its own token; a declared input is used at its
+    declared location (FRICTION 83). Declared inputs are what a Hawk runner puts in its
+    environment. `fetch_logs` (an auditor's `download` log access) downloads the rest."""
     _logs_on_hawk(hawk, tmp_path, "mine", ["a.eval"])
     monkeypatch.setenv("HAWK_API_URL", hawk.url)
     monkeypatch.setenv(
@@ -116,6 +151,18 @@ def test_a_declared_hawk_input_is_read_in_place_and_others_downloaded(
     assert fetch_logs("hawk:other") == "hawksrc://other"
     downloaded = Path(fetch_logs("hawk:mine"))
     assert [p.name for p in (downloaded / "mine").glob("*.eval")] == ["a.eval"]
+
+
+def test_log_files_read_a_declared_hawk_input_at_its_location(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test_helpers.logs import write_fixture_log
+
+    folder = tmp_path / "declared"
+    folder.mkdir()
+    write_fixture_log(str(folder / "run.eval"))
+    monkeypatch.setattr(_log_sources, "declared_transcripts", lambda: {"other": str(folder)})
+    assert log_files(["hawk:other"]) == [str(folder / "run.eval")]
 
 
 def test_directory_sources_accept_inspect_file_uris(tmp_path: Path) -> None:

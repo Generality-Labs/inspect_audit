@@ -5,7 +5,9 @@ Read native logs on the host; export selected content through tools.
 """
 
 import inspect
+import os
 import re
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
@@ -24,6 +26,14 @@ from inspect_ai.model import ModelConfig
 from inspect_ai.tool import ToolError
 
 logger = getLogger(__name__)
+
+
+IGNORE_LOG_TASK_ARGS = "INSPECT_AUDIT_IGNORE_LOG_TASK_ARGS"
+"""Comma-separated task arguments a supplied log may pass without the audit declaring them."""
+
+
+def _ignored_log_task_args() -> set[str]:
+    return {a.strip() for a in os.environ.get(IGNORE_LOG_TASK_ARGS, "").split(",") if a.strip()}
 
 
 class LogMismatchError(ValueError):
@@ -232,6 +242,16 @@ def _check_header(
                 f"not the declared {value!r}"
             )
     undeclared = set(spec.task_args_passed) - set(task_args)
+    # Opt-in, for logs from another build whose task took an argument the installed one
+    # does not (MirrorCode 0.1.202's `inspect_log_public`): the operator names it in
+    # benchmark_environment, frozen in the launch policy, and every job reads it here.
+    ignored = undeclared & _ignored_log_task_args()
+    if ignored:
+        logger.warning(
+            f"{path} passed task argument(s) {', '.join(sorted(ignored))}; ignored as "
+            f"{IGNORE_LOG_TASK_ARGS} declares"
+        )
+        undeclared -= ignored
     if undeclared:
         raise LogMismatchError(
             f"{path} passed task argument(s) the investigation does not declare: "
@@ -292,6 +312,23 @@ def _scorer_models(path: str, sample_id: str | int, epoch: int) -> set[str]:
         return found
 
     return walk(event_tree(sample.events or []), False)
+
+
+def _smallest(summaries: list[Any], path: str) -> Any:
+    """The summary whose recorded sample is cheapest to read, or None for none.
+
+    A remote log is read by range, and one scored sample is all `_scorer_models` needs:
+    the smallest entry, not a whole transcript of the longest attempt. A JSON log (no
+    entries to measure) gives its first.
+    """
+    if not summaries:
+        return None
+    if not path.endswith(".eval"):
+        return summaries[0]
+    from ._eval_slice import recorded_samples
+
+    sizes = recorded_samples(path)
+    return min(summaries, key=lambda s: sizes.get((str(s.id), s.epoch), sys.maxsize))
 
 
 def index_logs(
@@ -358,7 +395,7 @@ def index_logs(
                     error=summary.error,
                 )
             )
-        scored = next((s for s in summaries if s.scores), None)
+        scored = _smallest([s for s in summaries if s.scores], path)
         if scored is not None:
             try:
                 index.scorer_models |= _scorer_models(path, scored.id, scored.epoch)
@@ -378,13 +415,17 @@ def sliced_logs(index: LogIndex, sample_id: str) -> dict[str, bytes]:
     """This sample's recorded attempts, as Inspect logs: one per source log.
 
     Each keeps its source log's header (task, args, models, results for the whole run)
-    and only this sample's epochs. Written in Inspect's JSON log format: Inspect reads
-    it like any log, and so does plain `json`, so the box needs nothing installed.
-    Written on the host; the box gets the bytes.
+    and only this sample's epochs. An `.eval` source gives an `.eval` slice: its
+    sample entries copied as recorded (still compressed, attachments included) and
+    read from a remote log by range, so a job never downloads or inflates whole logs
+    (`_eval_slice`). A JSON source gives a JSON slice. Inspect reads either like any
+    log. Written on the host; the box gets the bytes.
     """
     import tempfile
 
     from inspect_ai.log import write_eval_log
+
+    from ._eval_slice import slice_eval
 
     by_log: dict[str, list[Attempt]] = {}
     for attempt in index.for_sample(sample_id):
@@ -392,15 +433,21 @@ def sliced_logs(index: LogIndex, sample_id: str) -> dict[str, bytes]:
     files: dict[str, bytes] = {}
     with tempfile.TemporaryDirectory(prefix="sliced-logs-") as tmp:
         for n, (log, attempts) in enumerate(sorted(by_log.items())):
-            header = read_eval_log(log, header_only=True)
-            samples = [
-                read_eval_log_sample(log, id=a.sample_id, epoch=a.epoch, resolve_attachments=True)
-                for a in attempts
-            ]
             stem = log.rstrip("/").rsplit("/", 1)[-1].removesuffix(".eval").removesuffix(".json")
-            name = f"{n:02d}-{stem}.json"
-            out = f"{tmp}/{name}"
-            write_eval_log(header.model_copy(update={"samples": samples}), out, format="json")
-            with open(out, "rb") as f:
-                files[name] = f.read()
+            if log.endswith(".eval"):
+                name = f"{n:02d}-{stem}.eval"
+                slice_eval(log, Path(tmp) / name, [(a.sample_id, a.epoch) for a in attempts])
+            else:
+                header = read_eval_log(log, header_only=True)
+                samples = [
+                    read_eval_log_sample(
+                        log, id=a.sample_id, epoch=a.epoch, resolve_attachments=True
+                    )
+                    for a in attempts
+                ]
+                name = f"{n:02d}-{stem}.json"
+                write_eval_log(
+                    header.model_copy(update={"samples": samples}), f"{tmp}/{name}", format="json"
+                )
+            files[name] = (Path(tmp) / name).read_bytes()
     return files

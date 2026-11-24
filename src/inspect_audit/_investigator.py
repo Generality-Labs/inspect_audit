@@ -160,8 +160,11 @@ def investigator(
         items=named,
         logs=(
             "The recorded attempts at this item are in /audit/logs/, one Inspect log per "
-            "recorded run (JSON format), holding only this item's samples. Read them with "
-            "plain `json` or Inspect's log API (the reading-logs skill). "
+            "recorded run (`.eval`, or `.json` for a run logged as JSON), holding the run's "
+            "header and only this item's samples, exactly as recorded. Read them with "
+            "Inspect's log API (the reading-logs skill): `read_eval_log_sample_summaries` "
+            "to list them, `read_eval_log_sample(path, id=..., epoch=..., "
+            "resolve_attachments=True)` for a whole transcript. "
             if index is not None
             else "No recorded attempts were supplied for this item, by design: there is no "
             "/audit/logs, and nothing about how models fared on it is available. Judge the "
@@ -201,7 +204,8 @@ def investigator(
                 logger.warning(f"could not stage the paper {paper}: {ex}")
         if index is not None:
             # this sample's recorded attempts, as ordinary .eval files the investigator
-            # reads with Inspect's log API (see the reading-logs skill)
+            # reads with Inspect's log API (see the reading-logs skill); its entries are
+            # copied from the declared logs by range, never the whole logs
             # off the event loop: the sync log readers re-enter a running loop
             sliced = await anyio.to_thread.run_sync(sliced_logs, index, sample_id)
             for name, data in sliced.items():

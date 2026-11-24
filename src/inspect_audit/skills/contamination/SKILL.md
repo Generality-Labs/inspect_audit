@@ -25,7 +25,7 @@ the answer arrived from memory rather than from doing the task.
 
 ## Start with the logs, not a theory
 
-The recorded attempts are in /audit/logs/*.json (Inspect logs holding only this item's samples); read them with Inspect's log API, as the reading-logs skill shows. For each attempt, search
+The recorded attempts are in /audit/logs/*.eval (Inspect logs holding only this item's samples; `.json` for a run logged as JSON); read them with Inspect's log API, as the reading-logs skill shows. For each attempt, search
 its transcript for the recorded answer and read the turns around where it first appears.
 The question is how the answer got there:
 

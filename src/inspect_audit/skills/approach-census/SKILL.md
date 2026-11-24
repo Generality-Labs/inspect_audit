@@ -25,7 +25,7 @@ completely different things, and that split is the finding.
 
 ## Read the field, route by route
 
-The recorded attempts are in /audit/logs/*.json (Inspect logs holding only this item's samples); read them with Inspect's log API, as the reading-logs skill shows. The transcripts show the moves.
+The recorded attempts are in /audit/logs/*.eval (Inspect logs holding only this item's samples; `.json` for a run logged as JSON); read them with Inspect's log API, as the reading-logs skill shows. The transcripts show the moves.
 Group by route, not by score. Name each route in the field's own terms -- what it
 ran, what it read, where it stopped -- and record roughly what share took it and how
 that share scored. Common shapes: the intended path; a path around the work; the

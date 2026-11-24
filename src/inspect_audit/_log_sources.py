@@ -2,7 +2,11 @@
 
 A local `.eval`/`.json` file or folder, `hawk:<eval set id>[/<file>]` (declared
 Hawk inputs first, else the warehouse), or an `s3://`, `gs://` or `http(s)://` URL.
-Reading a log, once it is local, is `_logs`' business. A saved findings bundle is
+A `hawk:` log is read where it lives, by range, as `hawksrc://evals/<eval set id>/<file>`
+(Hawk's own fsspec filesystem, which Inspect reads like `s3://`): a job reads its
+header, its summaries and the entries it needs, never the whole file. `fetch_logs`
+still downloads whole logs, for an auditor whose log access is `download`.
+Reading a log is `_logs`' business. A saved findings bundle is
 named the same ways (`fetch_bundle`): a local folder, a Hawk sample's artifact folder,
 or a folder URL.
 """
@@ -21,24 +25,60 @@ def is_remote_logs(source: str) -> bool:
 
 
 def log_files(logs: list[str]) -> list[str]:
-    """Each `logs` entry as log files.
+    """Each `logs` entry as log files, read where they live.
 
-    A `.eval`/`.json` file is itself; `hawk:<eval set id>[/<file>]` is fetched (a
-    single file too: FRICTION 5); any
-    other entry is a log directory, local or a URL Inspect reads (s3://, gs://),
-    listed with Inspect's own `list_eval_logs`. An entry with no logs is an error.
+    A `.eval`/`.json` file is itself; `hawk:<eval set id>[/<file>]` is its declared
+    location or its `hawksrc://` address (`hawk_logs`), never a download; any other
+    entry is a log directory, local or a URL Inspect reads (s3://, gs://), listed with
+    Inspect's own `list_eval_logs`. An entry with no logs is an error.
     """
     files: list[str] = []
     for entry in logs:
-        if entry.endswith((".eval", ".json")) and not entry.startswith("hawk:"):
+        if entry.startswith("hawk:"):
+            files += hawk_logs(entry)
+            continue
+        if entry.endswith((".eval", ".json")):
             files.append(entry)
             continue
-        found = [
-            i.name.removeprefix("file://")
-            for i in list_eval_logs(fetch_logs(entry) if entry.startswith("hawk:") else entry)
-        ]
+        found = [i.name.removeprefix("file://") for i in list_eval_logs(entry)]
         if not found:
             raise ValueError(f"logs entry {entry!r} holds no eval logs")
+        files += found
+    return files
+
+
+def hawk_logs(source: str) -> list[str]:
+    """The logs of `hawk:<eval set id>[,<id>...][/<file>]`, as addresses Inspect reads by range.
+
+    An eval set Hawk resolved for this run (declared inputs) is read at its declared
+    location; any other is `hawksrc://evals/<id>/<file>`, read through Hawk's API with
+    this process's own token (a Hawk runner's, or the operator's login). An eval set
+    with no logs is an error.
+    """
+    import fsspec  # pyright: ignore[reportMissingTypeStubs]
+
+    declared = declared_transcripts() or {}
+    files: list[str] = []
+    for address in source.removeprefix("hawk:").split(","):
+        eval_set, _, selected = address.strip("/").partition("/")
+        if eval_set in declared:
+            root = declared[eval_set]
+        else:
+            try:
+                fsspec.get_filesystem_class("hawksrc")  # pyright: ignore[reportUnknownMemberType]
+            except ValueError:
+                raise ValueError(
+                    f"hawk:{address}: reading Hawk logs in place needs the `hawk` package "
+                    "with its hawksrc:// filesystem (hawk 4.2 or later) installed here"
+                ) from None
+            root = f"hawksrc://evals/{eval_set}"
+        found = [i.name.removeprefix("file://") for i in list_eval_logs(root)]
+        if selected:
+            found = [f for f in found if f.rstrip("/").rsplit("/", 1)[-1] == selected]
+            if len(found) != 1:
+                raise ValueError(f"Expected exactly one Hawk log at {address!r}, found {len(found)}")
+        if not found:
+            raise ValueError(f"No eval logs found in Hawk eval set {address!r}")
         files += found
     return files
 

@@ -13,9 +13,11 @@ from inspect_ai.util import sandbox, subprocess
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from .._findings import Findings, encoded, read_bundle
-from .._framework import REGISTRY
+from .._framework import REGISTRY, stage_framework
+from .._framework import SKILL as FRAMEWORK_SKILL
 from .._publishing import Publisher
 from .._verdicts import Evidence
+from ._excerpt import MARKER, Excerpt, Quote, plain, resolve_all
 from ._render import box_has, render_in_box, reported, tree
 from ._template import template
 
@@ -39,6 +41,8 @@ class Prose(BaseModel):
     datasheet: str = ""
     setup: str = ""
     dimensions: dict[str, str] = Field(default_factory=dict)
+    # verbatim evidence, declared by where it is and placed with {{excerpt:<id>}}
+    excerpts: list[Excerpt] = Field(default_factory=list)
 
 
 # What pdfLaTeX with T1 fonts (the template's default engine) can set from UTF-8: Latin
@@ -56,23 +60,26 @@ def _settable(text: str) -> str:
     return "".join(c if c in _SETTABLE else "?" for c in text)
 
 
+_TEX = {
+    "\\": r"\textbackslash{}",
+    "&": r"\&",
+    "%": r"\%",
+    "$": r"\$",
+    "#": r"\#",
+    "_": r"\_",
+    "{": r"\{",
+    "}": r"\}",
+    "~": r"\textasciitilde{}",
+    "^": r"\textasciicircum{}",
+    "<": r"\textless{}",
+    ">": r"\textgreater{}",
+    "|": r"\textbar{}",
+}
+
+
 def tex(value: object) -> str:
     value = _settable(str(value))
-    substitutions = {
-        "\\": r"\textbackslash{}",
-        "&": r"\&",
-        "%": r"\%",
-        "$": r"\$",
-        "#": r"\#",
-        "_": r"\_",
-        "{": r"\{",
-        "}": r"\}",
-        "~": r"\textasciitilde{}",
-        "^": r"\textasciicircum{}",
-        "<": r"\textless{}",
-        ">": r"\textgreater{}",
-        "|": r"\textbar{}",
-    }
+    substitutions = _TEX
 
     def word(w: str) -> str:
         # names, paths and hashes have no hyphenation points: they may break after a
@@ -132,11 +139,65 @@ def validate(findings: Findings) -> None:
             )
 
 
+# what pdfLaTeX's T1 typewriter font would otherwise set as ligatures or curly quotes
+_CODE = {
+    "'": r"\textquotesingle{}",
+    "`": r"\textasciigrave{}",
+    '"': r"\textquotedbl{}",
+    "-": "-{}",
+    ",": ",{}",
+    " ": "\\ ",
+}
+
+
+def code(line: str) -> str:
+    """One recorded line in the typewriter font: every space kept, long runs breakable."""
+    escaped = []
+    for word in re.split(r"( +)", _settable(line)):
+        if word.startswith(" "):
+            escaped.append("\\ " * len(word))
+            continue
+        long = len(word) > 30
+        escaped.append(
+            "".join(
+                (_CODE.get(c) or _TEX.get(c, c)) + (r"\allowbreak{}" if long or c in "/_" else "")
+                for c in word
+            )
+        )
+    return "".join(escaped)
+
+
+def excerpt_box(quote: Quote, reference: str) -> str:
+    """A quotation box: its caption with a source reference, then its lines as recorded."""
+    lines = "".join(r"\iaxline{" + code(line) + "}" for line in quote.lines)
+    if quote.elided:
+        lines += r"\iaxelided{" + str(quote.elided) + "}"
+    return (
+        r"\begin{iaexcerpt}{"
+        + tex(quote.caption)
+        + "}{"
+        + reference
+        + "}"
+        + lines
+        + r"\end{iaexcerpt}"
+    )
+
+
 def source(
-    findings: Findings, manifest: dict[str, Any], prose: Prose, upstream: Path
+    findings: Findings,
+    manifest: dict[str, Any],
+    prose: Prose,
+    upstream: Path,
+    quotes: dict[str, Quote] | None = None,
 ) -> tuple[str, str]:
-    """Generate all template structure; prose values are escaped literal text."""
+    """Generate all template structure; prose values are escaped literal text.
+
+    `quotes` are the prose's excerpts as resolved from their sources (`resolve_all`).
+    """
     validate(findings)
+    quotes = quotes or {}
+    if missing := [e.id for e in prose.excerpts if e.id not in quotes]:
+        raise ValueError(f"excerpts {', '.join(missing)} were not resolved from their sources")
     definitions = json.loads(REGISTRY.read_text())["dimensions"]
     dimensions = {k: v for k, v in definitions.items() if "." not in k}
     if unknown := sorted(set(prose.dimensions) - set(dimensions)):
@@ -167,6 +228,27 @@ def source(
 
     def cite(source: str) -> str:
         return str(sources.setdefault(source, len(sources) + 1))
+
+    placed: list[str] = []
+
+    def text(value: str) -> str:
+        """Prose: escaped text, with each {{excerpt:<id>}} replaced by its quotation box."""
+        parts = MARKER.split(value)
+        out = [tex(parts[0])]
+        for name, after in zip(parts[1::2], parts[2::2], strict=True):
+            if name not in quotes:
+                raise ValueError(
+                    f"prose places excerpt {name}, but no excerpt with that id is declared"
+                )
+            if name in placed:
+                raise ValueError(f"excerpt {name} is placed twice; place each excerpt once")
+            placed.append(name)
+            out += [
+                r"\par",
+                excerpt_box(quotes[name], cite(quotes[name].reference)),
+                tex(after.strip()),
+            ]
+        return "".join(out)
 
     def evidence(label: str, records: list[Evidence]) -> str:
         if not records:
@@ -311,11 +393,11 @@ def source(
     log_references = manifest.get("log_references", [])
     parts += [
         r"\auditpart{Eval Datasheet}{datasheet}\begin{reportpart}{Eval Datasheet}{datasheet}{sec:datasheet}\auditdestination{datasheet}",
-        box("Overview", tex(prose.datasheet)) if prose.datasheet else "",
+        box("Overview", text(prose.datasheet)) if prose.datasheet else "",
         box("Benchmark", subject),
         r"\end{reportpart}",
         r"\auditpart{Audit Setup}{methodology}\begin{reportpart}{Audit Setup}{methodology}{sec:methodology}\auditdestination{methodology}",
-        box("Scope of Report", tex(prose.setup)),
+        box("Scope of Report", text(prose.setup)),
         box(
             "Run Setup",
             field("Samples", f"{investigated}/{samples} selected samples have investigator results")
@@ -366,7 +448,7 @@ def source(
         parts += [
             r"\begin{dimensionreview}{" + key + "}",
             r"\dimensionoverview{" + key + "}{" + explanation(letter) + "}{" + contributions + "}",
-            tex(prose.dimensions.get(letter, "")),
+            text(prose.dimensions.get(letter, "")),
             (r"\iaevidenceheading " + supporting) if supporting else "",
         ]
         for finding in findings.auditor.findings:
@@ -394,6 +476,11 @@ def source(
             ]
         parts.append(r"\end{dimensionreview}")
     parts.append(r"\end{reportpart}")
+    if unplaced := [name for name in quotes if name not in placed]:
+        raise ValueError(
+            f"excerpts {', '.join(unplaced)} are declared but not placed: put "
+            "{{excerpt:<id>}} where each belongs in the prose, or remove it"
+        )
     if sources or log_references:
         parts += [
             r"\auditpart{Appendix: Sources}{sources}\begin{reportpart}{Appendix: Sources}{sources}{sec:sources}\auditdestination{sources}",
@@ -462,7 +549,9 @@ async def build(root: Path, bundle: Path) -> Path:
             "Write /workspace/report/prose.json using the latex-publishing skill"
         ) from ex
     upstream = await asyncio.to_thread(template)
-    wrapper, content = source(findings, manifest, prose, upstream)
+    # read where they are recorded: the bundle, the audit's inputs, or a log's address
+    quotes = await asyncio.to_thread(resolve_all, prose.excerpts, bundle, manifest, root)
+    wrapper, content = source(findings, manifest, prose, upstream, quotes)
     output = root / "rendered-latex"
     if output.exists():
         shutil.rmtree(output)
@@ -478,6 +567,9 @@ async def build(root: Path, bundle: Path) -> Path:
     (output / "report.tex").write_text(wrapper)
     (output / "Content.tex").write_text(content)
     (output / "prose.json").write_bytes(encoded(prose.model_dump()))
+    if quotes:
+        # what the report quotes, as resolved, beside where it was read from
+        (output / "excerpts.txt").write_text("\n\n".join(plain(q) for q in quotes.values()) + "\n")
     (output / "template-provenance.json").write_bytes(
         (Path(__file__).with_name("template.json")).read_bytes()
     )
@@ -544,7 +636,17 @@ def preview_report(root: Path) -> Tool:
         await sandbox().write_file(
             "/workspace/report/report.pdf", (output / "report.pdf").read_bytes()
         )
-        return "Preview ready at /workspace/report/report.pdf. Revise prose.json, then publish_document."
+        quoted = ""
+        if (output / "excerpts.txt").exists():
+            await sandbox().write_file(
+                "/workspace/report/excerpts.txt", (output / "excerpts.txt").read_text()
+            )
+            quoted = " The excerpts as quoted, with their sources, are in /workspace/report/excerpts.txt."
+        return (
+            "Preview ready at /workspace/report/report.pdf."
+            + quoted
+            + " Revise prose.json, then publish_document."
+        )
 
     return execute
 
@@ -573,9 +675,14 @@ async def preflight() -> None:
 
 def publisher() -> Publisher:
     return Publisher(
-        skills=[str(Path(__file__).parent / "skills/latex-publishing")],
+        # the rubric the ratings were made against, to explain them in plain words
+        skills=[
+            str(Path(__file__).parent / "skills/latex-publishing"),
+            str(FRAMEWORK_SKILL.parent),
+        ],
         build=build,
         tools=lambda root: [preview_report(root)],
         validate=validate,
         preflight=preflight,
+        stage=stage_framework,
     )

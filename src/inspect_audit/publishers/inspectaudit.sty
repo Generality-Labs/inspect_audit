@@ -57,4 +57,24 @@
   \noindent\textbf{#1:}\par\nopagebreak
   {\small\begin{itemize}[nosep, leftmargin=1.2em, label=\textbullet]#2\end{itemize}}\par\vspace{2pt}}
 
+% ---- Excerpts: verbatim evidence, quoted by the publisher -------------
+% \begin{iaexcerpt}{caption}{source ref} \iaxline{...}... \end{iaexcerpt}
+% Each \iaxline is one recorded line, spaces kept; a line too long for the box wraps
+% with a hanging indent. \iaxelided{n} says how many selected lines are not shown.
+% The template sets its text in OT1, which has no typewriter braces, quotes or angle
+% brackets: excerpts use T1, declared here if nothing else has.
+\RequirePackage[varqu,scaled=0.86]{zi4}
+\@ifundefined{T1-cmd}{\input{t1enc.def}}{}
+\newtcolorbox{iaexcerpt}[2]{%
+  enhanced, breakable, sharp corners,
+  colback=black!3, colframe=brandTeal, boxrule=0pt, leftrule=2pt,
+  left=3mm, right=2mm, top=1.5mm, bottom=1.5mm,
+  before skip=6pt plus 2pt, after skip=6pt plus 2pt,
+  fontupper=\footnotesize,
+  before upper={\setlength{\parskip}{0pt}\raggedright
+    \noindent{\small\bfseries #1}\,\iaref{#2}\par\nopagebreak\vspace{3pt}\fontencoding{T1}\ttfamily\selectfont}}
+\newcommand{\iaxline}[1]{\par\noindent\hangindent=2em\hangafter=1 #1\mbox{}\par}
+\newcommand{\iaxelided}[1]{%
+  \par\noindent{\normalfont\itshape\color{black!55}[\ldots\ #1 more lines not shown]}\par}
+
 \endinput

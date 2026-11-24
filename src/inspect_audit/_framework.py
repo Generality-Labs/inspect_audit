@@ -17,7 +17,8 @@ def stage_framework(analysis: Path) -> None:
     """Stage analytical data, without report templates or a second judgment store."""
     source = json.loads(REGISTRY.read_text())
     target = analysis / "framework"
-    target.mkdir(parents=True)
+    # the same files whoever stages them first: the audit's setup or its publisher
+    target.mkdir(parents=True, exist_ok=True)
     (target / "checks.json").write_text(json.dumps(source["dimensions"], indent=2))
     (target / "criteria.json").write_text(
         json.dumps({key: source[key] for key in ("grades", "assessments")}, indent=2)

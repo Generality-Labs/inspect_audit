@@ -305,7 +305,10 @@ def test_publishers_are_actual_inspect_skills(publisher: str, skill_name: str) -
     from inspect_audit._publishing import load_publisher
 
     skills = read_skills(load_publisher(publisher).skills)
-    assert [skill.name for skill in skills] == [skill_name]
+    names = [skill.name for skill in skills]
+    assert names[0] == skill_name
+    # the LaTeX report explains its ratings in the rubric's terms, so its writer has it
+    assert names[1:] == (["audit-framework"] if publisher == "latex" else [])
     assert "writing" not in AUDIT_SKILLS
     assert "eval-report-workflow" not in AUDIT_SKILLS
 

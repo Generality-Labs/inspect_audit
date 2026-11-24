@@ -72,7 +72,15 @@ def test_fixture_pdf_uses_bundle_scorecard_and_finding_boxes(
                     "datasheet": "Synthetic fixture benchmark \u2013 \u201cquoted\u201d\u2026 "
                     "caf\u00e9 \u2588\u258e \U0001f600 \u6f22.",
                     "setup": "No model calls were made.",
-                    "dimensions": {"C": "The reference was checked directly."},
+                    "dimensions": {"C": "The reference was checked directly.\n\n{{excerpt:ref}}"},
+                    "excerpts": [
+                        {
+                            "id": "ref",
+                            "source": "/workspace/reference.txt",
+                            "caption": "The cited reference",
+                            "redact": ["9"],
+                        }
+                    ],
                 }
             )
 
@@ -86,6 +94,9 @@ def test_fixture_pdf_uses_bundle_scorecard_and_finding_boxes(
     # the datasheet with all of them compiled (pdftotext splits accented letters, so the
     # check is its plain words), and nothing unsettable reached the source
     assert "quoted" in text and "\u2588" not in generated and "\U0001f600" not in generated
+    # the excerpt as recorded, redacted, with what it quoted kept beside the report
+    assert "The correct reference value is [redacted]." in text
+    assert "/workspace/reference.txt" in (output / "excerpts.txt").read_text()
     for title in (
         "Cover Sheet",
         "Contents",
@@ -240,3 +251,263 @@ def test_a_named_latex_image_must_exist(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(latex, "subprocess", _image_check(1, calls))
     with pytest.raises(RuntimeError, match="inspect-audit:publishing"):
         asyncio.run(latex.preflight())
+
+
+# ---- Excerpts: verbatim evidence the publisher reads itself -----------------
+
+
+def _example(tmp_path: Path) -> Path:
+    """The pinned Example reduced to what `source` cuts from it."""
+    (tmp_path / "reports/Example").mkdir(parents=True)
+    (tmp_path / "reports/Example/Content.tex").write_text(
+        r"\auditpart{Contents} x \auditpart{Eval Scorecard} x \auditpart{Eval Datasheet}"
+    )
+    (tmp_path / "reports/Example/Example_Audit.tex").write_text(r"\evalscore{A}")
+    return tmp_path
+
+
+def _transcript(path: Path) -> str:
+    """A finished log, written by Inspect's own writer: one attempt with a tool call."""
+    from inspect_ai.log import (
+        EvalConfig,
+        EvalDataset,
+        EvalLog,
+        EvalSample,
+        EvalSpec,
+        write_eval_log,
+    )
+    from inspect_ai.model import (
+        ChatMessageAssistant,
+        ChatMessageTool,
+        ChatMessageUser,
+        ModelOutput,
+    )
+    from inspect_ai.tool import ToolCall
+
+    write_eval_log(
+        EvalLog(
+            eval=EvalSpec(
+                created="2026-01-01T00:00:00+00:00",
+                task="fixture",
+                dataset=EvalDataset(),
+                model="mockllm/model",
+                config=EvalConfig(),
+            ),
+            status="success",
+            samples=[
+                EvalSample(
+                    id="item-1",
+                    epoch=2,
+                    input="What is six plus seven?",
+                    target="thirteen",
+                    messages=[
+                        ChatMessageUser(content="What is six plus seven?"),
+                        ChatMessageAssistant(
+                            id="call-msg",
+                            content="I will look it up.",
+                            tool_calls=[
+                                ToolCall(
+                                    id="t1",
+                                    function="bash",
+                                    arguments={"cmd": "grep -n 'six' answers.txt\ncat key.txt"},
+                                )
+                            ],
+                        ),
+                        ChatMessageTool(
+                            id="result-msg",
+                            tool_call_id="t1",
+                            content="3:six plus seven = thirteen\nkey: thirteen",
+                        ),
+                    ],
+                    output=ModelOutput.from_content("mockllm/model", "thirteen"),
+                )
+            ],
+        ),
+        str(path),
+    )
+    return str(path)
+
+
+def _with_log(manifest: dict, source: str, address: str) -> dict:
+    return {
+        **manifest,
+        "log_references": [{"source": source, "address": address, "sha256": "x", "bytes": 1}],
+    }
+
+
+def test_a_file_excerpt_is_read_from_the_bundle_and_quoted_in_place(tmp_path: Path) -> None:
+    from inspect_audit.publishers._excerpt import Excerpt, resolve_all
+
+    findings, manifest = read_bundle(FIXTURE)
+    prose = latex.Prose(
+        dimensions={"C": "The reference disagrees.\n\n{{excerpt:ref}}\n\nIt says 9, not 7."},
+        excerpts=[
+            Excerpt(
+                id="ref",
+                source="/workspace/reference.txt",
+                lines=(1, 1),
+                caption="The cited reference",
+                redact=["9"],
+            )
+        ],
+    )
+    quotes = resolve_all(prose.excerpts, FIXTURE, manifest)
+    assert quotes["ref"].lines == ["The correct reference value is [redacted]."]
+    assert quotes["ref"].reference == "/workspace/reference.txt, lines 1-1"
+    _, content = latex.source(findings, manifest, prose, _example(tmp_path), quotes)
+    box = content[content.index(r"\begin{iaexcerpt}") : content.index(r"\end{iaexcerpt}")]
+    assert r"\iaxline{The\ correct\ reference\ value\ is\ [redacted].}" in box
+    assert "{The cited reference}" in box
+    # numbered into the sources appendix with the line range; text before and after kept
+    number = box.removeprefix(r"\begin{iaexcerpt}{The cited reference}{").split("}")[0]
+    assert r"\iasource{" + number + "}{/" in content and "lines 1-1" in content
+    assert "The reference disagrees." in content and "It says 9, not 7." in content
+
+
+def test_a_transcript_excerpt_is_read_from_its_log_with_the_answer_redacted(
+    tmp_path: Path,
+) -> None:
+    from inspect_audit.publishers._excerpt import Excerpt, resolve_all
+
+    _, manifest = read_bundle(FIXTURE)
+    log = _transcript(tmp_path / "attempt.eval")
+    manifest = _with_log(manifest, "/inputs/logs/0/attempt.eval", log)
+    by_id = Excerpt(
+        id="lookup",
+        source="/inputs/logs/0/attempt.eval",
+        sample="item-1",
+        epoch=2,
+        message="call-msg",
+        caption="The agent looks the answer up",
+    )
+    by_position = by_id.model_copy(
+        update={"id": "result", "message": 2, "start": "key:", "redact": []}
+    )
+    quotes = resolve_all([by_id, by_position], FIXTURE, manifest)
+    # the call's command as written, not JSON-quoted
+    assert quotes["lookup"].lines == [
+        "I will look it up.",
+        "bash: grep -n 'six' answers.txt",
+        "cat key.txt",
+    ]
+    # the recorded answer never reaches the report
+    assert quotes["result"].lines == ["key: [redacted]"]
+    assert quotes["result"].redactions == 1
+    assert "sample item-1, epoch 2, message 2 (tool, id result-msg)" in quotes["result"].reference
+    # a log known only by its place in the audit's inputs is read from the audit's host
+    staged = tmp_path / "audit/inputs/logs/0/attempt.eval"
+    staged.parent.mkdir(parents=True)
+    shutil.copyfile(log, staged)
+    inputs_only = _with_log(manifest, "/inputs/logs/0/attempt.eval", "/inputs/logs/0/attempt.eval")
+    assert resolve_all([by_id], FIXTURE, inputs_only, tmp_path / "audit")["lookup"].lines
+    with pytest.raises(ValueError, match="only in the original audit's inputs"):
+        resolve_all([by_id], FIXTURE, inputs_only)
+
+
+def test_long_excerpts_are_cut_and_say_what_they_left_out(tmp_path: Path) -> None:
+    from inspect_audit.publishers._excerpt import Excerpt, plain, resolve_all
+
+    _, manifest = read_bundle(FIXTURE)
+    log = _transcript(tmp_path / "attempt.eval")
+    manifest = _with_log(manifest, "/inputs/logs/0/attempt.eval", log)
+    excerpt = Excerpt(
+        id="cut",
+        source=log,
+        sample="item-1",
+        epoch=2,
+        message=1,
+        max_lines=1,
+        caption="Cut",
+    )
+    [quote] = resolve_all([excerpt], FIXTURE, manifest).values()
+    assert quote.lines == ["I will look it up."] and quote.elided == 2
+    assert plain(quote).endswith("[... 2 more lines not shown]")
+    assert r"\iaxelided{2}" in latex.excerpt_box(quote, "1")
+
+
+@pytest.mark.parametrize(
+    ("change", "error"),
+    [
+        ({"source": "/workspace/missing.txt"}, "neither a file in the findings bundle"),
+        ({"start": "reference value is 7"}, "not in the source verbatim"),
+        ({"start": "The correct", "end": "value is 7"}, "not in the source verbatim after"),
+        ({"lines": (1, 5)}, "run past the source's 1 lines"),
+        ({"redact": ["seven"]}, "does not occur in the selected lines"),
+        (
+            {"source": "/inputs/logs/9/other.eval", "sample": "a", "epoch": 1, "message": 0},
+            "not a log the findings reference",
+        ),
+    ],
+)
+def test_an_excerpt_that_does_not_resolve_fails_the_preview_by_name(
+    change: dict, error: str
+) -> None:
+    from inspect_ai.tool import ToolError
+
+    from inspect_audit.publishers._excerpt import Excerpt, resolve_all
+    from inspect_audit.publishers._render import reported
+
+    _, manifest = read_bundle(FIXTURE)
+    excerpt = Excerpt.model_validate(
+        {"id": "ref", "source": "/workspace/reference.txt", "caption": "C", **change}
+    )
+    with (
+        pytest.raises(ToolError, match=f"Preview failed: excerpt ref: .*{error}"),
+        reported("Preview"),
+    ):
+        resolve_all([excerpt], FIXTURE, manifest)
+
+
+@pytest.mark.parametrize(
+    ("datasheet", "error"),
+    [
+        ("No placement.", "ref are declared but not placed"),
+        ("{{excerpt:ref}} and again {{excerpt:ref}}", "placed twice"),
+        ("{{excerpt:ref}} {{excerpt:other}}", "no excerpt with that id is declared"),
+    ],
+)
+def test_each_declared_excerpt_is_placed_exactly_once(
+    tmp_path: Path, datasheet: str, error: str
+) -> None:
+    from inspect_audit.publishers._excerpt import Excerpt, resolve_all
+
+    findings, manifest = read_bundle(FIXTURE)
+    prose = latex.Prose(
+        datasheet=datasheet,
+        excerpts=[Excerpt(id="ref", source="/workspace/reference.txt", caption="C")],
+    )
+    quotes = resolve_all(prose.excerpts, FIXTURE, manifest)
+    with pytest.raises(ValueError, match=error):
+        latex.source(findings, manifest, prose, _example(tmp_path), quotes)
+
+
+def test_an_excerpt_declaration_is_checked_before_it_is_read() -> None:
+    from inspect_audit.publishers._excerpt import Excerpt
+
+    with pytest.raises(ValidationError, match="names sample, epoch and message"):
+        Excerpt(id="x", source="/inputs/a.eval", sample="a", caption="C")
+    with pytest.raises(ValidationError, match="not both"):
+        Excerpt(id="x", source="/workspace/a", lines=(1, 2), start="a", caption="C")
+    with pytest.raises(ValidationError):
+        Excerpt(id="x y", source="/workspace/a", caption="C")
+    with pytest.raises(ValidationError):
+        Excerpt(id="x", source="/workspace/a", caption="C", max_lines=500)
+
+
+def test_recorded_code_keeps_its_spacing_and_cannot_set_tex() -> None:
+    assert latex.code("  a {b}_c") == r"\ \ a\ \{b\}\_\allowbreak{}c"
+    assert latex.code("x--y,'z'") == r"x-{}-{}y,{}\textquotesingle{}z\textquotesingle{}"
+    # a run with nowhere to break may break anywhere rather than leave the box
+    assert latex.code("a" * 40).count(r"\allowbreak{}") == 40
+    assert latex.code(r"\end{iaexcerpt}").startswith(r"\textbackslash{}end")
+
+
+def test_the_latex_publisher_stages_the_rubric_it_explains(tmp_path: Path) -> None:
+    from inspect_audit._framework import stage_framework
+
+    publisher = load_publisher("latex")
+    assert publisher.stage is not None
+    publisher.stage(tmp_path)
+    # the audit's own setup staged it already: staging again leaves the same files
+    stage_framework(tmp_path)
+    assert json.loads((tmp_path / "framework/checks.json").read_text())["C.1"]["name"]

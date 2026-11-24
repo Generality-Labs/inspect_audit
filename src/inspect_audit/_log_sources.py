@@ -47,6 +47,18 @@ def log_files(logs: list[str]) -> list[str]:
     return files
 
 
+def remote_log_files(source: str) -> list[str]:
+    """A remote source's log files, as addresses Inspect reads by range, never downloaded."""
+    if source.startswith("hawk:"):
+        return hawk_logs(source)
+    if source.endswith((".eval", ".json")):
+        return [source]
+    found = [i.name for i in list_eval_logs(source)]
+    if not found:
+        raise ValueError(f"No Inspect logs found: {source}")
+    return found
+
+
 def hawk_logs(source: str) -> list[str]:
     """The logs of `hawk:<eval set id>[,<id>...][/<file>]`, as addresses Inspect reads by range.
 
@@ -76,7 +88,9 @@ def hawk_logs(source: str) -> list[str]:
         if selected:
             found = [f for f in found if f.rstrip("/").rsplit("/", 1)[-1] == selected]
             if len(found) != 1:
-                raise ValueError(f"Expected exactly one Hawk log at {address!r}, found {len(found)}")
+                raise ValueError(
+                    f"Expected exactly one Hawk log at {address!r}, found {len(found)}"
+                )
         if not found:
             raise ValueError(f"No eval logs found in Hawk eval set {address!r}")
         files += found

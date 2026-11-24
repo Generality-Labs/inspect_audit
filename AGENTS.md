@@ -30,7 +30,7 @@ One Inspect task: a react agent in its own box, launching benchmark and investig
 | `_audit.py`           | `audit`: declared inputs staged on the host, the job tools, the budget tool, the task                      |
 | `dispatch/`           | jobs and where they run (`local`, `hawk`), `policy` and the authoriser, `packages`, the key launcher       |
 | `_log_sources.py`     | every way of naming logs (path, `hawk:` read in place as `hawksrc://`, URL) and a saved findings folder    |
-| `_staging.py`         | the declared inputs on the host: repository snapshot, logs, paper, docs, starting workspace                |
+| `_staging.py`         | the declared inputs on the host: repository snapshot, logs (`logs_access`: remote `.eval`s ranged, samples loaded on demand, or `download`), paper, docs, starting workspace |
 | `_repository.py`      | what a benchmark repository says about itself: its task, the paths to snapshot, its paper                  |
 | `_audit_workspace.py` | the auditor's box (Docker compose or k8s values, staging inputs, installing the benchmark), Hawk artifacts |
 | `_box.py`             | the one way into any box: archive, `write_into`/`copy_into_box`, `install`                                 |

@@ -175,9 +175,7 @@ class _Writer:
         out.write(struct.pack("<IQHHIIQQQQ", 0x06064B50, 44, 45, 45, 0, 0, n, n, size, start))
         out.write(struct.pack("<IIQI", 0x07064B50, 0, end64, 1))
         out.write(
-            struct.pack(
-                "<IHHHHIIH", 0x06054B50, 0, 0, 0xFFFF, 0xFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0
-            )
+            struct.pack("<IHHHHIIH", 0x06054B50, 0, 0, 0xFFFF, 0xFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0)
         )
         out.truncate()
 
@@ -193,8 +191,8 @@ def recorded_samples(path: str) -> dict[Key, int]:
         found: dict[Key, int] = {}
         for name, info in z.NameToInfo.items():
             if name.startswith("samples/") and name.endswith(".json"):
-                stem, _, epoch = name.removeprefix("samples/").removesuffix(".json").rpartition(
-                    "_epoch_"
+                stem, _, epoch = (
+                    name.removeprefix("samples/").removesuffix(".json").rpartition("_epoch_")
                 )
                 if stem and epoch.isdigit():
                     found[(stem, int(epoch))] = info.compress_size
@@ -217,9 +215,7 @@ def slice_eval(
         names = z.NameToInfo
         for required in (HEADER, SUMMARIES):
             if required not in names:
-                raise ValueError(
-                    f"{source} has no {required}: an unfinished log cannot be sliced"
-                )
+                raise ValueError(f"{source} has no {required}: an unfinished log cannot be sliced")
         missing = sorted(k for k in wanted if sample_entry(*k) not in names)
         if missing:
             raise ValueError(f"{source} holds no sample entries for {missing}")
@@ -227,7 +223,10 @@ def slice_eval(
         writer.add_json(HEADER, json.loads(z.read(HEADER)))
         rows = _last_rows(json.loads(z.read(SUMMARIES)))
         writer.add_json(
-            SUMMARIES, list(rows.values()) if all_summaries else [rows[k] for k in sorted(wanted) if k in rows]
+            SUMMARIES,
+            list(rows.values())
+            if all_summaries
+            else [rows[k] for k in sorted(wanted) if k in rows],
         )
         if REDUCTIONS in names:
             reductions = json.loads(z.read(REDUCTIONS))
@@ -240,7 +239,9 @@ def slice_eval(
                         ]
             writer.add_json(REDUCTIONS, reductions)
         for key in sorted(wanted):
-            copied.bytes_read += writer.add_raw(names[sample_entry(*key)], _raw(f, names[sample_entry(*key)]))
+            copied.bytes_read += writer.add_raw(
+                names[sample_entry(*key)], _raw(f, names[sample_entry(*key)])
+            )
             copied.samples.append(key)
         writer.close()
     return copied
@@ -254,8 +255,10 @@ def add_samples(source: str, staged: Path, samples: Collection[Key]) -> Copied:
     """
     with ZipFile(staged) as existing:
         held = {i.filename for i in existing.infolist()}
-        kept = [i for i in existing.infolist()]
-    wanted = sorted({(str(i), int(e)) for i, e in samples if sample_entry(str(i), int(e)) not in held})
+        kept = list(existing.infolist())
+    wanted = sorted(
+        {(str(i), int(e)) for i, e in samples if sample_entry(str(i), int(e)) not in held}
+    )
     copied = Copied()
     if not wanted:
         return copied

@@ -762,6 +762,69 @@ def _logs_provenance(
         return (f"not checked against the installed benchmark: {ex}",)
 
 
+@tool
+def load_log_samples(root: Path) -> Tool:
+    """Copy samples of a supplied remote log into its staged copy, read by range."""
+    import anyio
+    import anyio.to_thread
+
+    from ._staging import load_samples
+
+    locks: dict[str, anyio.Lock] = {}
+
+    async def execute(log: str, samples: list[str], epochs: list[int] | None = None) -> str:
+        """Copy recorded samples of a supplied remote log into the box, to read.
+
+        A remote log under /inputs/logs whose seed.json entry has an `address` holds its
+        header, every sample's summary and the reductions, but a sample only once loaded:
+        this copies the samples you name from where the log lives, exactly as recorded,
+        into that same file. Then read them with Inspect's log API like any log
+        (`read_eval_log_sample(log, id=..., epoch=..., resolve_attachments=True)`).
+        Loading again is a no-op; long transcripts take a while.
+
+        Args:
+            log: The staged log, as seed.json lists it (e.g. /inputs/logs/0/<set>/<file>.eval).
+            samples: Sample ids to load (every recorded epoch), or ["*"] for every sample.
+            epochs: Only these epochs; all recorded epochs when omitted.
+        """
+        box = sandbox()
+        async with locks.setdefault(log, anyio.Lock()):
+            # what the box already holds (a resumed audit's box outlives the host copy)
+            listed = await box.exec(
+                [
+                    "python3",
+                    "-c",
+                    "import json,sys,zipfile; print(json.dumps(zipfile.ZipFile(sys.argv[1]).namelist()))",
+                    log,
+                ]
+            )
+            held: set[tuple[str, int]] = set()
+            if listed.success:
+                for name in json.loads(listed.stdout):
+                    stem, _, epoch = (
+                        name.removeprefix("samples/").removesuffix(".json").rpartition("_epoch_")
+                    )
+                    if name.startswith("samples/") and epoch.isdigit():
+                        held.add((stem, int(epoch)))
+            try:
+                path, copied, read = await anyio.to_thread.run_sync(
+                    lambda: load_samples(root, log, samples, epochs, held)
+                )
+            except (ValueError, OSError) as ex:
+                raise ToolError(str(ex)) from ex
+            from ._staging import staged_samples
+
+            recorded, now = await anyio.to_thread.run_sync(staged_samples, path)
+            if copied or not listed.success or held != now:
+                await box.write_file(log, path.read_bytes())
+        return (
+            f"{log}: copied {len(copied)} sample(s) as recorded ({read / 1e6:.1f} MB "
+            f"compressed); it now holds {len(now)} of the {len(recorded)} recorded samples."
+        )
+
+    return execute
+
+
 @task
 def audit(
     repo: str | None = None,
@@ -798,6 +861,7 @@ def audit(
     model_configs: dict[str, dict[str, Any]] | None = None,
     publisher: str | dict[str, Any] | None = None,
     investigator_search: dict[str, Any] | None = None,
+    logs_access: str | None = None,
 ) -> Task:
     """Audit a benchmark, submit findings, then use the selected publisher.
 
@@ -872,6 +936,12 @@ def audit(
             {"tavily": true}; external providers need their key in child_secrets.
             None gives investigators no search tool (they still have the internet in
             their box).
+        logs_access: How remote logs (`hawk:`, URLs) reach the auditor's box. "ranged"
+            (default): each `.eval` is staged as its header, every sample summary and
+            the reductions, and the `load_log_samples` tool copies any sample in from
+            where the log lives, by range, as recorded. "download": every log staged
+            whole (the runner needs disk and memory for all of them). Local logs are
+            always staged whole; investigators always read their item by range.
     """
     from ._findings import Findings, encoded, submit_findings
     from ._publishing import PhaseTools, load_publisher, preflight_publisher, publisher_spec
@@ -945,6 +1015,7 @@ def audit(
         overview or "",
         target_task,
         output_dir,
+        logs_access or "ranged",
     )
 
     (root / "work/findings.json").write_bytes(encoded(Findings().model_dump(mode="json")))
@@ -1024,6 +1095,10 @@ def audit(
         report_blocker(),
         register_view(target_task, launch_policy),
     ]
+    from ._staging import on_demand_logs
+
+    if on_demand_logs(seed):
+        tools.append(load_log_samples(root))
     inv = None
     if backend is not None:
         if target_task is None:
@@ -1055,7 +1130,9 @@ def audit(
     # Common shell/image/budget/blocker tools survive the handoff. Skill and job
     # capabilities are resolved per turn by Inspect, not by a second agent loop.
     common = [
-        t for t in tools if ToolDef(t).name in ("bash", "view_image", "budget", "report_blocker")
+        t
+        for t in tools
+        if ToolDef(t).name in ("bash", "view_image", "budget", "report_blocker", "load_log_samples")
     ]
     phase_tools = PhaseTools(
         root, common, [t for t in tools if t not in common], selected_publisher

@@ -95,7 +95,10 @@ def write_fixture_log(location: str, *, padding: dict[str, int] | None = None) -
                     epoch=e,
                     input=f"say {i}",
                     target=i,
-                    messages=[ChatMessageUser(content=f"say {i}"), ChatMessageAssistant(content=answer(i))],
+                    messages=[
+                        ChatMessageUser(content=f"say {i}"),
+                        ChatMessageAssistant(content=answer(i)),
+                    ],
                     output=ModelOutput.from_content("mockllm/model", i),
                     scores={"match": Score(value="C" if e == 1 else "I")},
                 )

@@ -46,8 +46,7 @@ def test_a_slice_holds_only_its_samples_copied_byte_for_byte(recorded: str, tmp_
     for name in ("samples/b_epoch_1.json", "samples/b_epoch_2.json"):
         assert _raw(out, name) == _raw(recorded, name)  # never recompressed
     assert copied.bytes_read == sum(
-        zipfile.ZipFile(recorded).getinfo(f"samples/b_epoch_{e}.json").compress_size
-        for e in (1, 2)
+        zipfile.ZipFile(recorded).getinfo(f"samples/b_epoch_{e}.json").compress_size for e in (1, 2)
     )
     header = read_eval_log(str(out), header_only=True)
     assert header.eval.eval_id == read_eval_log(recorded, header_only=True).eval.eval_id
@@ -57,7 +56,9 @@ def test_a_slice_holds_only_its_samples_copied_byte_for_byte(recorded: str, tmp_
     ]
     for epoch in (1, 2):
         sample = read_eval_log_sample(str(out), id="b", epoch=epoch, resolve_attachments=True)
-        assert sample == read_eval_log_sample(recorded, id="b", epoch=epoch, resolve_attachments=True)
+        assert sample == read_eval_log_sample(
+            recorded, id="b", epoch=epoch, resolve_attachments=True
+        )
         assert sample.messages and sample.scores
     full = read_eval_log(str(out))
     assert [(s.id, s.epoch) for s in full.samples or []] == [("b", 1), ("b", 2)]
@@ -123,7 +124,7 @@ def test_a_sample_written_twice_resolves_to_its_last_entry_as_inspect_reads_it(
         warnings.simplefilter("ignore")  # zipfile's duplicate-name warning
         with zipfile.ZipFile(retried, "a", compression=zipfile.ZIP_DEFLATED) as z:
             z.writestr("samples/a_epoch_1.json", json.dumps(rerun))
-            z.writestr("summaries.json", json.dumps(rows + [dict(row, metadata={"rerun": True})]))
+            z.writestr("summaries.json", json.dumps([*rows, dict(row, metadata={"rerun": True})]))
     assert read_eval_log_sample(str(retried), id="a", epoch=1).metadata == {"rerun": True}
     out = tmp_path / "slice.eval"
     slice_eval(str(retried), out, [("a", 1)])

@@ -17,6 +17,10 @@ benchmark_environment: {}
 
 # what the auditor reads, and its jobs may read
 logs: ["hawk:<source-run-id>"]
+# ranged (default): the auditor's box gets each remote log's header and summaries, and
+# load_log_samples copies any sample in, by range. download: every log whole (a runner
+# with disk and memory for all of them). Investigators always read their item by range.
+logs_access: ranged
 investigation_samples: all
 checks: [gold-answer, answer-format]
 

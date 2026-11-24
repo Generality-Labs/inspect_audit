@@ -242,7 +242,12 @@ class FakeHawk:
         self._seen(request)
         job = self.jobs.get(request.match_info["id"])
         files = [
-            {"name": p.name, "size": p.stat().st_size, "etag": f"e{p.stat().st_mtime_ns}", "mtime": 0.0}
+            {
+                "name": p.name,
+                "size": p.stat().st_size,
+                "etag": f"e{p.stat().st_mtime_ns}",
+                "mtime": 0.0,
+            }
             for p in (job.logs if job else [])
         ]
         return web.json_response({"files": files, "next_start_after": None})

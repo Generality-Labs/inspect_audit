@@ -57,7 +57,9 @@ def test_a_log_url_is_downloaded_to_a_local_file(tmp_path: Path) -> None:
     assert local.is_file() and local.read_bytes() == b"log bytes"
 
 
-def _written_on_hawk(hawk: Any, tmp_path: Path, run_id: str, names: list[str], **kw: Any) -> list[Path]:
+def _written_on_hawk(
+    hawk: Any, tmp_path: Path, run_id: str, names: list[str], **kw: Any
+) -> list[Path]:
     """`_logs_on_hawk` with logs written by Inspect's writer (no eval run, no network)."""
     from test_helpers.fake_hawk import FakeJob
     from test_helpers.logs import write_fixture_log
@@ -80,7 +82,9 @@ def hawksrc(hawk: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
     fsspec.get_filesystem_class("hawksrc").clear_instance_cache()
 
 
-def test_a_hawk_log_is_read_in_place_by_range_never_downloaded(tmp_path: Path, hawksrc: Any) -> None:
+def test_a_hawk_log_is_read_in_place_by_range_never_downloaded(
+    tmp_path: Path, hawksrc: Any
+) -> None:
     """`hawk:<set>/<file>.eval` (FRICTION 5) names only that file, read where it lives:
     a job reads the header, the summaries and the sample it needs, not the whole log."""
     from inspect_ai.log import read_eval_log, read_eval_log_sample, read_eval_log_sample_summaries
@@ -258,3 +262,129 @@ def test_a_findings_bundle_is_copied_from_a_bucket(tmp_path: Path) -> None:
     assert fetch_bundle(str(source)) == str(source)
     with pytest.raises(ValueError, match="is a folder"):
         fetch_bundle("https://example.com/bundle")
+
+
+def _stage(tmp_path: Path, logs: list[str], logs_access: str) -> tuple[Path, dict[str, Any]]:
+    from test_audit import git_repo
+
+    from inspect_audit._staging import prepare_workspace
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    root = prepare_workspace(
+        str(git_repo(tmp_path / "repo")),
+        None,
+        None,
+        logs,
+        None,
+        [],
+        "",
+        None,
+        str(tmp_path / "runs"),
+        logs_access,
+    )
+    return root, json.loads((root / "inputs/seed.json").read_text())
+
+
+def test_ranged_logs_access_stages_every_summary_and_no_transcripts(
+    tmp_path: Path, hawksrc: Any
+) -> None:
+    """The auditor's default: each remote log's header, summaries and reductions, its
+    address kept, read by range; samples are copied in as it asks."""
+    import zipfile
+
+    from inspect_ai.log import read_eval_log, read_eval_log_sample, read_eval_log_sample_summaries
+
+    from inspect_audit._staging import load_samples
+
+    [log] = _written_on_hawk(hawksrc, tmp_path, "run", ["run.eval"], padding={"c": 16_000_000})
+    root, seed = _stage(tmp_path, ["hawk:run"], "ranged")
+    [entry] = seed["logs"]
+    assert entry == {
+        "source": "hawk:run/run.eval",
+        "staged": "/inputs/logs/0/run/run.eval",
+        "remote": "hawk:run",
+        "address": "hawksrc://evals/run/run.eval",
+        "samples": "load_log_samples",
+    }
+    staged = root / "inputs/logs/0/run/run.eval"
+    assert staged.stat().st_size < log.stat().st_size / 100
+    assert hawksrc.bytes_served < log.stat().st_size / 4
+    assert read_eval_log(str(staged), header_only=True).eval.task == "fixture"
+    assert len(read_eval_log_sample_summaries(str(staged))) == 6
+    with zipfile.ZipFile(staged) as z:
+        assert not [n for n in z.namelist() if n.startswith("samples/")]
+
+    before = hawksrc.bytes_served
+    path, copied, read = load_samples(root, entry["staged"], ["a"], [2])
+    assert path == staged and copied == [("a", 2)] and 0 < read < 100_000
+    assert hawksrc.bytes_served - before < log.stat().st_size / 4
+    assert read_eval_log_sample(str(staged), id="a", epoch=2, resolve_attachments=True) == (
+        read_eval_log_sample(str(log), id="a", epoch=2, resolve_attachments=True)
+    )
+    _, copied, _ = load_samples(root, entry["staged"], ["*"], None)
+    assert sorted(copied) == [("a", 1), ("b", 1), ("b", 2), ("c", 1), ("c", 2)]
+    assert len(read_eval_log(str(staged)).samples or []) == 6
+    with pytest.raises(ValueError, match="records no sample"):
+        load_samples(root, entry["staged"], ["zz"], None)
+
+
+def test_download_logs_access_stages_every_log_whole(
+    tmp_path: Path, hawk: Any, monkeypatch
+) -> None:
+    [log] = _written_on_hawk(hawk, tmp_path, "run", ["run.eval"])
+    monkeypatch.setenv("HAWK_API_URL", hawk.url)
+    root, seed = _stage(tmp_path, ["hawk:run"], "download")
+    [entry] = seed["logs"]
+    assert "address" not in entry and entry["remote"] == "hawk:run"
+    staged = root / "inputs" / entry["staged"].removeprefix("/inputs/")
+    assert staged.read_bytes() == log.read_bytes()
+
+
+def test_the_auditor_loads_samples_into_its_box_and_keeps_what_a_resumed_box_held(
+    tmp_path: Path, hawksrc: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`load_log_samples` writes the grown log into the box; samples a resumed box
+    already held (its host copy is fresh) are copied again, not dropped."""
+    import asyncio
+    import io
+    import zipfile
+
+    from inspect_audit import _audit
+
+    _written_on_hawk(hawksrc, tmp_path, "run", ["run.eval"])
+    root, seed = _stage(tmp_path, ["hawk:run"], "ranged")
+    staged = seed["logs"][0]["staged"]
+
+    class Box:
+        def __init__(self) -> None:
+            self.files: dict[str, bytes] = {}
+
+        async def exec(self, cmd: list[str]) -> Any:
+            from types import SimpleNamespace
+
+            data = self.files.get(cmd[-1])
+            if data is None:
+                return SimpleNamespace(success=False, stdout="")
+            names = zipfile.ZipFile(io.BytesIO(data)).namelist()
+            return SimpleNamespace(success=True, stdout=json.dumps(names))
+
+        async def write_file(self, path: str, data: bytes) -> None:
+            self.files[path] = data
+
+    box = Box()
+    monkeypatch.setattr(_audit, "sandbox", lambda: box)
+    tool = _audit.load_log_samples(root)
+    out = asyncio.run(tool(log=staged, samples=["b"]))
+    assert "copied 2 sample(s)" in out and "holds 2 of the 6" in out
+    # a resumed audit: the box kept b; the host stages afresh
+    root2, _ = _stage(tmp_path / "again", ["hawk:run"], "ranged")
+    out = asyncio.run(_audit.load_log_samples(root2)(log=staged, samples=["c"], epochs=[1]))
+    assert "holds 3 of the 6" in out
+    held = zipfile.ZipFile(io.BytesIO(box.files[staged])).namelist()
+    assert sorted(n for n in held if n.startswith("samples/")) == [
+        "samples/b_epoch_1.json",
+        "samples/b_epoch_2.json",
+        "samples/c_epoch_1.json",
+    ]
+    with pytest.raises(Exception, match="not a log staged for ranged access"):
+        asyncio.run(tool(log="/inputs/logs/9/x.eval", samples=["a"]))

@@ -436,9 +436,10 @@ def test_a_sample_gets_only_its_own_attempts_as_an_inspect_log(tmp_path: Path) -
     with zipfile.ZipFile(tmp_path / name) as z, zipfile.ZipFile(log.location) as source:
         # readable with no Inspect installed: which attempts it holds
         assert json.loads(z.read("header.json"))["eval"]["eval_id"] == log.eval.eval_id
-        assert sorted(
-            (s["id"], s["epoch"]) for s in json.loads(z.read("summaries.json"))
-        ) == [("7", 1), ("7", 2)]
+        assert sorted((s["id"], s["epoch"]) for s in json.loads(z.read("summaries.json"))) == [
+            ("7", 1),
+            ("7", 2),
+        ]
         assert sorted(n for n in z.namelist() if n.startswith("samples/")) == [
             "samples/7_epoch_1.json",
             "samples/7_epoch_2.json",

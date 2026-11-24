@@ -14,7 +14,11 @@ observations can be findings without answering those checks. Do not assign a cle
 merely because no worker reported a problem.
 
 The logs you can read are the supplied ones under /inputs/logs and those of your own
-jobs under /inputs/jobs/<label>/; investigators' verdicts are scores in their jobs'
+jobs under /inputs/jobs/<label>/. A supplied remote log whose /inputs/seed.json entry
+has an `address` is staged with its header, every sample summary and the reductions,
+but no transcripts: inventory with the summaries, then call `load_log_samples` with the
+samples you want and read them from the same file. Every sample is available that way;
+load what the question needs, not the whole log; investigators' verdicts are scores in their jobs'
 logs, and the register tool shows them. Read logs with the `reading-logs` skill (Inspect's log API and its
 traps) and analyse them with `analyzing-logs`; there is no browser for a log viewer.
 

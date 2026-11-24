@@ -1,0 +1,35 @@
+name: ia-epoch-chess-full-pub-lw
+packages:
+- inspect-ai==0.3.285
+- joserfc>=1.7.4,<2
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@498e0505354ea08084ab385f3b928a7c89f82819
+tasks:
+- package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@498e0505354ea08084ab385f3b928a7c89f82819
+  name: inspect_audit
+  items:
+  - name: publish
+    args:
+      # The frozen findings of the Chess Puzzles Epoch review with Epoch's logs
+      # (ia-epoch-chess-logs-lw-7fc5ja4ub990mykh, Verified, 3/100 defects), as its
+      # audit published them. No re-audit: a fresh publishing agent writes the full
+      # page's prose from these findings; the benchmark is not loaded and no jobs run.
+      bundle: s3://arcadia-impact-generality-inspect/evals/ia-epoch-chess-logs-lw-7fc5ja4ub990mykh/artifacts/ANBxQCsP8vXPAKMi4S4Y2j/published/55cf18145a11488fa6f2227aa16db371/findings/
+      publisher:
+        name: epoch
+        full_page: true
+      box: k8s
+      # gpt-6.2-sol at Hawk's price ($2/M input, $10/M output): 4M tokens is about $8
+      # if every token were uncached input, so roughly $10 at most
+      token_limit: 4000000
+      instructions: "This is the full Epoch review page: methodology.md lists every block the page renders and which the verdict requires. The findings are frozen; do not re-audit or run new experiments. Write every block required for the derived verdict (Verified), within its limits, from the findings and the evidence files under /inputs/findings/evidence (the auditor's journal and analysis there hold the counts, settings and sources). Preview, revise until every block reads well for its reader and fits its limits, then publish_document."
+models:
+- package: inspect-ai
+  items:
+  - name: openai/openrouter/openai/gpt-6.2-sol
+message_limit: 300
+retry_attempts: 0
+# a publish task given a hawk: bundle fetches it through Hawk's API when it loads, and
+# Hawk does not tell a runner where its own API is
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

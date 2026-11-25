@@ -1018,3 +1018,82 @@ def test_the_stop_at_the_first_flag_can_be_turned_off(monkeypatch: pytest.Monkey
     monkeypatch.setenv(_epoch.STOP_AT_FIRST_FLAG, "maybe")
     with pytest.raises(ValueError, match=_epoch.STOP_AT_FIRST_FLAG):
         _epoch.validate(after)
+
+
+# ------------------------------------------------------------------ the examined items
+
+
+def _examined_case() -> Findings:
+    """No confirmed defect: s1 unresolved; s2 called a defect, then cleared by review."""
+    labels = {f"s{i}": "NO_ISSUE_FOUND" for i in range(6)}
+    labels["s1"] = "UNRESOLVED"
+    labels["s2"] = "DEFECT"
+    clear = Review(
+        sample_id="s2",
+        check="question-labels",
+        label="NO_ISSUE_FOUND",
+        explanation="The flagged credit is what the grader is designed to award.",
+        evidence=[Evidence(observed="patched build: TypeError", source="grade log")],
+    )
+    unsettled = Review(
+        sample_id="s1",
+        check="question-labels",
+        label="UNRESOLVED",
+        explanation="The patched build is a later release than the fix.",
+        evidence=[Evidence(observed="fixed release: 13.2.0\nvuln release: 13.1.0", source="build")],
+    )
+    return findings(labels, phase2(), logs=True, reviews=[clear, unsettled])
+
+
+VERIFIED_NO_ERRORS = {
+    k: v for k, v in VERIFIED_PROSE.items() if k not in ("representative_errors", "error_examples")
+}
+
+
+def test_the_full_page_fills_the_errors_with_the_items_examined(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = bundle(tmp_path, _examined_case())
+    monkeypatch.setattr(epoch, "sandbox", lambda: Box(VERIFIED_NO_ERRORS))
+    full = load_publisher({"name": "epoch", "full_page": True})
+    page = (asyncio.run(full.build(tmp_path, source)) / "epoch_review.md").read_text()
+    order = [
+        "## Benchmark Review Rubric",
+        "## Representative Errors",
+        "No errors were confirmed among the inspected tasks.",
+        "### Other items examined (2)",
+        "**s1**: Unsettled",
+        "```",
+        "fixed release: 13.2.0",
+        "**s2**: Examined, not an error",
+        "Raised: why",
+        "Standing: The flagged credit is what the grader is designed to award.",
+        "> patched build: TypeError",
+        "## Footnotes",
+    ]
+    positions = [page.index(marker) for marker in order]
+    assert positions == sorted(positions)
+    assert page.count("## Representative Errors") == 1
+    # the default page, which ends after its opening, is unchanged: no fill
+    page = (
+        asyncio.run(load_publisher("epoch").build(tmp_path, source)) / "epoch_review.md"
+    ).read_text()
+    assert "Other items examined" not in page
+
+
+def test_the_fill_follows_the_confirmed_defects_and_stops_at_its_size() -> None:
+    page = _epoch.template(True)
+    assert page.examined is not None and page.examined.fill_to == 5
+    case = findings(ten(1) | {"s5": "UNRESOLVED"}, phase2(), logs=True)
+    prose = _epoch.Prose.model_validate(VERIFIED_PROSE)
+    text = _epoch.review(case, prose, True)["page"]
+    # the confirmed defect's table first, as before, then the one unresolved item
+    assert text.index("| s0 | Impossible as written |") < text.index("### Other items examined (1)")
+    assert text.index("### Other items examined (1)") < text.index("**s5**: Unsettled")
+    assert "No errors were confirmed" not in text
+    # five confirmed defects fill the section: nothing is added
+    case = findings(ten(5) | {"s6": "UNRESOLVED"}, phase2(), logs=True)
+    assert _epoch.examined_from(case, _epoch.coverage_from(case), 5 - 5) == []
+    assert [
+        i["question_id"] for i in _epoch.examined_from(case, _epoch.coverage_from(case), 3)
+    ] == ["s6"]

@@ -310,6 +310,31 @@ class Footnotes(BaseModel):
     brief: str = ""
 
 
+class Examined(BaseModel):
+    """The full page's representative errors, filled out when few defects are confirmed.
+
+    Under the confirmed defects (unchanged), the most important other items the review
+    examined: unresolved items first, then items a check labelled a defect that the
+    standing labels cleared, up to `fill_to` items in all, each with its verdict label
+    and the recorded evidence quoted from the findings.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    fill_to: int = 5
+    title: str = "Other items examined"
+    # the section's lead; `none_lead` opens the representative errors when the prose has
+    # none because nothing was confirmed
+    lead: str = ""
+    none_lead: str = ""
+    # the verdict label per standing: DEFECT, UNRESOLVED, and CLEARED (a defect label
+    # the standing labels overturned)
+    labels: dict[str, str] = Field(default_factory=dict)
+    # what each label check judged, for the reader
+    checks: dict[str, str] = Field(default_factory=dict)
+    max_quote_words: int = 45
+    max_text_words: int = 60
+
+
 class Template(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
@@ -327,6 +352,8 @@ class Template(BaseModel):
     # notices and the other blocks follow, in template order; without it the blocks
     # come first and the rubric after them
     opening: list[str] = Field(default_factory=list)
+    # the full page's fill for the representative errors when few defects are confirmed
+    examined: Examined | None = None
     # the page ends after the opening and the notices: the other blocks and the
     # disclaimer are not rendered, so none is required (one written is still checked
     # and kept in prose.json), and only the footnotes the page refers to are printed
@@ -892,6 +919,101 @@ def classes_from(
             if qid in out:
                 break
     return out
+
+
+def _clip(text: str, max_words: int) -> str:
+    """At most `max_words` words, whole sentences where they fit."""
+    text = " ".join(str(text).split())
+    if words(text) <= max_words:
+        return text
+    kept = ""
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        if words(f"{kept} {sentence}") > max_words:
+            break
+        kept = f"{kept} {sentence}".strip()
+    return kept or " ".join(text.split()[:max_words]) + " …"
+
+
+def examined_from(
+    findings: "Findings", coverage: dict[str, Any] | None, limit: int
+) -> list[dict[str, Any]]:
+    """The most important items examined beyond the confirmed defects, at most `limit`.
+
+    Unresolved items first, then items some label check called a defect that the
+    standing labels cleared (most defect labels first), each in sample order. Per item,
+    each check that makes it one: the concern a defect label raised, the standing
+    label's explanation, and the evidence it recorded, all from the findings.
+    """
+    if limit <= 0 or not coverage:
+        return []
+    recorded = findings.investigators.get("samples")
+    samples: dict[str, Any] = dict(recorded) if isinstance(recorded, dict) else {}
+    takes: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for sample_id, cells in samples.items():
+        if not isinstance(cells, dict):
+            continue
+        for check in LABEL_CHECKS:
+            for t in cells.get(check) or []:
+                if isinstance(t, dict):
+                    takes.setdefault((str(sample_id), check), []).append(t)
+    for review in findings.auditor.reviews:
+        takes.setdefault((review.sample_id, review.check), []).append(
+            {
+                "by": "auditor",
+                "label": review.label,
+                "explanation": review.explanation,
+                "evidence": [e.model_dump() for e in review.evidence],
+            }
+        )
+
+    def standing(cell: list[dict[str, Any]]) -> dict[str, Any] | None:
+        mine = [t for t in cell if t.get("by") == "auditor"]
+        return (mine or cell or [None])[-1]
+
+    unresolved: list[dict[str, Any]] = []
+    cleared: list[tuple[int, dict[str, Any]]] = []
+    for q in coverage.get("questions") or []:
+        qid, status = str(q["question_id"]), q["status"]
+        if status not in ("UNRESOLVED", "NO_ISSUE_FOUND"):
+            continue
+        parts: list[dict[str, Any]] = []
+        raised_total = 0
+        for check in LABEL_CHECKS:
+            cell = takes.get((qid, check)) or []
+            state = (q.get("by_check") or {}).get(check)
+            raised = [t for t in cell if t.get("label") == "DEFECT"]
+            if status == "UNRESOLVED" and state != "UNRESOLVED":
+                continue
+            if status == "NO_ISSUE_FOUND" and not raised:
+                continue
+            raised_total += len(raised)
+            final = standing(cell) or {}
+            quotes = [
+                str(e.get("observed", "")).strip()
+                for e in (final.get("evidence") or [])
+                if isinstance(e, dict) and str(e.get("observed", "")).strip()
+            ]
+            parts.append(
+                {
+                    "check": check,
+                    "raised": str(raised[-1].get("explanation", "")) if raised else "",
+                    "finding": str(final.get("explanation", "")),
+                    "quotes": quotes[:1],
+                }
+            )
+        if not parts:
+            continue
+        item = {
+            "question_id": qid,
+            "standing": "UNRESOLVED" if status == "UNRESOLVED" else "CLEARED",
+            "checks": parts,
+        }
+        if status == "UNRESOLVED":
+            unresolved.append(item)
+        else:
+            cleared.append((raised_total, item))
+    cleared.sort(key=lambda pair: -pair[0])  # stable: sample order among equals
+    return (unresolved + [item for _, item in cleared])[:limit]
 
 
 def assessments_from(
@@ -1787,12 +1909,52 @@ def render(
     def _shown(block: Block) -> bool:
         return block.shown_for(verdict) and prose.present(block)
 
+    def _quote(text: str, max_words: int) -> list[str]:
+        if "\n" in text.strip():
+            lines = text.strip().splitlines()[:8]
+            return ["```", *lines, "```", ""]
+        return [f"> {_clip(text, max_words)}", ""]
+
+    def _render_examined() -> None:
+        """The full page's fill: the other items examined, under the confirmed defects."""
+        spec, items = page.examined, derived.get("examined") or []
+        if spec is None or not items:
+            return
+        errors = (
+            page.block("representative_errors")
+            if any(b.id == "representative_errors" for b in page.blocks)
+            else None
+        )
+        if errors is not None and not _shown(errors):
+            out.extend([f"## {errors.title}", ""])
+            if spec.none_lead and not coverage_ids(coverage, "DEFECT"):
+                out.extend([spec.none_lead, ""])
+        out.extend([f"### {spec.title} ({len(items)})", ""])
+        if spec.lead:
+            out.extend([spec.lead, ""])
+        for item in items:
+            label = spec.labels.get(item["standing"], item["standing"])
+            out.extend([f"**{item['question_id']}**: {label}", ""])
+            for part in item["checks"]:
+                what = spec.checks.get(part["check"], part["check"])
+                if part["raised"]:
+                    out.extend(
+                        [f"*{what}.* Raised: {_clip(part['raised'], spec.max_text_words)}", ""]
+                    )
+                    out.extend([f"Standing: {_clip(part['finding'], spec.max_text_words)}", ""])
+                else:
+                    out.extend([f"*{what}.* {_clip(part['finding'], spec.max_text_words)}", ""])
+                for quote in part["quotes"]:
+                    out.extend(_quote(quote, spec.max_quote_words))
+
     def _render_opening() -> None:
         for item in page.opening:
             if item == "rubric":
                 _render_rubric()
             elif _shown(block := page.block(item)):
                 _render_block(block)
+        if not page.ends_after_opening:
+            _render_examined()
         for notice in derived.get("notices") or []:
             out.extend([f"*{notice}*", ""])
 
@@ -1851,6 +2013,15 @@ def review(findings: "Findings", prose: Prose, full_page: bool = False) -> dict[
     derived["warnings"] = prose_warnings(prose, page)
     derived["sources"] = sources_from(findings)
     derived["classes"] = classes_from(findings, derived["coverage"])
+    derived["examined"] = (
+        examined_from(
+            findings,
+            derived["coverage"],
+            page.examined.fill_to - len(coverage_ids(derived["coverage"], "DEFECT")),
+        )
+        if page.examined and not page.ends_after_opening
+        else []
+    )
     derived["template"] = page.id
     derived["assessments"] = {k: v.model_dump(mode="json") for k, v in assessments.items()}
     derived["page"] = render(page, method, prose, assessments, derived, derived["coverage"])

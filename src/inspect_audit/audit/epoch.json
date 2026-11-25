@@ -484,6 +484,23 @@
       "representative_errors",
       "error_examples"
     ],
+    "examined": {
+      "fill_to": 5,
+      "title": "Other items examined",
+      "lead": "Fewer errors were confirmed than this section usually shows, so it continues with the other items the review examined most closely: unsettled items first, then concerns that were examined and cleared. Each shows the recorded evidence it rests on.",
+      "none_lead": "No errors were confirmed among the inspected tasks.",
+      "labels": {
+        "DEFECT": "Confirmed error",
+        "UNRESOLVED": "Unsettled",
+        "CLEARED": "Examined, not an error"
+      },
+      "checks": {
+        "question-labels": "The task as written",
+        "grading-labels": "The recorded grades"
+      },
+      "max_quote_words": 45,
+      "max_text_words": 60
+    },
     "ends_after_opening": true,
     "blocks": [
       {

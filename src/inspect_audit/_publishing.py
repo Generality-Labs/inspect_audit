@@ -222,8 +222,9 @@ def publish(
         bundle: The findings bundle (findings.json, manifest.json and evidence), or a
             published folder holding one under findings/: a local directory,
             `hawk:<eval set id>/artifacts/<sample uuid>/<folder>` (a Hawk sample's
-            artifacts, read through Hawk's API with this runner's own token), or an
-            s3:// or gs:// folder this process can read.
+            artifacts, read through Hawk's API with this runner's own token), an
+            s3:// or gs:// folder this process can read, or `env:<VAR>`, a base64
+            tarball of the folder in that environment variable (a Hawk `--secret`).
         publisher: 'latex', 'gl', 'epoch' or an installed module:factory returning a
             Publisher; or a mapping naming one with its options, e.g.
             `{"name": "epoch", "full_page": true}`.

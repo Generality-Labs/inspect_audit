@@ -101,7 +101,8 @@ def fetch_bundle(source: str) -> str:
     Hawk sample's artifacts through Hawk's API with this process's own token (what
     `hawk fs ls evals/<eval set id>/artifacts/...` lists); an `s3://` or `gs://` (any
     fsspec) folder is copied with fsspec, which needs this process's own read access;
-    a local path passes through. Which folder it is (a bundle or a published folder
+    `env:<VAR>` unpacks the folder from a base64 tarball in that environment variable
+    (on Hawk, passed with `--secret`); a local path passes through. Which folder it is (a bundle or a published folder
     holding one) is the reader's business.
     """
     if source.startswith("hawk:"):
@@ -110,6 +111,21 @@ def fetch_bundle(source: str) -> str:
         if cached is None or not Path(cached).exists():
             cached = _FETCHED[source] = fetch_artifacts(address)
         return cached
+    if source.startswith("env:"):
+        # a bundle no store holds yet (one merged by hand), handed to a Hawk runner as
+        # a secret: the environment variable holds the folder as a base64 tarball
+        import base64
+        import io
+        import os
+        import tarfile
+
+        name = source.removeprefix("env:")
+        if not (encoded := os.environ.get(name)):
+            raise ValueError(f"{source}: environment variable {name} is not set")
+        fetched = stable_dir("env-bundle", encoded)
+        with tarfile.open(fileobj=io.BytesIO(base64.b64decode(encoded)), mode="r:*") as tar:
+            tar.extractall(fetched, filter="data")
+        return str(fetched)
     if source.startswith(("http://", "https://")):
         raise ValueError(
             f"{source}: a findings bundle is a folder; name it as a local path, "

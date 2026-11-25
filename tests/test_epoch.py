@@ -995,3 +995,26 @@ def test_the_full_page_is_a_publisher_option(tmp_path: Path, capsys) -> None:
     assert "## Task Analysis" in (out / "epoch_review.md").read_text()
     assert epoch.main([str(source), "--prose", str(prose), "--out", str(out)]) == 0
     assert "## Task Analysis" not in (out / "epoch_review.md").read_text()
+
+
+def test_the_stop_at_the_first_flag_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    flagged = phase1(
+        benchmark_consistency=rating(
+            "Flag", impact="Scores from the two scorer versions differ by 11 points."
+        )
+    )
+    after = findings(ten(1), flagged | {"elicitation_adequacy": rating("Pass")}, logs=True)
+    # the default is the published rubric's stop, from the environment too
+    monkeypatch.delenv(_epoch.STOP_AT_FIRST_FLAG, raising=False)
+    with pytest.raises(ValueError, match=r"stops at the first Flag.*elicitation_adequacy"):
+        _epoch.validate(after)
+    # turned off, the rows after the Flag stand; the verdict is still Flawed and says why
+    derived = _epoch.validate(after, stop_at_first_flag=False)
+    assert derived["verdict"] == "Flawed"
+    assert any("rated after the first Flag" in r for r in derived["reasons"])
+    monkeypatch.setenv(_epoch.STOP_AT_FIRST_FLAG, "false")
+    assert _epoch.validate(after)["verdict"] == "Flawed"
+    epoch.validate(after)  # the publisher's submission check reads it the same way
+    monkeypatch.setenv(_epoch.STOP_AT_FIRST_FLAG, "maybe")
+    with pytest.raises(ValueError, match=_epoch.STOP_AT_FIRST_FLAG):
+        _epoch.validate(after)

@@ -17,6 +17,7 @@ Verified.
 """
 
 import json
+import os
 import re
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -1024,16 +1025,37 @@ def measures(
     return out
 
 
+# The rubric's "stop at the first Flag" rule, on by default. An operator who wants every
+# row rated anyway (a pilot that always runs phase 2) turns it off in the runner's
+# environment, not in the task's arguments: they are the eval-set task's identity, and
+# changing them on a resume would restart a checkpointed audit from scratch.
+STOP_AT_FIRST_FLAG = "INSPECT_AUDIT_EPOCH_STOP_AT_FIRST_FLAG"
+
+
+def stops_at_first_flag() -> bool:
+    """Whether the rubric stops at the first Flag: unless the environment says false."""
+    value = os.environ.get(STOP_AT_FIRST_FLAG, "").strip().lower()
+    if value in ("", "1", "true", "yes"):
+        return True
+    if value in ("0", "false", "no"):
+        return False
+    raise ValueError(f"{STOP_AT_FIRST_FLAG} must be true or false, not {value!r}")
+
+
 def derive_verdict(
     method: Methodology,
     assessments: dict[str, Assessment],
     measured: dict[str, dict[str, Any]],
+    *,
+    stop_at_first_flag: bool = True,
 ) -> dict[str, Any]:
     """Apply the methodology's verdict procedure to the recorded assessments.
 
     Raises when a thresholded check's level contradicts its measure without a written
     reason, and when a row is rated after the rubric's stop, so the published verdict
-    and its numbers cannot disagree silently.
+    and its numbers cannot disagree silently. With `stop_at_first_flag` false, rows
+    after the first Flag may be rated; the verdict is the same (Flawed) and its reasons
+    say the rubric was not stopped.
     """
     proc = method.verdict.procedure
     fail_at = proc.minimum["fail_at"]
@@ -1076,10 +1098,15 @@ def derive_verdict(
             after = [
                 c.id for c in order[first + 1 :] + method.quality if assessments[c.id].assessed
             ]
-            if after:
+            if after and stop_at_first_flag:
                 raise ValueError(
                     f"the review stops at the first {fail_at} ({order[first].name}): "
                     f"{', '.join(after)} must be {unfinished}, not rated"
+                )
+            if after:
+                reasons.append(
+                    f"rated after the first {fail_at} ({order[first].name}), as the operator "
+                    f"asked ({STOP_AT_FIRST_FLAG}=false): {', '.join(after)}"
                 )
         flagged = [c.name for c in order if assessments[c.id].level == fail_at]
         pending = [c.name for c in order if assessments[c.id].level == unfinished]
@@ -1137,15 +1164,20 @@ def phase_rule(method: Methodology, assessments: dict[str, Assessment], with_log
         )
 
 
-def validate(findings: "Findings") -> dict[str, Any]:
-    """The review a bundle holds, derived; raises with the first problem found."""
+def validate(findings: "Findings", stop_at_first_flag: bool | None = None) -> dict[str, Any]:
+    """The review a bundle holds, derived; raises with the first problem found.
+
+    `stop_at_first_flag` None reads the environment (`stops_at_first_flag()`).
+    """
+    if stop_at_first_flag is None:
+        stop_at_first_flag = stops_at_first_flag()
     method = methodology()
     assessments, sampling = assessments_from(findings, method)
     with_logs = logs_supplied(findings)
     phase_rule(method, assessments, with_logs)
     coverage = coverage_from(findings)
     measured = measures(method, assessments, coverage, sampling)
-    derived = derive_verdict(method, assessments, measured)
+    derived = derive_verdict(method, assessments, measured, stop_at_first_flag=stop_at_first_flag)
     derived["logs_supplied"] = with_logs
     derived["sampling"] = sampling.model_dump() if sampling else None
     derived["coverage"] = coverage

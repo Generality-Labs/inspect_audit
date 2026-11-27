@@ -1669,14 +1669,32 @@ def _measure_line(check: Check, row: Assessment, derived: dict[str, Any], unit: 
     if len(by_check) > 1:
         parts = [f"{n} {CHECK_PHRASES.get(name, name)}" for name, n in by_check.items()]
         line += " Of these, " + " and ".join(parts) + "; a task may count under both."
-    if beside.get("unresolved") or beside.get("not_assessed"):
+    # items no check examined at all are a drawn expansion reserve left unused, not
+    # items the review failed to assess
+    reserve = len(_unexamined(derived.get("coverage")))
+    unresolved = int(beside.get("unresolved", 0))
+    not_assessed = int(beside.get("not_assessed", 0)) - reserve
+    if unresolved or not_assessed:
         line += (
-            f" Unresolved {beside.get('unresolved', 0)}, not assessed "
-            f"{beside.get('not_assessed', 0)} of {beside.get('population', 0)}."
+            f" Unresolved {unresolved}, not assessed {not_assessed} of "
+            f"{int(beside.get('population', 0)) - reserve}."
         )
+    if reserve:
+        noun = unit if reserve == 1 else f"{unit}s"
+        line += f" A reserve of {reserve} further {noun} was drawn for expansion but not used."
     if row.threshold_override_reason.strip():
         line += f" Threshold overridden: {row.threshold_override_reason.strip()}"
     return line
+
+
+def _unexamined(coverage: dict[str, Any] | None) -> list[str]:
+    """The items no label check gave any verdict on: drawn, never examined."""
+    return [
+        str(q["question_id"])
+        for q in (coverage or {}).get("questions") or []
+        if q["status"] == "NOT_ASSESSED"
+        and all(s == "NOT_ASSESSED" for s in (q.get("by_check") or {}).values())
+    ]
 
 
 def sub_reason_label(sub_reason: str) -> str:

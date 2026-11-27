@@ -1,0 +1,36 @@
+name: ia-epoch-hle-full-pub-lw
+packages:
+- inspect-ai==0.3.285
+- joserfc>=1.7.4,<2
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@ac50ff63233baa7f64848ef39abe28491762a39d
+tasks:
+- package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@ac50ff63233baa7f64848ef39abe28491762a39d
+  name: inspect_audit
+  items:
+  - name: publish
+    args:
+      # The frozen findings of the task-only Humanity's Last Exam Epoch review
+      # (ia-epoch-hle-lw-3vm58qg4009wq95e, Flawed, 30/48 defects), as its audit
+      # published them. No re-audit: a fresh publishing agent writes the full page's
+      # prose from these findings; the benchmark is not loaded and no jobs run.
+      # Read through Hawk's sample-artifact API, as the chess full page does.
+      bundle: hawk:ia-epoch-hle-lw-3vm58qg4009wq95e/artifacts/iyodtKuUDRqrEcjyWnuAmH/published/d22ca42b2a9c4be3b416861167a5d5c3/findings
+      publisher:
+        name: epoch
+        full_page: true
+      box: k8s
+      # the runner's working directory is not writable
+      output_dir: ~/.inspect-audit/publications
+      # gpt-6.2-sol at Hawk's price ($2/M input, $10/M output): roughly $10 at most
+      token_limit: 4000000
+      instructions: "This is the full Epoch review page: methodology.md lists every block the page renders and which the verdict requires. The findings are frozen; do not re-audit or run new experiments. Write every block required for the derived verdict (Flawed), within its limits, from the findings and the evidence files under /inputs/findings/evidence (the auditor's journal and analysis there hold the counts, settings and sources). This was a task-only review of Epoch's 48 HLE items (6 per category, original HLE): no model logs were graded, so say so plainly rather than describing any impact on reported scores. Item hle_82d26472 was judged from its text only, because its image is refused by the model provider's content filter; say that where it matters, and do not open any item image. Preview, revise until every block reads well for its reader and fits its limits, then publish_document."
+models:
+- package: inspect-ai
+  items:
+  - name: openai/openrouter/openai/gpt-6.2-sol
+message_limit: 300
+retry_attempts: 0
+# a publish task given a hawk: bundle fetches it through Hawk's API when it loads
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

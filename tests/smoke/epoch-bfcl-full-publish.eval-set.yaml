@@ -1,0 +1,39 @@
+name: ia-epoch-bfcl-full-pub-lw
+packages:
+- inspect-ai==0.3.285
+- joserfc>=1.7.4,<2
+- inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@ac50ff63233baa7f64848ef39abe28491762a39d
+tasks:
+- package: inspect-audit[runner,k8s] @ git+https://github.com/Generality-Labs/inspect_audit@ac50ff63233baa7f64848ef39abe28491762a39d
+  name: inspect_audit
+  items:
+  - name: publish
+    args:
+      # The frozen findings of the BFCL v2 Epoch review (task-only, phase 1)
+      # (ia-epoch-bfcl-lw-r5jo0tootlw61ufs, Flawed, 35/50 defects), as its audit
+      # published them. No re-audit: a fresh publishing agent writes the full page's
+      # prose from these findings; the benchmark is not loaded and no jobs run.
+      # read through Hawk's sample-artifact API with the runner's own token (see
+      # epoch-chess-full-publish.eval-set.yaml for why not s3://)
+      bundle: hawk:ia-epoch-bfcl-lw-r5jo0tootlw61ufs/artifacts/WfmPht5negCPQBk5jodzLM/published/e5742ea32b4f452ca38735e43df00745/findings
+      publisher:
+        name: epoch
+        full_page: true
+      box: k8s
+      # the runner's working directory is not writable; the audit's own default is
+      # under the home directory
+      output_dir: ~/.inspect-audit/publications
+      # gpt-6.2-sol at Hawk's price ($2/M input, $10/M output): roughly $10 at most
+      token_limit: 4000000
+      instructions: "This is the full Epoch review page: methodology.md lists every block the page renders and which the verdict requires. The findings are frozen; do not re-audit or run new experiments. Write every block required for the derived verdict (Flawed), within its limits, from the findings and the evidence files under /inputs/findings/evidence (the auditor's journal and analysis there hold the counts, settings and sources). Preview, revise until every block reads well for its reader and fits its limits, then publish_document."
+models:
+- package: inspect-ai
+  items:
+  - name: openai/openrouter/openai/gpt-6.2-sol
+message_limit: 300
+retry_attempts: 0
+# a publish task given a hawk: bundle fetches it through Hawk's API when it loads, and
+# Hawk does not tell a runner where its own API is
+runner:
+  environment:
+    HAWK_API_URL: https://api.hawk.hawk.generalitylabs.ai

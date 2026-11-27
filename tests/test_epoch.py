@@ -1074,11 +1074,34 @@ def test_the_full_page_fills_the_errors_with_the_items_examined(
     positions = [page.index(marker) for marker in order]
     assert positions == sorted(positions)
     assert page.count("## Representative Errors") == 1
-    # the default page, which ends after its opening, is unchanged: no fill
+
+
+def test_the_short_page_fills_the_errors_with_the_items_examined(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The default page, which ends after its opening, renders the same fill."""
+    source = bundle(tmp_path, _examined_case())
+    monkeypatch.setattr(epoch, "sandbox", lambda: Box(VERIFIED_NO_ERRORS))
     page = (
         asyncio.run(load_publisher("epoch").build(tmp_path, source)) / "epoch_review.md"
     ).read_text()
-    assert "Other items examined" not in page
+    order = [
+        "## Benchmark Review Rubric",
+        "## Representative Errors",
+        "No errors were confirmed among the inspected tasks.",
+        "### Other items examined (2)",
+        "**s1**: Unsettled",
+        "```",
+        "fixed release: 13.2.0",
+        "**s2**: Examined, not an error",
+        "Standing: The flagged credit is what the grader is designed to award.",
+        "> patched build: TypeError",
+    ]
+    positions = [page.index(marker) for marker in order]
+    assert positions == sorted(positions)
+    assert page.count("## Representative Errors") == 1
+    # still the short page: none of the full page's other blocks
+    assert "## Disclaimer" not in page
 
 
 def test_the_fill_follows_the_confirmed_defects_and_stops_at_its_size() -> None:

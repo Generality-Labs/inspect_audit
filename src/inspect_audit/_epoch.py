@@ -311,7 +311,7 @@ class Footnotes(BaseModel):
 
 
 class Examined(BaseModel):
-    """The full page's representative errors, filled out when few defects are confirmed.
+    """The representative errors, filled out when few defects are confirmed (both pages).
 
     Under the confirmed defects (unchanged), the most important other items the review
     examined: unresolved items first, then items a check labelled a defect that the
@@ -352,7 +352,7 @@ class Template(BaseModel):
     # notices and the other blocks follow, in template order; without it the blocks
     # come first and the rubric after them
     opening: list[str] = Field(default_factory=list)
-    # the full page's fill for the representative errors when few defects are confirmed
+    # the fill for the representative errors when few defects are confirmed
     examined: Examined | None = None
     # the page ends after the opening and the notices: the other blocks and the
     # disclaimer are not rendered, so none is required (one written is still checked
@@ -1916,7 +1916,7 @@ def render(
         return [f"> {_clip(text, max_words)}", ""]
 
     def _render_examined() -> None:
-        """The full page's fill: the other items examined, under the confirmed defects."""
+        """The fill: the other items examined, under the confirmed defects."""
         spec, items = page.examined, derived.get("examined") or []
         if spec is None or not items:
             return
@@ -1953,8 +1953,7 @@ def render(
                 _render_rubric()
             elif _shown(block := page.block(item)):
                 _render_block(block)
-        if not page.ends_after_opening:
-            _render_examined()
+        _render_examined()
         for notice in derived.get("notices") or []:
             out.extend([f"*{notice}*", ""])
 
@@ -2019,7 +2018,7 @@ def review(findings: "Findings", prose: Prose, full_page: bool = False) -> dict[
             derived["coverage"],
             page.examined.fill_to - len(coverage_ids(derived["coverage"], "DEFECT")),
         )
-        if page.examined and not page.ends_after_opening
+        if page.examined
         else []
     )
     derived["template"] = page.id
